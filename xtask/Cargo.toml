@@ -6,4 +6,6 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-
+jetthing-control = { path = "../crates/jetthing-control" }
+serde.workspace = true
+serde_json.workspace = true

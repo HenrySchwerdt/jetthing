@@ -1,0 +1,19 @@
+{
+  "id": "05",
+  "title": "Search Everywhere (Double Shift, query \"main\")",
+  "reference": "reference/intellij-community/java-gradle/05-search-everywhere.png",
+  "fixture": "java-gradle",
+  "open": ["src/main/java/com/example/App.java"],
+  "steps": [
+    {"op": "wait", "until": "idle"},
+    {"op": "key", "chord": "DoubleShift"},
+    {"op": "wait", "until": "popup"},
+    {"op": "type", "text": "main"},
+    {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/popups/searchEverywhere", "equals": "all"},
+    {"op": "screenshot", "name": "05-search-everywhere.png"},
+    {"op": "key", "chord": "Escape"},
+    {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/popups/searchEverywhere", "equals": null}
+  ]
+}
