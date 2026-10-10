@@ -475,7 +475,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
                 candidate!("kotlin-language-server", &[]),
             ],
             root_markers: GRADLE_MAVEN,
-            install_hint: "Install JetBrains kotlin-lsp (https://github.com/Kotlin/kotlin-lsp) or kotlin-language-server and put it on PATH.",
+            install_hint: "Install JetBrains kotlin-lsp (https://github.com/Kotlin/kotlin-lsp; its server archive provides bin/intellij-server, which can be linked as `kotlin-lsp`) or kotlin-language-server, and put it on PATH.",
             notify_missing: true,
             initialization_options: None,
         },

@@ -119,6 +119,8 @@ pub mod tokens {
         SUCCESS = ["ui:Label.successForeground"] or 0x6DB083;
         /// `*.modifiedItemForeground`.
         MODIFIED = ["ui:*.modifiedItemForeground"] or 0x71A1FE;
+        /// `Link.activeForeground` (links in documentation popups).
+        LINK = ["ui:Link.activeForeground"] or 0x71A1FE;
         /// Added file color (`FILESTATUS_ADDED`).
         ADDED = ["color:FILESTATUS_ADDED"] or 0x73BD79;
         /// Untracked file color (`Red8` dark, `FILESTATUS_UNKNOWN` light).

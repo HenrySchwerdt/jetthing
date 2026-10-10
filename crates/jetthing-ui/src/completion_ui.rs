@@ -129,16 +129,13 @@ fn row_for(item: &CompletionItem, matched: &[usize]) -> Row {
     }
 }
 
-pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
-    let Some(session) = app.state.completion.as_ref() else {
-        return;
-    };
+/// Shows the popup; returns its screen rect for the documentation panel.
+pub fn show(app: &mut IdeApp, ctx: &egui::Context) -> Option<Rect> {
+    let session = app.state.completion.as_ref()?;
     if !session.visible() {
-        return;
+        return None;
     }
-    let Some(caret) = app.caret_screen_pos else {
-        return;
-    };
+    let caret = app.caret_screen_pos?;
     let rows: Vec<Row> = session
         .ranked
         .iter()
@@ -181,7 +178,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     }
 
     let mut clicked = None;
-    egui::Area::new(egui::Id::new("completion_popup"))
+    let area = egui::Area::new(egui::Id::new("completion_popup"))
         .order(egui::Order::Foreground)
         .fixed_pos(pos2(x, y))
         .show(ctx, |ui| {
@@ -223,6 +220,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     if let Some(row) = clicked {
         app.dispatch("completion.accept", json!({"row": row}));
     }
+    Some(area.response.rect)
 }
 
 fn paint_row(ui: &egui::Ui, rect: Rect, row: &Row, selected: bool, hovered: bool) {

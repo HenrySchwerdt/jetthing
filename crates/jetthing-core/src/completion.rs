@@ -12,6 +12,7 @@ use jetthing_lsp::{
     snippet::{self, Snippet},
 };
 use jetthing_text::{Selection, TextChange, TextDocument};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 /// Trigger characters that are better served by parameter info or that
@@ -40,6 +41,8 @@ pub struct CompletionSession {
     pub waiting: bool,
     /// Opened with Ctrl+Space: an empty result is reported, not hidden.
     pub explicit: bool,
+    /// Item indices already passed through `completionItem/resolve`.
+    pub resolved: HashSet<usize>,
 }
 
 impl CompletionSession {
@@ -126,6 +129,7 @@ impl IdeState {
             incomplete: false,
             waiting: true,
             explicit: explicit || previous.is_some_and(|session| session.explicit),
+            resolved: HashSet::new(),
         });
         Ok(id)
     }
@@ -159,11 +163,21 @@ impl IdeState {
             session.waiting = false;
             session.selected = 0;
             session.ranked.clear();
+            session.resolved.clear();
             if session.items.is_empty() && session.explicit {
                 self.status = "No suggestions".into();
             }
         }
         self.refresh_completion();
+        // The server may ask for an item to be selected first (`preselect`).
+        if let Some(session) = self.completion.as_mut()
+            && let Some(row) = session
+                .ranked
+                .iter()
+                .position(|row| session.items[row.index].preselect == Some(true))
+        {
+            session.selected = row;
+        }
     }
 
     /// Re-filters after the document or caret changed; closes the session
@@ -203,9 +217,13 @@ impl IdeState {
             .selected_item()
             .map(|item| item.label.clone())
             .filter(|_| prefix == session.prefix);
+        let language = self.lsp.language_id(&absolute).unwrap_or("text");
+        let stats = &self.completion_stats;
         let ranked = self
             .lsp
-            .rank_completions(&absolute, &session.items, &prefix);
+            .rank_completions(&absolute, &session.items, &prefix, |item| {
+                stats.weight(language, item)
+            });
         let close = !session.waiting && ranked.is_empty() && !session.explicit;
         let Some(session) = self.completion.as_mut() else {
             return;
@@ -352,6 +370,16 @@ impl IdeState {
             .selected_item()
             .cloned()
             .ok_or("no completion item is selected")?;
+        let resolved = session
+            .ranked
+            .get(session.selected)
+            .is_some_and(|row| session.resolved.contains(&row.index));
+        if let Some(language) = self
+            .active_absolute_path()
+            .and_then(|path| self.lsp.language_id(&path))
+        {
+            self.completion_stats.record(language, &item);
+        }
         let index = self.active_document.ok_or("no active document")?;
         let document = self
             .documents
@@ -449,6 +477,23 @@ impl IdeState {
             // Completing inside a template variable keeps the template.
             None => self.snippet_after_change(),
         }
+        if !resolved && item.additional_text_edits.is_none() {
+            self.resolve_accepted(item, inserted_at);
+        }
+        // Completing a call leaves the caret inside `(`: show parameter info,
+        // as the reference IDE does.
+        let after_paren = self
+            .active_document
+            .and_then(|index| self.documents.get(index))
+            .and_then(|document| {
+                let head = document.selections.primary().head;
+                head.checked_sub(1)
+                    .and_then(|before| document.text.char_at(before))
+            })
+            == Some('(');
+        if after_paren {
+            let _ = self.request_parameter_info(None, false);
+        }
         self.sync_active_lsp();
         Ok(())
     }
@@ -472,7 +517,7 @@ fn adjust_indentation(text: &str, indent: &str) -> String {
     out
 }
 
-fn lsp_change(text: &TextDocument, edit: &TextEdit) -> TextChange {
+pub(crate) fn lsp_change(text: &TextDocument, edit: &TextEdit) -> TextChange {
     let start = text.char_from_lsp_position(
         edit.range.start.line as usize,
         edit.range.start.character as usize,
@@ -548,6 +593,7 @@ mod tests {
             incomplete: false,
             waiting: true,
             explicit,
+            resolved: Default::default(),
         });
     }
 

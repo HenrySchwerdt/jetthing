@@ -22,6 +22,7 @@ mod crash_notice;
 mod device_manager;
 mod diff_ui;
 mod disk_banner;
+mod doc_ui;
 mod editor;
 mod editor_keys;
 mod findbar;
@@ -119,6 +120,7 @@ pub struct IdeApp {
     /// Open gutter change-marker popup.
     change_popup: Option<change_popup::ChangePopup>,
     deploy_balloon: android_run_ui::DeployBalloon,
+    doc_view: doc_ui::DocView,
 }
 
 impl IdeApp {
@@ -164,6 +166,8 @@ impl IdeApp {
             state.load_user_settings(&dir);
         }
         state.init_plugins(jetthing_plugins::PluginStore::user(), bundled);
+        // Tests use in-memory statistics; the app keeps the user's.
+        state.completion_stats = jetthing_core::CompletionStats::user();
         if let Some(path) = project {
             if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
             {
@@ -230,6 +234,7 @@ impl IdeApp {
             push_dialog: None,
             deploy_balloon: android_run_ui::DeployBalloon::default(),
             commit_amend: false,
+            doc_view: doc_ui::DocView::default(),
         }
     }
 
@@ -453,8 +458,12 @@ impl IdeApp {
                 self.change_popup = None;
             } else if self.palette.open {
                 self.palette.open = false;
+            } else if self.state.docs.popup.is_some() {
+                self.dispatch("language.closeQuickDoc", Value::Null);
             } else if self.state.completion.is_some() {
                 self.dispatch("completion.close", Value::Null);
+            } else if self.state.signature.popup.is_some() {
+                self.dispatch("language.closeParameterInfo", Value::Null);
             } else if self.state.snippet.is_some() {
                 self.dispatch("snippet.exit", Value::Null);
             } else if self.find.open
@@ -692,7 +701,10 @@ impl IdeApp {
         change_popup::show(self, ctx);
         branches_popup::show_dialog(self, ctx);
         push_dialog::show(self, ctx);
-        completion_ui::show(self, ctx);
+        let lookup = completion_ui::show(self, ctx);
+        doc_ui::show_completion_panel(self, ctx, lookup);
+        doc_ui::show_quick_doc(self, ctx);
+        doc_ui::show_parameter_info(self, ctx);
         navigation_ui::choices_popup(self, ctx);
         intentions_ui::popup(self, ctx);
         palette::show(self, ctx);

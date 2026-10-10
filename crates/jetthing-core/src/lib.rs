@@ -24,6 +24,7 @@ mod build_commands;
 pub mod build_info;
 mod code_actions;
 mod completion;
+mod completion_stats;
 mod diagnostic_commands;
 pub mod diagnostics;
 mod disk_sync;
@@ -36,8 +37,10 @@ mod navigation;
 mod plugin_host;
 mod problems;
 mod project_commands;
+mod quick_doc;
 mod remote_commands;
 mod settings_commands;
+mod signature_help;
 mod snippet_session;
 pub mod tabs;
 mod terminal_commands;
@@ -61,8 +64,11 @@ pub use plugin_host::{
 };
 mod workspace_edit;
 pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
+pub use completion_stats::CompletionStats;
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
+pub use quick_doc::{DocsState, QuickDoc};
+pub use signature_help::{ParameterInfo, SignatureLine, SignatureState};
 pub use snippet_session::SnippetSession;
 pub use toolchain_commands::ToolchainState;
 mod worktree_commands;
@@ -137,6 +143,8 @@ pub struct IdeState {
     pub toolchains: ToolchainState,
     /// The code completion popup, while open.
     pub completion: Option<CompletionSession>,
+    /// What the user picked before, to rank it first next time.
+    pub completion_stats: CompletionStats,
     /// Tab stops of an inserted snippet, while the user fills them in.
     pub snippet: Option<SnippetSession>,
     pub build_systems: BuildSystems,
@@ -146,6 +154,10 @@ pub struct IdeState {
     pub navigation: NavigationState,
     /// Quick fixes and intentions at the caret (Alt+Enter).
     pub code_actions: CodeActionState,
+    /// Quick documentation popup and completion documentation panel.
+    pub docs: DocsState,
+    /// Parameter info popup.
+    pub signature: SignatureState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -587,6 +599,8 @@ impl IdeState {
         self.refresh_problems();
         self.poll_navigation();
         self.poll_code_actions();
+        self.poll_docs();
+        self.poll_signature();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };

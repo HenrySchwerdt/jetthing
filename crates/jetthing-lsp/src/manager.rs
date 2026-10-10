@@ -58,7 +58,8 @@ pub struct ServerInfo {
     pub message: Option<String>,
 }
 
-/// A request sent with [`LspManager::request`], answered asynchronously.
+/// A request sent with [`LspManager::request`] or [`LspManager::send_request`],
+/// answered asynchronously.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestHandle {
     pub server: ServerKey,
@@ -910,12 +911,16 @@ impl LspManager {
         path: &Path,
         items: &[CompletionItem],
         prefix: &str,
+        usage: impl Fn(&CompletionItem) -> i32,
     ) -> Vec<crate::completion::RankedItem> {
         match self.registry.for_path(path) {
-            Some((provider, _)) => {
-                crate::completion::rank(items, prefix, |item| provider.completion_relevance(item))
-            }
-            None => crate::completion::rank(items, prefix, |_| 0),
+            Some((provider, _)) => crate::completion::rank_with_usage(
+                items,
+                prefix,
+                |item| provider.completion_relevance(item),
+                usage,
+            ),
+            None => crate::completion::rank_with_usage(items, prefix, |_| 0, usage),
         }
     }
 
@@ -925,6 +930,58 @@ impl LspManager {
             .and_then(|service| service.capabilities().completion_provider.as_ref())
             .and_then(|provider| provider.trigger_characters.clone())
             .unwrap_or_default()
+    }
+
+    /// Sends a typed request to the ready server of `path`. The handle is used
+    /// to collect (`take_response`) or cancel (`cancel_request`) the result.
+    pub fn send_request<R: lsp_types::request::Request>(
+        &mut self,
+        path: &Path,
+        params: R::Params,
+    ) -> Result<RequestHandle, LspError> {
+        let service = self.ready_server_for(path)?;
+        let server = ServerKey {
+            server: service.name().into(),
+            root: service.root().to_owned(),
+        };
+        let id = service.request::<R>(params)?;
+        let server = self
+            .documents
+            .get(path)
+            .map(|document| document.server.clone())
+            .unwrap_or(server);
+        Ok(RequestHandle {
+            server,
+            id,
+            method: R::METHOD.into(),
+        })
+    }
+
+    /// The decoded response for a [`send_request`](Self::send_request) handle,
+    /// once it has arrived.
+    pub fn take_typed_response<R: lsp_types::request::Request>(
+        &mut self,
+        handle: &RequestHandle,
+    ) -> Option<Result<R::Result, LspError>> {
+        let service = self.service_mut(&handle.server);
+        match service {
+            Some(service) => service.take_typed::<R>(handle.id),
+            None => Some(Err(LspError::NotReady(handle.server.server.clone()))),
+        }
+    }
+
+    /// Whether `handle` is still waiting for its response.
+    pub fn is_pending(&self, handle: &RequestHandle) -> bool {
+        self.servers
+            .iter()
+            .find(|server| server.key == handle.server)
+            .and_then(|server| server.service.as_ref())
+            .is_some_and(|service| service.is_pending(handle.id))
+    }
+
+    /// Server capabilities for `path`'s running server.
+    pub fn capabilities_for(&self, path: &Path) -> Option<&lsp_types::ServerCapabilities> {
+        self.server_for(path).map(LspService::capabilities)
     }
 
     /// The language id the server uses for `path`.

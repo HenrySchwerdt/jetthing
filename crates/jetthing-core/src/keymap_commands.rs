@@ -130,6 +130,8 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     global("Back", "navigate.back", "{}"),
     global("Forward", "navigate.forward", "{}"),
     editor("ShowIntentionActions", "code.showIntentions"),
+    editor("QuickJavaDoc", "language.quickDoc"),
+    editor("ParameterInfo", "language.parameterInfo"),
     editor("VcsShowNextChangeMarker", "vcs.nextChange"),
     editor("VcsShowPrevChangeMarker", "vcs.previousChange"),
     editor("Vcs.RollbackChangedLines", "vcs.rollbackChange"),

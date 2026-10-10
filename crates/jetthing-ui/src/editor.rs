@@ -39,6 +39,8 @@ pub struct EditorOutput {
     pub requests: Vec<EditorRequest>,
     /// Text typed this frame (drives completion auto-popup and filtering).
     pub typed: String,
+    /// Char offset and screen position under the resting mouse pointer.
+    pub hover: Option<(usize, egui::Pos2)>,
 }
 
 pub fn editor_id() -> egui::Id {
@@ -49,6 +51,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
     let mut changed_document = None;
     let mut requests = Vec::new();
     let mut typed = String::new();
+    let mut hover = None;
     let caret_before = app.state.active_caret();
     egui::CentralPanel::default()
         .frame(island_frame())
@@ -146,7 +149,9 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     bulb_anchor,
                     requests: editor_requests,
                     typed: typed_text,
+                    hover: hovered,
                 }) => {
+                    hover = hovered;
                     app.caret_screen_pos = caret_pos;
                     bulb = bulb_anchor;
                     requests.extend(editor_requests);
@@ -169,12 +174,15 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
         app.state.sync_document_lsp(&path, &text, version);
         app.state.snippet_after_change();
         app.state.completion_after_typing(&typed);
+        app.state.signature_after_typing(&typed);
     } else if app.state.active_caret() != caret_before {
         app.state.snippet_after_caret_move();
+        app.state.signature_after_caret_move();
         if app.state.completion.is_some() {
             app.state.refresh_completion();
         }
     }
+    crate::doc_ui::track_hover(app, ctx, hover);
     for request in requests {
         handle_request(app, ctx, request);
     }
@@ -631,6 +639,7 @@ fn editor_surface(
         .unwrap_or(0);
     let mut caret_pos = None;
     let mut bulb_anchor = None;
+    let mut hover = None;
     let brace_pair: Vec<usize> = {
         let head = document.selections.primary().head;
         ops::matching_bracket(&document.text, head)
@@ -678,6 +687,24 @@ fn editor_surface(
                     .max(0.0) as usize,
             };
             let block_drag_id = editor_id().with("block_drag_anchor");
+            // The character under the pointer (not the nearest boundary),
+            // only over text, for hover documentation.
+            hover = response.hover_pos().and_then(|position| {
+                let line = ((position.y - rect.top()) / row_height).floor();
+                if line < 0.0 || line as usize >= line_count {
+                    return None;
+                }
+                let line = line as usize;
+                let line_text = document.text.line(line).unwrap_or_default();
+                let length = line_text.trim_end_matches(['\r', '\n']).chars().count();
+                let column = (position.x - rect.left() - text_left) / char_width;
+                (column >= 0.0 && (column as usize) < length).then(|| {
+                    (
+                        document.text.line_to_char(line).unwrap_or(0) + column as usize,
+                        egui::pos2(position.x, rect.top() + (line + 1) as f32 * row_height),
+                    )
+                })
+            });
             // Clicking a change marker opens the change popup instead of
             // moving the caret.
             let marker_hit = response
@@ -1039,6 +1066,7 @@ fn editor_surface(
             bulb_anchor,
             requests,
             typed: String::new(),
+            hover,
         });
     }
     ui.memory_mut(|memory| {
@@ -1258,6 +1286,7 @@ fn editor_surface(
         bulb_anchor,
         requests,
         typed,
+        hover,
     })
 }
 

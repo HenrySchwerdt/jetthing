@@ -826,7 +826,11 @@ pub fn client_capabilities() -> ClientCapabilities {
                     deprecated_support: Some(true),
                     label_details_support: Some(true),
                     resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                        properties: vec!["documentation".into(), "detail".into()],
+                        properties: vec![
+                            "documentation".into(),
+                            "detail".into(),
+                            "additionalTextEdits".into(),
+                        ],
                     }),
                     ..Default::default()
                 }),
@@ -950,7 +954,8 @@ fn parse_diagnostic(value: &Value) -> Option<LspDiagnostic> {
     })
 }
 
-pub(crate) fn file_uri(path: &Path) -> Result<Url, LspError> {
+/// `file://` URI of `path` (canonicalized when it exists).
+pub fn file_uri(path: &Path) -> Result<Url, LspError> {
     let absolute = path.canonicalize().unwrap_or_else(|_| path.to_owned());
     Url::from_file_path(&absolute).map_err(|_| LspError::InvalidPath(path.to_owned()))
 }
