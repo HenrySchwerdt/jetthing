@@ -58,7 +58,16 @@ fn group_of(state: &IdeState, entry: &PluginEntry) -> Group {
     match &entry.source {
         PluginSource::Bundled => Group::Bundled,
         PluginSource::Directory(_) if state.plugin_uninstallable(entry.id()) => Group::Downloaded,
-        PluginSource::Directory(_) => Group::Project,
+        PluginSource::Directory(dir)
+            if state
+                .project
+                .as_ref()
+                .is_some_and(|project| dir.starts_with(project.root())) =>
+        {
+            Group::Project
+        }
+        // `JETTHING_PLUGINS_DIR` and `plugins/` next to the executable.
+        PluginSource::Directory(_) => Group::Bundled,
     }
 }
 
