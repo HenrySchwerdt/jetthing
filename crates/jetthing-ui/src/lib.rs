@@ -9,6 +9,7 @@ mod about;
 mod android_run_ui;
 mod android_sdk;
 mod android_view;
+mod bazel_window;
 mod blame_gutter;
 mod branches_popup;
 mod build_variants_ui;
@@ -27,6 +28,8 @@ mod editor_keys;
 mod findbar;
 mod first_run;
 mod git_log_ui;
+mod gradle_window;
+mod gutter_popup;
 mod icons;
 mod keybindings;
 mod keys;
@@ -40,11 +43,13 @@ mod plugin_ui;
 mod popups;
 mod problems_ui;
 mod push_dialog;
+mod run_config_dialog;
 mod settings_dialog;
 mod settings_keymap;
 mod settings_plugins;
 mod syntax;
 mod terminal_ui;
+mod test_view;
 mod theme;
 mod theme_engine;
 mod toolbar_gradient;
@@ -687,6 +692,8 @@ impl IdeApp {
             plugin_ui::right_side(self, ctx);
             toolwindows::left(self, ctx);
             device_manager::right(self, ctx);
+            gradle_window::show(self, ctx);
+            bazel_window::show(self, ctx);
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }
@@ -699,6 +706,11 @@ impl IdeApp {
         settings_dialog::show(self, ctx);
         android_sdk::show(self, ctx);
         merged_manifest_ui::show(self, ctx);
+        if let Some(focus) = self.state.edit_run_configurations.take() {
+            run_config_dialog::open(self, ctx, Some(focus.as_str()).filter(|f| !f.is_empty()));
+        }
+        run_config_dialog::show(self, ctx);
+        gutter_popup::show(self, ctx);
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
         first_run::show(self, ctx);

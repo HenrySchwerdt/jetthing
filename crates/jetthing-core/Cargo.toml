@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 jetthing-android = { path = "../jetthing-android" }
+jetthing-bazel = { path = "../jetthing-bazel" }
 jetthing-command = { path = "../jetthing-command" }
 jetthing-gradle = { path = "../jetthing-gradle" }
 jetthing-git = { path = "../jetthing-git" }
@@ -14,6 +15,7 @@ jetthing-language = { path = "../jetthing-language" }
 jetthing-lsp = { path = "../jetthing-lsp" }
 jetthing-plugins = { path = "../jetthing-plugins" }
 jetthing-project = { path = "../jetthing-project" }
+jetthing-runnables = { path = "../jetthing-runnables" }
 jetthing-runner = { path = "../jetthing-runner" }
 jetthing-settings = { path = "../jetthing-settings" }
 jetthing-search = { path = "../jetthing-search" }

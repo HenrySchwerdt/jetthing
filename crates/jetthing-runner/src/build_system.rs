@@ -7,7 +7,7 @@
 //! Richer integrations (the Gradle model, Bazel targets, Android deploy) live in
 //! their own crates and register additional or replacement providers.
 
-use crate::{RunnerError, TaskKind, TaskPlan};
+use crate::{RunConfiguration, RunTarget, RunnerError, TaskKind, TaskPlan, TestId};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -59,6 +59,49 @@ pub trait BuildSystem: Send + Sync {
 
     /// Plan that runs all tests.
     fn test_plan(&self, root: &Path) -> Result<TaskPlan, RunnerError>;
+
+    /// Plan for a run configuration whose type belongs to this provider.
+    fn configuration_plan(
+        &self,
+        _root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        Err(RunnerError::NotRunnable(format!(
+            "{} cannot run {} configurations",
+            self.kind().display_name(),
+            config.target.type_name()
+        )))
+    }
+
+    /// Re-runs only `failed` tests of a finished test `plan`.
+    fn rerun_failed_plan(
+        &self,
+        _root: &Path,
+        _plan: &TaskPlan,
+        _failed: &[TestId],
+    ) -> Result<TaskPlan, RunnerError> {
+        Err(RunnerError::NotRunnable(format!(
+            "re-running failed tests is not supported for {}",
+            self.kind().display_name()
+        )))
+    }
+}
+
+/// `plan` with its arguments replaced, keeping name, kind, cwd and environment.
+pub fn derive_plan(plan: &TaskPlan, args: Vec<String>) -> TaskPlan {
+    TaskPlan {
+        args,
+        kind: TaskKind::Test,
+        ..plan.clone()
+    }
+}
+
+/// Splits arguments at the first `--` (tool options vs. program arguments).
+fn split_at_separator(args: &[String]) -> (&[String], &[String]) {
+    match args.iter().position(|arg| arg == "--") {
+        Some(index) => (&args[..index], &args[index + 1..]),
+        None => (args, &[]),
+    }
 }
 
 /// Ordered provider list; the first provider that detects a root wins.
@@ -108,6 +151,33 @@ impl BuildSystemRegistry {
             .iter()
             .find(|provider| provider.detect(root))
             .map(Box::as_ref)
+    }
+
+    /// Plans `config` with the provider registered for its type (shell commands are
+    /// planned directly). Works even when the project root is of another type.
+    pub fn plan_configuration(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        config
+            .validate()
+            .map_err(|error| RunnerError::NotRunnable(format!("{}: {error}", config.name)))?;
+        let Some(kind) = config.target.build_system() else {
+            return config.shell_plan(root);
+        };
+        let provider = self
+            .providers
+            .iter()
+            .find(|provider| provider.kind() == kind)
+            .ok_or_else(|| {
+                RunnerError::NotRunnable(format!(
+                    "no {} integration is registered",
+                    kind.display_name()
+                ))
+            })?;
+        let plan = provider.configuration_plan(root, config)?;
+        Ok(config.finish_plan(plan, root))
     }
 
     pub fn kinds(&self) -> Vec<BuildSystemKind> {
@@ -175,6 +245,20 @@ fn plan(
     Ok(TaskPlan::new(name, program, args.iter().copied(), root).with_kind(kind))
 }
 
+/// `base`, then `options`, then `--` and `program_arguments` when there are any.
+fn with_program_arguments(
+    mut base: Vec<String>,
+    options: &[String],
+    program_arguments: &[String],
+) -> Vec<String> {
+    base.extend(options.iter().cloned());
+    if !program_arguments.is_empty() {
+        base.push("--".into());
+        base.extend(program_arguments.iter().cloned());
+    }
+    base
+}
+
 pub struct Cargo;
 
 impl BuildSystem for Cargo {
@@ -199,6 +283,55 @@ impl BuildSystem for Cargo {
     fn test_plan(&self, root: &Path) -> Result<TaskPlan, RunnerError> {
         let cargo = require_program("cargo", "Install Rust with rustup (https://rustup.rs).")?;
         plan(TaskKind::Test, "Cargo Test", cargo, &["test"], root)
+    }
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Cargo {
+            command,
+            package,
+            bin,
+            options,
+            program_arguments,
+        } = &config.target
+        else {
+            return Err(RunnerError::NotRunnable("not a Cargo configuration".into()));
+        };
+        let cargo = require_program("cargo", "Install Rust with rustup (https://rustup.rs).")?;
+        let mut base = vec![command.clone()];
+        if let Some(package) = package.as_ref().filter(|p| !p.is_empty()) {
+            base.extend(["-p".into(), package.clone()]);
+        }
+        if let Some(bin) = bin.as_ref().filter(|b| !b.is_empty()) {
+            base.extend(["--bin".into(), bin.clone()]);
+        }
+        let args = with_program_arguments(base, options, program_arguments);
+        Ok(TaskPlan::new(&config.name, cargo, args, root))
+    }
+    fn rerun_failed_plan(
+        &self,
+        _root: &Path,
+        plan: &TaskPlan,
+        failed: &[TestId],
+    ) -> Result<TaskPlan, RunnerError> {
+        if failed.is_empty() {
+            return Err(RunnerError::NotRunnable("no failed tests".into()));
+        }
+        let (cargo_args, test_args) = split_at_separator(&plan.args);
+        let mut args = cargo_args.to_vec();
+        args.push("--".into());
+        // Keep harness options (e.g. --nocapture) but replace name filters.
+        args.extend(test_args.iter().filter(|arg| arg.starts_with('-')).cloned());
+        if !args.iter().any(|arg| arg == "--exact") {
+            args.push("--exact".into());
+        }
+        args.extend(failed.iter().map(|test| match test.suite.as_str() {
+            "(top level)" => test.name.clone(),
+            suite => format!("{suite}::{}", test.name),
+        }));
+        Ok(derive_plan(plan, args))
     }
 }
 
@@ -264,6 +397,51 @@ impl BuildSystem for Maven {
             root,
         )
     }
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Maven { goals, options } = &config.target else {
+            return Err(RunnerError::NotRunnable("not a Maven configuration".into()));
+        };
+        let args = goals.iter().chain(options).cloned();
+        Ok(TaskPlan::new(
+            &config.name,
+            Self::program(root)?,
+            args,
+            root,
+        ))
+    }
+    fn rerun_failed_plan(
+        &self,
+        _root: &Path,
+        plan: &TaskPlan,
+        failed: &[TestId],
+    ) -> Result<TaskPlan, RunnerError> {
+        if failed.is_empty() {
+            return Err(RunnerError::NotRunnable("no failed tests".into()));
+        }
+        let filter = failed
+            .iter()
+            .map(|test| format!("{}#{}", test.suite, java_method_name(&test.name)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut args: Vec<String> = plan
+            .args
+            .iter()
+            .filter(|arg| !arg.starts_with("-Dtest="))
+            .cloned()
+            .collect();
+        args.push(format!("-Dtest={filter}"));
+        args.push("-Dsurefire.failIfNoSpecifiedTests=false".into());
+        Ok(derive_plan(plan, args))
+    }
+}
+
+/// JUnit 5 reports `greets()` or `adds(int)[1]`; filters need the bare method name.
+pub fn java_method_name(name: &str) -> &str {
+    name.split(['(', '[']).next().unwrap_or(name).trim()
 }
 
 pub struct Bazel;
@@ -305,7 +483,7 @@ impl BuildSystem for Bazel {
     }
     fn run_plan(&self, _root: &Path) -> Result<TaskPlan, RunnerError> {
         Err(RunnerError::NotRunnable(
-            "Bazel runs a specific target; create a run configuration with a target such as //:app"
+            "Bazel runs a specific target: pick one in the Bazel tool window or create a run configuration with a target such as //:app"
                 .into(),
         ))
     }
@@ -314,9 +492,58 @@ impl BuildSystem for Bazel {
             TaskKind::Test,
             "Bazel Test",
             Self::program()?,
-            &["test", "//..."],
+            // Keep going so one broken package does not hide every other result.
+            &["test", "--keep_going", "//..."],
             root,
         )
+    }
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Bazel {
+            command,
+            target,
+            options,
+            program_arguments,
+        } = &config.target
+        else {
+            return Err(RunnerError::NotRunnable("not a Bazel configuration".into()));
+        };
+        let base = vec![command.clone(), target.clone()];
+        let args = with_program_arguments(base, options, program_arguments);
+        Ok(TaskPlan::new(&config.name, Self::program()?, args, root))
+    }
+    fn rerun_failed_plan(
+        &self,
+        _root: &Path,
+        plan: &TaskPlan,
+        failed: &[TestId],
+    ) -> Result<TaskPlan, RunnerError> {
+        // Bazel reports one suite per test target; re-test those targets.
+        let mut targets: Vec<String> = failed
+            .iter()
+            .map(|test| test.suite.clone())
+            .filter(|label| label.starts_with("//") || label.starts_with('@'))
+            .collect();
+        targets.dedup();
+        if targets.is_empty() {
+            return Err(RunnerError::NotRunnable(
+                "no failed Bazel test targets".into(),
+            ));
+        }
+        let options = plan
+            .args
+            .iter()
+            .skip(1)
+            .filter(|arg| arg.starts_with('-'))
+            .cloned();
+        let args = std::iter::once("test".to_owned())
+            .chain(options)
+            .chain(targets)
+            .collect();
+        Ok(derive_plan(plan, args))
     }
 }
 
@@ -344,6 +571,23 @@ impl BuildSystem for Npm {
     fn test_plan(&self, root: &Path) -> Result<TaskPlan, RunnerError> {
         let npm = require_program("npm", "Install Node.js (https://nodejs.org) and npm.")?;
         plan(TaskKind::Test, "npm Test", npm, &["test"], root)
+    }
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Npm {
+            script,
+            program_arguments,
+        } = &config.target
+        else {
+            return Err(RunnerError::NotRunnable("not an npm configuration".into()));
+        };
+        let npm = require_program("npm", "Install Node.js (https://nodejs.org) and npm.")?;
+        let base = vec!["run".into(), script.clone()];
+        let args = with_program_arguments(base, &[], program_arguments);
+        Ok(TaskPlan::new(&config.name, npm, args, root))
     }
 }
 
@@ -374,6 +618,44 @@ impl BuildSystem for Go {
     fn test_plan(&self, root: &Path) -> Result<TaskPlan, RunnerError> {
         let go = require_program("go", "Install Go (https://go.dev/dl) and add it to PATH.")?;
         plan(TaskKind::Test, "Go Test", go, &["test", "./..."], root)
+    }
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Go {
+            command,
+            package,
+            program_arguments,
+        } = &config.target
+        else {
+            return Err(RunnerError::NotRunnable("not a Go configuration".into()));
+        };
+        let go = require_program("go", "Install Go (https://go.dev/dl) and add it to PATH.")?;
+        let base = vec![command.clone(), package.clone()];
+        // `go run pkg args…` takes program arguments directly.
+        let args = base.into_iter().chain(program_arguments.iter().cloned());
+        Ok(TaskPlan::new(&config.name, go, args, root))
+    }
+    fn rerun_failed_plan(
+        &self,
+        _root: &Path,
+        plan: &TaskPlan,
+        failed: &[TestId],
+    ) -> Result<TaskPlan, RunnerError> {
+        if failed.is_empty() {
+            return Err(RunnerError::NotRunnable("no failed tests".into()));
+        }
+        let names: Vec<&str> = failed.iter().map(|test| test.name.as_str()).collect();
+        let mut packages: Vec<String> = failed.iter().map(|test| test.suite.clone()).collect();
+        packages.dedup();
+        let args = ["test".to_owned(), "-v".to_owned(), "-run".to_owned()]
+            .into_iter()
+            .chain([format!("^({})$", names.join("|"))])
+            .chain(packages)
+            .collect();
+        Ok(derive_plan(plan, args))
     }
 }
 
@@ -419,6 +701,156 @@ mod tests {
             Err(RunnerError::NotRunnable(_))
         ));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configurations_are_planned_by_their_provider() {
+        let registry = BuildSystemRegistry::default();
+        let root = Path::new("/w");
+        let shell = RunConfiguration::new(
+            "Echo",
+            RunTarget::Shell {
+                program: "echo".into(),
+                arguments: vec!["hi".into()],
+            },
+        );
+        let plan = registry.plan_configuration(root, &shell).unwrap();
+        assert_eq!((plan.program.as_str(), plan.kind), ("echo", TaskKind::Run));
+        if find_program("cargo").is_some() {
+            let cargo = RunConfiguration::new(
+                "Server",
+                RunTarget::Cargo {
+                    command: "run".into(),
+                    package: Some("server".into()),
+                    bin: None,
+                    options: vec!["--release".into()],
+                    program_arguments: vec!["--port".into(), "80".into()],
+                },
+            );
+            let plan = registry.plan_configuration(root, &cargo).unwrap();
+            assert_eq!(
+                plan.args,
+                ["run", "-p", "server", "--release", "--", "--port", "80"]
+            );
+            assert_eq!(plan.name, "Server");
+        }
+        let gradle = RunConfiguration::new("G", RunTarget::template("gradle").unwrap());
+        let error = registry.plan_configuration(root, &gradle).unwrap_err();
+        assert!(
+            error.to_string().contains("no Gradle integration"),
+            "{error}"
+        );
+        let maven = RunConfiguration::new(
+            "Verify",
+            RunTarget::Maven {
+                goals: vec!["clean".into(), "verify".into()],
+                options: vec!["-q".into()],
+            },
+        );
+        match registry.plan_configuration(root, &maven) {
+            Ok(plan) => assert_eq!(plan.args, ["clean", "verify", "-q"]),
+            Err(error) => assert!(matches!(error, RunnerError::ToolNotFound { .. }), "{error}"),
+        }
+        let bazel = RunConfiguration::new(
+            "App",
+            RunTarget::Bazel {
+                command: "run".into(),
+                target: "//:app".into(),
+                options: Vec::new(),
+                program_arguments: vec!["x".into()],
+            },
+        );
+        match registry.plan_configuration(root, &bazel) {
+            Ok(plan) => assert_eq!(plan.args, ["run", "//:app", "--", "x"]),
+            Err(error) => assert!(error.to_string().contains("Bazel"), "{error}"),
+        }
+        let invalid = RunConfiguration::new("", RunTarget::template("shell").unwrap());
+        assert!(registry.plan_configuration(root, &invalid).is_err());
+    }
+
+    #[test]
+    fn rerun_failed_plans_filter_to_failed_tests() {
+        let failed = [
+            TestId {
+                suite: "tests::math".into(),
+                name: "subtracts".into(),
+            },
+            TestId {
+                suite: "(top level)".into(),
+                name: "smoke".into(),
+            },
+        ];
+        let plan = TaskPlan::new(
+            "Cargo Test",
+            "cargo",
+            ["test", "-p", "core", "--", "--nocapture", "old"],
+            "/w",
+        )
+        .with_kind(TaskKind::Test);
+        let rerun = Cargo
+            .rerun_failed_plan(Path::new("/w"), &plan, &failed)
+            .unwrap();
+        assert_eq!(
+            rerun.args,
+            [
+                "test",
+                "-p",
+                "core",
+                "--",
+                "--nocapture",
+                "--exact",
+                "tests::math::subtracts",
+                "smoke"
+            ]
+        );
+        let go = TaskPlan::new("Go Test", "go", ["test", "./..."], "/w");
+        let go_failed = [TestId {
+            suite: "example.com/calc".into(),
+            name: "TestSub".into(),
+        }];
+        assert_eq!(
+            Go.rerun_failed_plan(Path::new("/w"), &go, &go_failed)
+                .unwrap()
+                .args,
+            ["test", "-v", "-run", "^(TestSub)$", "example.com/calc"]
+        );
+        let mvn = TaskPlan::new("Maven Test", "mvn", ["test"], "/w");
+        let java_failed = [TestId {
+            suite: "com.example.AppTest".into(),
+            name: "adds(int)[1]".into(),
+        }];
+        assert_eq!(
+            Maven
+                .rerun_failed_plan(Path::new("/w"), &mvn, &java_failed)
+                .unwrap()
+                .args,
+            [
+                "test",
+                "-Dtest=com.example.AppTest#adds",
+                "-Dsurefire.failIfNoSpecifiedTests=false"
+            ]
+        );
+        let bazel = TaskPlan::new(
+            "Bazel Test",
+            "bazel",
+            ["test", "--config=ci", "//..."],
+            "/w",
+        );
+        let bazel_failed = [TestId {
+            suite: "//:app_test".into(),
+            name: "//:app_test".into(),
+        }];
+        assert_eq!(
+            Bazel
+                .rerun_failed_plan(Path::new("/w"), &bazel, &bazel_failed)
+                .unwrap()
+                .args,
+            ["test", "--config=ci", "//:app_test"]
+        );
+        assert!(
+            Npm.rerun_failed_plan(Path::new("/w"), &plan, &failed)
+                .is_err()
+        );
     }
 
     #[test]

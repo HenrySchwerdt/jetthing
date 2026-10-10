@@ -2477,6 +2477,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jetthing-bazel"
+version = "0.0.3"
+dependencies = [
+ "jetthing-runner",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jetthing-cli"
 version = "0.0.3"
 dependencies = [
@@ -2513,6 +2522,7 @@ dependencies = [
  "flate2",
  "jetthing-actions",
  "jetthing-android",
+ "jetthing-bazel",
  "jetthing-command",
  "jetthing-git",
  "jetthing-gradle",
@@ -2521,6 +2531,7 @@ dependencies = [
  "jetthing-lsp",
  "jetthing-plugins",
  "jetthing-project",
+ "jetthing-runnables",
  "jetthing-runner",
  "jetthing-search",
  "jetthing-settings",
@@ -2546,6 +2557,8 @@ name = "jetthing-gradle"
 version = "0.0.3"
 dependencies = [
  "jetthing-runner",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2648,12 +2661,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "jetthing-runnables"
+version = "0.0.3"
+dependencies = [
+ "jetthing-language",
+ "tree-sitter",
+]
+
+[[package]]
 name = "jetthing-runner"
 version = "0.0.3"
 dependencies = [
+ "quick-xml 0.37.5",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
  "toml",
+ "walkdir",
 ]
 
 [[package]]
@@ -2720,10 +2744,12 @@ dependencies = [
  "egui",
  "jetthing-actions",
  "jetthing-android",
+ "jetthing-bazel",
  "jetthing-command",
  "jetthing-control",
  "jetthing-core",
  "jetthing-git",
+ "jetthing-gradle",
  "jetthing-keymap",
  "jetthing-language",
  "jetthing-lsp",
@@ -4107,6 +4133,15 @@ name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
+
+[[package]]
+name = "quick-xml"
+version = "0.37.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "quick-xml"
@@ -6257,7 +6292,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "338e30461b3a2b67d70eb30a6d89f8e0c93a833e07d2ae89085cd070c4a00ac0"
 dependencies = [
  "proc-macro2",
- "quick-xml",
+ "quick-xml 0.41.0",
  "quote",
 ]
 

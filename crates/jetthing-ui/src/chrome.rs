@@ -231,6 +231,13 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
             "Run 'app' ({})",
             app.action_shortcut("Run").unwrap_or_default()
         ),
+        _ if app.state.run_configurations.selected().is_some() => {
+            format!(
+                "Run '{}' ({})",
+                app.state.run_widget_label().unwrap_or_default(),
+                app.action_shortcut("Run").unwrap_or_default()
+            )
+        }
         Some(build) if build.run_unavailable.is_some() => {
             format!(
                 "Run unavailable: {}",
@@ -249,20 +256,66 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
     } else if run.inner.clicked() {
         app.dispatch(run_command, Value::Null);
     }
-    if let Some(build) = detected {
+    if let Some(label) = app.state.run_widget_label() {
         let response = widgets::flat_widget(
             ui,
             None,
-            &build.run_label,
+            &label,
             egui::FontId::proportional(theme::UI_FONT_SIZE),
             *theme::TEXT_BRIGHT,
             true,
             28.0,
         );
         egui::Popup::menu(&response).show(|ui| {
-            ui.set_min_width(220.0);
+            ui.set_min_width(240.0);
+            let selected = app
+                .state
+                .run_configurations
+                .selected()
+                .map(|config| config.name.clone());
+            let names: Vec<(String, bool)> = app
+                .state
+                .run_configurations
+                .configurations()
+                .iter()
+                .map(|config| (config.name.clone(), config.temporary))
+                .collect();
+            for (name, temporary) in names {
+                let text = egui::RichText::new(&name).color(if temporary {
+                    theme::TEXT_SECONDARY
+                } else {
+                    theme::TEXT
+                });
+                if ui
+                    .add(egui::Button::selectable(
+                        selected.as_deref() == Some(name.as_str()),
+                        text,
+                    ))
+                    .clicked()
+                {
+                    app.dispatch("runConfig.select", json!({"name": name}));
+                    ui.close();
+                }
+            }
+            if let Some(build) = &detected
+                && selected.is_none()
+                && let Some(reason) = &build.run_unavailable
+            {
+                ui.label(
+                    egui::RichText::new(format!("Run unavailable: {reason}"))
+                        .color(theme::TEXT_INFO)
+                        .size(theme::UI_FONT_SIZE - 1.0),
+                );
+            }
+            if selected.is_some()
+                || detected
+                    .as_ref()
+                    .is_some_and(|b| b.run_unavailable.is_some())
+            {
+                ui.separator();
+            }
             for (id, label) in [
-                ("run.project", "Run"),
+                ("runConfig.edit", "Edit Configurations…"),
                 ("build.project", "Build Project"),
                 ("test.project", "Run All Tests"),
                 ("run.rerun", "Rerun Last Task"),
@@ -272,14 +325,6 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
                     app.dispatch(id, Value::Null);
                     ui.close();
                 }
-            }
-            if let Some(reason) = &build.run_unavailable {
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("Run unavailable: {reason}"))
-                        .color(theme::TEXT_INFO)
-                        .size(theme::UI_FONT_SIZE - 1.0),
-                );
             }
         });
     }
@@ -447,17 +492,11 @@ pub(crate) fn stripe_button(app: &mut IdeApp, ui: &mut egui::Ui, window: ToolWin
         ui.painter()
             .circle_filled(rect.right_top() + vec2(-7.0, 7.0), 3.0, color);
     }
-    if response
-        .on_hover_text(format!(
-            "{}{}",
-            window.title(),
-            match window.shortcut() {
-                "" => String::new(),
-                shortcut => format!(" ({})", keys::display(shortcut)),
-            }
-        ))
-        .clicked()
-    {
+    let tooltip = match window.shortcut() {
+        "" => window.title().to_owned(),
+        shortcut => format!("{} ({})", window.title(), keys::display(shortcut)),
+    };
+    if response.on_hover_text(tooltip).clicked() {
         app.toggle_tool_window(window);
     }
 }
@@ -498,17 +537,29 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
         });
 }
 
-/// Whether the right stripe offers the Device Manager (Android projects).
-pub(crate) fn shows_device_manager(app: &IdeApp) -> bool {
-    app.state.android.project.is_some()
+/// Built-in right-anchored tool windows offered for the open project, top to bottom.
+pub(crate) fn right_stripe_windows(app: &IdeApp) -> Vec<(ToolWindow, Icon)> {
+    let mut windows = Vec::new();
+    if app.state.is_gradle_project() || app.state.tool_windows.is_visible(ToolWindow::Gradle) {
+        windows.push((ToolWindow::Gradle, Icon::Model));
+    }
+    if app.state.is_bazel_project() || app.state.tool_windows.is_visible(ToolWindow::Bazel) {
+        windows.push((ToolWindow::Bazel, Icon::Model));
+    }
+    if app.state.android.project.is_some()
         || app.state.tool_windows.is_visible(ToolWindow::DeviceManager)
+    {
+        windows.push((ToolWindow::DeviceManager, Icon::Device));
+    }
+    windows
 }
 
-/// Right tool window stripe. Without right-anchored tool windows (non-Android
-/// projects) it is a narrow gutter so the editor island keeps its rounded edge.
-/// Plugin tool windows join this stripe (`plugin_ui::right_side`).
+/// Right tool window stripe. Without right-anchored tool windows it is a narrow
+/// gutter so the editor island keeps its rounded edge. Plugin tool windows join
+/// this stripe (`plugin_ui::right_side`).
 pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
-    if !shows_device_manager(app) {
+    let windows = right_stripe_windows(app);
+    if windows.is_empty() {
         egui::SidePanel::right("right_stripe")
             .exact_width(6.0)
             .resizable(false)
@@ -524,7 +575,9 @@ pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
         .frame(chrome_frame().inner_margin(egui::Margin::symmetric(4, 6)))
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            stripe_button(app, ui, ToolWindow::DeviceManager, Icon::Device);
+            for (window, icon) in windows {
+                stripe_button(app, ui, window, icon);
+            }
         });
 }
 

@@ -29,6 +29,8 @@ pub enum EditorRequest {
     ShowChange(usize, egui::Pos2),
     /// A blame annotation was clicked: commit hash.
     ShowCommit(String),
+    /// Click on a gutter run icon (line, screen position for the popup).
+    Gutter(usize, egui::Pos2),
 }
 
 pub struct EditorOutput {
@@ -98,8 +100,10 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let text_rect = available.with_max_x(stripe_rect.left());
             ui.allocate_rect(available, Sense::hover());
             let line_count = app.state.documents[index].text.len_lines();
+            let row_height =
+                theme::editor_row_height(ui.ctx(), &theme::editor_font(ui.style()), ROW_HEIGHT);
             if let Some((line, column)) =
-                problems_ui::error_stripe(ui, stripe_rect, &problems, line_count, ROW_HEIGHT)
+                problems_ui::error_stripe(ui, stripe_rect, &problems, line_count, row_height)
             {
                 move_caret_to(app, line, column);
                 ui.memory_mut(|memory| memory.request_focus(editor_id()));
@@ -108,6 +112,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
             let changes = app.state.document_changes(index).to_vec();
             let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
+            let gutter = app.state.gutter_marks();
             let doc = &mut app.state.documents[index];
             let surface = editor_surface(
                 &mut text_ui,
@@ -115,8 +120,11 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 &problems,
                 &highlights,
                 &context_model,
-                &changes,
-                blame.as_deref(),
+                GutterData {
+                    changes: &changes,
+                    blame: blame.as_deref(),
+                    run: &gutter,
+                },
             );
             let counts = jetthing_core::ProblemCounts::of(&problems);
             match problems_ui::inspection_widget(ui, text_rect.right_top(), counts) {
@@ -202,6 +210,7 @@ pub(crate) fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: Edi
         EditorRequest::ContextAction(action) => {
             app.run_context_action(&action, &crate::context_menus::Target::Editor, ctx)
         }
+        EditorRequest::Gutter(line, position) => crate::gutter_popup::open(ctx, line, position),
         EditorRequest::Paste(text) => {
             let whole_line = app.clipboard_line.as_deref() == Some(text.as_str());
             app.dispatch(
@@ -582,15 +591,29 @@ fn move_primary(document: &mut Document, head: usize, extend: bool) {
     document.selections.set_single(Selection { anchor, head });
 }
 
+/// What the gutter shows next to the line numbers.
+struct GutterData<'a> {
+    /// Change markers against `HEAD`.
+    changes: &'a [jetthing_git::Hunk],
+    /// Blame annotations, when shown.
+    blame: Option<&'a [jetthing_git::BlameLine]>,
+    /// Run icons (mains, tests, Bazel rules).
+    run: &'a [jetthing_core::GutterMark],
+}
+
 fn editor_surface(
     ui: &mut egui::Ui,
     document: &mut Document,
     problems: &[jetthing_core::Problem],
     highlights: &[(usize, usize)],
     context_model: &crate::context_menus::Model,
-    changes: &[jetthing_git::Hunk],
-    blame: Option<&[jetthing_git::BlameLine]>,
+    gutter_data: GutterData<'_>,
 ) -> Result<EditorOutput, String> {
+    let GutterData {
+        changes,
+        blame,
+        run: gutter,
+    } = gutter_data;
     let mut requests = Vec::new();
     let font = theme::editor_font(ui.style());
     // Rows scale with Settings | Editor | Font (size and line height).
@@ -613,7 +636,9 @@ fn editor_surface(
     } else {
         0.0
     };
-    let gutter_width = blame_width + 20.0 + digits as f32 * char_width + 18.0;
+    // Gutter, left to right: blame, line numbers, run icons, change bar, text.
+    let run_column = if gutter.is_empty() { 0.0 } else { 16.0 };
+    let gutter_width = blame_width + 20.0 + digits as f32 * char_width + run_column + 18.0;
     let text_left = gutter_width + TEXT_LEFT_PADDING;
     let caret_line = document
         .text
@@ -676,14 +701,14 @@ fn editor_surface(
                     crate::change_popup::in_marker_column(position.x - rect.left(), gutter_width)
                 })
                 .and_then(|position| {
-                    let line = ((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize;
+                    let line = ((position.y - rect.top()) / row_height).floor().max(0.0) as usize;
                     jetthing_core::hunk_at_line(changes, line).map(|hunk| (hunk, position))
                 });
             let blame_line = response
                 .hover_pos()
                 .or(response.interact_pointer_pos())
                 .filter(|position| position.x - rect.left() < blame_width)
-                .map(|position| ((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize);
+                .map(|position| ((position.y - rect.top()) / row_height).floor().max(0.0) as usize);
             if let (Some(lines), Some(line)) = (blame, blame_line) {
                 if let Some(text) = crate::blame_gutter::tooltip(lines, line) {
                     response.clone().on_hover_text_at_pointer(text);
@@ -694,12 +719,31 @@ fn editor_surface(
                     requests.push(EditorRequest::ShowCommit(entry.hash.clone()));
                 }
             }
+            // Run icons sit between the line numbers and the text.
+            let gutter_hit = response
+                .interact_pointer_pos()
+                .filter(|position| {
+                    let x = position.x - rect.left();
+                    let right = gutter_width - 18.0;
+                    run_column > 0.0 && x >= right - run_column && x < right
+                })
+                .and_then(|position| {
+                    let line = ((position.y - rect.top()) / row_height).floor().max(0.0) as usize;
+                    gutter
+                        .iter()
+                        .any(|mark| mark.line == line)
+                        .then_some((line, position))
+                });
             if response.clicked() && blame_line.is_some() {
                 // Handled above: annotation clicks never move the caret.
             } else if response.clicked()
                 && let Some((hunk, position)) = marker_hit
             {
                 requests.push(EditorRequest::ShowChange(hunk, position));
+            } else if response.clicked()
+                && let Some((line, position)) = gutter_hit
+            {
+                requests.push(EditorRequest::Gutter(line, position));
             } else if response.clicked()
                 && let Some(position) = response.interact_pointer_pos()
             {
@@ -830,7 +874,10 @@ fn editor_surface(
                     painter.rect_filled(row, 0.0, theme::editor::CARET_ROW);
                 }
                 painter.text(
-                    egui::pos2(rect.left() + gutter_width - 18.0, y + row_height / 2.0),
+                    egui::pos2(
+                        rect.left() + gutter_width - 18.0 - run_column,
+                        y + row_height / 2.0,
+                    ),
                     egui::Align2::RIGHT_CENTER,
                     format!("{}", line + 1),
                     font.clone(),
@@ -846,7 +893,7 @@ fn editor_surface(
                         lines,
                         line,
                         egui::pos2(rect.left(), y),
-                        ROW_HEIGHT,
+                        row_height,
                         now,
                     );
                 }
@@ -855,8 +902,18 @@ fn editor_surface(
                     changes,
                     line,
                     egui::pos2(rect.left() + gutter_width, y),
-                    ROW_HEIGHT,
+                    row_height,
                 );
+                if let Some(mark) = gutter.iter().find(|mark| mark.line == line) {
+                    crate::gutter_popup::paint_icon(
+                        &painter,
+                        egui::pos2(
+                            rect.left() + gutter_width - 18.0 - run_column / 2.0,
+                            y + row_height / 2.0,
+                        ),
+                        mark.kind,
+                    );
+                }
                 // Indent guides every four columns of leading whitespace.
                 let indent = content.chars().take_while(|c| *c == ' ').count();
                 for level in (4..=indent.saturating_sub(1)).step_by(4) {

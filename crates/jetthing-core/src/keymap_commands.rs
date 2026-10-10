@@ -66,6 +66,8 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     global("CloseContent", "editor.close", "{}"),
     global("CompileDirty", "build.project", "{}"),
     global("Run", "run.project", "{}"),
+    // Run context configuration: the gutter target at the caret.
+    editor("RunClass", "run.gutter"),
     global("Rerun", "run.rerun", "{}"),
     global("Stop", "run.cancel", "{}"),
     global("CheckinProject", "toolwindow.activate.commit", "{}"),

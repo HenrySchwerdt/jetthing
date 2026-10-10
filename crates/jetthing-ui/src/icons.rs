@@ -59,6 +59,13 @@ pub enum Icon {
     Rerun,
     /// Stacked squares (Build Variants).
     Variants,
+    /// Build-tool model (cube); used for the Gradle tool window and projects.
+    Model,
+    /// Single task (gear).
+    Task,
+    ExpandAll,
+    CollapseAll,
+    Add,
 }
 
 impl Icon {
@@ -406,6 +413,48 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
                 vec![g.p(3.0, 8.5), g.p(6.5, 12.0), g.p(13.0, 4.5)],
                 check,
             )));
+        }
+        Icon::Model => {
+            // Isometric cube.
+            closed(
+                &[
+                    (8.0, 1.5),
+                    (14.0, 4.75),
+                    (14.0, 11.25),
+                    (8.0, 14.5),
+                    (2.0, 11.25),
+                    (2.0, 4.75),
+                ],
+                Color32::TRANSPARENT,
+                stroke,
+            );
+            line(&[(2.0, 4.75), (8.0, 8.0), (14.0, 4.75)]);
+            line(&[(8.0, 8.0), (8.0, 14.5)]);
+        }
+        Icon::Task => {
+            let center = g.p(8.0, 8.0);
+            for step in 0..8 {
+                let angle = step as f32 * std::f32::consts::FRAC_PI_4;
+                let dir = vec2(angle.cos(), angle.sin());
+                painter.line_segment(
+                    [center + dir * g.len(4.0), center + dir * g.len(6.5)],
+                    Stroke::new(g.len(1.6).max(1.0), color),
+                );
+            }
+            painter.circle_stroke(center, g.len(4.0), stroke);
+            painter.circle_stroke(center, g.len(1.6), stroke);
+        }
+        Icon::Add => {
+            line(&[(8.0, 3.0), (8.0, 13.0)]);
+            line(&[(3.0, 8.0), (13.0, 8.0)]);
+        }
+        Icon::ExpandAll => {
+            line(&[(4.5, 4.0), (8.0, 7.5), (11.5, 4.0)]);
+            line(&[(4.5, 8.5), (8.0, 12.0), (11.5, 8.5)]);
+        }
+        Icon::CollapseAll => {
+            line(&[(4.5, 7.5), (8.0, 4.0), (11.5, 7.5)]);
+            line(&[(4.5, 12.0), (8.0, 8.5), (11.5, 12.0)]);
         }
         Icon::Rerun => {
             let center = g.p(8.0, 8.0);

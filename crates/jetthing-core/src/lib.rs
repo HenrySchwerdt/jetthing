@@ -19,6 +19,7 @@ mod android_manifest;
 mod android_resources;
 mod android_variants;
 mod annotations;
+mod bazel_commands;
 mod branch_commands;
 mod build_commands;
 pub mod build_info;
@@ -29,6 +30,8 @@ mod disk_sync;
 mod editor_commands;
 pub mod first_run;
 mod git_log;
+mod gradle_commands;
+mod gutter_commands;
 pub mod keymap_commands;
 mod line_changes;
 mod lsp_commands;
@@ -36,6 +39,7 @@ mod plugin_host;
 mod problems;
 mod project_commands;
 mod remote_commands;
+mod run_config_commands;
 mod settings_commands;
 mod snippet_session;
 pub mod tabs;
@@ -53,6 +57,8 @@ pub use settings_commands::Settings;
 mod vcs;
 pub use build_commands::{BuildSystems, DetectedBuild};
 pub use completion::CompletionSession;
+pub use gutter_commands::GutterMark;
+pub use jetthing_runnables::RunnableKind;
 pub use jetthing_search::SearchOptions;
 pub use plugin_host::{
     PluginHostState, PluginStatusWidget, PluginTab, plugin_dirs, sync_plugin_commands,
@@ -137,6 +143,18 @@ pub struct IdeState {
     pub build_systems: BuildSystems,
     /// Build system of the open project, detected on open (`build.detect` refreshes it).
     pub detected_build: Option<DetectedBuild>,
+    /// Gradle model from the last sync (cached in `.jetthing/gradle/model.json`).
+    pub gradle_model: Option<jetthing_gradle::GradleModel>,
+    pub gradle_error: Option<String>,
+    /// Bazel targets from the last sync (cached in `.jetthing/bazel/targets.json`).
+    pub bazel_targets: Option<jetthing_bazel::BazelTargets>,
+    pub bazel_error: Option<String>,
+    /// Run/Debug configurations of the open project and the run widget selection.
+    pub run_configurations: jetthing_runner::RunManager,
+    /// Pending request to show the Run/Debug Configurations dialog (focused name).
+    pub edit_run_configurations: Option<String>,
+    /// Gutter run targets of the active document, cached per text revision.
+    pub runnable_cache: gutter_commands::RunnableCache,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -232,6 +250,9 @@ impl IdeState {
         self.start_watcher();
         self.vcs_stale = false;
         self.detect_build();
+        self.load_gradle_model();
+        self.load_bazel_targets();
+        self.load_run_configurations();
         self.restore_workspace();
         Ok(())
     }
@@ -751,10 +772,14 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_resources::register(&mut registry);
     android_manifest::register(&mut registry);
     android_logcat::register(&mut registry);
+    bazel_commands::register(&mut registry);
     build_commands::register(&mut registry);
     editor_commands::register(&mut registry);
     disk_sync::register(&mut registry);
     tabs::register(&mut registry);
+    gradle_commands::register(&mut registry);
+    gutter_commands::register(&mut registry);
+    run_config_commands::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
     diagnostic_commands::register(&mut registry);

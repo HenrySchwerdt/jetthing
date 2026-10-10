@@ -24,10 +24,12 @@ pub enum ToolWindow {
     Logcat,
     Git,
     BuildVariants,
+    Gradle,
+    Bazel,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 10] = [
+    pub const ALL: [ToolWindow; 12] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Find,
@@ -38,6 +40,8 @@ impl ToolWindow {
         ToolWindow::Logcat,
         ToolWindow::Git,
         ToolWindow::BuildVariants,
+        ToolWindow::Gradle,
+        ToolWindow::Bazel,
     ];
 
     pub fn id(self) -> &'static str {
@@ -52,6 +56,8 @@ impl ToolWindow {
             ToolWindow::Logcat => "logcat",
             ToolWindow::Git => "git",
             ToolWindow::BuildVariants => "buildVariants",
+            ToolWindow::Gradle => "gradle",
+            ToolWindow::Bazel => "bazel",
         }
     }
 
@@ -67,10 +73,13 @@ impl ToolWindow {
             ToolWindow::Logcat => "Logcat",
             ToolWindow::Git => "Git",
             ToolWindow::BuildVariants => "Build Variants",
+            ToolWindow::Gradle => "Gradle",
+            ToolWindow::Bazel => "Bazel",
         }
     }
 
-    /// Default activation shortcut (macOS notation, see `docs/spec/toolwindows.md`).
+    /// Default activation shortcut (macOS notation, see `docs/spec/toolwindows.md`);
+    /// empty when the reference assigns none.
     pub fn shortcut(self) -> &'static str {
         match self {
             ToolWindow::Project => "⌘1",
@@ -80,7 +89,11 @@ impl ToolWindow {
             ToolWindow::Problems => "⌘6",
             ToolWindow::Terminal => "⌥F12",
             // Unbound by default, like the reference IDE.
-            ToolWindow::DeviceManager | ToolWindow::Logcat | ToolWindow::BuildVariants => "",
+            ToolWindow::DeviceManager
+            | ToolWindow::Logcat
+            | ToolWindow::BuildVariants
+            | ToolWindow::Gradle
+            | ToolWindow::Bazel => "",
             ToolWindow::Git => "⌘9",
         }
     }
@@ -94,7 +107,7 @@ impl ToolWindow {
             | ToolWindow::Terminal
             | ToolWindow::Logcat
             | ToolWindow::Git => Anchor::Bottom,
-            ToolWindow::DeviceManager => Anchor::Right,
+            ToolWindow::DeviceManager | ToolWindow::Gradle | ToolWindow::Bazel => Anchor::Right,
         }
     }
 
@@ -193,6 +206,9 @@ mod tests {
             layout.is_visible(ToolWindow::Commit),
             "anchors are independent"
         );
+        layout.show(ToolWindow::Gradle);
+        assert_eq!(layout.visible(Anchor::Right), Some(ToolWindow::Gradle));
+        assert!(layout.is_visible(ToolWindow::Commit));
         layout.hide_all();
         assert_eq!(layout.visible(Anchor::Right), None);
     }
