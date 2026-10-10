@@ -185,6 +185,7 @@ impl IdeState {
             self.diff_active = false;
             self.plugin_host.active_tab = None;
             self.touch_recent(path);
+            self.reveal_in_tree(path);
             return Ok(());
         }
         let project = self.project.as_ref().ok_or("no project is open")?;
@@ -201,9 +202,20 @@ impl IdeState {
         self.diff_active = false;
         self.plugin_host.active_tab = None;
         self.touch_recent(path);
+        self.reveal_in_tree(path);
         self.status = format!("Opened {}", path.display());
         self.sync_document_lsp(path, &text, 0);
         Ok(())
+    }
+
+    /// Expands the Project tree down to `path` so an opened file is visible
+    /// (the reference IDE's "Always Select Opened File").
+    pub fn reveal_in_tree(&mut self, path: &Path) {
+        for ancestor in path.ancestors().skip(1) {
+            if !ancestor.as_os_str().is_empty() {
+                self.expanded_dirs.insert(ancestor.to_owned());
+            }
+        }
     }
     pub fn save(&mut self, index: usize) -> Result<(), String> {
         disk_sync::ensure_no_conflict(self, index)?;
@@ -281,9 +293,34 @@ impl IdeState {
         if self.expanded_dirs.remove(path) {
             Ok(false)
         } else {
+            self.load_children(path)?;
             self.expanded_dirs.insert(path.to_owned());
             Ok(true)
         }
+    }
+
+    /// Lists a directory the initial walk did not descend into (symbolic links
+    /// such as `bazel-bin`, and directories below them) when it is expanded.
+    fn load_children(&mut self, path: &Path) -> Result<(), String> {
+        let loaded = self
+            .files
+            .iter()
+            .any(|entry| entry.relative_path.parent() == Some(path));
+        let linked = path.ancestors().any(|ancestor| {
+            self.files
+                .iter()
+                .any(|entry| entry.is_symlink && entry.relative_path == ancestor)
+        });
+        if loaded || !linked {
+            return Ok(());
+        }
+        let project = self.project.as_ref().ok_or("no project is open")?;
+        let children = project.children(path).map_err(|error| error.to_string())?;
+        let Some(position) = self.files.iter().position(|e| e.relative_path == path) else {
+            return Ok(());
+        };
+        self.files.splice(position + 1..position + 1, children);
+        Ok(())
     }
 
     /// Entries visible in the Project tree: every ancestor directory is expanded.
@@ -932,13 +969,27 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Open File",
                 "Editor",
                 None,
-                r#"{"path":"string"}"#,
+                r#"{"path":"string","line":"number?","column":"number?","length":"number?"}"#,
             ),
             |s: &IdeState| s.project.is_some(),
             |state: &mut IdeState, params| {
                 state
                     .open_file(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
+                // Navigation targets (Find in Files, diagnostics) land on the
+                // match and select it.
+                if params.get("line").is_some() {
+                    let line = usize_param(&params, "line")?;
+                    let column = params.get("column").and_then(Value::as_u64).unwrap_or(1);
+                    let length = params.get("length").and_then(Value::as_u64).unwrap_or(0);
+                    editor_commands::select_in_active(
+                        state,
+                        line,
+                        column as usize,
+                        length as usize,
+                    )
+                    .map_err(CommandError::Failed)?;
+                }
                 Ok(Value::Null)
             },
         ))
@@ -1151,6 +1202,58 @@ mod tests {
         assert_eq!(super::changes_summary(1, "master"), "1 change on master");
         assert_eq!(super::changes_summary(0, "main"), "0 changes on main");
         assert_eq!(super::changes_summary(2, "main"), "2 changes on main");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_directories_expand_and_their_files_open() {
+        use super::*;
+        let base = std::env::temp_dir().join(format!("jetthing-core-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("out/pkg")).unwrap();
+        std::fs::write(base.join("out/pkg/App.class.txt"), "bytes").unwrap();
+        std::fs::create_dir_all(base.join("ws")).unwrap();
+        std::os::unix::fs::symlink(base.join("out"), base.join("ws/bazel-bin")).unwrap();
+        let registry = built_in_commands();
+        let mut state = IdeState::default();
+        state.open_project(&base.join("ws")).unwrap();
+        let visible = |state: &IdeState| -> Vec<String> {
+            state
+                .visible_files()
+                .iter()
+                .map(|e| e.relative_path.display().to_string())
+                .collect()
+        };
+        assert_eq!(visible(&state), ["bazel-bin"]);
+        for dir in ["bazel-bin", "bazel-bin/pkg"] {
+            registry
+                .execute("project.toggleDirectory", &mut state, json!({"path": dir}))
+                .unwrap();
+        }
+        assert_eq!(
+            visible(&state),
+            ["bazel-bin", "bazel-bin/pkg", "bazel-bin/pkg/App.class.txt"]
+        );
+        // Collapsing and expanding again does not duplicate children.
+        for _ in 0..2 {
+            registry
+                .execute(
+                    "project.toggleDirectory",
+                    &mut state,
+                    json!({"path": "bazel-bin"}),
+                )
+                .unwrap();
+        }
+        assert_eq!(visible(&state).len(), 3);
+        registry
+            .execute(
+                "editor.openFile",
+                &mut state,
+                json!({"path": "bazel-bin/pkg/App.class.txt"}),
+            )
+            .unwrap();
+        assert_eq!(state.documents[0].text.text(), "bytes");
+        let _ = std::fs::remove_dir_all(base);
     }
 
     use super::*;

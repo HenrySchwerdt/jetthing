@@ -229,6 +229,26 @@ fn register_transforms(registry: &mut CommandRegistry<IdeState>) {
     );
 }
 
+/// Moves the active editor's caret to 1-based `line`:`column` (clamped to the
+/// document) and selects `length` characters from there, staying on that line.
+pub(crate) fn select_in_active(
+    state: &mut IdeState,
+    line: usize,
+    column: usize,
+    length: usize,
+) -> Result<(), String> {
+    let line = line.max(1) - 1;
+    let column = column.max(1) - 1;
+    state.edit_active(|d| {
+        let line = line.min(d.text.len_lines().saturating_sub(1));
+        let (start, end, _) = ops::line_bounds(&d.text, line);
+        let anchor = (start + column).min(end);
+        let head = (anchor + length).min(end);
+        d.selections.set_single(Selection { anchor, head });
+        Ok(())
+    })
+}
+
 pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     action(
         registry,
@@ -358,21 +378,9 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             ),
             |state: &IdeState| state.active_document.is_some(),
             |state: &mut IdeState, params| {
-                let line = usize_param(&params, "line")?.max(1) - 1;
-                let column = params
-                    .get("column")
-                    .and_then(Value::as_u64)
-                    .map(|c| (c as usize).max(1) - 1)
-                    .unwrap_or(0);
-                state
-                    .edit_active(|d| {
-                        let line = line.min(d.text.len_lines().saturating_sub(1));
-                        let (start, end, _) = ops::line_bounds(&d.text, line);
-                        d.selections
-                            .set_single(Selection::caret((start + column).min(end)));
-                        Ok(())
-                    })
-                    .map_err(CommandError::Failed)?;
+                let line = usize_param(&params, "line")?;
+                let column = params.get("column").and_then(Value::as_u64).unwrap_or(1);
+                select_in_active(state, line, column as usize, 0).map_err(CommandError::Failed)?;
                 Ok(Value::Null)
             },
         ))
@@ -525,6 +533,48 @@ mod tests {
             .execute("editor.redo", &mut state, Value::Null)
             .unwrap();
         assert_eq!(state.documents[0].selections.primary().head, 17);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn open_file_lands_on_and_selects_a_search_match() {
+        let (mut state, commands, root) = state_with("a\n  val greeting = 1\n", "found.kt");
+        commands
+            .execute(
+                "editor.openFile",
+                &mut state,
+                json!({"path": "found.kt", "line": 2, "column": 7, "length": 5}),
+            )
+            .unwrap();
+        let primary = state.documents[0].selections.primary();
+        assert_eq!((primary.anchor, primary.head), (8, 13));
+        assert_eq!(state.documents[0].text.slice(8, 13).unwrap(), "greet");
+        // Out-of-range targets clamp to the line instead of failing.
+        commands
+            .execute(
+                "editor.openFile",
+                &mut state,
+                json!({"path": "found.kt", "line": 99, "column": 99, "length": 3}),
+            )
+            .unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn opening_a_nested_file_reveals_it_in_the_tree() {
+        let (mut state, commands, root) = state_with("x", "top.txt");
+        std::fs::create_dir_all(root.join("src/main/java")).unwrap();
+        std::fs::write(root.join("src/main/java/App.java"), "class App {}").unwrap();
+        commands
+            .execute(
+                "editor.openFile",
+                &mut state,
+                json!({"path": "src/main/java/App.java"}),
+            )
+            .unwrap();
+        for dir in ["src", "src/main", "src/main/java"] {
+            assert!(state.expanded_dirs.contains(Path::new(dir)), "{dir}");
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -35,7 +35,24 @@ pub enum ProjectError {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileEntry {
     pub relative_path: PathBuf,
+    /// A directory, or a symbolic link to one.
     pub is_dir: bool,
+    /// The entry itself is a symbolic link. Linked directories are listed lazily
+    /// when expanded rather than walked (they often point at large build trees).
+    #[serde(default)]
+    pub is_symlink: bool,
+}
+
+/// Names never shown in the Project tree.
+const HIDDEN: [&str; 4] = [".git", ".jetthing", "target", "node_modules"];
+
+fn file_entry(path: &Path, root: &Path, file_type: fs::FileType) -> Option<FileEntry> {
+    let is_symlink = file_type.is_symlink();
+    Some(FileEntry {
+        relative_path: path.strip_prefix(root).ok()?.to_owned(),
+        is_dir: file_type.is_dir() || (is_symlink && path.is_dir()),
+        is_symlink,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -69,22 +86,73 @@ impl Project {
                     })
             })
             .into_iter()
-            .filter_entry(|e| {
-                !matches!(
-                    e.file_name().to_str(),
-                    Some(".git" | ".jetthing" | "target" | "node_modules")
-                )
-            })
+            .filter_entry(|e| !e.file_name().to_str().is_some_and(|n| HIDDEN.contains(&n)))
             .filter_map(Result::ok)
             .skip(1)
             .take(max)
-            .filter_map(|e| {
-                Some(FileEntry {
-                    relative_path: e.path().strip_prefix(&self.root).ok()?.to_owned(),
-                    is_dir: e.file_type().is_dir(),
-                })
-            })
+            .filter_map(|e| file_entry(e.path(), &self.root, e.file_type()))
             .collect()
+    }
+
+    /// Direct children of a directory (following symbolic links), in Project
+    /// view order. Used to expand linked directories that `entries` does not walk.
+    pub fn children(&self, relative: &Path) -> Result<Vec<FileEntry>, ProjectError> {
+        let directory = self.checked_follow(relative)?;
+        let mut children: Vec<FileEntry> = fs::read_dir(&directory)?
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                !entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| HIDDEN.contains(&name))
+            })
+            .filter_map(|entry| {
+                let logical = self.root.join(relative).join(entry.file_name());
+                file_entry(&logical, &self.root, entry.file_type().ok()?)
+            })
+            .collect();
+        children.sort_by(|a, b| {
+            b.is_dir.cmp(&a.is_dir).then_with(|| {
+                let name = |entry: &FileEntry| {
+                    entry
+                        .relative_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_lowercase())
+                        .unwrap_or_default()
+                };
+                name(a).cmp(&name(b))
+            })
+        });
+        Ok(children)
+    }
+
+    /// Resolves an existing project path for reading. Unlike [`Self::checked`]
+    /// it may leave the root, but only through a symbolic link that lives in the
+    /// project (e.g. Bazel's `bazel-bin`); `..` and absolute paths are rejected.
+    fn checked_follow(&self, relative: &Path) -> Result<PathBuf, ProjectError> {
+        use std::path::Component;
+        if relative
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+        {
+            return Err(ProjectError::InvalidName(relative.display().to_string()));
+        }
+        let candidate = self.root.join(relative);
+        let canonical = candidate.canonicalize()?;
+        if canonical.starts_with(&self.root) {
+            return Ok(canonical);
+        }
+        let mut logical = self.root.clone();
+        for component in relative.components() {
+            logical.push(component);
+            if logical
+                .symlink_metadata()
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                return Ok(canonical);
+            }
+        }
+        Err(ProjectError::OutsideRoot(candidate))
     }
     fn checked(&self, relative: &Path) -> Result<PathBuf, ProjectError> {
         let candidate = self.root.join(relative);
@@ -95,7 +163,7 @@ impl Project {
         Ok(canonical)
     }
     pub fn read_text(&self, relative: &Path) -> Result<String, ProjectError> {
-        let path = self.checked(relative)?;
+        let path = self.checked_follow(relative)?;
         String::from_utf8(fs::read(&path)?).map_err(|_| ProjectError::NonUtf8(path))
     }
     /// Validates a project-relative path that may not exist yet.
@@ -171,15 +239,26 @@ impl Project {
 
     /// Deletes a file or a directory tree. The project root itself cannot be deleted.
     pub fn delete(&self, relative: &Path) -> Result<(), ProjectError> {
+        // Delete a link itself, never its target (which may lie outside).
+        let link = self.root.join(relative);
+        if relative.components().count() > 0
+            && link
+                .symlink_metadata()
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            self.checked_follow(relative).or_else(|error| match error {
+                // A dangling link can still be removed.
+                ProjectError::Io(_) => Ok(link.clone()),
+                other => Err(other),
+            })?;
+            fs::remove_file(link)?;
+            return Ok(());
+        }
         let path = self.checked(relative)?;
         if path == self.root {
             return Err(ProjectError::InvalidName(relative.display().to_string()));
         }
-        // Delete the link itself, never its target.
-        let link = self.root.join(relative);
-        if link.symlink_metadata()?.file_type().is_symlink() {
-            fs::remove_file(link)?;
-        } else if path.is_dir() {
+        if path.is_dir() {
             fs::remove_dir_all(path)?;
         } else {
             fs::remove_file(path)?;
@@ -206,6 +285,59 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_directories_are_listed_lazily_and_readable_but_not_writable() {
+        let base = std::env::temp_dir().join(format!("jetthing-links-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let outside = base.join("output-base/bin");
+        fs::create_dir_all(outside.join("pkg")).unwrap();
+        fs::write(outside.join("pkg/gen.txt"), "generated").unwrap();
+        let root = base.join("ws");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("BUILD.bazel"), "").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("bazel-bin")).unwrap();
+        let project = Project::open(&root).unwrap();
+        let entries = project.entries(100);
+        let link = entries
+            .iter()
+            .find(|e| e.relative_path == Path::new("bazel-bin"))
+            .unwrap();
+        assert!(link.is_dir && link.is_symlink, "{link:?}");
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e.relative_path.starts_with("bazel-bin")
+                    && e.relative_path != Path::new("bazel-bin")),
+            "linked trees are not walked"
+        );
+        let children = project.children(Path::new("bazel-bin")).unwrap();
+        assert_eq!(children[0].relative_path, Path::new("bazel-bin/pkg"));
+        assert!(children[0].is_dir);
+        assert_eq!(
+            project.children(Path::new("bazel-bin/pkg")).unwrap()[0].relative_path,
+            Path::new("bazel-bin/pkg/gen.txt")
+        );
+        assert_eq!(
+            project
+                .read_text(Path::new("bazel-bin/pkg/gen.txt"))
+                .unwrap(),
+            "generated"
+        );
+        assert!(
+            project
+                .read_text(Path::new("../output-base/bin/pkg/gen.txt"))
+                .is_err()
+        );
+        assert!(matches!(
+            project.write_text(Path::new("bazel-bin/pkg/gen.txt"), "x"),
+            Err(ProjectError::OutsideRoot(_))
+        ));
+        project.delete(Path::new("bazel-bin")).unwrap();
+        assert!(outside.join("pkg/gen.txt").exists(), "target survives");
+        let _ = fs::remove_dir_all(base);
+    }
     #[test]
     fn opens_lists_and_reads_project() {
         let root = std::env::temp_dir().join(format!("jetthing-project-{}", std::process::id()));

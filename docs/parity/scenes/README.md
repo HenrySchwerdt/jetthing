@@ -50,7 +50,7 @@ Chords use the Linux keymap (`Alt+0`, `Alt+F12`); `Primary` means ⌘ on macOS a
 | Scene | Script | Asserts |
 |---|---|---|
 | 01 Welcome | `01-welcome.json` | no project, no tabs |
-| 04 Editor + project tree | `04-editor-project-tree.json` | App.java active, Project tool window visible, editor text |
+| 04 Editor + project tree | `04-editor-project-tree.json` | App.java active and revealed/selected in the tree, Project tool window visible, editor text |
 | 05 Search Everywhere | `05-search-everywhere.json` | Double Shift opens the All tab; Escape closes it |
 | 06 Find Action | `06-find-action.json` | Ctrl+Shift+A opens the Actions tab |
 | 11 Terminal | `11-terminal.json` | terminal visible and focused; `ls --color` and `git log --oneline` output on screen |
