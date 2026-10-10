@@ -15,6 +15,8 @@ pub struct Workspace {
     pub expanded_dirs: Vec<PathBuf>,
     pub left_tool_window: Option<String>,
     pub bottom_tool_window: Option<String>,
+    pub right_tool_window: Option<String>,
+    pub selected_run_configuration: Option<String>,
     pub bottom_tool_height: Option<u32>,
     pub recent_files: Vec<PathBuf>,
     pub pinned_files: Vec<PathBuf>,
@@ -196,9 +198,18 @@ impl IdeState {
                 .tool_windows
                 .visible(Anchor::Bottom)
                 .map(|window| window.id().to_owned()),
+            right_tool_window: self
+                .tool_windows
+                .visible(Anchor::Right)
+                .map(|window| window.id().to_owned()),
             bottom_tool_height: self.tool_windows.bottom_height().map(|h| h as u32),
             recent_files: self.recent_files.clone(),
             pinned_files: self.tabs.pinned.iter().cloned().collect(),
+            selected_run_configuration: self
+                .run_configurations
+                .selected()
+                .filter(|config| !config.temporary)
+                .map(|config| config.name.clone()),
         }
     }
 
@@ -252,13 +263,20 @@ impl IdeState {
             self.active_document = Some(index);
         }
         self.recent_files = recent;
+        if let Some(name) = &workspace.selected_run_configuration {
+            let _ = self.run_configurations.select(name);
+        }
         self.tool_windows.hide_all();
         if let Some(height) = workspace.bottom_tool_height {
             self.tool_windows.set_bottom_height(height as f32);
         }
-        for id in [&workspace.left_tool_window, &workspace.bottom_tool_window]
-            .into_iter()
-            .flatten()
+        for id in [
+            &workspace.left_tool_window,
+            &workspace.bottom_tool_window,
+            &workspace.right_tool_window,
+        ]
+        .into_iter()
+        .flatten()
         {
             // The terminal is not restored automatically: it would spawn a shell.
             if let Some(window) = ToolWindow::parse(id).filter(|w| *w != ToolWindow::Terminal) {

@@ -231,14 +231,7 @@ mod tests {
         assert_eq!(bar.query, "needle");
         assert!(bar.replace);
         let path = std::path::PathBuf::from("n.txt");
-        let mut document = jetthing_core::Document {
-            analysis: jetthing_language::analyze(&path, "a needle, Needle"),
-            text: jetthing_text::TextDocument::new("a needle, Needle"),
-            path,
-            selections: Default::default(),
-            disk_hash: 0,
-            conflict: None,
-        };
+        let mut document = jetthing_core::Document::new(path, "a needle, Needle");
         assert_eq!(bar.matches(&document).len(), 2);
         bar.match_case = true;
         assert_eq!(

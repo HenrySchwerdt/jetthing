@@ -9,7 +9,7 @@ use eframe::egui::{self, Rect, Sense, vec2};
 use jetthing_core::navigation::{
     ActionCandidate, Hit, Ranked, SearchSources, SearchTab, SymbolEntry, file_name, search,
 };
-use jetthing_language::symbols::SymbolKind;
+use jetthing_language::structure::SymbolKind;
 use serde_json::{Value, json};
 use std::time::Duration;
 

@@ -4,11 +4,13 @@
 //! |---|---|
 //! | `jdk` | foojay Disco API (Temurin by default) |
 //! | `jdtls` | download.eclipse.org milestones |
+//! | `gradle` | services.gradle.org distributions (for projects without `gradlew`) |
 //! | `rust-analyzer` | GitHub releases of rust-lang/rust-analyzer |
 //! | `bazelisk` | GitHub releases of bazelbuild/bazelisk |
 //! | `taplo` | GitHub releases of tamasfe/taplo |
 
 pub mod github;
+pub mod gradle;
 pub mod jdk;
 pub mod jdtls;
 
@@ -21,6 +23,7 @@ pub fn builtin_catalog() -> Catalog {
     let mut catalog = Catalog::new();
     catalog.register(Arc::new(jdk::FoojayJdk::default()));
     catalog.register(Arc::new(jdtls::EclipseJdtls::default()));
+    catalog.register(Arc::new(gradle::GradleDistributions::default()));
     catalog.register(Arc::new(rust_analyzer()));
     catalog.register(Arc::new(bazelisk()));
     catalog.register(Arc::new(taplo()));
@@ -124,4 +127,144 @@ pub fn taplo() -> GithubReleaseProvider {
             )
         })
     })
+}
+
+/// What a project of one language needs, detected from marker files.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ProjectRequirement {
+    /// Display name ("Java", "Rust", "Bazel").
+    pub language: &'static str,
+    /// Component ids, in setup order.
+    pub components: &'static [&'static str],
+    /// File extensions whose editors show the "missing toolchain" bar.
+    pub extensions: &'static [&'static str],
+    /// Exact file names that also show it (`BUILD`).
+    pub file_names: &'static [&'static str],
+}
+
+impl ProjectRequirement {
+    /// Whether an editor for `path` belongs to this requirement's language.
+    pub fn applies_to(&self, path: &std::path::Path) -> bool {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        self.file_names.contains(&name)
+            || path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| self.extensions.iter().any(|e| e.eq_ignore_ascii_case(ext)))
+    }
+}
+
+const REQUIREMENTS: &[(&[&str], ProjectRequirement)] = &[
+    (
+        &[
+            "build.gradle",
+            "build.gradle.kts",
+            "settings.gradle",
+            "settings.gradle.kts",
+            "pom.xml",
+        ],
+        ProjectRequirement {
+            language: "Java",
+            components: &["jdk", "jdtls"],
+            extensions: &["java", "gradle", "kts", "kt"],
+            file_names: &["pom.xml"],
+        },
+    ),
+    (
+        &["Cargo.toml"],
+        ProjectRequirement {
+            language: "Rust",
+            components: &["rust-analyzer"],
+            extensions: &["rs"],
+            file_names: &["Cargo.toml"],
+        },
+    ),
+    (
+        &[
+            "MODULE.bazel",
+            "WORKSPACE",
+            "WORKSPACE.bazel",
+            ".bazelversion",
+        ],
+        ProjectRequirement {
+            language: "Bazel",
+            components: &["bazelisk"],
+            extensions: &["bzl", "bazel"],
+            file_names: &["BUILD", "WORKSPACE", "MODULE.bazel", ".bazelversion"],
+        },
+    ),
+];
+
+const GRADLE_MARKERS: &[&str] = &[
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+];
+
+/// A Gradle project without the wrapper also needs a Gradle distribution.
+const JAVA_GRADLE_WITHOUT_WRAPPER: ProjectRequirement = ProjectRequirement {
+    language: "Java",
+    components: &["jdk", "gradle", "jdtls"],
+    extensions: &["java", "gradle", "kts", "kt"],
+    file_names: &["pom.xml"],
+};
+
+/// Requirements of the project at `root`, from marker files in the root.
+pub fn project_requirements(root: &std::path::Path) -> Vec<ProjectRequirement> {
+    let has = |name: &str| root.join(name).exists();
+    let gradle_without_wrapper =
+        GRADLE_MARKERS.iter().any(|marker| has(marker)) && !has("gradlew") && !has("gradlew.bat");
+    REQUIREMENTS
+        .iter()
+        .filter(|(markers, _)| markers.iter().any(|marker| has(marker)))
+        .map(|(_, requirement)| {
+            if requirement.language == "Java" && gradle_without_wrapper {
+                JAVA_GRADLE_WITHOUT_WRAPPER
+            } else {
+                requirement.clone()
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn detects_project_requirements_from_markers() {
+        let dir = std::env::temp_dir().join(format!("jetthing-reqs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(project_requirements(&dir).is_empty());
+        std::fs::write(dir.join("settings.gradle.kts"), "").unwrap();
+        std::fs::write(dir.join("MODULE.bazel"), "").unwrap();
+        let found = project_requirements(&dir);
+        let languages: Vec<&str> = found.iter().map(|r| r.language).collect();
+        assert_eq!(languages, ["Java", "Bazel"]);
+        assert!(found[0].applies_to(Path::new("src/App.java")));
+        assert!(!found[0].applies_to(Path::new("README.md")));
+        assert!(found[1].applies_to(Path::new("pkg/BUILD")));
+        // Without a wrapper the Java project also needs Gradle; with one it does not.
+        assert_eq!(found[0].components, ["jdk", "gradle", "jdtls"]);
+        std::fs::write(dir.join("gradlew"), "").unwrap();
+        assert_eq!(project_requirements(&dir)[0].components, ["jdk", "jdtls"]);
+        // Every required component is in the built-in catalog.
+        let catalog = builtin_catalog();
+        let all = REQUIREMENTS
+            .iter()
+            .map(|(_, requirement)| requirement)
+            .chain([&JAVA_GRADLE_WITHOUT_WRAPPER]);
+        for requirement in all {
+            for component in requirement.components {
+                assert!(catalog.get(component).is_some(), "{component}");
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

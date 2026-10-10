@@ -7,7 +7,7 @@
 
 use crate::{IdeState, ToolWindow, spec};
 use jetthing_command::{Command, CommandError, CommandRegistry};
-use jetthing_language::symbols::{SymbolKind, outline};
+use jetthing_language::structure::{StructureItem, SymbolKind};
 use jetthing_lsp::completion::{MatchClass, fuzzy_match, match_class};
 use jetthing_lsp::lsp_types;
 use jetthing_lsp::{WorkspaceSymbolHit, WorkspaceSymbolRequestHandle};
@@ -134,6 +134,11 @@ pub fn rank<T>(
     ranked.into_iter().map(|(r, _)| r).take(limit).collect()
 }
 
+/// Whether `name` matches `query` with camel-hump semantics (empty matches all).
+pub fn matches(query: &str, name: &str) -> bool {
+    query.is_empty() || fuzzy_match(query, name).is_some()
+}
+
 /// Splits `Name:12` into the name pattern and a one-based line.
 pub fn split_line_suffix(query: &str) -> (&str, Option<usize>) {
     if let Some((name, line)) = query.rsplit_once(':')
@@ -242,17 +247,40 @@ impl SymbolIndex {
     }
 }
 
-fn entries(
-    path: &Path,
-    symbols: Vec<jetthing_language::symbols::OutlineSymbol>,
-) -> Vec<SymbolEntry> {
+/// Declarations of `source` in file order, flattened from the file structure
+/// (tree-sitter tags queries); empty for languages without one.
+fn outline(path: &Path, source: &str) -> Vec<(String, SymbolKind, usize)> {
+    fn flatten(items: &[StructureItem], out: &mut Vec<(String, SymbolKind, usize)>) {
+        for item in items {
+            out.push((item.name.clone(), item.kind, item.line));
+            flatten(&item.children, out);
+        }
+    }
+    let mut out = Vec::new();
+    flatten(
+        &jetthing_language::analyze(path, source).structure(),
+        &mut out,
+    );
+    out.sort_by_key(|(_, _, line)| *line);
+    out
+}
+
+/// Declarations Go to Class lists: classes, interfaces, enums and type aliases.
+pub fn is_class_like(kind: SymbolKind) -> bool {
+    matches!(
+        kind,
+        SymbolKind::Class | SymbolKind::Interface | SymbolKind::Enum | SymbolKind::Type
+    )
+}
+
+fn entries(path: &Path, symbols: Vec<(String, SymbolKind, usize)>) -> Vec<SymbolEntry> {
     symbols
         .into_iter()
-        .map(|symbol| SymbolEntry {
-            name: symbol.name,
-            kind: symbol.kind,
+        .map(|(name, kind, line)| SymbolEntry {
+            name,
+            kind,
             path: path.to_owned(),
-            line: symbol.line,
+            line,
             container: None,
         })
         .collect()
@@ -389,9 +417,9 @@ fn files(query: &str, sources: &SearchSources, limit: usize) -> Vec<Ranked<Hit>>
 fn symbols(query: &str, sources: &SearchSources, limit: usize, classes: bool) -> Vec<Ranked<Hit>> {
     let keep = |kind: SymbolKind| {
         if classes {
-            kind.is_class_like()
+            is_class_like(kind)
         } else {
-            !kind.is_class_like()
+            !is_class_like(kind)
         }
     };
     let mut seen = std::collections::HashSet::new();
@@ -1153,5 +1181,28 @@ mod tests {
         );
         assert_eq!(SearchTab::All.step(true), SearchTab::Actions);
         assert_eq!(SearchTab::Actions.step(false), SearchTab::All);
+    }
+
+    #[test]
+    fn outlines_come_from_the_file_structure() {
+        let rust = outline(
+            Path::new("a.rs"),
+            "struct Greeter;\nfn greet() {}\nimpl Greeter { fn hello(&self) {} }\n",
+        );
+        assert!(
+            rust.iter()
+                .any(|(n, k, _)| n == "Greeter" && is_class_like(*k))
+        );
+        assert!(
+            rust.iter()
+                .any(|(n, k, l)| n == "hello" && *l == 2 && !is_class_like(*k))
+        );
+        let java = outline(
+            Path::new("A.java"),
+            "public class A {\n  void run() {}\n}\n",
+        );
+        assert!(java.iter().any(|(n, k, _)| n == "A" && is_class_like(*k)));
+        assert!(java.iter().any(|(n, _, l)| n == "run" && *l == 1));
+        assert!(outline(Path::new("n.txt"), "hello").is_empty());
     }
 }

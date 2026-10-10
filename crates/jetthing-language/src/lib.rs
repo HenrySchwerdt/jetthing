@@ -2,19 +2,28 @@
 //! their bundled queries, a generic highlight engine, and IntelliJ color
 //! schemes. No language has its own code path here.
 
+pub mod brackets;
 mod captures;
+pub mod folding;
 pub mod highlight;
+mod injection;
 pub mod registry;
 pub mod scheme;
-pub mod symbols;
+pub mod selection;
+pub mod structure;
+pub mod syntax;
 
 pub use captures::capture_key;
+pub use folding::{FoldKind, FoldRange};
 pub use highlight::{HighlightLayer, HighlightSpan, QueryError};
+pub use jetthing_text::{ByteEdit, BytePoint};
 pub use registry::{LANGUAGES, LanguageSpec};
 pub use scheme::{ColorScheme, EffectType, FontStyle, Rgba, TextAttributes};
+pub use structure::{StructureItem, SymbolKind};
+pub use syntax::SyntaxTree;
 
 use std::path::Path;
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
 
 /// Maximum number of syntax diagnostics reported per file.
 const MAX_DIAGNOSTICS: usize = 100;
@@ -33,6 +42,96 @@ pub struct LanguageAnalysis {
     /// Syntax highlighting from the grammar's highlight query.
     pub highlights: HighlightLayer,
     pub diagnostics: Vec<Diagnostic>,
+    /// The incrementally maintained syntax tree, when the language is known.
+    pub syntax: Option<SyntaxTree>,
+    /// The text this analysis describes (shared, for range queries such as
+    /// folding regions without re-reading the buffer).
+    pub source: std::sync::Arc<str>,
+}
+
+impl LanguageAnalysis {
+    /// Matching-bracket pair for the bracket token starting at `byte`, from the
+    /// syntax tree (`None` for non-brackets, brackets in strings/comments and
+    /// unmatched brackets). Callers fall back to text matching when the
+    /// language has no grammar ([`LanguageAnalysis::syntax`] is `None`).
+    pub fn matching_bracket(&self, byte: usize) -> Option<(usize, usize)> {
+        brackets::matching_bracket(self.syntax.as_ref()?.tree(), byte)
+    }
+
+    /// Declarations of the file, nested (empty without a tags query).
+    pub fn structure(&self) -> Vec<StructureItem> {
+        match &self.syntax {
+            Some(syntax) => structure::structure(syntax.language(), syntax.tree(), &self.source),
+            None => Vec::new(),
+        }
+    }
+
+    /// Folding regions intersecting the byte `range` (see [`folding::fold_ranges`]).
+    pub fn folds_in(&self, range: std::ops::Range<usize>) -> Vec<FoldRange> {
+        match &self.syntax {
+            Some(syntax) => {
+                folding::fold_ranges(syntax.language(), syntax.tree(), &self.source, range)
+            }
+            None => Vec::new(),
+        }
+    }
+
+    /// Extend Selection: the next larger syntactic byte range around `range`.
+    pub fn expand_selection(
+        &self,
+        source: &str,
+        range: std::ops::Range<usize>,
+    ) -> Option<std::ops::Range<usize>> {
+        selection::expand(self.syntax.as_ref()?.tree(), source, range)
+    }
+
+    /// Brings the analysis up to date with `source` after `edits` (as
+    /// journaled by the text buffer): applies them to the syntax tree,
+    /// reparses incrementally and re-highlights only the affected ranges.
+    pub fn apply_edits(&mut self, path: &Path, source: &str, edits: &[ByteEdit]) {
+        if edits.is_empty() {
+            return;
+        }
+        let Some(syntax) = self.syntax.as_mut() else {
+            // Plain text may become a known language (e.g. a new shebang line).
+            if registry::detect(path, source).is_some() {
+                *self = analyze(path, source);
+            }
+            return;
+        };
+        let mut stale: Vec<std::ops::Range<usize>> = Vec::new();
+        for edit in edits {
+            for range in &mut stale {
+                *range = syntax::map_range(range.clone(), edit);
+            }
+            stale.extend(self.highlights.apply_edit(edit));
+        }
+        let Some(mut ranges) = syntax.apply_edits(source, edits) else {
+            *self = analyze(path, source);
+            return;
+        };
+        ranges.extend(
+            stale
+                .into_iter()
+                .map(|range| range.start.min(source.len())..range.end.min(source.len())),
+        );
+        for mut range in syntax::merge_ranges(ranges) {
+            // Grow until the range covers whole new captures and whole old
+            // spans, so no clipped remainder keeps a stale key.
+            loop {
+                let (covered, replacement) = syntax.highlight_covering(source, range);
+                let grown = self.highlights.covering(covered.clone());
+                if grown == covered {
+                    self.highlights.splice(covered, replacement);
+                    break;
+                }
+                range = grown;
+            }
+        }
+        self.diagnostics.clear();
+        collect_diagnostics(syntax.tree().root_node(), &mut self.diagnostics);
+        self.source = source.into();
+    }
 }
 
 /// Parses and highlights `source`, detecting the language from `path`.
@@ -45,41 +144,57 @@ pub fn analyze(path: &Path, source: &str) -> LanguageAnalysis {
         language: Some(spec.name),
         ..Default::default()
     };
-    let mut parser = Parser::new();
-    if parser.set_language(&spec.grammar()).is_err() {
-        return result;
-    }
-    let Some(tree) = parser.parse(source, None) else {
+    let Some(syntax) = SyntaxTree::parse(spec, source) else {
         return result;
     };
-    result.highlights =
-        highlight::highlight(spec, &tree, source, 0..source.len()).unwrap_or_default();
-    collect_diagnostics(tree.root_node(), &mut result.diagnostics);
+    result.highlights = syntax.highlight(source, 0..source.len());
+    collect_diagnostics(syntax.tree().root_node(), &mut result.diagnostics);
+    result.source = source.into();
+    result.syntax = Some(syntax);
     result
 }
 
 fn collect_diagnostics(node: Node<'_>, diagnostics: &mut Vec<Diagnostic>) {
-    if diagnostics.len() >= MAX_DIAGNOSTICS || !node.has_error() {
+    if diagnostics.len() >= MAX_DIAGNOSTICS || !(node.has_error() || node.is_missing()) {
         return;
     }
-    if node.is_error() || node.is_missing() {
-        let point = node.start_position();
+    let push = |diagnostics: &mut Vec<Diagnostic>, point: tree_sitter::Point, message: String| {
         diagnostics.push(Diagnostic {
-            message: if node.is_missing() {
-                format!("expected {}", node.kind())
-            } else {
-                "syntax error".into()
-            },
+            message,
             row: point.row + 1,
             column: point.column + 1,
         });
-        if node.is_missing() {
-            return;
-        }
+    };
+    if node.is_missing() {
+        push(
+            diagnostics,
+            node.start_position(),
+            format!("expected {}", node.kind()),
+        );
+        return;
+    }
+    if node.is_error() {
+        push(diagnostics, node.start_position(), "syntax error".into());
     }
     let mut cursor = node.walk();
+    let mut child_error = false;
     for child in node.children(&mut cursor) {
+        child_error |= child.has_error() || child.is_missing();
         collect_diagnostics(child, diagnostics);
+    }
+    // Some grammars flag an error on a node without exposing an ERROR or
+    // MISSING child (e.g. a hidden missing token); report it on the node.
+    if !child_error && !node.is_error() {
+        let point = if node.child_count() == 0 {
+            node.start_position()
+        } else {
+            node.end_position()
+        };
+        push(
+            diagnostics,
+            point,
+            format!("syntax error in {}", node.kind()),
+        );
     }
 }
 
@@ -222,6 +337,18 @@ mod tests {
             ("a.json", "{\"k\": 1}", "1", "DEFAULT_NUMBER"),
             ("a.yaml", "k: true\n", "true", "DEFAULT_KEYWORD"),
             ("a.py", "import os\n", "import", "DEFAULT_KEYWORD"),
+            (
+                "build.gradle",
+                "plugins {\n    id 'java'\n}\ndef x = 1\n",
+                "'java'",
+                "DEFAULT_STRING",
+            ),
+            (
+                "build.gradle",
+                "plugins {\n    id 'java'\n}\ndef x = 1\n",
+                "def",
+                "DEFAULT_KEYWORD",
+            ),
             ("a.py", "x = None\n", "None", "DEFAULT_KEYWORD"),
             ("lib.rs", "fn f(x: u32) {}\n", "u32", "DEFAULT_KEYWORD"),
             ("A.java", "class A { int x; }\n", "int", "DEFAULT_KEYWORD"),
@@ -273,6 +400,57 @@ mod tests {
         for (path, source, needle, expected) in cases {
             let analysis = analyze(Path::new(path), source);
             assert!(analysis.language.is_some(), "{path} not detected");
+            assert_eq!(
+                key_of(&analysis, source, needle),
+                Some(*expected),
+                "{path}: `{needle}` in {:?}",
+                analysis.highlights
+            );
+        }
+    }
+
+    #[test]
+    fn injected_languages_are_highlighted() {
+        let cases: &[(&str, &str, &str, &str)] = &[
+            (
+                "README.md",
+                "# T\n\n```kotlin\nfun main() {}\n```\n",
+                "fun",
+                "DEFAULT_KEYWORD",
+            ),
+            (
+                "README.md",
+                "# T\n\n```java\nclass A {}\n```\n",
+                "class",
+                "DEFAULT_KEYWORD",
+            ),
+            (
+                "README.md",
+                "Use `code` and [link](http://x).\n",
+                "`code`",
+                "DEFAULT_STRING",
+            ),
+            (
+                "a.html",
+                "<script>let x = 1;</script>\n",
+                "let",
+                "DEFAULT_KEYWORD",
+            ),
+            (
+                "a.html",
+                "<style>a { color: red; }</style>\n",
+                "color",
+                "DEFAULT_INSTANCE_FIELD",
+            ),
+            (
+                "main.rs",
+                "fn main() { println!(\"hi {}\", 1); }\n",
+                "\"hi",
+                "DEFAULT_STRING",
+            ),
+        ];
+        for (path, source, needle, expected) in cases {
+            let analysis = analyze(Path::new(path), source);
             assert_eq!(
                 key_of(&analysis, source, needle),
                 Some(*expected),

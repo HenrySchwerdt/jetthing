@@ -32,7 +32,7 @@ Captured with `cargo run -p xtask -- scenes --only 05,06,21,22,23,24,25,26` (Xvf
   `navigate.*` commands that only record a request the UI turns into a popup.
 - Ranking reuses the completion matcher (`jetthing_lsp::completion::fuzzy_match`): exact, prefix,
   camel-hump, then inner matches; shorter names first.
-- Symbols come from tree-sitter tags outlines (cached by size and mtime, indexed in 15 ms slices
+- Symbols come from the file structure (tree-sitter tags outlines) (cached by size and mtime, indexed in 15 ms slices
   per frame while the popup is open; open documents use their live text) plus
   `workspace/symbol` of the running language server (`LspManager::request_workspace_symbols`, a
   new module that leaves the navigation code untouched).

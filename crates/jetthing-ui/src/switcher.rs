@@ -65,6 +65,8 @@ fn window_icon(window: ToolWindow) -> Icon {
         ToolWindow::Logcat => Icon::Logcat,
         ToolWindow::Git => Icon::Branch,
         ToolWindow::BuildVariants => Icon::Variants,
+        ToolWindow::Structure => Icon::Structure,
+        ToolWindow::Gradle | ToolWindow::Bazel => Icon::Model,
     }
 }
 

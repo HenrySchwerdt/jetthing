@@ -248,6 +248,20 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             },
         ))
         .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("app.closeAbout", "Close About", "Help", None, "{}"),
+            |state: &IdeState| state.about_open,
+            |state: &mut IdeState, _| {
+                state.about_open = false;
+                // The version line was only there for the dialog; later messages stay.
+                if state.status == crate::build_info::BUILD.version_line("Jetthing") {
+                    state.status.clear();
+                }
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
 }
 
 #[cfg(test)]
@@ -306,6 +320,31 @@ mod tests {
                 .status
                 .starts_with(&format!("Jetthing {CURRENT_VERSION} ("))
         );
+    }
+
+    #[test]
+    fn closing_about_clears_its_status_line() {
+        let commands = crate::built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("app.about", &mut state, Value::Null)
+            .unwrap();
+        assert!(!state.status.is_empty());
+        commands
+            .execute("app.closeAbout", &mut state, Value::Null)
+            .unwrap();
+        assert!(!state.about_open);
+        assert_eq!(state.status, "");
+        // A message set while the dialog was open is kept.
+        commands
+            .execute("app.about", &mut state, Value::Null)
+            .unwrap();
+        state.status = "Build details copied".into();
+        commands
+            .execute("app.closeAbout", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(state.status, "Build details copied");
+        assert!(!commands.is_enabled("app.closeAbout", &state));
     }
 
     #[test]

@@ -443,7 +443,8 @@ impl IdeState {
                 .as_ref()
                 .map_or(new_text.chars().count(), Snippet::final_caret);
         document.selections.set_single(Selection::caret(caret));
-        document.analysis = jetthing_language::analyze(&document.path, &document.text.text());
+        let source = document.text.text();
+        document.refresh_analysis(&source);
         match snippet.filter(Snippet::is_interactive) {
             Some(snippet) => self.start_snippet(&snippet, inserted_at),
             // Completing inside a template variable keeps the template.

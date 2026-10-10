@@ -17,6 +17,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiAction {
     GotoLine,
+    FileStructure,
     Find,
     Replace,
     FindNext,
@@ -36,6 +37,7 @@ pub enum UiAction {
 pub fn ui_action(action: &str) -> Option<UiAction> {
     Some(match action {
         "GotoLine" => UiAction::GotoLine,
+        "FileStructurePopup" => UiAction::FileStructure,
         "Find" => UiAction::Find,
         "Replace" => UiAction::Replace,
         "FindNext" => UiAction::FindNext,
@@ -182,7 +184,9 @@ impl IdeApp {
     fn ui_action_available(&self, action: UiAction) -> bool {
         let document = self.state.active_document.is_some();
         match action {
-            UiAction::GotoLine | UiAction::Find | UiAction::Replace => document,
+            UiAction::GotoLine | UiAction::FileStructure | UiAction::Find | UiAction::Replace => {
+                document
+            }
             UiAction::FindNext | UiAction::FindPrevious => document && !self.find.query.is_empty(),
             UiAction::NewFile
             | UiAction::NewDirectory
@@ -197,6 +201,10 @@ impl IdeApp {
         match action {
             UiAction::GotoLine => self.open_dialog(popups::Dialog::GotoLine {
                 input: String::new(),
+            }),
+            UiAction::FileStructure => self.open_dialog(popups::Dialog::FileStructure {
+                query: String::new(),
+                selected: None,
             }),
             UiAction::Find | UiAction::Replace => {
                 let selection = self.primary_selection_text();
