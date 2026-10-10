@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Jetthing MSI (WiX Toolset v5). Built by `cargo xtask dist --installer` on
+  Jetthing MSI (WiX Toolset v5). Built by `cargo xtask dist` (installer mode) on
   Windows, which passes:
     Version  numeric product version (from [workspace.package] version)
     Stage    absolute path of dist/jetthing-<version>-windows-<arch>
