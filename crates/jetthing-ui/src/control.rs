@@ -303,6 +303,10 @@ impl IdeApp {
                 json!({
                     "path": relative(&document.path),
                     "modified": document.text.is_dirty(),
+                    "diskConflict": document.conflict.map(|conflict| match conflict {
+                        jetthing_core::DiskConflict::Modified => "modified",
+                        jetthing_core::DiskConflict::Deleted => "deleted",
+                    }),
                 })
             })
             .collect();

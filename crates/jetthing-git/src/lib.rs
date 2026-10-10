@@ -4,6 +4,11 @@ use std::{
 };
 use thiserror::Error;
 
+mod diff;
+mod watcher;
+pub use diff::{FileDiff, Hunk, HunkKind, LineRange, split_lines};
+pub use watcher::{Notify, StatusWatcher};
+
 #[derive(Debug, Error)]
 pub enum GitError {
     #[error("failed to execute Git: {0}")]
@@ -12,6 +17,8 @@ pub enum GitError {
     Command(String),
     #[error("path is not inside a Git repository: {0}")]
     NotRepository(PathBuf),
+    #[error("{0} is a binary file and cannot be compared as text")]
+    Binary(PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +56,15 @@ impl RepositoryStatus {
         let branch = current_branch(&root)?;
         let output = checked(
             &root,
-            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            &[
+                // Never take index.lock in the background: it would make the
+                // user's own git commands fail.
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
         )?;
         let changes = parse_porcelain(&output.stdout);
         Ok(Self {
@@ -57,6 +72,61 @@ impl RepositoryStatus {
             branch,
             changes,
         })
+    }
+
+    /// Content of repository-relative `path` at `HEAD`, or `None` when the
+    /// file is not in `HEAD` (new file or no commits yet).
+    pub fn head_text(&self, path: &Path) -> Result<Option<String>, GitError> {
+        let spec = format!("HEAD:{}", git_path(path));
+        if !run(&self.root, &["cat-file", "-e", &spec])?
+            .status
+            .success()
+        {
+            return Ok(None);
+        }
+        let output = checked(&self.root, &["show", &spec])?;
+        decode_text(path, output.stdout).map(Some)
+    }
+
+    /// Short hash of `HEAD`, or `None` before the first commit.
+    pub fn head_revision(&self) -> Option<String> {
+        let output = run(&self.root, &["rev-parse", "--short", "HEAD"]).ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+
+    /// Diff of `HEAD` against `working` (the current content of repository-
+    /// relative `path`; `None` when the file was deleted).
+    pub fn diff_against_head(
+        &self,
+        path: &Path,
+        working: Option<String>,
+    ) -> Result<FileDiff, GitError> {
+        let base = self.head_text(path)?;
+        if base.is_none() && working.is_none() {
+            return Err(GitError::Command(format!(
+                "{} exists neither in HEAD nor in the working tree",
+                path.display()
+            )));
+        }
+        let revision = base.as_ref().and(self.head_revision());
+        Ok(FileDiff::compute(
+            path.to_owned(),
+            revision,
+            base.unwrap_or_default(),
+            working.unwrap_or_default(),
+        ))
+    }
+
+    /// Reads repository-relative `path` from the working tree as text.
+    pub fn working_text(&self, path: &Path) -> Result<Option<String>, GitError> {
+        match std::fs::read(self.root.join(path)) {
+            Ok(bytes) => decode_text(path, bytes).map(Some),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub fn stage(&self, path: &Path) -> Result<(), GitError> {
@@ -103,6 +173,22 @@ impl RepositoryStatus {
         let head = checked(&self.root, &["rev-parse", "--short", "HEAD"])?;
         Ok(String::from_utf8_lossy(&head.stdout).trim().into())
     }
+}
+
+/// Git tree paths always use `/`.
+fn git_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn decode_text(path: &Path, bytes: Vec<u8>) -> Result<String, GitError> {
+    if bytes.contains(&0) {
+        return Err(GitError::Binary(path.to_owned()));
+    }
+    Ok(String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
 }
 
 fn current_branch(root: &Path) -> Result<String, GitError> {
@@ -245,6 +331,51 @@ mod tests {
                 .iter()
                 .any(|change| change.path == Path::new("space name.txt") && change.unstaged)
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn diffs_working_files_against_head() {
+        let root = std::env::temp_dir().join(format!("jetthing-git-diff-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        git(&root, &["init", "-q"]);
+        git(&root, &["config", "user.email", "test@example.invalid"]);
+        git(&root, &["config", "user.name", "Jetthing Test"]);
+        let status = RepositoryStatus::load(&root).unwrap();
+        assert_eq!(status.head_revision(), None);
+        fs::write(root.join("src/a b.txt"), "one\ntwo\n").unwrap();
+        fs::write(root.join("bin.dat"), [0u8, 1, 2]).unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-qm", "initial"]);
+        fs::write(root.join("src/a b.txt"), "one\nTWO\nthree\n").unwrap();
+        fs::write(root.join("new.txt"), "fresh\n").unwrap();
+        let status = RepositoryStatus::load(&root).unwrap();
+        let path = Path::new("src/a b.txt");
+        let diff = status
+            .diff_against_head(path, status.working_text(path).unwrap())
+            .unwrap();
+        assert_eq!(diff.old_text, "one\ntwo\n");
+        assert_eq!(diff.hunks.len(), 1);
+        assert_eq!(diff.hunks[0].kind(), HunkKind::Modified);
+        assert_eq!(diff.base_revision, status.head_revision());
+        let added = status
+            .diff_against_head(Path::new("new.txt"), Some("fresh\n".into()))
+            .unwrap();
+        assert_eq!(added.base_revision, None);
+        assert_eq!(added.hunks[0].kind(), HunkKind::Inserted);
+        let deleted = status.diff_against_head(path, None).unwrap();
+        assert_eq!(deleted.hunks[0].kind(), HunkKind::Deleted);
+        assert!(matches!(
+            status.head_text(Path::new("bin.dat")),
+            Err(GitError::Binary(_))
+        ));
+        assert!(
+            status
+                .diff_against_head(Path::new("missing"), None)
+                .is_err()
+        );
+        assert_eq!(status.working_text(Path::new("missing")).unwrap(), None);
         fs::remove_dir_all(root).unwrap();
     }
 

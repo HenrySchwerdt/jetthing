@@ -2,7 +2,6 @@ use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
 use jetthing_git::RepositoryStatus;
 use jetthing_language::{LanguageAnalysis, analyze};
 use jetthing_lsp::{LspDiagnostic, LspManager};
-use jetthing_plugins::PluginManifest;
 use jetthing_project::{FileEntry, Project};
 use jetthing_runner::{TaskPlan, TaskService, TaskState};
 use jetthing_search::{SearchEvent, SearchService, TextMatch};
@@ -12,21 +11,37 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod android_commands;
+mod android_devices;
+mod android_logcat;
 pub mod build_info;
 mod diagnostic_commands;
 pub mod diagnostics;
+mod disk_sync;
 mod editor_commands;
 mod lsp_commands;
+mod plugin_host;
 mod project_commands;
+mod settings_commands;
 mod terminal_commands;
 mod toolchain_commands;
 mod toolwindow;
 mod update_commands;
+pub use android_commands::AndroidState;
+pub use android_devices::DeviceHub;
+pub use android_logcat::LogcatState;
+pub use disk_sync::{DiskConflict, Waker, content_hash};
+pub use settings_commands::Settings;
+mod vcs;
+pub use plugin_host::{
+    PluginHostState, PluginStatusWidget, PluginTab, sync_plugin_commands, user_plugin_dir,
+};
 pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
 };
+pub use vcs::{DiffTab, DiffViewer, RepaintHook};
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -34,6 +49,10 @@ pub struct Document {
     pub text: TextDocument,
     pub analysis: LanguageAnalysis,
     pub selections: SelectionSet,
+    /// Hash of the content last loaded from or saved to disk.
+    pub disk_hash: u64,
+    /// Unresolved outside change; saving is refused while set.
+    pub conflict: Option<DiskConflict>,
 }
 
 #[derive(Default)]
@@ -42,7 +61,7 @@ pub struct IdeState {
     pub files: Vec<FileEntry>,
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
-    pub plugins: Vec<PluginManifest>,
+    pub plugin_host: PluginHostState,
     pub terminal: Option<TerminalSession>,
     pub search: SearchService,
     pub search_results: Vec<TextMatch>,
@@ -50,6 +69,14 @@ pub struct IdeState {
     pub search_files_scanned: usize,
     pub search_truncated: bool,
     pub git: Option<RepositoryStatus>,
+    /// Background status refresh for external changes.
+    git_watcher: Option<jetthing_git::StatusWatcher>,
+    /// The diff viewer tab, if open.
+    pub diff: Option<DiffTab>,
+    /// Whether the diff tab (rather than a document) is the selected editor tab.
+    pub diff_active: bool,
+    /// Lets background services wake the UI.
+    pub repaint: RepaintHook,
     pub runner: TaskService,
     /// Language servers of the open project, started lazily per language.
     pub lsp: LspManager,
@@ -71,7 +98,18 @@ pub struct IdeState {
     update_silent: bool,
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
+    pub settings: Settings,
+    /// Settings page the UI should open (set by `settings.open`, taken by the UI).
+    pub settings_request: Option<String>,
+    pub android: AndroidState,
+    /// Verified installer to run on quit (MSI/DMG/.deb installations).
+    update_installer: Option<(PathBuf, jetthing_update::InstallKind)>,
     pub status: String,
+    watcher: Option<jetthing_project::ProjectWatcher>,
+    /// Lets background services (file watcher) wake the UI.
+    pub waker: Waker,
+    /// Files or `.git` changed outside the IDE since VCS status was loaded.
+    pub vcs_stale: bool,
 }
 
 /// Status bar summary after a Git refresh: "1 change on main", "3 changes on main".
@@ -109,22 +147,29 @@ impl IdeState {
         self.search_truncated = false;
         self.terminal = None;
         self.runner = TaskService::default();
-        self.plugins.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
         self.lsp.set_project(Some(project.root()));
+        self.start_git_watcher();
+        self.close_diff();
         self.toolchains.reload(Some(project.root()));
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
         self.tool_windows.show(ToolWindow::Project);
         self.status = format!("Opened {}", project.root().display());
+        self.load_project_settings(project.root());
+        self.android.project_opened(project.root());
         self.project = Some(project);
+        self.start_watcher();
+        self.vcs_stale = false;
         self.restore_workspace();
         Ok(())
     }
     pub fn open_file(&mut self, path: &Path) -> Result<(), String> {
         if let Some(index) = self.documents.iter().position(|d| d.path == path) {
             self.active_document = Some(index);
+            self.diff_active = false;
+            self.plugin_host.active_tab = None;
             self.touch_recent(path);
             return Ok(());
         }
@@ -135,23 +180,30 @@ impl IdeState {
             text: TextDocument::new(&text),
             analysis: analyze(path, &text),
             selections: SelectionSet::default(),
+            disk_hash: content_hash(&text),
+            conflict: None,
         });
         self.active_document = Some(self.documents.len() - 1);
+        self.diff_active = false;
+        self.plugin_host.active_tab = None;
         self.touch_recent(path);
         self.status = format!("Opened {}", path.display());
         self.sync_document_lsp(path, &text, 0);
         Ok(())
     }
     pub fn save(&mut self, index: usize) -> Result<(), String> {
+        disk_sync::ensure_no_conflict(self, index)?;
         let project = self.project.as_ref().ok_or("no project is open")?;
         let document = self
             .documents
             .get_mut(index)
             .ok_or("document does not exist")?;
+        let text = document.text.text();
         project
-            .write_text(&document.path, &document.text.text())
+            .write_text(&document.path, &text)
             .map_err(|e| e.to_string())?;
         document.text.mark_saved();
+        document.disk_hash = content_hash(&text);
         self.status = format!("Saved {}", document.path.display());
         Ok(())
     }
@@ -185,6 +237,8 @@ impl IdeState {
             return Err("document does not exist".into());
         }
         self.active_document = Some(index);
+        self.diff_active = false;
+        self.plugin_host.active_tab = None;
         let path = self.documents[index].path.clone();
         self.touch_recent(&path);
         self.lsp.clear_completions();
@@ -279,7 +333,18 @@ impl IdeState {
                 .as_ref()
                 .map(Project::root)
                 .unwrap_or_else(|| Path::new("."));
-            self.terminal = Some(TerminalSession::spawn_shell(cwd).map_err(|e| e.to_string())?);
+            let shell = self
+                .settings
+                .text(jetthing_settings::ids::TERMINAL_SHELL)
+                .unwrap_or_default();
+            let session = if shell.trim().is_empty() {
+                TerminalSession::spawn_shell(cwd).map_err(|e| e.to_string())
+            } else {
+                TerminalSession::spawn(shell.trim(), &[], cwd).map_err(|e| {
+                    format!("{e}. Check the shell path in Settings | Tools | Terminal.")
+                })
+            };
+            self.terminal = Some(session?);
         }
         self.tool_windows.show(ToolWindow::Terminal);
         self.status = "Terminal ready".into();
@@ -343,6 +408,7 @@ impl IdeState {
         if let Some(git) = &self.git {
             self.status = changes_summary(git.changes.len(), &git.branch);
         }
+        self.refresh_diff();
         Ok(())
     }
 
@@ -596,12 +662,19 @@ pub(crate) fn usize_param(params: &Value, name: &str) -> Result<usize, CommandEr
 
 pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
+    android_commands::register(&mut registry);
+    android_devices::register(&mut registry);
+    android_logcat::register(&mut registry);
     editor_commands::register(&mut registry);
+    disk_sync::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
     diagnostic_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
+    settings_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
+    vcs::register(&mut registry);
+    plugin_host::register(&mut registry);
     toolchain_commands::register(&mut registry);
     registry
         .register(Command::new(
@@ -923,7 +996,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Toggle Tool Window",
                 "Window",
                 None,
-                r#"{"id":"project|commit|find|build|problems|terminal"}"#,
+                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat"}"#,
             ),
             |_| true,
             |state: &mut IdeState, params| {
@@ -934,6 +1007,12 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 }
                 if window == ToolWindow::Commit && !state.tool_windows.is_visible(window) {
                     let _ = state.refresh_git();
+                }
+                if window == ToolWindow::DeviceManager && !state.tool_windows.is_visible(window) {
+                    state.device_manager_opened();
+                }
+                if window == ToolWindow::Logcat && !state.tool_windows.is_visible(window) {
+                    state.logcat_opened();
                 }
                 Ok(json!({"visible": state.tool_windows.toggle(window)}))
             },
@@ -963,11 +1042,17 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     &id,
                     &format!("{} Tool Window", window.title()),
                     "Window",
-                    Some(window.shortcut()),
+                    Some(window.shortcut()).filter(|shortcut| !shortcut.is_empty()),
                     "{}",
                 ),
                 |_| true,
                 move |state: &mut IdeState, _| {
+                    if window == ToolWindow::DeviceManager {
+                        state.device_manager_opened();
+                    }
+                    if window == ToolWindow::Logcat {
+                        state.logcat_opened();
+                    }
                     if window == ToolWindow::Terminal {
                         state.open_terminal().map_err(CommandError::Failed)?;
                     }
@@ -1035,23 +1120,6 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .toggle_directory(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"expanded": expanded}))
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec("plugin.refresh", "Refresh Plugins", "Plugins", None, "{}"),
-            |_| true,
-            |state: &mut IdeState, _| {
-                let root = state.project.as_ref().map(|p| p.root().join("plugins"));
-                state.plugins = root
-                    .as_deref()
-                    .map(jetthing_plugins::discover)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(Result::ok)
-                    .collect();
-                Ok(json!({"count": state.plugins.len()}))
             },
         ))
         .expect("unique built-in id");

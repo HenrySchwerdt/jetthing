@@ -15,7 +15,7 @@ pub fn status_widget(app: &mut IdeApp, ui: &mut egui::Ui, font: egui::FontId) {
                 egui::ProgressBar::new(fraction)
                     .desired_width(80.0)
                     .desired_height(4.0)
-                    .fill(theme::TEXT_INFO),
+                    .fill(*theme::TEXT_INFO),
             );
         }
         None => {

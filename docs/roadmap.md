@@ -16,6 +16,8 @@
 - [x] Save and Save All commands
 - [x] Command palette
 - [x] Manifest plugin discovery
+- [x] Plugin API 1: Rust plugins contribute commands, menus, keybindings, settings, tool windows, editor tabs and status widgets; live enable/disable; `--app <id>` standalone mode (`docs/plugins/api.md`)
+- [ ] `.jtplugin` install/uninstall, Settings ▸ Plugins (Marketplace/Installed), Lua and WASM plugin runtimes, JetBrains Marketplace conversion
 - [x] Revisioned rope-backed text engine with Unicode-safe undo/redo
 - [x] Viewport-native editor that shapes and paints only visible lines
 - [x] Multi-cursor selections, atomic edits, and coalesced primary typing transactions
@@ -37,7 +39,11 @@
 - [x] Collapsible, sorted project tree with VCS file colors
 - [x] Run widget (`run.project`) next to Build, with OpenGL fallback renderer
 - [x] Release packaging (`cargo xtask dist`) and CI/release workflows
-- [ ] Light theme, settings dialog, and bundled icon set beyond the core actions
+- [x] Typed settings model and Settings dialog with search, Apply/Reset and Advanced Settings
+- [x] Theme engine from spec data with live Islands Dark / Islands Light switching
+- [ ] Keymap switching and bundled icon set beyond the core actions
+- [x] Native installers: MSI, DMG (`Jetthing.app`) and `.deb`, smoke-tested in CI
+- [ ] Code signing and notarization with project certificates (pipeline supports it)
 - [x] Editor actions: duplicate/delete/comment/move lines, pairing, smart Enter, word moves
 - [x] Find/Replace in file, Go to Line, Recent Files, Go to File
 - [x] Project tree New/Rename/Delete, commit with message and file selection
