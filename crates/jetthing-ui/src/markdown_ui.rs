@@ -573,6 +573,7 @@ fn render_block(ui: &mut egui::Ui, ctx: &mut Ctx, block: &Block, depth: usize) {
 
 /// Draws the preview of `document` in `rect`; `scroll_to` sets its vertical offset.
 /// Returns its scroll offset after the frame and records block positions for syncing.
+#[allow(clippy::too_many_arguments)] // inputs of one preview frame
 pub fn preview(
     ui: &mut egui::Ui,
     state: &mut State,
@@ -653,10 +654,11 @@ mod tests {
     use super::*;
 
     fn state() -> State {
-        let mut state = State::default();
         // 10 lines over 300px of preview: 30px per line, editor rows are 20px.
-        state.map = ScrollMap::new(&[(0..10, 0.0, 300.0)], 10, 300.0);
-        state
+        State {
+            map: ScrollMap::new(&[(0..10, 0.0, 300.0)], 10, 300.0),
+            ..State::default()
+        }
     }
 
     #[test]

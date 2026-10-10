@@ -684,6 +684,7 @@ fn move_primary(document: &mut Document, head: usize, extend: bool) {
     document.selections.set_single(Selection { anchor, head });
 }
 
+#[allow(clippy::too_many_arguments)] // paint inputs of one editor frame
 fn editor_surface(
     ui: &mut egui::Ui,
     document: &mut Document,
