@@ -11,6 +11,7 @@ mod control;
 mod diff_ui;
 mod editor;
 mod findbar;
+mod git_log_ui;
 mod icons;
 mod keys;
 mod lsp_status;
@@ -460,6 +461,7 @@ impl IdeApp {
             (Key::Num3, ToolWindow::Find),
             (Key::Num4, ToolWindow::Build),
             (Key::Num6, ToolWindow::Problems),
+            (Key::Num9, ToolWindow::Git),
         ] {
             if consume(tool_modifier, key) {
                 self.toggle_tool_window(window);

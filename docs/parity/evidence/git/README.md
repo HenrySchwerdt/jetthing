@@ -11,6 +11,9 @@ Captured on Linux under Xvfb (1600×1000, `JETTHING_RENDERER=glow`,
 | `13b-diff-external-change-words.png` | With the diff open, run `sed -i 's/"Hello, "/"Hi there, "/' App.java` and `echo new > NOTES.txt` in another process; wait ~2 s, no clicks | 12 Commit / 13 Diff |
 | `13c-diff-unified.png` | F7, then choose “Unified viewer” in the toolbar | 13 Diff (unified mode) |
 | `12c-tree-autorefresh.png` | Change `settings.gradle` outside the IDE, Alt+1 | issue #47 bug 3 |
+| `14-git-log.png` | Sample history with a merged `feature/greeting` branch and tag `v1.0`; Alt+9 | 14 Git log |
+| `14b-git-log-commit-diff.png` | Select the merge commit, double-click `settings.gradle` in the changed files | 14 Git log / 13 Diff |
+| `14c-git-log-filter.png` | Type `greet` in “Text or hash” | 14 Git log |
 | `gutter-change-markers.png` | Open `App.java` with a modified line (6), an inserted comment (11) and a deleted `import` (wedge above 3) | editor gutter (no numbered scene) |
 | `gutter-change-popup.png` | Click the blue marker on line 6 | gutter change popup |
 | `gutter-rollback.png` | Click “Rollback” in the popup: line 6 is back to the HEAD text and its marker is gone | — |
@@ -29,3 +32,11 @@ Compared with reference scene 13 (IntelliJ IDEA, `java-gradle`):
 Background refresh: `git --no-optional-locks status` every 2 s on a worker
 thread and immediately when the window regains focus, so it never takes
 `index.lock` away from the user's own git commands.
+
+Compared with reference scene 14 (IntelliJ IDEA, `java-gradle`): same three-pane
+split (branches, commit table, changed files over commit details), the
+“Text or hash” field, a Branch filter, ref labels with branch/tag icons, and a
+`hash author <email> on date` details line. Differences: no `Log` tab strip or
+`+` for more log tabs, no User/Date/Paths filters or toolbar actions, branches
+pane has no search or action strip, the changed files are a flat list (not a
+directory tree), dates are UTC.
