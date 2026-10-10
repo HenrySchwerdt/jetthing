@@ -43,6 +43,7 @@ pub use plugin_host::{
 pub use completion::CompletionSession;
 pub use snippet_session::SnippetSession;
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
+pub use jetthing_search::SearchOptions;
 pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
@@ -73,6 +74,8 @@ pub struct IdeState {
     pub search: SearchService,
     pub search_results: Vec<TextMatch>,
     pub search_query: String,
+    /// Options of the last Find in Files run.
+    pub search_options: SearchOptions,
     pub search_files_scanned: usize,
     pub search_truncated: bool,
     pub git: Option<RepositoryStatus>,
@@ -425,9 +428,17 @@ impl IdeState {
     }
 
     pub fn start_search(&mut self, query: String) -> Result<u64, String> {
-        if query.is_empty() {
-            return Err("search query cannot be empty".into());
-        }
+        self.start_search_with(query, SearchOptions::default())
+    }
+
+    /// Find in Files with match-case, whole-word, regex and file-mask options.
+    pub fn start_search_with(
+        &mut self,
+        query: String,
+        options: SearchOptions,
+    ) -> Result<u64, String> {
+        // Validate before clearing the previous results.
+        jetthing_search::Matcher::new(&query, &options).map_err(|error| error.to_string())?;
         let project = self.project.as_ref().ok_or("no project is open")?;
         let files = self
             .files
@@ -442,8 +453,9 @@ impl IdeState {
         self.tool_windows.show(ToolWindow::Find);
         let job = self
             .search
-            .start(project.root().to_owned(), files, query)
-            .map_err(|error| format!("failed to start search: {error}"))?;
+            .start(project.root().to_owned(), files, query, &options)
+            .map_err(|error| error.to_string())?;
+        self.search_options = options;
         self.status = format!("Searching project (job {job})");
         Ok(job)
     }
@@ -889,12 +901,25 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Find in Files",
                 "Search",
                 Some("⇧⌘F"),
-                r#"{"query":"string"}"#,
+                r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?","fileMask":"string?"}"#,
             ),
             |state: &IdeState| state.project.is_some(),
             |state: &mut IdeState, params| {
                 let query = string_param(&params, "query")?;
-                let job = state.start_search(query).map_err(CommandError::Failed)?;
+                let flag = |name: &str| params.get(name).and_then(Value::as_bool).unwrap_or(false);
+                let options = SearchOptions {
+                    match_case: flag("matchCase"),
+                    whole_words: flag("wholeWords"),
+                    regex: flag("regex"),
+                    file_mask: params
+                        .get("fileMask")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                };
+                let job = state
+                    .start_search_with(query, options)
+                    .map_err(CommandError::InvalidParams)?;
                 Ok(json!({"job": job}))
             },
         ))
@@ -1374,6 +1399,61 @@ mod tests {
         state.poll_search();
         assert_eq!(state.search_results.len(), 1);
         assert_eq!(state.search_results[0].path, Path::new("sample.txt"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_search_honours_options_and_rejects_bad_regex() {
+        use super::*;
+        let root =
+            std::env::temp_dir().join(format!("jetthing-core-search-opts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("App.java"), "Greet greet\ngreeting\n").unwrap();
+        std::fs::write(root.join("notes.txt"), "greet\n").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        state.open_project(&root).unwrap();
+        let run = |state: &mut IdeState, params: Value| {
+            commands.execute("search.project", state, params).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while state.search.is_running() && Instant::now() < deadline {
+                state.poll_search();
+                thread::sleep(Duration::from_millis(5));
+            }
+            state.poll_search();
+            state
+                .search_results
+                .iter()
+                .map(|result| (result.path.display().to_string(), result.line))
+                .collect::<Vec<_>>()
+        };
+        let hits = run(
+            &mut state,
+            json!({"query": "greet", "matchCase": true, "wholeWords": true, "fileMask": "*.java"}),
+        );
+        assert_eq!(hits, [("App.java".to_owned(), 1)]);
+        assert_eq!(state.search_results[0].highlights, vec![6..11]);
+        assert!(state.search_options.match_case && state.search_options.whole_words);
+        let hits = run(&mut state, json!({"query": "^greet", "regex": true}));
+        assert_eq!(hits.len(), 3, "{hits:?}");
+        let previous = state.search_results.len();
+        let error = commands
+            .execute(
+                "search.project",
+                &mut state,
+                json!({"query": "(", "regex": true}),
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("invalid regular expression"),
+            "{error}"
+        );
+        assert_eq!(
+            state.search_results.len(),
+            previous,
+            "bad input keeps old results"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

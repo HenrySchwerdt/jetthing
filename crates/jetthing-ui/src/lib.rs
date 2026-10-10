@@ -59,6 +59,8 @@ pub struct IdeApp {
     palette: palette::Palette,
     terminal_selection: Option<(terminal_ui::GridPoint, terminal_ui::GridPoint)>,
     search_input: String,
+    /// Find in Files option toggles and file mask.
+    find_options: jetthing_core::SearchOptions,
     tree_selection: Option<PathBuf>,
     /// Active editor file last revealed in the Project tree.
     tree_revealed: Option<PathBuf>,
@@ -183,6 +185,7 @@ impl IdeApp {
             palette: palette::Palette::default(),
             terminal_selection: None,
             search_input: String::new(),
+            find_options: jetthing_core::SearchOptions::default(),
             tree_selection: None,
             tree_revealed: None,
             caret_screen_pos: None,
