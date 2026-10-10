@@ -15,6 +15,7 @@ mod lsp_status;
 mod notifications;
 mod palette;
 mod popups;
+mod problems_ui;
 mod syntax;
 mod terminal_ui;
 mod theme;
@@ -347,6 +348,12 @@ impl IdeApp {
             if consume(Modifiers::COMMAND, Key::R) {
                 let selection = self.primary_selection_text();
                 self.find.show(true, selection);
+            }
+            if consume(Modifiers::NONE, Key::F2) {
+                self.dispatch("editor.nextProblem", Value::Null);
+            }
+            if consume(Modifiers::SHIFT, Key::F2) {
+                self.dispatch("editor.previousProblem", Value::Null);
             }
             let next =
                 consume(Modifiers::NONE, Key::F3) || (mac && consume(Modifiers::COMMAND, Key::G));

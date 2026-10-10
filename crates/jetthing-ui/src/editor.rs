@@ -1,6 +1,7 @@
 //! Editor island: tabs, viewport-native text surface, and completion popup.
 
 use crate::icons::{self, Icon};
+use crate::problems_ui;
 use crate::widgets::island_frame;
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, Sense, Stroke, vec2};
@@ -52,21 +53,57 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let Some(index) = app.state.active_document else {
                 return;
             };
-            let diagnostics = app.state.active_lsp_diagnostics();
+            let problems = app.state.active_problems();
             let highlights = if app.find.open {
                 app.find.matches(&app.state.documents[index].text.text())
             } else {
                 Vec::new()
             };
+            let available = ui.available_rect_before_wrap();
+            let stripe_rect = Rect::from_min_max(
+                egui::pos2(
+                    available.right() - problems_ui::STRIPE_WIDTH,
+                    available.top(),
+                ),
+                available.max,
+            );
+            let text_rect = available.with_max_x(stripe_rect.left());
+            ui.allocate_rect(available, Sense::hover());
+            let line_count = app.state.documents[index].text.len_lines();
+            if let Some((line, column)) =
+                problems_ui::error_stripe(ui, stripe_rect, &problems, line_count, ROW_HEIGHT)
+            {
+                move_caret_to(app, line, column);
+                ui.memory_mut(|memory| memory.request_focus(editor_id()));
+            }
+            let mut text_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
             let doc = &mut app.state.documents[index];
-            match editor_surface(ui, doc, &diagnostics, &highlights) {
+            let surface = editor_surface(&mut text_ui, doc, &problems, &highlights);
+            let counts = jetthing_core::ProblemCounts::of(&problems);
+            match problems_ui::inspection_widget(ui, text_rect.right_top(), counts) {
+                Some(problems_ui::WidgetAction::Next) => {
+                    requests.push(EditorRequest::Command("editor.nextProblem", Value::Null));
+                }
+                Some(problems_ui::WidgetAction::Previous) => {
+                    requests.push(EditorRequest::Command(
+                        "editor.previousProblem",
+                        Value::Null,
+                    ));
+                }
+                Some(problems_ui::WidgetAction::ShowProblems) => requests.push(
+                    EditorRequest::Command("toolwindow.activate.problems", Value::Null),
+                ),
+                None => {}
+            }
+            let doc = &mut app.state.documents[index];
+            match surface {
                 Ok(EditorOutput {
                     changed,
                     caret_pos,
                     requests: editor_requests,
                 }) => {
                     app.caret_screen_pos = caret_pos;
-                    requests = editor_requests;
+                    requests.extend(editor_requests);
                     if changed {
                         let snapshot = doc.text.text();
                         doc.analysis = jetthing_language::analyze(&doc.path, &snapshot);
@@ -196,7 +233,17 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             Icon::for_file(&name),
             icons::ICON,
         );
+        let text_rect = layout.text;
         ui.painter().galley(layout.text.min, galley, color);
+        if app.state.problems.has_errors(&doc.path) {
+            problems_ui::squiggle(
+                ui.painter(),
+                text_rect.left(),
+                text_rect.right(),
+                rect.center().y + 8.0,
+                theme::editor::ERROR_EFFECT,
+            );
+        }
         let close_rect = layout.close;
         let dirty = doc.text.is_dirty();
         let pointer_on_close = response
@@ -306,20 +353,6 @@ fn highlighted_line_job(
     job
 }
 
-/// Squiggle underline used for errors and warnings.
-fn squiggle(painter: &egui::Painter, x1: f32, x2: f32, y: f32, color: Color32) {
-    let step = 2.0;
-    let mut points = Vec::new();
-    let mut x = x1;
-    let mut up = true;
-    while x <= x2.max(x1 + 6.0) {
-        points.push(egui::pos2(x, if up { y - 1.5 } else { y + 0.5 }));
-        x += step;
-        up = !up;
-    }
-    painter.add(egui::Shape::line(points, Stroke::new(1.0_f32, color)));
-}
-
 /// Moves the primary caret to a zero-based line/column and focuses the editor.
 pub fn move_caret_to(app: &mut IdeApp, line: usize, column: usize) {
     let Some(index) = app.state.active_document else {
@@ -370,7 +403,7 @@ fn move_primary(document: &mut Document, head: usize, extend: bool) {
 fn editor_surface(
     ui: &mut egui::Ui,
     document: &mut Document,
-    lsp_diagnostics: &[jetthing_lsp::LspDiagnostic],
+    problems: &[jetthing_core::Problem],
     highlights: &[(usize, usize)],
 ) -> Result<EditorOutput, String> {
     let mut requests = Vec::new();
@@ -619,44 +652,14 @@ fn editor_surface(
                 );
 
                 let column_x = |column: usize| rect.left() + text_left + column as f32 * char_width;
-                for diagnostic in &document.analysis.diagnostics {
-                    if diagnostic.row == line + 1 {
-                        let start = diagnostic.column.saturating_sub(1);
-                        squiggle(
-                            &painter,
-                            column_x(start),
-                            column_x(start + 1),
-                            y + ROW_HEIGHT - 2.0,
-                            theme::editor::ERROR_EFFECT,
-                        );
-                    }
-                }
-                for diagnostic in lsp_diagnostics {
-                    if diagnostic.start_line <= line && diagnostic.end_line >= line {
-                        let start = if diagnostic.start_line == line {
-                            diagnostic.start_character
-                        } else {
-                            0
-                        };
-                        let end = if diagnostic.end_line == line {
-                            diagnostic.end_character
-                        } else {
-                            content.chars().count()
-                        };
-                        let color = if diagnostic.severity == Some(1) {
-                            theme::editor::ERROR_EFFECT
-                        } else {
-                            theme::editor::WARNING_EFFECT
-                        };
-                        squiggle(
-                            &painter,
-                            column_x(start),
-                            column_x(end.max(start + 1)),
-                            y + ROW_HEIGHT - 2.0,
-                            color,
-                        );
-                    }
-                }
+                problems_ui::paint_line(
+                    &painter,
+                    problems,
+                    line,
+                    content.chars().count(),
+                    column_x,
+                    row,
+                );
                 for selection in document.selections.selections() {
                     if selection.head >= line_start && selection.head <= line_end {
                         let x = column_x(selection.head - line_start);
@@ -670,6 +673,26 @@ fn editor_surface(
                             );
                         }
                     }
+                }
+            }
+            if let Some(pointer) = response.hover_pos() {
+                let line = ((pointer.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize;
+                let column = (pointer.x - rect.left() - text_left) / char_width;
+                if line < line_count && column >= 0.0 {
+                    let line_len = document
+                        .text
+                        .line(line)
+                        .unwrap_or_default()
+                        .trim_end_matches(['\r', '\n'])
+                        .chars()
+                        .count();
+                    problems_ui::hover_tooltip(
+                        &response,
+                        problems,
+                        line,
+                        column.floor() as usize,
+                        line_len,
+                    );
                 }
             }
             if focused {

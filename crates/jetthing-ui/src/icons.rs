@@ -44,6 +44,7 @@ pub enum Icon {
     Refresh,
     Error,
     Warning,
+    WeakWarning,
 }
 
 impl Icon {
@@ -275,11 +276,16 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             painter.line_segment([g.p(8.0, 4.5), g.p(8.0, 9.0)], white);
             painter.circle_filled(g.p(8.0, 11.3), g.len(1.0), theme::ISLAND);
         }
-        Icon::Warning => {
+        Icon::Warning | Icon::WeakWarning => {
+            let fill = if icon == Icon::Warning {
+                theme::WARNING
+            } else {
+                theme::editor::WEAK_WARNING_EFFECT
+            };
             closed(
                 &[(8.0, 1.5), (15.0, 14.0), (1.0, 14.0)],
-                theme::WARNING,
-                Stroke::new(stroke.width, theme::WARNING),
+                fill,
+                Stroke::new(stroke.width, fill),
             );
             let dark = Stroke::new(g.len(1.5).max(1.0), theme::ISLAND);
             painter.line_segment([g.p(8.0, 6.0), g.p(8.0, 10.0)], dark);

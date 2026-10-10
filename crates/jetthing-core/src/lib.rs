@@ -14,10 +14,12 @@ use std::path::{Path, PathBuf};
 
 mod editor_commands;
 mod lsp_commands;
+mod problems;
 mod project_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
+pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -48,6 +50,8 @@ pub struct IdeState {
     pub runner: TaskService,
     /// Language servers of the open project, started lazily per language.
     pub lsp: LspManager,
+    /// Project-wide problems, refreshed by [`IdeState::refresh_problems`].
+    pub problems: ProblemIndex,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -141,6 +145,8 @@ impl IdeState {
             .map_err(|e| e.to_string())?;
         document.text.mark_saved();
         self.status = format!("Saved {}", document.path.display());
+        let absolute = project.root().join(&document.path);
+        let _ = self.lsp.save_document(&absolute);
         Ok(())
     }
 
@@ -396,6 +402,7 @@ impl IdeState {
     /// Pumps the language servers and re-opens documents on restarted servers.
     pub fn poll_lsp(&mut self) {
         let restarted = self.lsp.poll();
+        self.refresh_problems();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };
@@ -589,6 +596,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     update_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
+    problems::register(&mut registry);
     registry
         .register(Command::new(
             spec(

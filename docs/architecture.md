@@ -32,7 +32,9 @@ no crate below `jetthing-ui` imports UI types.
 - `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,
   and validation. Executable/Wasm loading is deliberately not claimed yet.
 - `jetthing-core`: application state, tool window layout model (one visible tool window
-  per anchor), and built-in command handlers.
+  per anchor), the problems model (`problems`: syntax errors and LSP diagnostics merged
+  into per-file problems with severities, counts and ancestor error propagation), and
+  built-in command handlers.
 - `jetthing-ui`: native workbench shell split into `chrome` (main toolbar, stripe, status
   bar, window controls), `toolwindows` (Project, Commit, Find, Build/Run, Problems,
   Terminal), `editor` (tabs, viewport-native highlighted editor, completion popup),

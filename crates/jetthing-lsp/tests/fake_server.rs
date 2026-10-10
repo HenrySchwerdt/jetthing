@@ -249,3 +249,57 @@ fn disabled_servers_are_not_started() {
     ));
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn diagnostics_carry_severity_tags_and_project_files() {
+    let root = workspace("diagnostics");
+    let file = root.join("src/App.fake");
+    let mut manager = LspManager::new(registry(&["--publish", "src/Other.fake"]));
+    manager.set_project(Some(&root));
+    let generation = manager.diagnostics_generation();
+    assert_eq!(manager.published_diagnostics(&file), None);
+    let text = "ok\nlet x = 1; // @error é @unused\n@weak @hint\n";
+    manager.sync_document(&file, text, 0).unwrap();
+    assert!(wait_until(|| {
+        manager.poll();
+        manager.diagnostics_for(&file).len() == 4
+            && manager
+                .all_diagnostics()
+                .any(|(path, _)| path.ends_with("Other.fake"))
+    }));
+    assert_ne!(manager.diagnostics_generation(), generation);
+    let mut diagnostics = manager.diagnostics_for(&file);
+    diagnostics.sort_by_key(|d| (d.start_line, d.start_character));
+    let error = &diagnostics[0];
+    assert_eq!((error.severity, error.start_line), (Some(1), 1));
+    assert_eq!(error.start_character, 14);
+    assert_eq!(error.code.as_deref(), Some("F1"));
+    assert_eq!(error.source.as_deref(), Some("fake"));
+    let unused = &diagnostics[1];
+    // `é` is one UTF-16 unit, so the marker starts at 23.
+    assert_eq!((unused.start_character, unused.unnecessary), (23, true));
+    assert_eq!(diagnostics[2].severity, Some(3));
+    assert_eq!(diagnostics[3].severity, Some(4));
+    let (other, published) = manager
+        .all_diagnostics()
+        .find(|(path, _)| path.ends_with("Other.fake"))
+        .unwrap();
+    assert_eq!(other, root.join("src/Other.fake"));
+    assert_eq!(published[0].message, "fake project error");
+    // Fixing the text clears the markers and bumps the generation.
+    let generation = manager.diagnostics_generation();
+    manager.sync_document(&file, "ok\n", 1).unwrap();
+    assert!(wait_until(|| {
+        manager.poll();
+        manager.diagnostics_for(&file).len() == 1
+    }));
+    assert!(manager.diagnostics_generation() > generation);
+    // Saving triggers the server's on-save check.
+    manager.save_document(&file).unwrap();
+    assert!(wait_until(|| {
+        manager.poll();
+        manager.diagnostics_for(&file)[0].message == "fake check warning"
+    }));
+    manager.shutdown();
+    std::fs::remove_dir_all(root).unwrap();
+}

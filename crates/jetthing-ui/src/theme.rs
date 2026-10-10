@@ -96,6 +96,9 @@ pub mod editor {
     pub const INDENT_GUIDE: Color32 = hex(0x323438); // INDENT_GUIDE
     pub const ERROR_EFFECT: Color32 = hex(0xFA6675); // ERRORS_ATTRIBUTES.EFFECT_COLOR
     pub const WARNING_EFFECT: Color32 = hex(0xF2C55C); // WARNING_ATTRIBUTES.EFFECT_COLOR
+    pub const WEAK_WARNING_EFFECT: Color32 = hex(0x756D56); // INFO_ATTRIBUTES.EFFECT_COLOR
+    pub const ERROR_STRIPE: Color32 = hex(0xE55765); // ERRORS_ATTRIBUTES.ERROR_STRIPE_COLOR
+    pub const WARNING_STRIPE: Color32 = hex(0xBE9117); // WARNING_ATTRIBUTES.ERROR_STRIPE_COLOR
 }
 
 /// Avatar gradient start colors (`RecentProject.ColorN.Avatar.Start`).
