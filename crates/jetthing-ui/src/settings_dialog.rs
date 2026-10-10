@@ -183,7 +183,7 @@ fn draw(
                 egui::Align2::CENTER_CENTER,
                 "Settings",
                 theme::semibold(theme::UI_FONT_SIZE),
-                theme::TEXT_BRIGHT,
+                *theme::TEXT_BRIGHT,
             );
             let mut close_ui = ui.new_child(
                 egui::UiBuilder::new()
@@ -361,9 +361,9 @@ fn tree_row(
         ui.allocate_exact_size(vec2(ui.available_width(), TREE_ROW), Sense::click());
     let selected = dialog.page == node.id;
     let fill = if selected {
-        theme::SELECTION
+        *theme::SELECTION
     } else if response.hovered() {
-        theme::HOVER
+        *theme::HOVER
     } else {
         Color32::TRANSPARENT
     };
@@ -379,7 +379,7 @@ fn tree_row(
             } else {
                 Icon::ChevronRight
             },
-            theme::TEXT_SECONDARY,
+            *theme::TEXT_SECONDARY,
         );
     }
     let font = if depth == 0 {
@@ -388,9 +388,9 @@ fn tree_row(
         egui::FontId::proportional(theme::UI_FONT_SIZE)
     };
     let color = if modified.contains(&node.id) {
-        theme::MODIFIED
+        *theme::MODIFIED
     } else {
-        theme::TEXT
+        *theme::TEXT
     };
     ui.painter().text(
         pos2(x + 20.0, rect.center().y),
@@ -461,7 +461,7 @@ fn page(
         let crumbs = registry.breadcrumbs(&page_id);
         for (index, crumb) in crumbs.iter().enumerate() {
             if index > 0 {
-                icons::show(ui, Icon::ChevronRight, 12.0, theme::TEXT_SECONDARY);
+                icons::show(ui, Icon::ChevronRight, 12.0, *theme::TEXT_SECONDARY);
             }
             ui.label(
                 RichText::new(*crumb)
@@ -586,7 +586,7 @@ fn setting_row(
     let indent = if indented { 18.0 } else { 0.0 };
     ui.horizontal(|ui| {
         ui.add_space(indent);
-        let label_color = theme::TEXT;
+        let label_color = *theme::TEXT;
         match (&def.kind, &current) {
             (SettingKind::Bool, SettingValue::Bool(value)) => {
                 let mut checked = *value;
@@ -736,7 +736,7 @@ fn number_field(
         .id(key)
         .desired_width(64.0);
     if parsed.is_none() {
-        edit = edit.text_color(theme::ERROR);
+        edit = edit.text_color(*theme::ERROR);
     }
     let response = ui.add(edit);
     if response.has_focus() {

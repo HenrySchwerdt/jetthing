@@ -134,14 +134,14 @@ fn empty_state(ui: &mut egui::Ui) {
             egui::Align2::RIGHT_CENTER,
             label,
             egui::FontId::proportional(theme::UI_FONT_SIZE),
-            theme::TEXT_SECONDARY,
+            *theme::TEXT_SECONDARY,
         );
         painter.text(
             egui::pos2(rect.center().x + 8.0, y),
             egui::Align2::LEFT_CENTER,
             crate::keys::display(shortcut),
             egui::FontId::proportional(theme::UI_FONT_SIZE),
-            theme::MODIFIED,
+            *theme::MODIFIED,
         );
         y += 28.0;
     }
@@ -159,9 +159,9 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
         let name = IdeApp::file_name(&doc.path);
         let active = app.state.active_document == Some(index);
         let color = if active {
-            theme::TEXT_BRIGHT
+            *theme::TEXT_BRIGHT
         } else {
-            theme::TEXT_SECONDARY
+            *theme::TEXT_SECONDARY
         };
         let galley = ui
             .painter()
@@ -174,9 +174,9 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         let response = ui.interact(rect, egui::Id::new(("editor_tab", index)), Sense::click());
         let fill = if active {
-            Color32::from_rgb(0x23, 0x35, 0x58) // EditorTabs.underlinedTabBackground
+            *theme::TAB_SELECTED
         } else if response.hovered() {
-            theme::HOVER
+            *theme::HOVER
         } else {
             Color32::TRANSPARENT
         };
@@ -185,7 +185,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.painter().rect_stroke(
                 rect,
                 6.0,
-                Stroke::new(1.0_f32, Color32::from_rgb(0x2E, 0x4D, 0x89)), // EditorTabs.underlinedBorderColor
+                Stroke::new(1.0_f32, theme::TAB_SELECTED_BORDER),
                 egui::StrokeKind::Inside,
             );
         }
@@ -193,7 +193,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.painter(),
             Rect::from_min_size(rect.left_center() + vec2(10.0, -8.0), vec2(16.0, 16.0)),
             Icon::for_file(&name),
-            icons::ICON,
+            *icons::ICON,
         );
         let text_pos = rect.left_center() + vec2(32.0, -galley.size().y / 2.0);
         ui.painter().galley(text_pos, galley, color);
@@ -214,7 +214,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
                 ui.painter(),
                 close_rect.shrink(2.0),
                 Icon::Close,
-                theme::TEXT_SECONDARY,
+                *theme::TEXT_SECONDARY,
             );
         } else if dirty {
             ui.painter()
@@ -250,13 +250,13 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
 fn syntax_color(kind: SyntaxKind) -> Color32 {
     use theme::editor;
     match kind {
-        SyntaxKind::Keyword => editor::KEYWORD,
-        SyntaxKind::String => editor::STRING,
-        SyntaxKind::Comment => editor::COMMENT,
-        SyntaxKind::Number => editor::NUMBER,
-        SyntaxKind::Type => editor::TEXT,
-        SyntaxKind::Function => editor::FUNCTION,
-        SyntaxKind::Macro => editor::FUNCTION,
+        SyntaxKind::Keyword => *editor::KEYWORD,
+        SyntaxKind::String => *editor::STRING,
+        SyntaxKind::Comment => *editor::COMMENT,
+        SyntaxKind::Number => *editor::NUMBER,
+        SyntaxKind::Type => *editor::TEXT,
+        SyntaxKind::Function => *editor::FUNCTION,
+        SyntaxKind::Macro => *editor::FUNCTION,
     }
 }
 
@@ -269,7 +269,7 @@ fn highlighted_line_job(
     let mut job = egui::text::LayoutJob::default();
     let base = egui::TextFormat {
         font_id: font.clone(),
-        color: theme::editor::TEXT,
+        color: *theme::editor::TEXT,
         ..Default::default()
     };
     let line_end_byte = line_start_byte + text.len();
@@ -300,7 +300,7 @@ fn highlighted_line_job(
             0.0,
             egui::TextFormat {
                 color: if doc {
-                    theme::editor::DOC_COMMENT
+                    *theme::editor::DOC_COMMENT
                 } else {
                     syntax_color(span.kind)
                 },
@@ -393,6 +393,16 @@ fn editor_surface(
     let font = theme::editor_font(ui.style());
     // Rows scale with Settings | Editor | Font (size and line height).
     let row_height = theme::editor_row_height(ui.ctx(), &font, ROW_HEIGHT);
+    // The color scheme's background (equal to the island in the theme's own scheme).
+    ui.painter().rect_filled(
+        ui.available_rect_before_wrap(),
+        egui::CornerRadius {
+            sw: theme::ISLAND_RADIUS,
+            se: theme::ISLAND_RADIUS,
+            ..Default::default()
+        },
+        theme::editor::BACKGROUND,
+    );
     let char_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'm'));
     let line_count = document.text.len_lines();
     let digits = line_count.max(1).to_string().len().max(2);
@@ -570,9 +580,9 @@ fn editor_surface(
                     format!("{}", line + 1),
                     font.clone(),
                     if line == caret_line {
-                        theme::editor::LINE_NUMBER_CARET
+                        *theme::editor::LINE_NUMBER_CARET
                     } else {
-                        theme::editor::LINE_NUMBER
+                        *theme::editor::LINE_NUMBER
                     },
                 );
                 // Indent guides every four columns of leading whitespace.
@@ -645,7 +655,7 @@ fn editor_surface(
                             column_x(start),
                             column_x(start + 1),
                             y + row_height - 2.0,
-                            theme::editor::ERROR_EFFECT,
+                            *theme::editor::ERROR_EFFECT,
                         );
                     }
                 }
@@ -662,9 +672,9 @@ fn editor_surface(
                             content.chars().count()
                         };
                         let color = if diagnostic.severity == Some(1) {
-                            theme::editor::ERROR_EFFECT
+                            *theme::editor::ERROR_EFFECT
                         } else {
-                            theme::editor::WARNING_EFFECT
+                            *theme::editor::WARNING_EFFECT
                         };
                         squiggle(
                             &painter,
@@ -989,13 +999,13 @@ pub fn completion_popup(app: &mut IdeApp, ctx: &egui::Context) {
                                     rect.left() + 8.0,
                                     &item.label,
                                     theme::editor_font(ui.style()),
-                                    theme::TEXT_BRIGHT,
+                                    *theme::TEXT_BRIGHT,
                                 );
                                 if let Some(detail) = &item.detail {
                                     let galley = ui.painter().layout_no_wrap(
                                         detail.clone(),
                                         egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                                        theme::TEXT_INFO,
+                                        *theme::TEXT_INFO,
                                     );
                                     let pos = egui::pos2(
                                         (rect.right() - galley.size().x - 8.0).max(x + 16.0),
@@ -1004,7 +1014,7 @@ pub fn completion_popup(app: &mut IdeApp, ctx: &egui::Context) {
                                     ui.painter().with_clip_rect(rect).galley(
                                         pos,
                                         galley,
-                                        theme::TEXT_INFO,
+                                        *theme::TEXT_INFO,
                                     );
                                 }
                                 if response.clicked() {

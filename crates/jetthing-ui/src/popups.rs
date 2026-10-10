@@ -457,7 +457,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                         ui.painter(),
                         Rect::from_min_size(rect.left_center() + vec2(8.0, -8.0), vec2(16.0, 16.0)),
                         Icon::for_file(&name),
-                        icons::ICON,
+                        *icons::ICON,
                     );
                     let x = row_text(
                         ui,
@@ -465,7 +465,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                         rect.left() + 32.0,
                         &name,
                         egui::FontId::proportional(theme::UI_FONT_SIZE),
-                        theme::TEXT_BRIGHT,
+                        *theme::TEXT_BRIGHT,
                     );
                     let parent = path
                         .parent()
@@ -478,7 +478,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                         x + 10.0,
                         &parent,
                         egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                        theme::TEXT_INFO,
+                        *theme::TEXT_INFO,
                     );
                     if response.clicked() {
                         open = Some(index);

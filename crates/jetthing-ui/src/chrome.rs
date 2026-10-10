@@ -131,12 +131,12 @@ fn project_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
     let galley = ui.painter().layout_no_wrap(
         name.clone(),
         theme::semibold(theme::UI_FONT_SIZE),
-        theme::TEXT_BRIGHT,
+        *theme::TEXT_BRIGHT,
     );
     let width = 8.0 + 20.0 + 8.0 + galley.size().x + 22.0;
     let (rect, response) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
     let fill = if response.hovered() {
-        theme::HOVER
+        *theme::HOVER
     } else {
         Color32::TRANSPARENT
     };
@@ -153,7 +153,7 @@ fn project_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
     );
     let text_pos = egui::pos2(badge.right() + 8.0, rect.center().y - galley.size().y / 2.0);
     let text_right = text_pos.x + galley.size().x;
-    ui.painter().galley(text_pos, galley, theme::TEXT_BRIGHT);
+    ui.painter().galley(text_pos, galley, *theme::TEXT_BRIGHT);
     icons::paint(
         ui.painter(),
         Rect::from_min_size(
@@ -161,7 +161,7 @@ fn project_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
             vec2(14.0, 14.0),
         ),
         Icon::ChevronDown,
-        theme::TEXT_SECONDARY,
+        *theme::TEXT_SECONDARY,
     );
     let root = app
         .state
@@ -205,10 +205,10 @@ fn vcs_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
     let branch = git.branch.clone();
     let response = widgets::flat_widget(
         ui,
-        Some((Icon::Branch, icons::ICON)),
+        Some((Icon::Branch, *icons::ICON)),
         &branch,
         egui::FontId::proportional(theme::UI_FONT_SIZE),
-        theme::TEXT_BRIGHT,
+        *theme::TEXT_BRIGHT,
         true,
         28.0,
     )
@@ -240,7 +240,7 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         && icons::button_colored(
             ui,
             Icon::Stop,
-            theme::STOP_RED,
+            *theme::STOP_RED,
             &format!("Stop ({})", keys::display("⌘F2")),
             false,
         )
@@ -260,9 +260,9 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         app.dispatch("build.project", Value::Null);
     }
     let run_color = if can_start {
-        theme::RUN_GREEN
+        *theme::RUN_GREEN
     } else {
-        theme::TEXT_DISABLED
+        *theme::TEXT_DISABLED
     };
     let run = ui.add_enabled_ui(can_start, |ui| {
         icons::button_colored(
@@ -282,7 +282,7 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
             None,
             &label,
             egui::FontId::proportional(theme::UI_FONT_SIZE),
-            theme::TEXT_BRIGHT,
+            *theme::TEXT_BRIGHT,
             true,
             28.0,
         );
@@ -333,11 +333,11 @@ fn window_controls(ui: &mut egui::Ui) {
     if control(ui, 2, Color32::from_rgb(0xC4, 0x2B, 0x1C)).clicked() {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
-    if control(ui, 1, theme::HOVER).clicked() {
+    if control(ui, 1, *theme::HOVER).clicked() {
         let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
     }
-    if control(ui, 0, theme::HOVER).clicked() {
+    if control(ui, 0, *theme::HOVER).clicked() {
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
     }
 }
@@ -427,9 +427,9 @@ fn stripe_button(app: &mut IdeApp, ui: &mut egui::Ui, window: ToolWindow, icon: 
     let selected = app.state.tool_windows.is_visible(window);
     let (rect, response) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
     let fill = if selected {
-        theme::ACCENT
+        *theme::ACCENT
     } else if response.hovered() {
-        theme::HOVER
+        *theme::HOVER
     } else {
         Color32::TRANSPARENT
     };
@@ -437,7 +437,7 @@ fn stripe_button(app: &mut IdeApp, ui: &mut egui::Ui, window: ToolWindow, icon: 
     let color = if selected {
         Color32::WHITE
     } else {
-        icons::ICON
+        *icons::ICON
     };
     icons::paint(
         ui.painter(),
@@ -566,36 +566,36 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                 let last = crumbs.len().saturating_sub(1);
                 for (index, crumb) in crumbs.iter().enumerate() {
                     let icon = if index == 0 {
-                        Some((Icon::Project, theme::TEXT_SECONDARY))
+                        Some((Icon::Project, *theme::TEXT_SECONDARY))
                     } else if index == last {
-                        Some((Icon::for_file(crumb), icons::ICON))
+                        Some((Icon::for_file(crumb), *icons::ICON))
                     } else {
                         None
                     };
                     let color = if index == last {
-                        theme::TEXT
+                        *theme::TEXT
                     } else {
-                        theme::TEXT_SECONDARY
+                        *theme::TEXT_SECONDARY
                     };
                     widgets::flat_widget(ui, icon, crumb, font.clone(), color, false, 22.0);
                     if index != last {
-                        icons::show(ui, Icon::ChevronRight, 12.0, theme::TEXT_INFO);
+                        icons::show(ui, Icon::ChevronRight, 12.0, *theme::TEXT_INFO);
                     }
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let secondary = theme::TEXT_SECONDARY;
+                    let secondary = *theme::TEXT_SECONDARY;
                     if let Some(lsp) = &app.state.lsp {
                         let (label, color) = match lsp.state() {
-                            ServerState::Starting => ("rust-analyzer: starting", theme::TEXT_INFO),
+                            ServerState::Starting => ("rust-analyzer: starting", *theme::TEXT_INFO),
                             ServerState::Ready => ("rust-analyzer", secondary),
-                            ServerState::Exited => ("rust-analyzer: exited", theme::ERROR),
+                            ServerState::Exited => ("rust-analyzer: exited", *theme::ERROR),
                         };
                         widgets::flat_widget(ui, None, label, font.clone(), color, false, 22.0);
                     } else if let Some(error) = &app.state.lsp_error {
                         widgets::flat_widget(
                             ui,
-                            Some((Icon::Warning, theme::WARNING)),
+                            Some((Icon::Warning, *theme::WARNING)),
                             "No language server",
                             font.clone(),
                             secondary,
@@ -674,10 +674,10 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                         };
                         if widgets::flat_widget(
                             ui,
-                            Some((Icon::Refresh, theme::MODIFIED)),
+                            Some((Icon::Refresh, *theme::MODIFIED)),
                             &label,
                             font.clone(),
-                            theme::MODIFIED,
+                            *theme::MODIFIED,
                             false,
                             22.0,
                         )
@@ -697,7 +697,7 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                             None,
                             &status,
                             font.clone(),
-                            theme::TEXT_INFO,
+                            *theme::TEXT_INFO,
                             false,
                             22.0,
                         );

@@ -88,12 +88,12 @@ fn git_colors(app: &IdeApp) -> HashMap<PathBuf, ChangeKind> {
 
 pub fn change_color(kind: Option<ChangeKind>) -> Color32 {
     match kind {
-        Some(ChangeKind::Modified | ChangeKind::Renamed) => theme::MODIFIED,
-        Some(ChangeKind::Added) => theme::ADDED,
-        Some(ChangeKind::Untracked) => theme::UNTRACKED,
-        Some(ChangeKind::Deleted) => theme::MUTED,
-        Some(ChangeKind::Conflicted) => theme::ERROR,
-        None => theme::TEXT,
+        Some(ChangeKind::Modified | ChangeKind::Renamed) => *theme::MODIFIED,
+        Some(ChangeKind::Added) => *theme::ADDED,
+        Some(ChangeKind::Untracked) => *theme::UNTRACKED,
+        Some(ChangeKind::Deleted) => *theme::MUTED,
+        Some(ChangeKind::Conflicted) => *theme::ERROR,
+        None => *theme::TEXT,
     }
 }
 
@@ -136,7 +136,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                         ui.painter(),
                         Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
                         Icon::Folder,
-                        icons::ICON,
+                        *icons::ICON,
                     );
                     x += 22.0;
                     x = row_text(
@@ -145,7 +145,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                         x,
                         &root_name,
                         theme::semibold(theme::UI_FONT_SIZE),
-                        theme::TEXT_BRIGHT,
+                        *theme::TEXT_BRIGHT,
                     );
                     row_text(
                         ui,
@@ -153,7 +153,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                         x + 8.0,
                         &root_path,
                         egui::FontId::proportional(theme::UI_FONT_SIZE),
-                        theme::TEXT_INFO,
+                        *theme::TEXT_INFO,
                     );
                     continue;
                 }
@@ -174,7 +174,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                         } else {
                             Icon::ChevronRight
                         },
-                        theme::TEXT_SECONDARY,
+                        *theme::TEXT_SECONDARY,
                     );
                 }
                 x += 16.0;
@@ -188,7 +188,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                     ui.painter(),
                     Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
                     icon,
-                    icons::ICON,
+                    *icons::ICON,
                 );
                 x += 22.0;
                 let kind = colors.get(path).copied().or_else(|| {
@@ -355,7 +355,7 @@ fn tree_context_menu(
 /// Paints a checkbox in the reference style and returns whether it was clicked.
 fn checkbox(ui: &egui::Ui, rect: Rect, state: Option<bool>) {
     let fill = match state {
-        Some(true) | None => theme::ACCENT,
+        Some(true) | None => *theme::ACCENT,
         Some(false) => Color32::TRANSPARENT,
     };
     ui.painter().rect_filled(rect, 3.0, fill);
@@ -462,7 +462,7 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                         vec2(16.0, 16.0),
                     ),
                     Icon::ChevronDown,
-                    theme::TEXT_SECONDARY,
+                    *theme::TEXT_SECONDARY,
                 );
                 let check = Rect::from_min_size(
                     egui::pos2(rect.left() + 30.0, rect.center().y - 7.0),
@@ -477,7 +477,7 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     rect.left() + 52.0,
                     title,
                     theme::semibold(theme::UI_FONT_SIZE),
-                    theme::TEXT_BRIGHT,
+                    *theme::TEXT_BRIGHT,
                 );
                 row_text(
                     ui,
@@ -485,7 +485,7 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     x + 8.0,
                     &widgets::pluralize(files.len(), "file", "files"),
                     egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    theme::TEXT_INFO,
+                    *theme::TEXT_INFO,
                 );
                 if response.clicked() && !files.is_empty() {
                     let value = state != Some(true);
@@ -505,7 +505,7 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                         ui.painter(),
                         Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
                         Icon::for_file(&name),
-                        icons::ICON,
+                        *icons::ICON,
                     );
                     x += 22.0;
                     x = row_text(
@@ -523,7 +523,7 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                             x + 8.0,
                             &parent.display().to_string(),
                             egui::FontId::proportional(theme::UI_FONT_SIZE),
-                            theme::TEXT_INFO,
+                            *theme::TEXT_INFO,
                         );
                     }
                     let on_check = response
@@ -625,7 +625,7 @@ pub fn commit_message_id() -> egui::Id {
 fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
     let hide = tool_window_header(ui, "Find in Files", |ui| {
         if app.state.search.is_running()
-            && icons::button_colored(ui, Icon::Stop, theme::STOP_RED, "Cancel", false).clicked()
+            && icons::button_colored(ui, Icon::Stop, *theme::STOP_RED, "Cancel", false).clicked()
         {
             app.dispatch("search.cancel", Value::Null);
         }
@@ -673,13 +673,13 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
                     rect.left() + 16.0,
                     result.preview.trim(),
                     mono,
-                    theme::editor::TEXT,
+                    *theme::editor::TEXT,
                 );
                 let location = format!("{} {}", IdeApp::file_name(&result.path), result.line);
                 let galley = ui.painter().layout_no_wrap(
                     location,
                     egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    theme::TEXT_INFO,
+                    *theme::TEXT_INFO,
                 );
                 let pos = egui::pos2(
                     (rect.right() - galley.size().x - 16.0).max(x + 16.0),
@@ -687,7 +687,7 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
                 );
                 ui.painter()
                     .with_clip_rect(rect)
-                    .galley(pos, galley, theme::TEXT_INFO);
+                    .galley(pos, galley, *theme::TEXT_INFO);
                 if response
                     .on_hover_text(result.path.display().to_string())
                     .clicked()
@@ -711,14 +711,14 @@ fn build(app: &mut IdeApp, ui: &mut egui::Ui) {
     let running = app.state.runner.is_running();
     let hide = tool_window_header(ui, &title, |ui| {
         if running {
-            if icons::button_colored(ui, Icon::Stop, theme::STOP_RED, "Stop", false).clicked() {
+            if icons::button_colored(ui, Icon::Stop, *theme::STOP_RED, "Stop", false).clicked() {
                 app.dispatch("run.cancel", Value::Null);
             }
         } else if app.state.project.is_some() {
             if icons::button(ui, Icon::Build, "Build Project").clicked() {
                 app.dispatch("build.project", Value::Null);
             }
-            if icons::button_colored(ui, Icon::Run, theme::RUN_GREEN, "Run", false).clicked() {
+            if icons::button_colored(ui, Icon::Run, *theme::RUN_GREEN, "Run", false).clicked() {
                 app.dispatch("run.project", Value::Null);
             }
         }
@@ -757,7 +757,7 @@ fn build(app: &mut IdeApp, ui: &mut egui::Ui) {
                     for chunk in app.state.runner.output() {
                         for line in chunk.text.trim_end_matches('\n').split('\n') {
                             let color = match chunk.stream {
-                                OutputStream::Stdout => theme::editor::TEXT,
+                                OutputStream::Stdout => *theme::editor::TEXT,
                                 OutputStream::Stderr => console_stderr_color(line),
                             };
                             ui.label(RichText::new(line).monospace().color(color));
@@ -771,11 +771,11 @@ fn build(app: &mut IdeApp, ui: &mut egui::Ui) {
 fn console_stderr_color(text: &str) -> Color32 {
     let trimmed = text.trim_start();
     if trimmed.starts_with("error") {
-        theme::ERROR
+        *theme::ERROR
     } else if trimmed.starts_with("warning") {
-        theme::WARNING
+        *theme::WARNING
     } else {
-        theme::editor::TEXT
+        *theme::editor::TEXT
     }
 }
 
@@ -822,7 +822,7 @@ fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
                     vec2(16.0, 16.0),
                 ),
                 Icon::for_file(&name),
-                icons::ICON,
+                *icons::ICON,
             );
             let x = row_text(
                 ui,
@@ -830,7 +830,7 @@ fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
                 rect.left() + 34.0,
                 &name,
                 egui::FontId::proportional(theme::UI_FONT_SIZE),
-                theme::TEXT_BRIGHT,
+                *theme::TEXT_BRIGHT,
             );
             row_text(
                 ui,
@@ -838,7 +838,7 @@ fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
                 x + 8.0,
                 &widgets::pluralize(rows.len(), "problem", "problems"),
                 egui::FontId::proportional(theme::UI_FONT_SIZE),
-                theme::TEXT_INFO,
+                *theme::TEXT_INFO,
             );
             for (icon, message, line, column) in &rows {
                 let (rect, response) = list_row(ui, false);
@@ -849,7 +849,7 @@ fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
                         vec2(14.0, 14.0),
                     ),
                     *icon,
-                    icons::ICON,
+                    *icons::ICON,
                 );
                 let first_line = message.lines().next().unwrap_or_default();
                 let x = row_text(
@@ -858,7 +858,7 @@ fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
                     rect.left() + 56.0,
                     first_line,
                     egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    theme::TEXT,
+                    *theme::TEXT,
                 );
                 row_text(
                     ui,
@@ -866,7 +866,7 @@ fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
                     x + 8.0,
                     &format!(":{line}:{column}"),
                     egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    theme::TEXT_INFO,
+                    *theme::TEXT_INFO,
                 );
                 if response.on_hover_text(message).clicked() {
                     jump = Some((*line, *column));
@@ -897,11 +897,11 @@ mod tests {
     fn stderr_lines_are_only_red_for_errors() {
         assert_eq!(
             console_stderr_color("error[E0308]: mismatched"),
-            theme::ERROR
+            *theme::ERROR
         );
         assert_eq!(
             console_stderr_color("   Compiling foo"),
-            theme::editor::TEXT
+            *theme::editor::TEXT
         );
     }
 }

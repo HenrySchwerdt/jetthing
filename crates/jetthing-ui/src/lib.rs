@@ -16,6 +16,7 @@ mod popups;
 mod settings_dialog;
 mod terminal_ui;
 mod theme;
+mod theme_engine;
 mod toolwindows;
 mod welcome;
 mod widgets;

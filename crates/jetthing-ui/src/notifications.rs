@@ -42,7 +42,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
         ))
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style())
-                .fill(theme::NOTIFICATION)
+                .fill(*theme::NOTIFICATION)
                 .stroke(egui::Stroke::new(1.0_f32, theme::NOTIFICATION))
                 .corner_radius(8)
                 .inner_margin(egui::Margin::same(14))

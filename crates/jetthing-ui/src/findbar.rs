@@ -56,9 +56,9 @@ impl FindBar {
 fn toggle(ui: &mut egui::Ui, label: &str, on: &mut bool, tooltip: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(24.0, 22.0), egui::Sense::click());
     let fill = if *on {
-        theme::SELECTION
+        *theme::SELECTION
     } else if response.hovered() {
-        theme::HOVER
+        *theme::HOVER
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -69,9 +69,9 @@ fn toggle(ui: &mut egui::Ui, label: &str, on: &mut bool, tooltip: &str) -> bool 
         label,
         theme::semibold(theme::UI_FONT_SIZE - 1.0),
         if *on {
-            theme::TEXT_BRIGHT
+            *theme::TEXT_BRIGHT
         } else {
-            theme::TEXT_SECONDARY
+            *theme::TEXT_SECONDARY
         },
     );
     let clicked = response.on_hover_text(tooltip).clicked();
@@ -93,12 +93,12 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         .position(|&(s, e)| s == primary.start() && e == primary.end());
     let mut action: Option<(&'static str, Value)> = None;
     egui::Frame::new()
-        .fill(theme::editor::BACKGROUND_PANEL)
+        .fill(*theme::editor::BACKGROUND_PANEL)
         .inner_margin(egui::Margin::symmetric(10, 4))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                icons::show(ui, Icon::Search, 14.0, theme::TEXT_SECONDARY);
+                icons::show(ui, Icon::Search, 14.0, *theme::TEXT_SECONDARY);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut app.find.query)
                         .id(query_id())
@@ -135,9 +135,9 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     format!("{} results", matches.len())
                 };
                 let color = if !app.find.query.is_empty() && matches.is_empty() {
-                    theme::ERROR
+                    *theme::ERROR
                 } else {
-                    theme::TEXT_SECONDARY
+                    *theme::TEXT_SECONDARY
                 };
                 ui.label(RichText::new(summary).color(color));
                 if icons::button(ui, Icon::ChevronUp, "Previous Occurrence (⇧Enter)").clicked() {

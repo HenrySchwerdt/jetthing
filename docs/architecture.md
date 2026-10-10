@@ -34,7 +34,8 @@ no crate below `jetthing-ui` imports UI types.
 - `jetthing-ui`: native workbench shell split into `chrome` (main toolbar, stripe, status
   bar, window controls), `toolwindows` (Project, Commit, Find, Build/Run, Problems,
   Terminal), `editor` (tabs, viewport-native highlighted editor, completion popup),
-  `palette` (Search Everywhere), `theme` (Islands Dark tokens and fonts), and `icons`
+  `palette` (Search Everywhere), `theme` / `theme_engine` (color tokens resolved from
+  `docs/spec/data` for the active theme, fonts, egui visuals), and `icons`
   (original 16×16 vector icons).
 - `jetthing-app`: process startup, native window (custom title bar on Windows/Linux),
   and wgpu → OpenGL renderer fallback.

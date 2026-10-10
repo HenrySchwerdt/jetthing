@@ -1767,6 +1767,7 @@ dependencies = [
  "jetthing-settings",
  "jetthing-terminal",
  "jetthing-text",
+ "serde",
  "serde_json",
 ]
 
