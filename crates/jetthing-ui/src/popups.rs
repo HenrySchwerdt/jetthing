@@ -1,6 +1,6 @@
 //! Small modal popups: New File/Directory, Rename, Delete, Go to Line, Recent Files.
 
-use crate::icons::{self, Icon};
+use crate::icons;
 use crate::native_dialog::Purpose;
 use crate::widgets::row_text;
 use crate::{IdeApp, theme};
@@ -583,7 +583,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                     icons::paint(
                         ui.painter(),
                         Rect::from_min_size(rect.left_center() + vec2(8.0, -8.0), vec2(16.0, 16.0)),
-                        Icon::for_file(&name),
+                        app.file_icon(path),
                         *icons::ICON,
                     );
                     let x = row_text(
