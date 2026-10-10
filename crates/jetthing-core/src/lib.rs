@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 pub mod build_info;
 mod diagnostic_commands;
 pub mod diagnostics;
+mod branch_commands;
 mod editor_commands;
 mod git_log;
 mod line_changes;
@@ -26,6 +27,7 @@ mod toolwindow;
 mod update_commands;
 pub use toolchain_commands::ToolchainState;
 mod vcs;
+pub use branch_commands::abort_label;
 pub use git_log::GitLogState;
 pub use line_changes::hunk_at_line;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
@@ -58,6 +60,8 @@ pub struct IdeState {
     pub git: Option<RepositoryStatus>,
     /// Background status refresh for external changes.
     git_watcher: Option<jetthing_git::StatusWatcher>,
+    /// Interrupted merge/rebase/cherry-pick, if any.
+    pub git_pending: Option<jetthing_git::PendingOperation>,
     /// Git tool window Log tab.
     pub git_log: GitLogState,
     /// The diff viewer tab, if open.
@@ -132,6 +136,7 @@ impl IdeState {
         self.lsp.set_project(Some(project.root()));
         self.toolchains.reload(Some(project.root()));
         self.start_git_watcher();
+        self.refresh_pending_operation();
         self.close_diff();
         self.git_log = GitLogState::default();
         self.expanded_dirs.clear();
@@ -369,6 +374,7 @@ impl IdeState {
         }
         self.invalidate_line_changes();
         self.invalidate_git_log();
+        self.refresh_pending_operation();
         self.refresh_diff();
         Ok(())
     }
@@ -633,6 +639,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     vcs::register(&mut registry);
     line_changes::register(&mut registry);
     git_log::register(&mut registry);
+    branch_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(
