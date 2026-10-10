@@ -33,6 +33,7 @@ mod logcat_ui;
 mod lsp_status;
 mod main_menu;
 mod merged_manifest_ui;
+mod native_dialog;
 mod notifications;
 mod palette;
 mod plugin_ui;
@@ -110,6 +111,10 @@ pub struct IdeApp {
     plugins_window: Option<plugin_ui::PluginsWindow>,
     /// Amend toggle of the Commit tool window.
     commit_amend: bool,
+    /// The OS file dialog implementation (replaced by a fake in tests).
+    file_dialogs: std::sync::Arc<dyn native_dialog::FileDialogs>,
+    /// A native dialog that is open right now.
+    pending_dialog: Option<native_dialog::PendingDialog>,
     /// Open push dialog.
     push_dialog: Option<push_dialog::PushDialog>,
     /// Open branch name/confirmation dialog.
@@ -228,6 +233,8 @@ impl IdeApp {
             push_dialog: None,
             deploy_balloon: android_run_ui::DeployBalloon::default(),
             commit_amend: false,
+            file_dialogs: std::sync::Arc::new(native_dialog::SystemDialogs),
+            pending_dialog: None,
         }
     }
 
@@ -259,11 +266,79 @@ impl IdeApp {
         self.dialog_focus = true;
     }
 
+    /// File › Open…: the OS folder dialog, or the in-app path field when none exists.
     fn open_project_dialog(&mut self) {
+        self.browse(native_dialog::Purpose::OpenProject);
+    }
+
+    fn open_project_fallback(&mut self) {
         self.open_dialog(popups::Dialog::OpenProject {
             path: String::new(),
             error: None,
         });
+    }
+
+    /// Starts a native folder dialog without blocking the UI; `poll_native_dialog`
+    /// delivers the result. A path queued by `dialog.injectPath` answers instead.
+    fn browse(&mut self, purpose: native_dialog::Purpose) {
+        if self.pending_dialog.is_some() {
+            return;
+        }
+        let (title, start_dir) = match purpose {
+            native_dialog::Purpose::OpenProject => ("Open Project", None),
+            native_dialog::Purpose::NewProjectLocation => {
+                let start = match &self.dialog {
+                    Some(popups::Dialog::NewProject { parent, .. }) => Some(PathBuf::from(parent)),
+                    _ => None,
+                };
+                ("Choose Project Location", start)
+            }
+        };
+        let dialogs: std::sync::Arc<dyn native_dialog::FileDialogs> =
+            match self.state.injected_dialog_paths.pop_front() {
+                Some(path) => std::sync::Arc::new(native_dialog::InjectedDialog(path)),
+                None => self.file_dialogs.clone(),
+            };
+        let request = native_dialog::DialogRequest {
+            title: title.into(),
+            start_dir,
+            folder: true,
+        };
+        self.pending_dialog = Some(native_dialog::PendingDialog::spawn(
+            dialogs, purpose, request,
+        ));
+    }
+
+    fn poll_native_dialog(&mut self, ctx: &egui::Context) {
+        let Some(pending) = &self.pending_dialog else {
+            return;
+        };
+        let Ok(outcome) = pending.poll() else {
+            ctx.request_repaint_after(Duration::from_millis(50));
+            return;
+        };
+        let purpose = pending.purpose;
+        self.pending_dialog = None;
+        use native_dialog::{DialogOutcome, Purpose};
+        match (purpose, outcome) {
+            (_, DialogOutcome::Cancelled) => {}
+            (Purpose::OpenProject, DialogOutcome::Picked(path)) => {
+                self.dialog = None;
+                if let Err(message) = self.open_project_path(&path.to_string_lossy(), ctx) {
+                    self.state.status = message;
+                }
+            }
+            (Purpose::NewProjectLocation, DialogOutcome::Picked(path)) => {
+                if let Some(popups::Dialog::NewProject { parent, .. }) = &mut self.dialog {
+                    *parent = path.to_string_lossy().into_owned();
+                }
+            }
+            (Purpose::OpenProject, DialogOutcome::Unavailable) => self.open_project_fallback(),
+            (Purpose::NewProjectLocation, DialogOutcome::Unavailable) => {
+                self.state.status =
+                    "No native file dialog is available; type the location instead".into();
+            }
+        }
     }
 
     fn new_project_dialog(&mut self) {
@@ -602,6 +677,7 @@ impl IdeApp {
             self.waker_installed = true;
         }
         self.state.poll_files();
+        self.poll_native_dialog(ctx);
         if !self.repaint_hook_installed {
             let ctx = ctx.clone();
             self.state
@@ -750,6 +826,87 @@ mod tests {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             assert!(!popup_owns_keyboard(ctx), "no menu, shortcuts run normally");
         });
+    }
+
+    fn run_frames(app: &mut IdeApp, ctx: &egui::Context, until: impl Fn(&IdeApp) -> bool) {
+        for _ in 0..200 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| app.frame(ctx));
+            if until(app) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("condition not reached");
+    }
+
+    fn temp_project(name: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("jetthing-dialog-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn open_project_uses_the_injected_native_dialog() {
+        let root = temp_project("open");
+        let fake = std::sync::Arc::new(native_dialog::FakeDialogs::new(
+            native_dialog::DialogOutcome::Picked(root.clone()),
+        ));
+        let mut app = IdeApp::with_update_check(None, Vec::new(), false);
+        app.file_dialogs = fake.clone();
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        app.open_project_dialog();
+        run_frames(&mut app, &ctx, |app| app.state.project.is_some());
+        assert_eq!(app.state.project.as_ref().unwrap().root(), root);
+        assert!(
+            app.dialog.is_none(),
+            "no in-app picker when the native dialog answers"
+        );
+        let requests = fake.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].folder);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unavailable_native_dialog_falls_back_to_the_in_app_picker() {
+        let mut app = IdeApp::with_update_check(None, Vec::new(), false);
+        app.file_dialogs = std::sync::Arc::new(native_dialog::FakeDialogs::new(
+            native_dialog::DialogOutcome::Unavailable,
+        ));
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        app.open_project_dialog();
+        run_frames(&mut app, &ctx, |app| app.dialog.is_some());
+        assert_eq!(app.dialog.as_ref().unwrap().kind(), "openProject");
+        // A cancelled dialog does nothing.
+        app.dialog = None;
+        app.file_dialogs = std::sync::Arc::new(native_dialog::FakeDialogs::new(
+            native_dialog::DialogOutcome::Cancelled,
+        ));
+        app.open_project_dialog();
+        for _ in 0..20 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| app.frame(ctx));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.dialog.is_none() && app.state.project.is_none());
+    }
+
+    #[test]
+    fn injected_paths_answer_before_the_system_dialog() {
+        let root = temp_project("inject");
+        let mut app = IdeApp::with_update_check(None, Vec::new(), false);
+        app.file_dialogs = std::sync::Arc::new(native_dialog::FakeDialogs::new(
+            native_dialog::DialogOutcome::Cancelled,
+        ));
+        app.dispatch("dialog.injectPath", json!({"path": root}));
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        app.open_project_dialog();
+        run_frames(&mut app, &ctx, |app| app.state.project.is_some());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
