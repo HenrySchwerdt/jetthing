@@ -19,6 +19,7 @@ mod settings_dialog;
 mod syntax;
 mod terminal_ui;
 mod theme;
+mod theme_engine;
 mod toolwindows;
 mod welcome;
 mod widgets;

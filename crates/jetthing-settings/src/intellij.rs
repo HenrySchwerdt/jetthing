@@ -258,10 +258,15 @@ fn add_definitions(registry: &mut SettingsRegistry) {
             look,
             "Editor color scheme",
             options(&[
+                ("", "Theme default"),
                 ("Islands Dark", "Islands Dark"),
-                ("Islands Light", "Islands Light"),
+                ("Light", "Light"),
+                ("Darcula", "Darcula"),
+                ("IntelliJ Light", "IntelliJ Light"),
+                ("Dark", "Dark"),
+                ("High contrast", "High contrast"),
             ]),
-            text("Islands Dark"),
+            text(""),
         ),
         SettingDef::new(ids::ZOOM, look, "Zoom", options(&zoom), text("100%"))
             .group(accessibility)

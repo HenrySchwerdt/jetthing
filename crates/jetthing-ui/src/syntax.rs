@@ -1,5 +1,6 @@
 //! Resolves highlight attribute keys to egui text formats through the active
-//! editor color scheme (Islands Dark by default).
+//! editor color scheme, the one the theme engine resolved for the active theme
+//! (Islands Dark by default).
 
 use eframe::egui::{self, Color32, Stroke};
 use jetthing_language::{ColorScheme, EffectType, Rgba, TextAttributes};
@@ -10,19 +11,43 @@ fn color(rgba: Rgba) -> Color32 {
     Color32::from_rgba_unmultiplied(rgba.r, rgba.g, rgba.b, rgba.a)
 }
 
+/// The editor color scheme of the active theme (`theme_engine`), Islands Dark if
+/// it has none or the scheme cannot be loaded. Loaded schemes are kept for the
+/// process lifetime; only a handful are offered.
 fn scheme() -> &'static ColorScheme {
-    static SCHEME: OnceLock<ColorScheme> = OnceLock::new();
-    SCHEME.get_or_init(ColorScheme::islands_dark)
+    static SCHEMES: OnceLock<Mutex<HashMap<String, &'static ColorScheme>>> = OnceLock::new();
+    static FALLBACK: OnceLock<ColorScheme> = OnceLock::new();
+    let fallback = || FALLBACK.get_or_init(ColorScheme::islands_dark);
+    let Some(name) = crate::theme_engine::active().scheme.as_deref() else {
+        return fallback();
+    };
+    let Ok(mut schemes) = SCHEMES.get_or_init(Default::default).lock() else {
+        return fallback();
+    };
+    if let Some(scheme) = schemes.get(name) {
+        return scheme;
+    }
+    let scheme: &'static ColorScheme = match ColorScheme::bundled(name) {
+        Ok(scheme) => Box::leak(Box::new(scheme)),
+        Err(_) => fallback(),
+    };
+    schemes.insert(name.to_owned(), scheme);
+    scheme
 }
 
-/// Resolved attributes for `key`, cached per key.
+/// Resolved attributes for `key` in the active scheme, cached per scheme and key.
 pub fn attributes(key: &'static str) -> TextAttributes {
-    static CACHE: OnceLock<Mutex<HashMap<&'static str, TextAttributes>>> = OnceLock::new();
+    type Cache = HashMap<(usize, &'static str), TextAttributes>;
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+    let scheme = scheme();
+    let id = std::ptr::from_ref(scheme) as usize;
     let cache = CACHE.get_or_init(Default::default);
     if let Ok(mut cache) = cache.lock() {
-        return *cache.entry(key).or_insert_with(|| scheme().attributes(key));
+        return *cache
+            .entry((id, key))
+            .or_insert_with(|| scheme.attributes(key));
     }
-    scheme().attributes(key)
+    scheme.attributes(key)
 }
 
 /// Applies the attributes of `key` on top of the editor's base text format.

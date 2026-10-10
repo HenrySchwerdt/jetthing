@@ -8,8 +8,7 @@ use crate::theme;
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke, epaint::PathShape, vec2};
 
 /// Neutral icon color (palette `Gray11`).
-pub const ICON: Color32 = Color32::from_rgb(0xCE, 0xD0, 0xD6);
-const FOLDER_FILL: Color32 = Color32::from_rgb(0x43, 0x45, 0x4A);
+pub const ICON: theme::Token = theme::ICON;
 const RUST: Color32 = Color32::from_rgb(0xE0, 0x88, 0x55);
 const TOML: Color32 = Color32::from_rgb(0x9D, 0xA0, 0xA8);
 const MARKDOWN: Color32 = Color32::from_rgb(0x6B, 0x9B, 0xFA);
@@ -126,7 +125,7 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             egui::Align2::CENTER_CENTER,
             text,
             theme::semibold(g.len(6.0)),
-            theme::ISLAND,
+            *theme::ISLAND,
         );
     };
     match icon {
@@ -140,7 +139,7 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::ChevronRight => line(&[(6.5, 4.5), (10.0, 8.0), (6.5, 11.5)]),
         Icon::Folder | Icon::Project => {
             let fill = if icon == Icon::Folder {
-                FOLDER_FILL
+                *theme::FOLDER_FILL
             } else {
                 Color32::TRANSPARENT
             };
@@ -278,7 +277,7 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Warning => {
             closed(
                 &[(8.0, 1.5), (15.0, 14.0), (1.0, 14.0)],
-                theme::WARNING,
+                *theme::WARNING,
                 Stroke::new(stroke.width, theme::WARNING),
             );
             let dark = Stroke::new(g.len(1.5).max(1.0), theme::ISLAND);
@@ -297,7 +296,7 @@ pub fn show(ui: &mut egui::Ui, icon: Icon, size: f32, color: Color32) -> egui::R
 
 /// Toolbar-style icon button: transparent until hovered, rounded hover/pressed fill.
 pub fn button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
-    button_colored(ui, icon, ICON, tooltip, false)
+    button_colored(ui, icon, *ICON, tooltip, false)
 }
 
 pub fn button_colored(
@@ -310,11 +309,11 @@ pub fn button_colored(
     let size = vec2(26.0, 26.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let fill = if selected {
-        theme::ACCENT
+        *theme::ACCENT
     } else if response.is_pointer_button_down_on() {
-        theme::PRESSED
+        *theme::PRESSED
     } else if response.hovered() {
-        theme::HOVER
+        *theme::HOVER
     } else {
         Color32::TRANSPARENT
     };
