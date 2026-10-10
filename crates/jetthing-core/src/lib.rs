@@ -12,14 +12,19 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+pub mod build_info;
+mod diagnostic_commands;
+pub mod diagnostics;
 mod editor_commands;
 mod lsp_commands;
 mod problems;
 mod project_commands;
 mod terminal_commands;
+mod toolchain_commands;
 mod toolwindow;
 mod update_commands;
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
+pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -52,6 +57,8 @@ pub struct IdeState {
     pub lsp: LspManager,
     /// Project-wide problems, refreshed by [`IdeState::refresh_problems`].
     pub problems: ProblemIndex,
+    /// Toolchain provisioning: discovery, pins and background installs.
+    pub toolchains: ToolchainState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -61,6 +68,10 @@ pub struct IdeState {
     pub update_state: UpdateState,
     /// Whether the update balloon is showing.
     pub update_notification: bool,
+    /// Whether Help → About is showing (`app.about`).
+    pub about_open: bool,
+    /// Unseen crash report from a previous session (`app.dismissCrashReport`).
+    pub crash_report: Option<PathBuf>,
     update_silent: bool,
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
@@ -105,6 +116,7 @@ impl IdeState {
         self.plugins.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
         self.lsp.set_project(Some(project.root()));
+        self.toolchains.reload(Some(project.root()));
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -594,9 +606,11 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     editor_commands::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
+    diagnostic_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
     problems::register(&mut registry);
+    toolchain_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(

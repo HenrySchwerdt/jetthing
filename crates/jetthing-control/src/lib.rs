@@ -173,8 +173,6 @@ pub enum ControlError {
     Io(#[from] io::Error),
     #[error("malformed control message: {0}")]
     Protocol(String),
-    #[error("control sockets are not supported on this platform yet")]
-    Unsupported,
 }
 
 /// A request received by the server, waiting for the UI to answer it.
@@ -244,7 +242,6 @@ impl Drop for ControlServer {
 }
 
 /// Serves one connection: each request line is answered by the UI in order.
-#[cfg_attr(not(unix), allow(dead_code))]
 fn serve<S: io::Read + Write>(
     stream: S,
     requests: &Sender<Pending>,
@@ -283,32 +280,22 @@ fn serve<S: io::Read + Write>(
 
 /// Blocking client for one connection; requests are answered in order.
 pub struct ControlClient {
-    #[cfg(unix)]
-    reader: BufReader<std::os::unix::net::UnixStream>,
+    reader: BufReader<platform::ClientStream>,
 }
 
 impl ControlClient {
-    #[cfg(unix)]
     pub fn connect(path: &Path) -> Result<Self, ControlError> {
-        let stream = std::os::unix::net::UnixStream::connect(path).map_err(|source| {
-            ControlError::Connect {
-                path: path.to_owned(),
-                source,
-            }
+        let stream = platform::connect(path).map_err(|source| ControlError::Connect {
+            path: path.to_owned(),
+            source,
         })?;
         Ok(Self {
             reader: BufReader::new(stream),
         })
     }
 
-    #[cfg(not(unix))]
-    pub fn connect(_path: &Path) -> Result<Self, ControlError> {
-        Err(ControlError::Unsupported)
-    }
-
     /// Sends one request and waits for its response. A response line arrives
     /// even for failures; only transport problems are `Err`.
-    #[cfg(unix)]
     pub fn send(&mut self, request: &Request) -> Result<Response, ControlError> {
         let stream = self.reader.get_mut();
         let mut line =
@@ -323,11 +310,6 @@ impl ControlClient {
             ));
         }
         serde_json::from_str(&answer).map_err(|e| ControlError::Protocol(e.to_string()))
-    }
-
-    #[cfg(not(unix))]
-    pub fn send(&mut self, _request: &Request) -> Result<Response, ControlError> {
-        Err(ControlError::Unsupported)
     }
 }
 
@@ -363,6 +345,12 @@ mod platform {
     use super::*;
     use std::os::unix::fs::FileTypeExt;
     use std::os::unix::net::{UnixListener, UnixStream};
+
+    pub type ClientStream = UnixStream;
+
+    pub fn connect(path: &Path) -> io::Result<UnixStream> {
+        UnixStream::connect(path)
+    }
 
     pub fn listen(path: &Path, requests: Sender<Pending>, wake: Waker) -> Result<(), ControlError> {
         if let Ok(metadata) = std::fs::symlink_metadata(path) {
@@ -402,16 +390,65 @@ mod platform {
     }
 }
 
-#[cfg(not(unix))]
+/// Windows: named pipes. A `\\.\pipe\name` path is used as given; any other
+/// value names a pipe in the local namespace by its file name (so
+/// `JETTHING_CONTROL_SOCKET=jetthing` listens on `\\.\pipe\jetthing`).
+#[cfg(windows)]
 mod platform {
     use super::*;
+    use interprocess::local_socket::{
+        GenericFilePath, GenericNamespaced, Listener, ListenerOptions, Name, Stream, prelude::*,
+    };
 
-    pub fn listen(
-        _path: &Path,
-        _requests: Sender<Pending>,
-        _wake: Waker,
-    ) -> Result<(), ControlError> {
-        Err(ControlError::Unsupported)
+    pub type ClientStream = Stream;
+
+    pub fn pipe_name(path: &Path) -> io::Result<Name<'static>> {
+        if path.to_string_lossy().starts_with(r"\\.\pipe\") {
+            path.as_os_str().to_owned().to_fs_name::<GenericFilePath>()
+        } else {
+            path.file_name()
+                .unwrap_or(path.as_os_str())
+                .to_owned()
+                .to_ns_name::<GenericNamespaced>()
+        }
+    }
+
+    pub fn connect(path: &Path) -> io::Result<Stream> {
+        Stream::connect(pipe_name(path)?)
+    }
+
+    pub fn listen(path: &Path, requests: Sender<Pending>, wake: Waker) -> Result<(), ControlError> {
+        let listener: Listener = ListenerOptions::new()
+            .name(pipe_name(path)?)
+            .create_sync()
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::AddrInUse {
+                    ControlError::Io(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        format!(
+                            "another Jetthing instance is listening on {}",
+                            path.display()
+                        ),
+                    ))
+                } else {
+                    ControlError::Io(error)
+                }
+            })?;
+        std::thread::Builder::new()
+            .name("jetthing-control".into())
+            .spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(stream) = stream else { continue };
+                    let requests = requests.clone();
+                    let wake = wake.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("jetthing-control-conn".into())
+                        .spawn(move || {
+                            let _ = serve(stream, &requests, &wake);
+                        });
+                }
+            })?;
+        Ok(())
     }
 }
 
@@ -473,6 +510,29 @@ mod tests {
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(&bytes[1..4], b"PNG");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn named_pipe_round_trips_requests() {
+        let path = PathBuf::from(format!("jetthing-test-{}", std::process::id()));
+        let server = ControlServer::bind(&path, || {}).unwrap();
+        assert!(ControlServer::bind(&path, || {}).is_err(), "pipe is in use");
+        let ui = std::thread::spawn(move || {
+            loop {
+                if let Some(pending) = server.try_recv() {
+                    pending.respond(Response::ok(json!("pong")));
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let mut client = ControlClient::connect(&path).unwrap();
+        assert_eq!(
+            client.send(&Request::State).unwrap(),
+            Response::ok(json!("pong"))
+        );
+        ui.join().unwrap();
     }
 
     #[cfg(unix)]

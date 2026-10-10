@@ -1,7 +1,9 @@
 use ropey::Rope;
 use thiserror::Error;
 
+pub mod multicaret;
 pub mod ops;
+pub mod transform;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AtomicEdit {
@@ -14,6 +16,8 @@ struct AtomicEdit {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Transaction {
     edits: Vec<AtomicEdit>,
+    /// Produced by typing; later adjacent typing may extend it.
+    typing: bool,
     before_state: u64,
     after_state: u64,
 }
@@ -55,6 +59,15 @@ impl Selection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectionSet {
     selections: Vec<Selection>,
+    /// Selections added by "Add Selection for Next Occurrence", most recent last,
+    /// so "Unselect Occurrence" can remove them in reverse order.
+    occurrences: Vec<Selection>,
+    /// Whether the occurrence search started from a word at a bare caret
+    /// (whole-word matching) rather than from an explicit selection.
+    occurrence_whole_words: bool,
+    /// Column selection mode toggle and the block it last produced.
+    column_mode: bool,
+    block: Option<multicaret::BlockSelection>,
 }
 
 impl Default for SelectionSet {
@@ -67,6 +80,10 @@ impl SelectionSet {
     pub fn single(position: usize) -> Self {
         Self {
             selections: vec![Selection::caret(position)],
+            occurrences: Vec::new(),
+            occurrence_whole_words: false,
+            column_mode: false,
+            block: None,
         }
     }
 
@@ -90,6 +107,9 @@ impl SelectionSet {
     }
 
     pub fn set_single(&mut self, selection: Selection) {
+        self.occurrences.clear();
+        self.occurrence_whole_words = false;
+        self.block = None;
         self.selections.clear();
         self.selections.push(selection);
     }
@@ -116,6 +136,14 @@ impl SelectionSet {
             self.selections[0] = Selection::caret(position + inserted_len);
             return Ok(());
         }
+        if !text.is_empty() && self.selections.iter().all(|s| s.is_caret()) {
+            let positions: Vec<usize> = self.selections.iter().map(|s| s.head).collect();
+            document.type_text_many(&positions, text)?;
+            for (index, selection) in self.selections.iter_mut().enumerate() {
+                *selection = Selection::caret(positions[index] + inserted_len * (index + 1));
+            }
+            return Ok(());
+        }
         let mut shift: isize = 0;
         let mut next = Vec::with_capacity(self.selections.len());
         let changes: Vec<_> = self
@@ -134,7 +162,7 @@ impl SelectionSet {
                 }
             })
             .collect();
-        document.edit_many(changes)?;
+        document.edit_many_kind(changes, !text.is_empty())?;
         self.selections = next;
         Ok(())
     }
@@ -318,6 +346,14 @@ impl TextDocument {
         &mut self,
         changes: impl IntoIterator<Item = TextChange>,
     ) -> Result<(), TextError> {
+        self.edit_many_kind(changes, false)
+    }
+
+    fn edit_many_kind(
+        &mut self,
+        changes: impl IntoIterator<Item = TextChange>,
+        typing: bool,
+    ) -> Result<(), TextError> {
         let mut changes: Vec<_> = changes.into_iter().collect();
         changes.sort_by_key(|change| (change.start_char, change.end_char));
         for change in &changes {
@@ -360,7 +396,7 @@ impl TextDocument {
                 &edit.inserted,
             );
         }
-        self.record_transaction(edits);
+        self.record_transaction(edits, typing);
         Ok(())
     }
 
@@ -373,8 +409,8 @@ impl TextDocument {
         let can_coalesce = self.current_state != self.saved_state
             && self.redo.is_empty()
             && self.undo.last().is_some_and(|transaction| {
-                transaction.edits.len() == 1
-                    && transaction.edits[0].deleted.is_empty()
+                transaction.typing
+                    && transaction.edits.len() == 1
                     && transaction.edits[0].applied_start
                         + transaction.edits[0].inserted.chars().count()
                         == position
@@ -388,13 +424,69 @@ impl TextDocument {
             self.current_state = after_state;
             self.revision = self.revision.saturating_add(1);
         } else {
-            self.record_transaction(vec![AtomicEdit {
-                original_start: position,
-                applied_start: position,
-                deleted: String::new(),
-                inserted: text.to_owned(),
-            }]);
+            self.record_transaction(
+                vec![AtomicEdit {
+                    original_start: position,
+                    applied_start: position,
+                    deleted: String::new(),
+                    inserted: text.to_owned(),
+                }],
+                true,
+            );
         }
+        Ok(())
+    }
+
+    /// Multi-caret typing: inserts `text` at every position (ascending, distinct)
+    /// as one transaction, and extends the previous multi-caret typing
+    /// transaction when every caret continues right after its earlier insertion,
+    /// so a typed word at N carets undoes in one step.
+    pub fn type_text_many(&mut self, positions: &[usize], text: &str) -> Result<(), TextError> {
+        if positions.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(TextError::OverlappingChanges);
+        }
+        for &position in positions {
+            self.validate_range(position, position)?;
+        }
+        if text.is_empty() || positions.is_empty() {
+            return Ok(());
+        }
+        let can_coalesce = self.current_state != self.saved_state
+            && self.redo.is_empty()
+            && self.undo.last().is_some_and(|transaction| {
+                transaction.typing
+                    && transaction.edits.len() == positions.len()
+                    && transaction
+                        .edits
+                        .iter()
+                        .zip(positions)
+                        .all(|(edit, &position)| {
+                            edit.applied_start + edit.inserted.chars().count() == position
+                        })
+            });
+        if !can_coalesce {
+            return self.edit_many_kind(
+                positions.iter().map(|&position| TextChange {
+                    start_char: position,
+                    end_char: position,
+                    inserted: text.to_owned(),
+                }),
+                true,
+            );
+        }
+        for &position in positions.iter().rev() {
+            self.apply(position, position, text);
+        }
+        let added = text.chars().count();
+        let after_state = self.allocate_state();
+        let transaction = self.undo.last_mut().expect("coalescing requires history");
+        for (index, edit) in transaction.edits.iter_mut().enumerate() {
+            edit.applied_start += added * index;
+            edit.inserted.push_str(text);
+        }
+        transaction.after_state = after_state;
+        self.current_state = after_state;
+        self.revision = self.revision.saturating_add(1);
         Ok(())
     }
 
@@ -481,11 +573,12 @@ impl TextDocument {
         state
     }
 
-    fn record_transaction(&mut self, edits: Vec<AtomicEdit>) {
+    fn record_transaction(&mut self, edits: Vec<AtomicEdit>, typing: bool) {
         let before_state = self.current_state;
         let after_state = self.allocate_state();
         self.undo.push(Transaction {
             edits,
+            typing,
             before_state,
             after_state,
         });
@@ -646,6 +739,62 @@ mod tests {
         );
         selections.clamp(1);
         assert_eq!(selections.selections(), &[Selection::caret(1)]);
+    }
+
+    #[test]
+    fn multi_caret_typing_coalesces_into_one_undo_step() {
+        let mut doc = TextDocument::new("a\nb\nc");
+        let mut selections = SelectionSet::single(1);
+        selections.add(Selection::caret(3));
+        selections.add(Selection::caret(5));
+        for c in ["x", "🦀", "z"] {
+            selections.insert(&mut doc, c).unwrap();
+        }
+        assert_eq!(doc.text(), "ax🦀z\nbx🦀z\ncx🦀z");
+        assert_eq!(
+            selections.selections(),
+            &[
+                Selection::caret(4),
+                Selection::caret(9),
+                Selection::caret(14)
+            ]
+        );
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "a\nb\nc");
+        assert!(doc.redo());
+        assert_eq!(doc.text(), "ax🦀z\nbx🦀z\ncx🦀z");
+        assert!(doc.undo());
+        // Moving one caret breaks the group.
+        selections.set_all(vec![Selection::caret(0), Selection::caret(3)]);
+        selections.insert(&mut doc, "1").unwrap();
+        selections.set_all(vec![Selection::caret(0), Selection::caret(3)]);
+        selections.insert(&mut doc, "2").unwrap();
+        assert_eq!(doc.text(), "21a\n2b1\nc");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "1a\nb1\nc");
+        assert!(doc.type_text_many(&[2, 1], "x").is_err());
+    }
+
+    #[test]
+    fn typing_over_selections_undoes_with_the_typed_word_but_not_with_cuts() {
+        let mut doc = TextDocument::new("one one");
+        let mut selections = SelectionSet::default();
+        selections.set_all(vec![
+            Selection { anchor: 0, head: 3 },
+            Selection { anchor: 4, head: 7 },
+        ]);
+        for c in ["t", "w", "o"] {
+            selections.insert(&mut doc, c).unwrap();
+        }
+        assert_eq!(doc.text(), "two two");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "one one");
+        // A deletion is not typing: the next keystroke starts a new step.
+        let mut doc = TextDocument::new("abc");
+        doc.edit(1, 3, "").unwrap();
+        doc.type_text(1, "x").unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "a");
     }
 
     proptest! {

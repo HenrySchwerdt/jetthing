@@ -195,8 +195,10 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             spec("app.about", "About Jetthing", "Help", None, "{}"),
             |_| true,
             |state: &mut IdeState, _| {
-                state.status = format!("Jetthing {CURRENT_VERSION}");
-                Ok(json!({"version": CURRENT_VERSION}))
+                let build = crate::build_info::BUILD;
+                state.status = build.version_line("Jetthing");
+                state.about_open = true;
+                Ok(build.to_json())
             },
         ))
         .expect("unique built-in id");
@@ -242,6 +244,22 @@ mod tests {
         crate::built_in_commands()
             .execute("app.prepareRestart", &mut IdeState::default(), Value::Null)
             .unwrap();
+    }
+
+    #[test]
+    fn about_opens_the_dialog_and_reports_the_build() {
+        let mut state = IdeState::default();
+        let info = crate::built_in_commands()
+            .execute("app.about", &mut state, Value::Null)
+            .unwrap();
+        assert!(state.about_open);
+        assert_eq!(info["version"], CURRENT_VERSION);
+        assert_eq!(info["commit"], crate::build_info::BUILD.commit);
+        assert!(
+            state
+                .status
+                .starts_with(&format!("Jetthing {CURRENT_VERSION} ("))
+        );
     }
 
     #[test]
