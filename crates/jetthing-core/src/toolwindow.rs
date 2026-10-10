@@ -9,6 +9,7 @@ use std::fmt;
 pub enum Anchor {
     Left,
     Bottom,
+    Right,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -19,16 +20,18 @@ pub enum ToolWindow {
     Build,
     Problems,
     Terminal,
+    AiChat,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 6] = [
+    pub const ALL: [ToolWindow; 7] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Find,
         ToolWindow::Build,
         ToolWindow::Problems,
         ToolWindow::Terminal,
+        ToolWindow::AiChat,
     ];
 
     pub fn id(self) -> &'static str {
@@ -39,6 +42,7 @@ impl ToolWindow {
             ToolWindow::Build => "build",
             ToolWindow::Problems => "problems",
             ToolWindow::Terminal => "terminal",
+            ToolWindow::AiChat => "aiChat",
         }
     }
 
@@ -50,6 +54,7 @@ impl ToolWindow {
             ToolWindow::Build => "Build",
             ToolWindow::Problems => "Problems",
             ToolWindow::Terminal => "Terminal",
+            ToolWindow::AiChat => "AI Chat",
         }
     }
 
@@ -62,6 +67,8 @@ impl ToolWindow {
             ToolWindow::Build => "⌘4",
             ToolWindow::Problems => "⌘6",
             ToolWindow::Terminal => "⌥F12",
+            // The reference IDE assigns no default shortcut to its AI chat window.
+            ToolWindow::AiChat => "",
         }
     }
 
@@ -71,6 +78,7 @@ impl ToolWindow {
             ToolWindow::Find | ToolWindow::Build | ToolWindow::Problems | ToolWindow::Terminal => {
                 Anchor::Bottom
             }
+            ToolWindow::AiChat => Anchor::Right,
         }
     }
 
@@ -89,6 +97,7 @@ impl fmt::Display for ToolWindow {
 pub struct ToolWindowLayout {
     left: Option<ToolWindow>,
     bottom: Option<ToolWindow>,
+    right: Option<ToolWindow>,
 }
 
 impl ToolWindowLayout {
@@ -96,6 +105,7 @@ impl ToolWindowLayout {
         match anchor {
             Anchor::Left => &mut self.left,
             Anchor::Bottom => &mut self.bottom,
+            Anchor::Right => &mut self.right,
         }
     }
 
@@ -103,6 +113,7 @@ impl ToolWindowLayout {
         match anchor {
             Anchor::Left => self.left,
             Anchor::Bottom => self.bottom,
+            Anchor::Right => self.right,
         }
     }
 
@@ -136,6 +147,7 @@ impl ToolWindowLayout {
     pub fn hide_all(&mut self) {
         self.left = None;
         self.bottom = None;
+        self.right = None;
     }
 }
 
@@ -156,6 +168,9 @@ mod tests {
         assert_eq!(layout.visible(Anchor::Bottom), None);
         assert!(layout.toggle(ToolWindow::Commit));
         assert!(!layout.is_visible(ToolWindow::Project));
+        layout.show(ToolWindow::AiChat);
+        assert_eq!(layout.visible(Anchor::Right), Some(ToolWindow::AiChat));
+        assert!(layout.is_visible(ToolWindow::Commit));
     }
 
     #[test]

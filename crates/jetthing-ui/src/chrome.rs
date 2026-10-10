@@ -506,11 +506,11 @@ fn stripe_button(app: &mut IdeApp, ui: &mut egui::Ui, window: ToolWindow, icon: 
             .circle_filled(rect.right_top() + vec2(-7.0, 7.0), 3.0, color);
     }
     if response
-        .on_hover_text(format!(
-            "{} ({})",
-            window.title(),
-            keys::display(window.shortcut())
-        ))
+        .on_hover_text(if window.shortcut().is_empty() {
+            window.title().to_owned()
+        } else {
+            format!("{} ({})", window.title(), keys::display(window.shortcut()))
+        })
         .clicked()
     {
         app.toggle_tool_window(window);
@@ -546,14 +546,16 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
         });
 }
 
-/// Narrow right gutter so the editor island keeps its rounded right edge.
-pub fn right_stripe(ctx: &egui::Context) {
+/// Right tool window stripe (AI Chat).
+pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
     egui::SidePanel::right("right_stripe")
-        .exact_width(6.0)
+        .exact_width(STRIPE_WIDTH)
         .resizable(false)
         .show_separator_line(false)
-        .frame(chrome_frame())
-        .show(ctx, |_| {});
+        .frame(chrome_frame().inner_margin(egui::Margin::symmetric(4, 6)))
+        .show(ctx, |ui| {
+            stripe_button(app, ui, ToolWindow::AiChat, Icon::Ai);
+        });
 }
 
 /// First line of `text`, shortened to `max` characters with an ellipsis.
@@ -624,6 +626,9 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if app.state.project.is_some() {
+                        crate::ai_chat::status_widget(app, ui, font.clone());
+                    }
                     let secondary = theme::TEXT_SECONDARY;
                     crate::lsp_status::status_widget(app, ui, font.clone());
                     crate::toolchain_status::status_widget(app, ui, font.clone());

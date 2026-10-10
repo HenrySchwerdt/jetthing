@@ -15,6 +15,7 @@ pub struct Workspace {
     pub expanded_dirs: Vec<PathBuf>,
     pub left_tool_window: Option<String>,
     pub bottom_tool_window: Option<String>,
+    pub right_tool_window: Option<String>,
     pub recent_files: Vec<PathBuf>,
 }
 
@@ -164,6 +165,10 @@ impl IdeState {
                 .tool_windows
                 .visible(Anchor::Bottom)
                 .map(|window| window.id().to_owned()),
+            right_tool_window: self
+                .tool_windows
+                .visible(Anchor::Right)
+                .map(|window| window.id().to_owned()),
             recent_files: self.recent_files.clone(),
         }
     }
@@ -175,7 +180,8 @@ impl IdeState {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         let json = serde_json::to_string_pretty(&self.workspace()).map_err(|e| e.to_string())?;
-        std::fs::write(path, json).map_err(|error| error.to_string())
+        std::fs::write(path, json).map_err(|error| error.to_string())?;
+        self.save_ai_chat()
     }
 
     /// Restores tabs, tree expansion and tool windows; missing files are skipped.
@@ -214,9 +220,13 @@ impl IdeState {
         }
         self.recent_files = recent;
         self.tool_windows.hide_all();
-        for id in [&workspace.left_tool_window, &workspace.bottom_tool_window]
-            .into_iter()
-            .flatten()
+        for id in [
+            &workspace.left_tool_window,
+            &workspace.bottom_tool_window,
+            &workspace.right_tool_window,
+        ]
+        .into_iter()
+        .flatten()
         {
             // The terminal is not restored automatically: it would spawn a shell.
             if let Some(window) = ToolWindow::parse(id).filter(|w| *w != ToolWindow::Terminal) {

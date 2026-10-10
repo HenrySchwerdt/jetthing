@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod ai_commands;
 pub mod build_info;
 mod diagnostic_commands;
 pub mod diagnostics;
@@ -22,6 +23,7 @@ mod terminal_commands;
 mod toolchain_commands;
 mod toolwindow;
 mod update_commands;
+pub use ai_commands::{AiState, ApplyPreview, CHAT_FILE as AI_CHAT_FILE, MOCK_ENV as AI_MOCK_ENV};
 pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
@@ -71,6 +73,7 @@ pub struct IdeState {
     update_silent: bool,
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
+    pub ai: AiState,
     pub status: String,
 }
 
@@ -120,6 +123,7 @@ impl IdeState {
         self.status = format!("Opened {}", project.root().display());
         self.project = Some(project);
         self.restore_workspace();
+        self.load_ai_project();
         Ok(())
     }
     pub fn open_file(&mut self, path: &Path) -> Result<(), String> {
@@ -603,6 +607,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     terminal_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
     toolchain_commands::register(&mut registry);
+    ai_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(
@@ -963,7 +968,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     &id,
                     &format!("{} Tool Window", window.title()),
                     "Window",
-                    Some(window.shortcut()),
+                    Some(window.shortcut()).filter(|shortcut| !shortcut.is_empty()),
                     "{}",
                 ),
                 |_| true,

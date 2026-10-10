@@ -6,6 +6,7 @@
 //! dispatched through the typed command registry.
 
 mod about;
+mod ai_chat;
 mod chrome;
 mod control;
 mod crash_notice;
@@ -61,6 +62,7 @@ pub struct IdeApp {
     window_focused: bool,
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
+    ai_ui: ai_chat::AiChatUi,
 }
 
 impl IdeApp {
@@ -82,6 +84,7 @@ impl IdeApp {
     ) -> Self {
         let commands = built_in_commands();
         let mut state = IdeState::default();
+        state.init_ai(None);
         if let Some(path) = project {
             if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
             {
@@ -137,6 +140,7 @@ impl IdeApp {
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
             control: None,
+            ai_ui: ai_chat::AiChatUi::default(),
         }
     }
 
@@ -380,6 +384,8 @@ impl IdeApp {
                 self.state.about_open = false;
             } else if self.dialog.is_some() {
                 self.dialog = None;
+            } else if self.state.ai.pending_apply.is_some() {
+                self.dispatch("ai.chat.applyCancel", Value::Null);
             } else if self.palette.open {
                 self.palette.open = false;
             } else if self.find.open
@@ -558,6 +564,10 @@ impl eframe::App for IdeApp {
             // Diagnostics and server messages arrive without user input.
             ctx.request_repaint_after(Duration::from_millis(500));
         }
+        self.state.poll_ai();
+        if self.state.ai.service.is_busy() {
+            ctx.request_repaint_after(Duration::from_millis(30));
+        }
         if self.state.search.is_running() || self.state.runner.is_running() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
@@ -581,14 +591,16 @@ impl eframe::App for IdeApp {
             welcome::show(self, ctx);
         } else {
             chrome::left_stripe(self, ctx);
-            chrome::right_stripe(ctx);
+            chrome::right_stripe(self, ctx);
             toolwindows::left(self, ctx);
+            ai_chat::right(self, ctx);
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }
         editor::completion_popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
+        ai_chat::diff_preview(self, ctx);
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
         about::show(self, ctx);

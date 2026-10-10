@@ -47,6 +47,15 @@
 - [x] Log file per OS, crash reports with backtrace, crash notice on next start
 - [x] Versioned release pipeline (0.0.2) publishing on every version bump
 
+## AI Assistant (#52)
+
+- [x] `jetthing-ai` engine: provider trait, Anthropic/OpenAI-compatible/Ollama streaming, mock provider, settings and key storage
+- [x] AI Chat tool window with streaming Markdown, context chips, slash commands, Apply with diff preview
+- [ ] Inline ghost-text completion
+- [ ] AI actions (Explain, Rewrite, Generate tests/docs, Fix with AI)
+- [ ] Commit message generation, terminal NL→command
+- [ ] Agent mode with per-edit approval
+
 ## M2 — language intelligence
 
 VFS snapshots, background indexing, LSP transport, diagnostics, completion, symbol
