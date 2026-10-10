@@ -96,7 +96,8 @@ fn service_initializes_answers_server_requests_and_completes() {
     else {
         panic!("expected a completion list");
     };
-    assert_eq!(list.items[0].label, "greeting");
+    assert_eq!(list.items[0].label, "trigger0", "no context was sent");
+    assert_eq!(list.items[1].label, "greeting");
     assert!(service.last_latency("textDocument/completion").is_some());
     // Unknown requests produce JSON-RPC errors, not hangs.
     let id = service
@@ -145,7 +146,11 @@ fn manager_starts_lazily_reports_progress_and_routes_completion() {
         result.is_some()
     }));
     let result = result.unwrap();
-    assert_eq!(result.items.len(), 4);
+    assert_eq!(result.items.len(), 5);
+    assert_eq!(
+        result.items[0].label, "trigger2",
+        "trigger character kind is sent"
+    );
     assert!(!result.incomplete);
     assert_eq!(manager.trigger_characters(&file), ["."]);
     let ranked = manager.rank_completions(&file, &result.items, "gRF");

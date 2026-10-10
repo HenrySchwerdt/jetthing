@@ -5,6 +5,10 @@
 //! - `--crash-once <file>`: exit with code 3 after `initialized` unless `<file>`
 //!   exists (the file is created first, so the restarted server survives).
 //! - `--completion-delay-ms <n>`: answer completion requests after a delay.
+//! - `--incomplete`: mark completion lists `isIncomplete`.
+//!
+//! Completion lists start with an item `trigger<kind>` naming the request's
+//! `triggerKind`.
 //!
 //! Completion returns a fixed Java-like member list; resolve adds Markdown
 //! documentation and an import edit; hover and signature help return fixed
@@ -26,6 +30,7 @@ fn main() {
             .cloned()
     };
     let progress = flag("--progress");
+    let incomplete = flag("--incomplete");
     let crash_file = value("--crash-once");
     let delay = value("--completion-delay-ms")
         .and_then(|ms| ms.parse().ok())
@@ -89,8 +94,10 @@ fn main() {
                 if let Some(delay) = delay {
                     std::thread::sleep(delay);
                 }
+                let kind = params["context"]["triggerKind"].as_u64().unwrap_or(0);
                 send(
-                    json!({"jsonrpc":"2.0","id":id,"result":{"isIncomplete":false,"items":[
+                    json!({"jsonrpc":"2.0","id":id,"result":{"isIncomplete":incomplete,"items":[
+                        {"label":format!("trigger{kind}"),"kind":1,"sortText":"9"},
                         {"label":"greeting","kind":2,"detail":"String","labelDetails":{"detail":"(String name)","description":"String"},"sortText":"0"},
                         {"label":"getRequiredField","kind":2,"detail":"Field","sortText":"1"},
                         {"label":"getClass","kind":2,"detail":"Class<?>","sortText":"2"},

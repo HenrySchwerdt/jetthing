@@ -17,14 +17,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-struct Fake(PathBuf, ServerSpec);
+struct Fake(PathBuf, ServerSpec, Vec<String>);
 
 impl LanguageServerProvider for Fake {
     fn spec(&self) -> &ServerSpec {
         &self.1
     }
     fn launch(&self, _: &LaunchContext<'_>) -> Result<LaunchConfig, LspError> {
-        Ok(LaunchConfig::new("fake", &self.0))
+        Ok(LaunchConfig::new("fake", &self.0).args(self.2.clone()))
     }
 }
 
@@ -47,13 +47,11 @@ fn wait(state: &mut IdeState, mut done: impl FnMut(&IdeState) -> bool) -> bool {
     false
 }
 
-#[test]
-fn completion_resolves_docs_applies_imports_and_shows_quick_doc() {
-    let Some(server) = fake_server() else {
-        eprintln!("jetthing-fake-lsp not built; run `cargo test --workspace`");
-        return;
-    };
-    let root = std::env::temp_dir().join(format!("jetthing-core-fake-{}", std::process::id()));
+/// Opens a project with `App.fake` ("app.") served by the fake server and
+/// waits until the server is ready, caret after the dot.
+fn open_fake_project(server: PathBuf, args: &[&str], name: &str) -> (PathBuf, IdeState) {
+    let root =
+        std::env::temp_dir().join(format!("jetthing-core-fake-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("App.fake"), "app.").unwrap();
@@ -71,6 +69,7 @@ fn completion_resolves_docs_applies_imports_and_shows_quick_doc() {
             notify_missing: false,
             initialization_options: None,
         },
+        args.iter().map(|arg| arg.to_string()).collect(),
     )));
     let commands = built_in_commands();
     let mut state = IdeState::default();
@@ -89,6 +88,66 @@ fn completion_resolves_docs_applies_imports_and_shows_quick_doc() {
             .active_absolute_path()
             .is_some_and(|path| !state.lsp.trigger_characters(&path).is_empty())
     }));
+    (root, state)
+}
+
+fn type_text(state: &mut IdeState, text: &str) {
+    let caret = state.documents[0].selections.primary().head;
+    state.documents[0].text.edit(caret, caret, text).unwrap();
+    state.documents[0]
+        .selections
+        .set_single(jetthing_text::Selection::caret(
+            caret + text.chars().count(),
+        ));
+    state.sync_active_lsp();
+    state.completion_after_typing(text);
+}
+
+#[test]
+fn incomplete_lists_are_requeried_while_typing() {
+    let Some(server) = fake_server() else {
+        eprintln!("jetthing-fake-lsp not built; run `cargo test --workspace`");
+        return;
+    };
+    let (root, mut state) = open_fake_project(server, &["--incomplete"], "incomplete");
+    // Typing an identifier start opens the popup without Ctrl+Space.
+    type_text(&mut state, "g");
+    assert!(wait(&mut state, |state| {
+        state
+            .completion
+            .as_ref()
+            .is_some_and(|s| s.visible() && s.incomplete)
+    }));
+    let labels = |state: &IdeState| -> Vec<String> {
+        let session = state.completion.as_ref().unwrap();
+        session
+            .ranked
+            .iter()
+            .map(|row| session.items[row.index].label.clone())
+            .collect()
+    };
+    assert!(labels(&state).contains(&"getRequiredField".to_string()));
+    // The next character re-queries with TriggerForIncompleteCompletions (3).
+    type_text(&mut state, "r");
+    assert!(wait(&mut state, |state| {
+        state
+            .completion
+            .as_ref()
+            .is_some_and(|s| !s.waiting && s.items.iter().any(|i| i.label == "trigger3"))
+    }));
+    // `gr`: the prefix match first, then the camel-hump match g+R.
+    assert_eq!(labels(&state), ["greeting", "getRequiredField"]);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn completion_resolves_docs_applies_imports_and_shows_quick_doc() {
+    let Some(server) = fake_server() else {
+        eprintln!("jetthing-fake-lsp not built; run `cargo test --workspace`");
+        return;
+    };
+    let (root, mut state) = open_fake_project(server, &[], "flow");
+    let commands = built_in_commands();
 
     // Ctrl+Space, then the docs panel (Ctrl+Q while the popup is open).
     commands
