@@ -98,6 +98,14 @@ installer instead, and **Quit and Install** hands it to the OS. Development buil
 (`JETTHING_NO_UPDATE_CHECK`, `JETTHING_GITHUB_TOKEN`, `JETTHING_UPDATE_REPOSITORY`)
 are in [`docs/release.md`](docs/release.md).
 
+## Logs and crash reports
+
+`jetthing.log` lives in `~/.local/state/jetthing/logs` (Linux), `~/Library/Logs/Jetthing`
+(macOS) or `%LOCALAPPDATA%\Jetthing\logs` (Windows); `JETTHING_LOG_DIR` overrides it.
+**Help → Show Log in Files** opens it. A crash writes `crash-*.txt` there (build, panic,
+backtrace, log tail) and the next start offers it in a notification; attach it to bug
+reports together with **Help → About → Copy**.
+
 ## Keyboard
 
 Shortcuts follow the default keymap of the reference IDE (macOS / Windows & Linux):

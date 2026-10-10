@@ -13,6 +13,7 @@ mod control;
 mod device_manager;
 mod diff_ui;
 mod disk_banner;
+mod crash_notice;
 mod editor;
 mod editor_keys;
 mod findbar;
@@ -42,8 +43,8 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+pub use jetthing_core::{build_info, diagnostics};
 pub use jetthing_plugins::PluginFactory;
-pub use jetthing_core::build_info;
 pub use theme::install as install_theme;
 
 pub struct IdeApp {
@@ -100,7 +101,11 @@ impl IdeApp {
         bundled: Vec<PluginFactory>,
     ) -> Self {
         let check_updates = std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none();
-        Self::build(project, files, bundled, check_updates)
+        let mut app = Self::build(project, files, bundled, check_updates);
+        if let Some(dir) = diagnostics::active_log_dir() {
+            app.state.check_crash_reports(&dir);
+        }
+        app
     }
 
     #[cfg(test)]
@@ -209,6 +214,7 @@ impl IdeApp {
 
     fn dispatch(&mut self, id: &str, params: Value) {
         if let Err(error) = self.commands.execute(id, &mut self.state, params) {
+            diagnostics::log(diagnostics::Level::Warn, &format!("{id}: {error}"));
             self.state.status = error.to_string();
         }
     }
@@ -724,6 +730,7 @@ impl eframe::App for IdeApp {
         settings_dialog::show(self, ctx);
         android_sdk::show(self, ctx);
         notifications::show(self, ctx);
+        crash_notice::show(self, ctx);
         about::show(self, ctx);
         lsp_status::notices(self, ctx);
         plugin_ui::plugins_window(self, ctx);

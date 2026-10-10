@@ -3,6 +3,7 @@
 
 mod plugins;
 
+use jetthing_ui::diagnostics;
 use std::path::PathBuf;
 
 enum Mode {
@@ -97,7 +98,8 @@ fn missing_library_hint(message: &str) -> Option<String> {
 }
 
 /// Missing desktop libraries make winit panic during startup; report them
-/// as an actionable error instead of a backtrace.
+/// as an actionable error instead of a backtrace. Any other panic leaves a
+/// crash report in the log directory, offered to the user on the next start.
 fn install_startup_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -109,10 +111,18 @@ fn install_startup_panic_hook() {
             .unwrap_or_default();
         match missing_library_hint(message) {
             Some(hint) => {
+                diagnostics::log(diagnostics::Level::Error, &hint);
                 eprintln!("{hint}");
                 std::process::exit(1);
             }
-            None => default_hook(info),
+            None => {
+                let location = info.location().map(ToString::to_string);
+                match diagnostics::write_crash_report(message, location.as_deref()) {
+                    Ok(path) => eprintln!("jetthing: crash report written to {}", path.display()),
+                    Err(error) => eprintln!("jetthing: could not write a crash report: {error}"),
+                }
+                default_hook(info)
+            }
         }
     }));
 }
@@ -189,7 +199,14 @@ fn main() -> eframe::Result<()> {
         println!("{text}");
         return Ok(());
     }
+    if let Err(error) = diagnostics::init() {
+        eprintln!("jetthing: logging disabled: {error}");
+    }
     install_startup_panic_hook();
+    // Debug builds only: exercise the crash-report path end to end.
+    if cfg!(debug_assertions) && std::env::var_os("JETTHING_DEBUG_PANIC").is_some() {
+        panic!("JETTHING_DEBUG_PANIC requested a test crash");
+    }
     // Usage: jetthing [PROJECT_DIR] [FILE...]  |  jetthing --app <PLUGIN_ID>
     let mode = match parse_args() {
         Ok(mode) => mode,
@@ -218,7 +235,9 @@ fn main() -> eframe::Result<()> {
         // No usable wgpu adapter/surface (VMs, old drivers): fall back to OpenGL.
         // The first app was consumed by the failed attempt; build a fresh one.
         Err(eframe::Error::Wgpu(error)) => {
-            eprintln!("jetthing: wgpu unavailable ({error}); falling back to OpenGL");
+            let message = format!("wgpu unavailable ({error}); falling back to OpenGL");
+            diagnostics::log(diagnostics::Level::Warn, &message);
+            eprintln!("jetthing: {message}");
             match build_app(&mode) {
                 Ok(app) => run(eframe::Renderer::Glow, &title, app),
                 Err(error) => {
