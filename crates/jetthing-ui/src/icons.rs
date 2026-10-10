@@ -53,6 +53,8 @@ pub enum Icon {
     Pin,
     Success,
     Rerun,
+    /// Stacked squares (Build Variants).
+    Variants,
 }
 
 impl Icon {
@@ -278,6 +280,21 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
             line(&[(6.5, 6.0), (12.0, 6.0)]);
             painter.circle_filled(g.p(4.5, 10.0), g.len(0.9), color);
             line(&[(6.5, 10.0), (10.0, 10.0)]);
+        }
+        Icon::Variants => {
+            painter.rect_stroke(
+                g.rect(1.5, 5.5, 10.5, 14.5),
+                g.len(1.5),
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+            line(&[
+                (4.5, 3.5),
+                (4.5, 1.5),
+                (14.5, 1.5),
+                (14.5, 11.5),
+                (12.5, 11.5),
+            ]);
         }
         Icon::Pause => {
             line(&[(5.5, 3.5), (5.5, 12.5)]);

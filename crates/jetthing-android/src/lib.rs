@@ -7,10 +7,12 @@
 
 pub mod adb;
 pub mod avd;
+pub mod deploy;
 pub mod logcat;
 pub mod project;
 mod properties;
 pub mod sdk;
+pub mod variants;
 pub mod view;
 
 pub use adb::{

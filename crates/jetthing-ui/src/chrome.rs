@@ -196,13 +196,24 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
     if build.inner.clicked() {
         app.dispatch("build.project", Value::Null);
     }
-    let can_run = app.commands.is_enabled("run.project", &app.state);
+    // Android apps have no `gradlew run`; Run deploys 'app' to the selected device.
+    let android_run = app.state.android.project.is_some();
+    let run_command = if android_run {
+        "android.app.deploy"
+    } else {
+        "run.project"
+    };
+    let can_run = app.commands.is_enabled(run_command, &app.state);
     let run_color = if can_run {
         *theme::RUN_GREEN
     } else {
         *theme::TEXT_DISABLED
     };
     let run_tip = match &detected {
+        _ if android_run => format!(
+            "Run 'app' ({})",
+            app.action_shortcut("Run").unwrap_or_default()
+        ),
         Some(build) if build.run_unavailable.is_some() => {
             format!(
                 "Run unavailable: {}",
@@ -219,7 +230,7 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
     if !can_run {
         run.response.on_disabled_hover_text(&run_tip);
     } else if run.inner.clicked() {
-        app.dispatch("run.project", Value::Null);
+        app.dispatch(run_command, Value::Null);
     }
     if let Some(build) = detected {
         let response = widgets::flat_widget(
@@ -445,6 +456,9 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
             ui.vertical(|ui| {
                 stripe_button(app, ui, ToolWindow::Project, Icon::Project);
                 stripe_button(app, ui, ToolWindow::Commit, Icon::Commit);
+                if app.state.android.project.is_some() {
+                    stripe_button(app, ui, ToolWindow::BuildVariants, Icon::Variants);
+                }
                 let (rect, _) = ui.allocate_exact_size(vec2(32.0, 1.0), Sense::hover());
                 ui.painter().line_segment(
                     [

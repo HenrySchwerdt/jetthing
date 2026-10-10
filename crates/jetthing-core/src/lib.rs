@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod android_commands;
+mod android_deploy;
 mod android_devices;
 mod android_logcat;
 mod build_commands;
@@ -22,6 +23,7 @@ pub mod diagnostics;
 mod disk_sync;
 mod annotations;
 mod branch_commands;
+mod android_variants;
 mod editor_commands;
 pub mod keymap_commands;
 mod git_log;
@@ -39,6 +41,7 @@ mod toolchain_commands;
 mod toolwindow;
 mod update_commands;
 pub use android_commands::AndroidState;
+pub use android_deploy::{DeployPhase, DeployState};
 pub use android_devices::DeviceHub;
 pub use android_logcat::LogcatState;
 pub use disk_sync::{DiskConflict, Waker, content_hash};
@@ -732,6 +735,8 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
     android_commands::register(&mut registry);
     android_devices::register(&mut registry);
+    android_deploy::register(&mut registry);
+    android_variants::register(&mut registry);
     android_logcat::register(&mut registry);
     build_commands::register(&mut registry);
     editor_commands::register(&mut registry);
@@ -1033,7 +1038,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Toggle Tool Window",
                 "Window",
                 None,
-                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat"}"#,
+                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat|buildVariants"}"#,
             ),
             |_| true,
             |state: &mut IdeState, params| {

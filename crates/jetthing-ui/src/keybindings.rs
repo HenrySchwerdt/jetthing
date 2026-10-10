@@ -269,6 +269,9 @@ impl IdeApp {
             let params = serde_json::from_str(binding.params).unwrap_or(Value::Null);
             if binding.command == "editor.close" && diff_tab {
                 self.dispatch("diff.close", Value::Null);
+            } else if binding.command == "run.project" && self.state.android.project.is_some() {
+                // Android apps run by deploying 'app' (like the toolbar Run button).
+                self.dispatch("android.app.deploy", Value::Null);
             } else if binding.command == "toolwindow.toggle"
                 && params.get("id").and_then(Value::as_str) == Some("terminal")
             {

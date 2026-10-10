@@ -12,6 +12,8 @@ mod blame_gutter;
 mod branches_popup;
 mod change_popup;
 mod build_window;
+mod android_run_ui;
+mod build_variants_ui;
 mod chrome;
 mod completion_ui;
 mod context_menus;
@@ -109,6 +111,7 @@ pub struct IdeApp {
     branch_dialog: Option<branches_popup::BranchDialog>,
     /// Open gutter change-marker popup.
     change_popup: Option<change_popup::ChangePopup>,
+    deploy_balloon: android_run_ui::DeployBalloon,
 }
 
 impl IdeApp {
@@ -218,6 +221,7 @@ impl IdeApp {
             change_popup: None,
             branch_dialog: None,
             push_dialog: None,
+            deploy_balloon: android_run_ui::DeployBalloon::default(),
         }
     }
 
@@ -665,6 +669,7 @@ impl eframe::App for IdeApp {
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
         about::show(self, ctx);
+        android_run_ui::show(self, ctx);
         lsp_status::notices(self, ctx);
         plugin_ui::plugins_window(self, ctx);
         plugin_ui::notifications(self, ctx);
