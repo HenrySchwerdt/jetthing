@@ -153,6 +153,24 @@ impl CollectionTab {
 pub enum TabKind {
     Welcome,
     Collection(Box<CollectionTab>),
+    Aggregation(Box<crate::tools::AggregationTab>),
+    Sql(Box<crate::tools::SqlTab>),
+    Schema(Box<crate::tools::SchemaTab>),
+    Indexes(Box<crate::tools::IndexTab>),
+}
+
+impl TabKind {
+    /// The session a tab belongs to (`None` for the welcome tab).
+    pub fn session(&self) -> Option<SessionId> {
+        match self {
+            Self::Welcome => None,
+            Self::Collection(t) => Some(t.session),
+            Self::Aggregation(t) => Some(t.session),
+            Self::Sql(t) => Some(t.session),
+            Self::Schema(t) => Some(t.session),
+            Self::Indexes(t) => Some(t.session),
+        }
+    }
 }
 
 pub struct Tab {
@@ -324,10 +342,7 @@ impl MongoRaabit {
     pub fn disconnect(&mut self, id: SessionId) {
         if let Some(index) = self.sessions.iter().position(|s| s.id == id) {
             let session = self.sessions.remove(index);
-            self.tabs.retain(|tab| match &tab.kind {
-                TabKind::Collection(c) => c.session != id,
-                TabKind::Welcome => true,
-            });
+            self.tabs.retain(|tab| tab.kind.session() != Some(id));
             self.active_tab = self.active_tab.min(self.tabs.len().saturating_sub(1));
             self.status = format!("Disconnected from {}", session.profile.name);
             if let SessionState::Connected(conn) = session.state {

@@ -21,6 +21,9 @@ struct Args {
     demo: bool,
     dialog: Option<String>,
     edit_cell: Option<String>,
+    tool: Option<String>,
+    text: Option<String>,
+    stage: Option<usize>,
 }
 
 fn parse_args() -> Args {
@@ -35,6 +38,9 @@ fn parse_args() -> Args {
         demo: false,
         dialog: None,
         edit_cell: None,
+        tool: None,
+        text: None,
+        stage: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -46,6 +52,9 @@ fn parse_args() -> Args {
             "--filter" => args.filter = it.next(),
             "--dialog" => args.dialog = it.next(),
             "--edit-cell" => args.edit_cell = it.next(),
+            "--tool" => args.tool = it.next(),
+            "--text" => args.text = it.next(),
+            "--stage" => args.stage = it.next().and_then(|s| s.parse().ok()),
             "--drill" => args.drill.extend(it.next()),
             "--open" => {
                 args.open = it.next().and_then(|v| {
@@ -172,6 +181,60 @@ impl App {
                     .into_iter()
                     .find(|l| format!("{l:?}").eq_ignore_ascii_case(&code));
             }
+        }
+        if let Some(tool) = self.args.tool.clone()
+            && let Some(session) = self.raabit.sessions.first().map(|s| s.id)
+            && let Some((db, coll)) = self.args.open.clone()
+        {
+            let text = self.args.text.clone();
+            match tool.as_str() {
+                "aggregate" => {
+                    let pipeline = text
+                        .and_then(|t| mongo_raabit::core::aggregate::Pipeline::from_text(&t).ok());
+                    let id = self.raabit.open_aggregation(session, &db, &coll, pipeline);
+                    if let Some(stage) = self.args.stage
+                        && let Some(tab) = self.raabit.aggregation_tab_mut(id)
+                    {
+                        tab.selected = stage;
+                    }
+                    self.raabit.preview_stage(id);
+                    wait(&mut self.raabit);
+                    if std::env::var("RAABIT_RUN").is_ok() {
+                        self.raabit.run_pipeline(id);
+                    }
+                }
+                "sql" => {
+                    let id = self.raabit.open_sql(session, &db, Some(&coll));
+                    if let Some(t) = text
+                        && let Some(tab) = self.raabit.sql_tab_mut(id)
+                    {
+                        tab.sql = t;
+                    }
+                    self.raabit.run_sql(id);
+                }
+                "schema" => {
+                    let id = self.raabit.open_schema(session, &db, &coll);
+                    wait(&mut self.raabit);
+                    if let Some(field) = text
+                        && let Some(tab) = self.raabit.schema_tab_mut(id)
+                        && let mongo_raabit::app::Load::Ready(report) = &tab.report
+                    {
+                        tab.selected = report.fields.iter().position(|f| f.path == field);
+                    }
+                }
+                "indexes" => {
+                    let id = self.raabit.open_indexes(session, &db, &coll);
+                    if text.is_some()
+                        && let Some(tab) = self.raabit.index_tab_mut(id)
+                    {
+                        tab.form_open = true;
+                        tab.form.keys = "{ status: 1, createdAt: -1 }".into();
+                        tab.form.partial = "{ status: { $ne: \"delivered\" } }".into();
+                    }
+                }
+                other => eprintln!("unknown --tool {other}"),
+            }
+            wait(&mut self.raabit);
         }
         if self.args.demo {
             for (uri, name, folder) in [

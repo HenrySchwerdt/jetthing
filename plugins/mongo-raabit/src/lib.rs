@@ -4,14 +4,19 @@
 //! any egui `Ui` (a plugin tool window, an editor tab or a standalone window). All
 //! database work runs on a background runtime and is applied in [`MongoRaabit::poll`].
 
+mod aggregation_view;
 pub mod app;
 mod collection;
 pub mod dialogs;
 pub mod icons;
+mod index_view;
 pub mod jobs;
 pub mod manager;
 mod results;
+mod schema_view;
+mod sql_view;
 pub mod style;
+pub mod tools;
 mod tree;
 mod values;
 mod welcome;
@@ -199,6 +204,18 @@ impl MongoRaabit {
                                 c.collection.clone(),
                                 p.text_secondary,
                             ),
+                            TabKind::Aggregation(t) => (
+                                Icon::Pipeline,
+                                format!("{} · Aggregate", t.collection),
+                                p.accent_text,
+                            ),
+                            TabKind::Sql(t) => (Icon::Sql, format!("{} · SQL", t.db), p.keyword),
+                            TabKind::Schema(t) => {
+                                (Icon::Schema, format!("{} · Schema", t.collection), p.leaf)
+                            }
+                            TabKind::Indexes(t) => {
+                                (Icon::Index, format!("{} · Indexes", t.collection), p.date)
+                            }
                         };
                         let active = index == self.active_tab;
                         let font = FontId::proportional(13.0);
@@ -297,6 +314,22 @@ impl MongoRaabit {
             TabKind::Collection(_) => {
                 let id = tab.id;
                 collection::show(self, id, ui);
+            }
+            TabKind::Aggregation(_) => {
+                let id = tab.id;
+                aggregation_view::show(self, id, ui);
+            }
+            TabKind::Sql(_) => {
+                let id = tab.id;
+                sql_view::show(self, id, ui);
+            }
+            TabKind::Schema(_) => {
+                let id = tab.id;
+                schema_view::show(self, id, ui);
+            }
+            TabKind::Indexes(_) => {
+                let id = tab.id;
+                index_view::show(self, id, ui);
             }
         }
     }

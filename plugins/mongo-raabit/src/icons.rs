@@ -25,6 +25,7 @@ pub enum Icon {
     ChevronRight,
     ChevronDown,
     ChevronLeft,
+    ChevronUp,
     Table,
     Tree,
     Json,
@@ -252,6 +253,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::ChevronRight => poly(&[(6.0, 3.5), (10.5, 8.0), (6.0, 12.5)], false),
         Icon::ChevronLeft => poly(&[(10.0, 3.5), (5.5, 8.0), (10.0, 12.5)], false),
         Icon::ChevronDown => poly(&[(3.5, 6.0), (8.0, 10.5), (12.5, 6.0)], false),
+        Icon::ChevronUp => poly(&[(3.5, 10.0), (8.0, 5.5), (12.5, 10.0)], false),
         Icon::Tree => {
             line((4.0, 3.0), (4.0, 12.0));
             line((4.0, 7.0), (8.0, 7.0));

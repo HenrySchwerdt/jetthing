@@ -14,6 +14,15 @@ enum Action {
     RefreshSession(SessionId),
     RefreshDatabase(SessionId, String),
     Disconnect(SessionId),
+    Tool(SessionId, String, Option<String>, ToolKind),
+}
+
+#[derive(Clone, Copy)]
+pub enum ToolKind {
+    Aggregation,
+    Sql,
+    Schema,
+    Indexes,
 }
 
 const ROW: f32 = 24.0;
@@ -442,6 +451,24 @@ pub fn show(app: &mut MongoRaabit, ui: &mut Ui) {
                                         ));
                                         ui.close();
                                     }
+                                    ui.separator();
+                                    for (label, kind) in [
+                                        ("Aggregation Editor", ToolKind::Aggregation),
+                                        ("SQL Query", ToolKind::Sql),
+                                        ("Schema Explorer", ToolKind::Schema),
+                                        ("Manage Indexes", ToolKind::Indexes),
+                                    ] {
+                                        if ui.button(label).clicked() {
+                                            actions.push(Action::Tool(
+                                                session.id,
+                                                db.info.name.clone(),
+                                                Some(entry.info.name.clone()),
+                                                kind,
+                                            ));
+                                            ui.close();
+                                        }
+                                    }
+                                    ui.separator();
                                     if ui.button("Copy name").clicked() {
                                         ui.ctx().copy_text(entry.info.name.clone());
                                         ui.close();
@@ -502,5 +529,33 @@ fn apply(app: &mut MongoRaabit, action: Action) {
         Action::RefreshSession(id) => app.load_databases(id),
         Action::RefreshDatabase(id, db) => app.load_collections(id, &db),
         Action::Disconnect(id) => app.disconnect(id),
+        Action::Tool(id, db, collection, kind) => {
+            open_tool(app, id, &db, collection.as_deref(), kind)
+        }
+    }
+}
+
+/// Open a tool tab for a database or collection.
+pub fn open_tool(
+    app: &mut MongoRaabit,
+    session: SessionId,
+    db: &str,
+    collection: Option<&str>,
+    kind: ToolKind,
+) {
+    match (kind, collection) {
+        (ToolKind::Sql, coll) => {
+            app.open_sql(session, db, coll);
+        }
+        (ToolKind::Aggregation, Some(coll)) => {
+            app.open_aggregation(session, db, coll, None);
+        }
+        (ToolKind::Schema, Some(coll)) => {
+            app.open_schema(session, db, coll);
+        }
+        (ToolKind::Indexes, Some(coll)) => {
+            app.open_indexes(session, db, coll);
+        }
+        _ => {}
     }
 }

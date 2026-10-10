@@ -113,6 +113,50 @@ impl Palette {
     }
 }
 
+/// Categorical chart slots (validated for CVD separation and contrast against the
+/// island surfaces with the dataviz palette validator). Assigned in fixed order.
+const CHART_DARK: [Color32; 8] = [
+    hex(0x3987E5),
+    hex(0xD95926),
+    hex(0x199E70),
+    hex(0xC98500),
+    hex(0xD55181),
+    hex(0x008300),
+    hex(0x9085E9),
+    hex(0xE66767),
+];
+const CHART_LIGHT: [Color32; 8] = [
+    hex(0x2A78D6),
+    hex(0xEB6834),
+    hex(0x1BAF7A),
+    hex(0xEDA100),
+    hex(0xE87BA4),
+    hex(0x008300),
+    hex(0x6250D6),
+    hex(0xE34948),
+];
+
+/// BSON types with a fixed chart slot; everything else is "Other" (neutral).
+pub const CHART_TYPES: [&str; 8] = [
+    "String", "Int32", "Double", "Date", "Boolean", "ObjectId", "Object", "Array",
+];
+
+impl Palette {
+    /// Chart color of categorical slot `i` (0-based, fixed order).
+    pub fn chart(&self, i: usize) -> Color32 {
+        let slots = if self.dark { &CHART_DARK } else { &CHART_LIGHT };
+        slots.get(i).copied().unwrap_or(self.text_info)
+    }
+
+    /// Chart color of a BSON type name; the color follows the type, never its rank.
+    pub fn type_color(&self, type_name: &str) -> Color32 {
+        CHART_TYPES
+            .iter()
+            .position(|t| *t == type_name)
+            .map_or(self.text_info, |i| self.chart(i))
+    }
+}
+
 pub const RADIUS: u8 = 10;
 pub const GAP: f32 = 2.0;
 

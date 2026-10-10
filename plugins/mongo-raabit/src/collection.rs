@@ -4,6 +4,7 @@ use crate::app::{CollectionTab, Load, MongoRaabit, ResultView, TabId};
 use crate::icons::{self, Icon};
 use crate::results::{self, DocCommand, TableEvent, TreeEvent};
 use crate::style::{self, Palette};
+use crate::tree::ToolKind;
 use crate::widgets;
 use egui::{CornerRadius, RichText, Stroke, Ui};
 use mongo_raabit_core::connection::CollectionKind;
@@ -37,6 +38,7 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
         return;
     };
     let mut actions = Vec::new();
+    let mut tool = None;
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 14,
@@ -45,7 +47,7 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
             bottom: 6,
         })
         .show(ui, |ui| {
-            header(ui, &p, tab, &server_name);
+            header(ui, &p, tab, &server_name, &mut tool);
             ui.add_space(8.0);
             query_bar(ui, &p, tab, &mut actions);
             if let Some(err) = &tab.query_error {
@@ -60,6 +62,12 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
         });
     widgets::separator(ui);
     result_area(ui, &p, tab, &mut actions);
+    if let Some(kind) = tool
+        && let Some(tab) = app.collection_tab_mut(tab_id)
+    {
+        let (session, db, coll) = (tab.session, tab.db.clone(), tab.collection.clone());
+        crate::tree::open_tool(app, session, &db, Some(&coll), kind);
+    }
     for action in actions {
         match action {
             Action::Doc(command, index) => {
@@ -125,7 +133,13 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
     }
 }
 
-fn header(ui: &mut Ui, p: &Palette, tab: &CollectionTab, server: &str) {
+fn header(
+    ui: &mut Ui,
+    p: &Palette,
+    tab: &CollectionTab,
+    server: &str,
+    tool: &mut Option<ToolKind>,
+) {
     ui.horizontal(|ui| {
         let icon = match tab.kind {
             CollectionKind::View => Icon::View,
@@ -147,9 +161,21 @@ fn header(ui: &mut Ui, p: &Palette, tab: &CollectionTab, server: &str) {
         if tab.kind == CollectionKind::View {
             widgets::badge(ui, "view", p.keyword);
         }
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| match &tab.count {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            for (icon, tip, kind) in [
+                (Icon::Index, "Manage indexes", ToolKind::Indexes),
+                (Icon::Schema, "Schema Explorer", ToolKind::Schema),
+                (Icon::Sql, "SQL Query", ToolKind::Sql),
+                (Icon::Pipeline, "Aggregation Editor", ToolKind::Aggregation),
+            ] {
+                if widgets::icon_button(ui, icon, tip).clicked() {
+                    *tool = Some(kind);
+                }
+            }
+            ui.add_space(10.0);
+            ui.spacing_mut().item_spacing.x = 6.0;
+            match &tab.count {
                 Load::Ready(n) => {
                     widgets::badge(ui, &format!("{} documents", group(*n)), p.accent_text);
                 }
@@ -160,8 +186,8 @@ fn header(ui: &mut Ui, p: &Palette, tab: &CollectionTab, server: &str) {
                     widgets::badge(ui, "count failed", p.error).on_hover_text(err);
                 }
                 Load::Idle => {}
-            },
-        );
+            }
+        });
     });
 }
 
@@ -401,7 +427,16 @@ fn result_area(ui: &mut Ui, p: &Palette, tab: &mut CollectionTab, actions: &mut 
                     Some(TableEvent::CommitEdit) => actions.push(Action::CommitEdit),
                     None => {}
                 },
-                ResultView::Tree => match results::tree(ui, tab, &docs, first) {
+                ResultView::Tree => match results::tree(
+                    ui,
+                    results::TreeState {
+                        id: egui::Id::new(("raabit-tree", &tab.db, &tab.collection)),
+                        open: &tab.open,
+                        selected: tab.selected,
+                    },
+                    &docs,
+                    first,
+                ) {
                     Some(TreeEvent::Toggle(key)) => {
                         if !tab.open.remove(&key) {
                             tab.open.insert(key);

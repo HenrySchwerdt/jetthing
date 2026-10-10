@@ -487,7 +487,15 @@ pub fn tree_rows(
     }
     let mut out = Vec::new();
     for (i, doc) in docs.iter().enumerate() {
-        let id = doc.get("_id").map(values::preview).unwrap_or_default();
+        // Label by `_id`, or by the first field when the projection dropped it.
+        let id = match doc.get("_id") {
+            Some(id) => values::preview(id),
+            None => doc
+                .iter()
+                .next()
+                .map(|(k, v)| format!("{k}: {}", values::preview(v)))
+                .unwrap_or_default(),
+        };
         let label = format!("({}) {}", first_index + i as u64, id);
         walk(
             &mut out,
@@ -509,18 +517,25 @@ pub enum TreeEvent {
     Command(DocCommand, usize),
 }
 
+/// Tree view state shared by collection, aggregation and SQL result panes.
+pub struct TreeState<'a> {
+    pub id: egui::Id,
+    pub open: &'a std::collections::HashSet<String>,
+    pub selected: Option<usize>,
+}
+
 pub fn tree(
     ui: &mut Ui,
-    tab: &CollectionTab,
+    tab: TreeState<'_>,
     docs: &[Document],
     first_index: u64,
 ) -> Option<TreeEvent> {
     let p = Palette::of(ui);
-    let rows = tree_rows(docs, &tab.open, first_index);
+    let rows = tree_rows(docs, tab.open, first_index);
     let mut event = None;
     let header_bg = p.raised;
     TableBuilder::new(ui)
-        .id_salt(("raabit-tree", &tab.db, &tab.collection))
+        .id_salt(tab.id)
         .striped(true)
         .resizable(true)
         .sense(Sense::click())

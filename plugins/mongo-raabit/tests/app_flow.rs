@@ -271,3 +271,171 @@ fn edit_insert_clone_delete_explain_and_code() {
         conn.drop_database(db).await.unwrap();
     });
 }
+
+#[test]
+fn aggregation_sql_schema_and_index_tabs() {
+    let (mut profile, _) = ConnectionProfile::from_uri(&uri()).unwrap();
+    profile.connect_timeout_ms = Some(1500);
+    let mut app = MongoRaabit::new(None);
+    let session = app.connect(profile);
+    app.wait_idle(Duration::from_secs(10));
+    let Some(conn) = app.session(session).unwrap().connection().cloned() else {
+        eprintln!(
+            "skipping aggregation_sql_schema_and_index_tabs: no MongoDB server at {}",
+            uri()
+        );
+        return;
+    };
+    let db = "raabit_test_ui_tools";
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let _ = conn.drop_database(db).await;
+        conn.insert_documents(
+            db,
+            "sales",
+            (0..30).map(|i| doc! {"region": (["north", "south", "east"][i % 3]), "amount": i as i32 * 10}).collect(),
+        )
+        .await
+        .unwrap();
+    });
+
+    // Aggregation: preview of the selected stage and a full run.
+    let pipeline = mongo_raabit::core::aggregate::Pipeline::from_text(
+        "[{$match: {amount: {$gte: 100}}}, {$group: {_id: '$region', total: {$sum: '$amount'}}}, {$sort: {_id: 1}}]",
+    )
+    .unwrap();
+    let agg = app.open_aggregation(session, db, "sales", Some(pipeline));
+    app.aggregation_tab_mut(agg).unwrap().selected = 1;
+    app.preview_stage(agg);
+    app.wait_idle(Duration::from_secs(10));
+    {
+        let tab = app.aggregation_tab_mut(agg).unwrap();
+        let preview = tab.preview.ready().expect("preview");
+        assert_eq!(preview.input.len(), 20);
+        assert_eq!(preview.output.len(), 3);
+    }
+    app.run_pipeline(agg);
+    app.wait_idle(Duration::from_secs(10));
+    let result = app
+        .aggregation_tab_mut(agg)
+        .unwrap()
+        .result
+        .ready()
+        .cloned()
+        .unwrap();
+    assert_eq!(result.documents[0], doc! {"_id": "east", "total": 1400});
+
+    // Invalid stage text is reported on the tab, not sent to the server.
+    app.aggregation_tab_mut(agg).unwrap().pipeline.stages[0].body = "{amount: }".into();
+    app.preview_stage(agg);
+    assert!(
+        app.aggregation_tab_mut(agg)
+            .unwrap()
+            .stage_error
+            .as_deref()
+            .unwrap()
+            .starts_with("stage 1")
+    );
+
+    // SQL.
+    let sql = app.open_sql(session, db, Some("sales"));
+    app.sql_tab_mut(sql).unwrap().sql = "SELECT region, SUM(amount) AS total FROM sales GROUP BY region ORDER BY total DESC LIMIT 1".into();
+    app.run_sql(sql);
+    app.wait_idle(Duration::from_secs(10));
+    let rows = app
+        .sql_tab_mut(sql)
+        .unwrap()
+        .result
+        .ready()
+        .cloned()
+        .unwrap()
+        .documents;
+    assert_eq!(rows, vec![doc! {"region": "east", "total": 1550}]);
+    app.sql_tab_mut(sql).unwrap().sql = "DELETE FROM sales".into();
+    app.run_sql(sql);
+    assert!(matches!(
+        app.sql_tab_mut(sql).unwrap().result,
+        Load::Failed(_)
+    ));
+
+    // Schema.
+    let schema = app.open_schema(session, db, "sales");
+    app.wait_idle(Duration::from_secs(10));
+    let report = app
+        .schema_tab_mut(schema)
+        .unwrap()
+        .report
+        .ready()
+        .cloned()
+        .unwrap();
+    assert_eq!(report.sampled, 30);
+    assert!(
+        report
+            .fields
+            .iter()
+            .any(|f| f.path == "region" && f.top_values.len() == 3)
+    );
+
+    // Indexes: create, hide, drop.
+    let idx = app.open_indexes(session, db, "sales");
+    app.wait_idle(Duration::from_secs(10));
+    assert_eq!(
+        app.index_tab_mut(idx)
+            .unwrap()
+            .indexes
+            .ready()
+            .unwrap()
+            .len(),
+        1
+    );
+    app.index_tab_mut(idx).unwrap().form.keys = "{region: 1, amount: -1}".into();
+    app.index_tab_mut(idx).unwrap().form.name = "by_region".into();
+    app.create_index(idx);
+    app.wait_idle(Duration::from_secs(10));
+    assert_eq!(
+        app.index_tab_mut(idx)
+            .unwrap()
+            .indexes
+            .ready()
+            .unwrap()
+            .len(),
+        2
+    );
+    app.set_index_hidden(idx, "by_region".into(), true);
+    app.wait_idle(Duration::from_secs(10));
+    assert!(
+        app.index_tab_mut(idx)
+            .unwrap()
+            .indexes
+            .ready()
+            .unwrap()
+            .iter()
+            .any(|i| i.name == "by_region" && i.hidden)
+    );
+    app.drop_index(idx, "by_region".into());
+    app.wait_idle(Duration::from_secs(10));
+    assert_eq!(
+        app.index_tab_mut(idx)
+            .unwrap()
+            .indexes
+            .ready()
+            .unwrap()
+            .len(),
+        1
+    );
+    app.index_tab_mut(idx).unwrap().form.keys = "{}".into();
+    app.create_index(idx);
+    assert!(app.index_tab_mut(idx).unwrap().error.is_some());
+
+    // Render every tab headlessly.
+    let ctx = egui::Context::default();
+    for i in 0..app.tabs.len() {
+        app.active_tab = i;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| app.ui(ui));
+        });
+    }
+    rt.block_on(async {
+        conn.drop_database(db).await.unwrap();
+    });
+}
