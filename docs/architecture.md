@@ -23,12 +23,20 @@ no crate below `jetthing-ui` imports UI types.
   it delegates repository semantics to the installed Git executable.
 - `jetthing-runner`: detected build plans and cancellable child-process execution with
   streamed, separated stdout/stderr and explicit exit state.
+<<<<<<< HEAD
+- `jetthing-android`: Android SDK discovery (IDE setting, `local.properties`, `ANDROID_HOME`,
+  `ANDROID_SDK_ROOT`, OS default), installed-package inventory, and Android Gradle project
+  detection; host access goes through the `HostEnvironment` trait so tests use fakes.
+- `jetthing-lsp`: JSON-RPC framing, language-server lifecycle, document synchronization,
+  diagnostics, and completion transport; providers remain behind platform abstractions.
+=======
 - `jetthing-lsp`: JSON-RPC framing (`transport`), one server process with typed
   request/response plumbing, cancellation, `$/progress` and diagnostics (`client`), the
   server registry behind the `LanguageServerProvider` trait with PATH/`lsp.toml` discovery
   (`registry`), and `LspManager`, which starts servers lazily per workspace root and
   restarts crashed ones (`manager`). Uses `lsp-types`; no UI code. Popups live in
   `jetthing-ui`. `jetthing-fake-lsp` is a scriptable test server.
+>>>>>>> origin/main
 - `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,
   and validation. Executable/Wasm loading is deliberately not claimed yet.
 - `jetthing-settings`: typed settings registry (bool/int/float/text/path/enum/list with

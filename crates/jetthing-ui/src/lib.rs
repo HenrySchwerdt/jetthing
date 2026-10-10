@@ -5,12 +5,16 @@
 //! islands and a status bar with navigation breadcrumbs. Every user action is
 //! dispatched through the typed command registry.
 
+mod android_sdk;
+mod android_view;
 mod chrome;
 mod control;
+mod device_manager;
 mod editor;
 mod findbar;
 mod icons;
 mod keys;
+mod logcat_ui;
 mod lsp_status;
 mod notifications;
 mod palette;
@@ -60,6 +64,9 @@ pub struct IdeApp {
     window_focused: bool,
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
+    android_sdk: android_sdk::SdkPage,
+    logcat: logcat_ui::LogcatView,
+    android_view: android_view::AndroidViewState,
 }
 
 impl IdeApp {
@@ -136,6 +143,9 @@ impl IdeApp {
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
             control: None,
+            android_sdk: android_sdk::SdkPage::default(),
+            logcat: logcat_ui::LogcatView::default(),
+            android_view: android_view::AndroidViewState::default(),
         }
     }
 
@@ -554,10 +564,13 @@ impl eframe::App for IdeApp {
         self.state.poll_runner();
         self.state.poll_lsp();
         self.state.poll_updates();
+        if self.state.poll_android() {
+            ctx.request_repaint();
+        }
         if self.state.lsp.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(100));
-        } else if !self.state.lsp.servers().is_empty() {
-            // Diagnostics and server messages arrive without user input.
+        } else if !self.state.lsp.servers().is_empty() || self.state.android.devices.is_tracking() {
+            // Diagnostics, server messages and device changes arrive without user input.
             ctx.request_repaint_after(Duration::from_millis(500));
         }
         if self.state.search.is_running() || self.state.runner.is_running() {
@@ -591,8 +604,9 @@ impl eframe::App for IdeApp {
             welcome::show(self, ctx);
         } else {
             chrome::left_stripe(self, ctx);
-            chrome::right_stripe(ctx);
+            chrome::right_stripe(self, ctx);
             toolwindows::left(self, ctx);
+            device_manager::right(self, ctx);
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }
@@ -600,6 +614,7 @@ impl eframe::App for IdeApp {
         palette::show(self, ctx);
         popups::show(self, ctx);
         settings_dialog::show(self, ctx);
+        android_sdk::show(self, ctx);
         notifications::show(self, ctx);
         lsp_status::notices(self, ctx);
         // Include operations started by controls in this frame, and keep

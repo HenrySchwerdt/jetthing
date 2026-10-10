@@ -12,6 +12,9 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod android_commands;
+mod android_devices;
+mod android_logcat;
 mod editor_commands;
 mod lsp_commands;
 mod project_commands;
@@ -20,6 +23,9 @@ mod terminal_commands;
 mod toolwindow;
 mod update_commands;
 pub use settings_commands::Settings;
+pub use android_commands::AndroidState;
+pub use android_devices::DeviceHub;
+pub use android_logcat::LogcatState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -65,6 +71,7 @@ pub struct IdeState {
     pub settings: Settings,
     /// Settings page the UI should open (set by `settings.open`, taken by the UI).
     pub settings_request: Option<String>,
+    pub android: AndroidState,
     pub status: String,
 }
 
@@ -112,6 +119,7 @@ impl IdeState {
         self.tool_windows.show(ToolWindow::Project);
         self.status = format!("Opened {}", project.root().display());
         self.load_project_settings(project.root());
+        self.android.project_opened(project.root());
         self.project = Some(project);
         self.restore_workspace();
         Ok(())
@@ -601,6 +609,9 @@ pub(crate) fn usize_param(params: &Value, name: &str) -> Result<usize, CommandEr
 
 pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
+    android_commands::register(&mut registry);
+    android_devices::register(&mut registry);
+    android_logcat::register(&mut registry);
     editor_commands::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
@@ -927,7 +938,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Toggle Tool Window",
                 "Window",
                 None,
-                r#"{"id":"project|commit|find|build|problems|terminal"}"#,
+                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat"}"#,
             ),
             |_| true,
             |state: &mut IdeState, params| {
@@ -938,6 +949,12 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 }
                 if window == ToolWindow::Commit && !state.tool_windows.is_visible(window) {
                     let _ = state.refresh_git();
+                }
+                if window == ToolWindow::DeviceManager && !state.tool_windows.is_visible(window) {
+                    state.device_manager_opened();
+                }
+                if window == ToolWindow::Logcat && !state.tool_windows.is_visible(window) {
+                    state.logcat_opened();
                 }
                 Ok(json!({"visible": state.tool_windows.toggle(window)}))
             },
@@ -967,11 +984,17 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     &id,
                     &format!("{} Tool Window", window.title()),
                     "Window",
-                    Some(window.shortcut()),
+                    Some(window.shortcut()).filter(|shortcut| !shortcut.is_empty()),
                     "{}",
                 ),
                 |_| true,
                 move |state: &mut IdeState, _| {
+                    if window == ToolWindow::DeviceManager {
+                        state.device_manager_opened();
+                    }
+                    if window == ToolWindow::Logcat {
+                        state.logcat_opened();
+                    }
                     if window == ToolWindow::Terminal {
                         state.open_terminal().map_err(CommandError::Failed)?;
                     }

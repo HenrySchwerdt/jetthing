@@ -37,7 +37,7 @@ const fn menu(
     }
 }
 
-const MENUS: [Menu; 9] = [
+const MENUS: [Menu; 10] = [
     menu("File", &["File", "Project", "Plugins"], &[]),
     menu("Edit", &["Editor"], &[]),
     menu("View", &["Window"], &[]),
@@ -53,6 +53,7 @@ const MENUS: [Menu; 9] = [
     ),
     menu("Build", &["Build"], &[]),
     menu("Run", &["Run"], &[]),
+    menu("Tools", &["Android"], &[]),
     menu("Git", &["Git"], &[]),
     menu("Help", &["Help"], &[]),
 ];
@@ -117,6 +118,7 @@ pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
                 }
                 ui.add_space(6.0);
                 run_widget(app, ui);
+                crate::device_manager::device_selector(app, ui);
             });
         });
 }
@@ -507,9 +509,12 @@ fn stripe_button(app: &mut IdeApp, ui: &mut egui::Ui, window: ToolWindow, icon: 
     }
     if response
         .on_hover_text(format!(
-            "{} ({})",
+            "{}{}",
             window.title(),
-            keys::display(window.shortcut())
+            match window.shortcut() {
+                "" => String::new(),
+                shortcut => format!(" ({})", keys::display(shortcut)),
+            }
         ))
         .clicked()
     {
@@ -537,6 +542,9 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
                     egui::Stroke::new(1.0_f32, theme::TOOLBAR_SEPARATOR),
                 );
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    if app.state.android.project.is_some() {
+                        stripe_button(app, ui, ToolWindow::Logcat, Icon::Logcat);
+                    }
                     stripe_button(app, ui, ToolWindow::Problems, Icon::Problems);
                     stripe_button(app, ui, ToolWindow::Terminal, Icon::Terminal);
                     stripe_button(app, ui, ToolWindow::Build, Icon::Build);
@@ -546,14 +554,29 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
         });
 }
 
-/// Narrow right gutter so the editor island keeps its rounded right edge.
-pub fn right_stripe(ctx: &egui::Context) {
+/// Right tool window stripe. Without right-anchored tool windows (non-Android
+/// projects) it is a narrow gutter so the editor island keeps its rounded edge.
+pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
+    let android = app.state.android.project.is_some()
+        || app.state.tool_windows.is_visible(ToolWindow::DeviceManager);
+    if !android {
+        egui::SidePanel::right("right_stripe")
+            .exact_width(6.0)
+            .resizable(false)
+            .show_separator_line(false)
+            .frame(chrome_frame())
+            .show(ctx, |_| {});
+        return;
+    }
     egui::SidePanel::right("right_stripe")
-        .exact_width(6.0)
+        .exact_width(STRIPE_WIDTH)
         .resizable(false)
         .show_separator_line(false)
-        .frame(chrome_frame())
-        .show(ctx, |_| {});
+        .frame(chrome_frame().inner_margin(egui::Margin::symmetric(4, 6)))
+        .show(ctx, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            stripe_button(app, ui, ToolWindow::DeviceManager, Icon::Device);
+        });
 }
 
 /// First line of `text`, shortened to `max` characters with an ellipsis.

@@ -9,6 +9,7 @@ use std::fmt;
 pub enum Anchor {
     Left,
     Bottom,
+    Right,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -19,16 +20,20 @@ pub enum ToolWindow {
     Build,
     Problems,
     Terminal,
+    DeviceManager,
+    Logcat,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 6] = [
+    pub const ALL: [ToolWindow; 8] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Find,
         ToolWindow::Build,
         ToolWindow::Problems,
         ToolWindow::Terminal,
+        ToolWindow::DeviceManager,
+        ToolWindow::Logcat,
     ];
 
     pub fn id(self) -> &'static str {
@@ -39,6 +44,8 @@ impl ToolWindow {
             ToolWindow::Build => "build",
             ToolWindow::Problems => "problems",
             ToolWindow::Terminal => "terminal",
+            ToolWindow::DeviceManager => "deviceManager",
+            ToolWindow::Logcat => "logcat",
         }
     }
 
@@ -50,6 +57,8 @@ impl ToolWindow {
             ToolWindow::Build => "Build",
             ToolWindow::Problems => "Problems",
             ToolWindow::Terminal => "Terminal",
+            ToolWindow::DeviceManager => "Device Manager",
+            ToolWindow::Logcat => "Logcat",
         }
     }
 
@@ -62,15 +71,20 @@ impl ToolWindow {
             ToolWindow::Build => "⌘4",
             ToolWindow::Problems => "⌘6",
             ToolWindow::Terminal => "⌥F12",
+            // Unbound by default, like the reference IDE.
+            ToolWindow::DeviceManager | ToolWindow::Logcat => "",
         }
     }
 
     pub fn anchor(self) -> Anchor {
         match self {
             ToolWindow::Project | ToolWindow::Commit => Anchor::Left,
-            ToolWindow::Find | ToolWindow::Build | ToolWindow::Problems | ToolWindow::Terminal => {
-                Anchor::Bottom
-            }
+            ToolWindow::Find
+            | ToolWindow::Build
+            | ToolWindow::Problems
+            | ToolWindow::Terminal
+            | ToolWindow::Logcat => Anchor::Bottom,
+            ToolWindow::DeviceManager => Anchor::Right,
         }
     }
 
@@ -89,6 +103,7 @@ impl fmt::Display for ToolWindow {
 pub struct ToolWindowLayout {
     left: Option<ToolWindow>,
     bottom: Option<ToolWindow>,
+    right: Option<ToolWindow>,
 }
 
 impl ToolWindowLayout {
@@ -96,6 +111,7 @@ impl ToolWindowLayout {
         match anchor {
             Anchor::Left => &mut self.left,
             Anchor::Bottom => &mut self.bottom,
+            Anchor::Right => &mut self.right,
         }
     }
 
@@ -103,6 +119,7 @@ impl ToolWindowLayout {
         match anchor {
             Anchor::Left => self.left,
             Anchor::Bottom => self.bottom,
+            Anchor::Right => self.right,
         }
     }
 
@@ -136,6 +153,7 @@ impl ToolWindowLayout {
     pub fn hide_all(&mut self) {
         self.left = None;
         self.bottom = None;
+        self.right = None;
     }
 }
 
@@ -156,6 +174,17 @@ mod tests {
         assert_eq!(layout.visible(Anchor::Bottom), None);
         assert!(layout.toggle(ToolWindow::Commit));
         assert!(!layout.is_visible(ToolWindow::Project));
+        layout.show(ToolWindow::DeviceManager);
+        assert_eq!(
+            layout.visible(Anchor::Right),
+            Some(ToolWindow::DeviceManager)
+        );
+        assert!(
+            layout.is_visible(ToolWindow::Commit),
+            "anchors are independent"
+        );
+        layout.hide_all();
+        assert_eq!(layout.visible(Anchor::Right), None);
     }
 
     #[test]

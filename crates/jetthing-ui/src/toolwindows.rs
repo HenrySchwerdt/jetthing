@@ -31,17 +31,25 @@ pub fn left(app: &mut IdeApp, ctx: &egui::Context) {
         .show_separator_line(false)
         .frame(island_frame())
         .show(ctx, |ui| {
-            let hide = tool_window_header(ui, window.title(), |ui| {
-                if window == ToolWindow::Commit
-                    && icons::button(ui, Icon::Refresh, "Refresh").clicked()
-                {
-                    app.dispatch("git.refresh", Value::Null);
-                }
-            });
+            let android = window == ToolWindow::Project && app.state.android.project.is_some();
+            let hide = if android {
+                crate::android_view::header(app, ui)
+            } else {
+                tool_window_header(ui, window.title(), |ui| {
+                    if window == ToolWindow::Commit
+                        && icons::button(ui, Icon::Refresh, "Refresh").clicked()
+                    {
+                        app.dispatch("git.refresh", Value::Null);
+                    }
+                })
+            };
             if hide {
                 app.toggle_tool_window(window);
             }
             match window {
+                ToolWindow::Project if crate::android_view::active(app) => {
+                    crate::android_view::tree(app, ui)
+                }
                 ToolWindow::Project => project_tree(app, ui),
                 ToolWindow::Commit => commit(app, ui),
                 _ => {}
@@ -64,6 +72,7 @@ pub fn bottom(app: &mut IdeApp, ctx: &egui::Context) {
             ToolWindow::Build => build(app, ui),
             ToolWindow::Problems => problems(app, ui),
             ToolWindow::Terminal => terminal(app, ui),
+            ToolWindow::Logcat => crate::logcat_ui::show(app, ui),
             _ => {}
         });
 }

@@ -43,6 +43,12 @@ pub enum Icon {
     Refresh,
     Error,
     Warning,
+    /// Phone outline (devices, Device Manager).
+    Device,
+    Logcat,
+    Pause,
+    ScrollEnd,
+    SoftWrap,
 }
 
 impl Icon {
@@ -255,6 +261,43 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             line(&[(12.0, 4.0), (4.0, 12.0)]);
         }
         Icon::Minimize => line(&[(3.5, 8.0), (12.5, 8.0)]),
+        Icon::Logcat => {
+            // Log lines of varying length with a level marker.
+            painter.rect_stroke(
+                g.rect(1.5, 2.5, 14.5, 13.5),
+                g.len(2.0),
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+            painter.circle_filled(g.p(4.5, 6.0), g.len(0.9), color);
+            line(&[(6.5, 6.0), (12.0, 6.0)]);
+            painter.circle_filled(g.p(4.5, 10.0), g.len(0.9), color);
+            line(&[(6.5, 10.0), (10.0, 10.0)]);
+        }
+        Icon::Pause => {
+            line(&[(5.5, 3.5), (5.5, 12.5)]);
+            line(&[(10.5, 3.5), (10.5, 12.5)]);
+        }
+        Icon::ScrollEnd => {
+            line(&[(8.0, 2.5), (8.0, 10.5)]);
+            line(&[(4.5, 7.5), (8.0, 11.0), (11.5, 7.5)]);
+            line(&[(3.5, 13.5), (12.5, 13.5)]);
+        }
+        Icon::SoftWrap => {
+            line(&[(2.5, 4.0), (13.5, 4.0)]);
+            line(&[(2.5, 8.0), (12.0, 8.0)]);
+            line(&[(12.0, 8.0), (13.5, 9.5), (12.0, 11.5), (8.5, 11.5)]);
+            line(&[(10.0, 10.0), (8.5, 11.5), (10.0, 13.0)]);
+        }
+        Icon::Device => {
+            painter.rect_stroke(
+                g.rect(4.0, 1.5, 12.0, 14.5),
+                g.len(1.5),
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+            line(&[(7.0, 12.5), (9.0, 12.5)]);
+        }
         Icon::Refresh => {
             let center = g.p(8.0, 8.0);
             let points = (0..=20)
