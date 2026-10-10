@@ -14,6 +14,9 @@ Captured on Linux under Xvfb (1600×1000, `JETTHING_RENDERER=glow`,
 | `14-git-log.png` | Sample history with a merged `feature/greeting` branch and tag `v1.0`; Alt+9 | 14 Git log |
 | `14b-git-log-commit-diff.png` | Select the merge commit, double-click `settings.gradle` in the changed files | 14 Git log / 13 Diff |
 | `14c-git-log-filter.png` | Type `greet` in “Text or hash” | 14 Git log |
+| `branches-popup.png` | Click the `master` VCS widget | branches popup (no numbered scene) |
+| `branches-popup-actions.png` | Hover `feature/greeting` | branch submenu |
+| `branches-new-branch.png` | After Checkout of `feature/greeting` (widget and tree updated), New Branch… and type `feature/login`; Enter creates and checks it out | — |
 | `gutter-change-markers.png` | Open `App.java` with a modified line (6), an inserted comment (11) and a deleted `import` (wedge above 3) | editor gutter (no numbered scene) |
 | `gutter-change-popup.png` | Click the blue marker on line 6 | gutter change popup |
 | `gutter-rollback.png` | Click “Rollback” in the popup: line 6 is back to the HEAD text and its marker is gone | — |

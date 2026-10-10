@@ -5,6 +5,7 @@
 //! islands and a status bar with navigation breadcrumbs. Every user action is
 //! dispatched through the typed command registry.
 
+mod branches_popup;
 mod change_popup;
 mod chrome;
 mod control;
@@ -60,6 +61,8 @@ pub struct IdeApp {
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
     repaint_hook_installed: bool,
+    /// Open branch name/confirmation dialog.
+    branch_dialog: Option<branches_popup::BranchDialog>,
     /// Open gutter change-marker popup.
     change_popup: Option<change_popup::ChangePopup>,
 }
@@ -136,6 +139,7 @@ impl IdeApp {
             control: None,
             repaint_hook_installed: false,
             change_popup: None,
+            branch_dialog: None,
         }
     }
 
@@ -397,6 +401,8 @@ impl IdeApp {
         if consume(Modifiers::NONE, Key::Escape) {
             if self.dialog.is_some() {
                 self.dialog = None;
+            } else if self.branch_dialog.is_some() {
+                self.branch_dialog = None;
             } else if self.change_popup.is_some() {
                 self.change_popup = None;
             } else if self.palette.open {
@@ -617,6 +623,7 @@ impl eframe::App for IdeApp {
             editor::central(self, ctx);
         }
         change_popup::show(self, ctx);
+        branches_popup::show_dialog(self, ctx);
         editor::completion_popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
