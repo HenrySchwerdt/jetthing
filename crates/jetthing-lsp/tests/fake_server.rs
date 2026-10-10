@@ -303,3 +303,56 @@ fn diagnostics_carry_severity_tags_and_project_files() {
     manager.shutdown();
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn navigation_requests_return_locations() {
+    use jetthing_lsp::{Feature, parse_locations};
+    let root = workspace("navigation");
+    let app = root.join("src/App.fake");
+    let other = root.join("src/Other.fake");
+    let mut manager = LspManager::new(registry(&[]));
+    manager.set_project(Some(&root));
+    manager
+        .sync_document(&app, "fn greet() {}\ngreet();\n", 0)
+        .unwrap();
+    std::fs::write(&other, "greet();\n").unwrap();
+    manager.sync_document(&other, "greet();\n", 0).unwrap();
+    let wait = |manager: &mut LspManager, feature, line, character| {
+        let handle = loop {
+            manager.poll();
+            match manager.request(&app, feature, line, character, serde_json::json!({})) {
+                Ok(handle) => break handle,
+                Err(LspError::Starting { .. }) => thread::sleep(Duration::from_millis(10)),
+                Err(error) => panic!("{error}"),
+            }
+        };
+        let mut result = None;
+        assert!(wait_until(|| {
+            manager.poll();
+            result = manager.take_response(&handle);
+            result.is_some()
+        }));
+        parse_locations(&result.unwrap().unwrap())
+    };
+    let definition = wait(&mut manager, Feature::Definition, 1, 2);
+    assert_eq!(definition.len(), 1);
+    assert_eq!(
+        (definition[0].path.clone(), definition[0].start_line),
+        (app.clone(), 0)
+    );
+    assert_eq!(definition[0].start_character, 3);
+    let type_definition = wait(&mut manager, Feature::TypeDefinition, 1, 0);
+    assert_eq!(
+        type_definition, definition,
+        "LocationLink resolves to the same place"
+    );
+    let implementations = wait(&mut manager, Feature::Implementation, 1, 0);
+    assert_eq!(implementations.len(), 2);
+    let references = wait(&mut manager, Feature::References, 0, 4);
+    assert_eq!(references.len(), 3);
+    assert!(references.iter().any(|location| location.path == other));
+    // Nothing under the caret.
+    assert!(wait(&mut manager, Feature::Definition, 0, 12).is_empty());
+    manager.shutdown();
+    std::fs::remove_dir_all(root).unwrap();
+}

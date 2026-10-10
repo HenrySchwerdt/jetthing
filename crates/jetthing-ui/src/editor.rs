@@ -76,9 +76,10 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 move_caret_to(app, line, column);
                 ui.memory_mut(|memory| memory.request_focus(editor_id()));
             }
+            let navigable = app.state.active_has_language_server();
             let mut text_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
             let doc = &mut app.state.documents[index];
-            let surface = editor_surface(&mut text_ui, doc, &problems, &highlights);
+            let surface = editor_surface(&mut text_ui, doc, &problems, &highlights, navigable);
             let counts = jetthing_core::ProblemCounts::of(&problems);
             match problems_ui::inspection_widget(ui, text_rect.right_top(), counts) {
                 Some(problems_ui::WidgetAction::Next) => {
@@ -405,6 +406,7 @@ fn editor_surface(
     document: &mut Document,
     problems: &[jetthing_core::Problem],
     highlights: &[(usize, usize)],
+    navigable: bool,
 ) -> Result<EditorOutput, String> {
     let mut requests = Vec::new();
     let font = egui::FontId::monospace(theme::EDITOR_FONT_SIZE);
@@ -462,7 +464,19 @@ fn editor_surface(
             {
                 let offset = position_to_offset(position);
                 let modifiers = ui.input(|input| input.modifiers);
-                if modifiers.alt {
+                if modifiers.command && navigable {
+                    // Ctrl/⌘+click: Go to Declaration; with Shift the type
+                    // declaration, with Alt the implementations.
+                    document.selections.set_single(Selection::caret(offset));
+                    let id = if modifiers.shift {
+                        "navigate.typeDeclaration"
+                    } else if modifiers.alt {
+                        "navigate.implementation"
+                    } else {
+                        "navigate.declaration"
+                    };
+                    requests.push(EditorRequest::Command(id, Value::Null));
+                } else if modifiers.alt {
                     document.selections.add(Selection::caret(offset));
                 } else if modifiers.shift {
                     let anchor = document.selections.primary().anchor;
@@ -693,6 +707,23 @@ fn editor_surface(
                         column.floor() as usize,
                         line_len,
                     );
+                    // Ctrl/⌘+hover turns the identifier into a link.
+                    let column = column.floor() as usize;
+                    if navigable && ui.input(|input| input.modifiers.command) && column < line_len {
+                        let line_start = document.text.line_to_char(line).unwrap_or(0);
+                        let (start, end) = ops::word_at(&document.text, line_start + column);
+                        if start < end && (start..end).contains(&(line_start + column)) {
+                            let y = rect.top() + (line + 1) as f32 * ROW_HEIGHT - 3.0;
+                            let x = |offset: usize| {
+                                rect.left() + text_left + (offset - line_start) as f32 * char_width
+                            };
+                            painter.line_segment(
+                                [egui::pos2(x(start), y), egui::pos2(x(end), y)],
+                                Stroke::new(1.0_f32, crate::navigation_ui::LINK),
+                            );
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                    }
                 }
             }
             if focused {

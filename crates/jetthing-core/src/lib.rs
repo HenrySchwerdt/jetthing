@@ -14,11 +14,13 @@ use std::path::{Path, PathBuf};
 
 mod editor_commands;
 mod lsp_commands;
+mod navigation;
 mod problems;
 mod project_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
+pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
@@ -52,6 +54,8 @@ pub struct IdeState {
     pub lsp: LspManager,
     /// Project-wide problems, refreshed by [`IdeState::refresh_problems`].
     pub problems: ProblemIndex,
+    /// Navigation history and pending/finished navigation requests.
+    pub navigation: NavigationState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -105,6 +109,7 @@ impl IdeState {
         self.plugins.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
         self.lsp.set_project(Some(project.root()));
+        self.navigation = NavigationState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -403,6 +408,7 @@ impl IdeState {
     pub fn poll_lsp(&mut self) {
         let restarted = self.lsp.poll();
         self.refresh_problems();
+        self.poll_navigation();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };
@@ -597,6 +603,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     terminal_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
     problems::register(&mut registry);
+    navigation::register(&mut registry);
     registry
         .register(Command::new(
             spec(

@@ -55,6 +55,68 @@ pub struct ServerInfo {
     pub message: Option<String>,
 }
 
+/// A request sent with [`LspManager::request`], answered asynchronously.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestHandle {
+    pub server: ServerKey,
+    pub id: u64,
+    pub method: String,
+}
+
+/// Optional server features, checked against the advertised capabilities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Feature {
+    Definition,
+    TypeDefinition,
+    Implementation,
+    References,
+}
+
+impl Feature {
+    pub fn method(self) -> &'static str {
+        match self {
+            Feature::Definition => "textDocument/definition",
+            Feature::TypeDefinition => "textDocument/typeDefinition",
+            Feature::Implementation => "textDocument/implementation",
+            Feature::References => "textDocument/references",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Feature::Definition => "Go to Declaration",
+            Feature::TypeDefinition => "Go to Type Declaration",
+            Feature::Implementation => "Go to Implementation",
+            Feature::References => "Find Usages",
+        }
+    }
+
+    fn supported(self, capabilities: &lsp_types::ServerCapabilities) -> bool {
+        use lsp_types::{
+            ImplementationProviderCapability as Impl, OneOf,
+            TypeDefinitionProviderCapability as TypeDef,
+        };
+        match self {
+            Feature::Definition => !matches!(
+                capabilities.definition_provider,
+                None | Some(OneOf::Left(false))
+            ),
+            Feature::TypeDefinition => !matches!(
+                capabilities.type_definition_provider,
+                None | Some(TypeDef::Simple(false))
+            ),
+            Feature::Implementation => !matches!(
+                capabilities.implementation_provider,
+                None | Some(Impl::Simple(false))
+            ),
+            Feature::References => !matches!(
+                capabilities.references_provider,
+                None | Some(OneOf::Left(false))
+            ),
+        }
+    }
+}
+
 /// A notification balloon about a language server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LspNotice {
@@ -573,6 +635,76 @@ impl LspManager {
         }
         self.notices.retain(|existing| existing.id != notice.id);
         self.notices.push(notice);
+    }
+
+    /// Sends `feature`'s request for the UTF-16 position in `path` to its
+    /// ready server. `extra` fields are merged into the position params
+    /// (e.g. `{"context": {"includeDeclaration": true}}`).
+    pub fn request(
+        &mut self,
+        path: &Path,
+        feature: Feature,
+        line: usize,
+        character: usize,
+        extra: serde_json::Value,
+    ) -> Result<RequestHandle, LspError> {
+        let service = self.ready_server_for(path)?;
+        if !feature.supported(service.capabilities()) {
+            return Err(LspError::Protocol(format!(
+                "{} does not support {}",
+                service.name(),
+                feature.label()
+            )));
+        }
+        let server = ServerKey {
+            server: service.name().into(),
+            root: service.root().to_owned(),
+        };
+        let mut params = json!({
+            "textDocument": {"uri": crate::client::file_uri(path)?},
+            "position": {"line": line, "character": character},
+        });
+        if let (Some(params), serde_json::Value::Object(extra)) = (params.as_object_mut(), extra) {
+            params.extend(extra);
+        }
+        let id = service.request_raw(feature.method(), params)?;
+        let server = self
+            .documents
+            .get(path)
+            .map(|document| document.server.clone())
+            .unwrap_or(server);
+        Ok(RequestHandle {
+            server,
+            id,
+            method: feature.method().into(),
+        })
+    }
+
+    /// The result of `handle` once it arrived; an error when the server
+    /// answered with one or went away.
+    pub fn take_response(
+        &mut self,
+        handle: &RequestHandle,
+    ) -> Option<Result<serde_json::Value, LspError>> {
+        let Some(service) = self.service_mut(&handle.server) else {
+            return Some(Err(LspError::NotReady(handle.server.server.clone())));
+        };
+        if let Some(response) = service.take_response(handle.id) {
+            return Some(response.result.map_err(|error| LspError::Server {
+                code: error.code,
+                message: error.message,
+            }));
+        }
+        if !service.is_pending(handle.id) || service.state() == ServerState::Exited {
+            return Some(Err(LspError::NotReady(handle.server.server.clone())));
+        }
+        None
+    }
+
+    pub fn cancel_request(&mut self, handle: &RequestHandle) {
+        if let Some(service) = self.service_mut(&handle.server) {
+            service.cancel(handle.id);
+        }
     }
 
     /// Requests completion at a UTF-16 position, cancelling any older request.

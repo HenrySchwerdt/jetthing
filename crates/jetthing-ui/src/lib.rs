@@ -12,6 +12,7 @@ mod findbar;
 mod icons;
 mod keys;
 mod lsp_status;
+mod navigation_ui;
 mod notifications;
 mod palette;
 mod popups;
@@ -562,6 +563,12 @@ impl eframe::App for IdeApp {
             self.autosave();
         }
         self.window_focused = focused;
+        if self.dialog.is_none()
+            && !self.palette.open
+            && !ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
+        {
+            navigation_ui::handle_shortcuts(self, ctx);
+        }
         self.handle_shortcuts(ctx);
         self.follow_tool_window_focus(ctx);
 
@@ -578,6 +585,7 @@ impl eframe::App for IdeApp {
             editor::central(self, ctx);
         }
         editor::completion_popup(self, ctx);
+        navigation_ui::choices_popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
         notifications::show(self, ctx);

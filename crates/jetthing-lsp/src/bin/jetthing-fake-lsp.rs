@@ -8,6 +8,10 @@
 //! - `--publish <relative path>`: after `initialized`, publish one error for a
 //!   file below the workspace root that was never opened.
 //!
+//! Navigation works on words: definition is the word's first occurrence in
+//! the open documents (by URI), typeDefinition the same as a `LocationLink`,
+//! implementation every later occurrence and references all of them.
+//!
 //! Completion returns a fixed Java-like member list. `textDocument/didOpen`
 //! and `didChange` publish one diagnostic per `@error`, `@warning`, `@weak`,
 //! `@hint` and `@unused` marker in the text, or one warning at 0:0 when the
@@ -34,6 +38,7 @@ fn main() {
         .map(Duration::from_millis);
     let publish = value("--publish");
     let mut root = String::new();
+    let mut documents: std::collections::BTreeMap<String, String> = Default::default();
     let mut input = BufReader::new(stdin().lock());
     let mut output = stdout().lock();
     let mut send = |message: Value| {
@@ -66,7 +71,11 @@ fn main() {
                     "textDocumentSync": {"openClose": true, "change": 1, "save": {"includeText": false}},
                     "completionProvider": {"triggerCharacters": ["."], "resolveProvider": true},
                     "hoverProvider": true,
-                    "signatureHelpProvider": {"triggerCharacters": ["(", ","]}
+                    "signatureHelpProvider": {"triggerCharacters": ["(", ","]},
+                    "definitionProvider": true,
+                    "typeDefinitionProvider": true,
+                    "implementationProvider": true,
+                    "referencesProvider": true
                 },"serverInfo":{"name":"fake"}}}));
             }
             ("initialized", None) => {
@@ -96,6 +105,7 @@ fn main() {
                     .as_str()
                     .or_else(|| params["contentChanges"][0]["text"].as_str())
                     .unwrap_or_default();
+                documents.insert(uri.as_str().unwrap_or_default().to_owned(), text.to_owned());
                 let mut diagnostics = marker_diagnostics(text);
                 if diagnostics.is_empty() {
                     diagnostics.push(json!({"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},
@@ -115,6 +125,43 @@ fn main() {
                         "severity":2,"source":"check","message":"fake check warning"}]
                     }}),
                 );
+            }
+            (
+                "textDocument/definition"
+                | "textDocument/typeDefinition"
+                | "textDocument/implementation"
+                | "textDocument/references",
+                Some(id),
+            ) => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
+                let character = params["position"]["character"].as_u64().unwrap_or(0) as usize;
+                let word = documents
+                    .get(uri)
+                    .and_then(|text| word_at(text, line, character))
+                    .unwrap_or_default();
+                let occurrences: Vec<Value> = documents
+                    .iter()
+                    .flat_map(|(uri, text)| occurrences(uri, text, &word))
+                    .collect();
+                let result = match method {
+                    _ if word.is_empty() => Value::Null,
+                    "textDocument/definition" => {
+                        occurrences.first().cloned().unwrap_or(Value::Null)
+                    }
+                    "textDocument/typeDefinition" => match occurrences.first() {
+                        Some(first) => {
+                            json!([{"targetUri": first["uri"], "targetRange": first["range"],
+                            "targetSelectionRange": first["range"]}])
+                        }
+                        None => Value::Null,
+                    },
+                    "textDocument/implementation" => {
+                        json!(occurrences.iter().skip(1).collect::<Vec<_>>())
+                    }
+                    _ => json!(occurrences),
+                };
+                send(json!({"jsonrpc":"2.0","id":id,"result":result}));
             }
             ("textDocument/completion", Some(id)) => {
                 if let Some(delay) = delay {
@@ -172,4 +219,56 @@ fn marker_diagnostics(text: &str) -> Vec<Value> {
         }
     }
     diagnostics
+}
+
+/// The identifier at a UTF-16 position.
+fn word_at(text: &str, line: usize, character: usize) -> Option<String> {
+    let content = text.lines().nth(line)?;
+    let chars: Vec<char> = content.chars().collect();
+    let mut units = 0;
+    let mut index = chars.len();
+    for (i, c) in chars.iter().enumerate() {
+        if units >= character {
+            index = i;
+            break;
+        }
+        units += c.len_utf16();
+    }
+    let is_word = |c: &char| c.is_alphanumeric() || *c == '_';
+    let start = chars[..index]
+        .iter()
+        .rposition(|c| !is_word(c))
+        .map_or(0, |p| p + 1);
+    let end = chars[index..]
+        .iter()
+        .position(|c| !is_word(c))
+        .map_or(chars.len(), |p| index + p);
+    (start < end).then(|| chars[start..end].iter().collect())
+}
+
+/// Whole-word occurrences of `word` as LSP locations.
+fn occurrences(uri: &str, text: &str, word: &str) -> Vec<Value> {
+    let mut found = Vec::new();
+    if word.is_empty() {
+        return found;
+    }
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    for (line, content) in text.lines().enumerate() {
+        let mut from = 0;
+        while let Some(offset) = content[from..].find(word) {
+            let byte = from + offset;
+            let end = byte + word.len();
+            let before = content[..byte].chars().next_back();
+            let after = content[end..].chars().next();
+            if !before.is_some_and(is_word) && !after.is_some_and(is_word) {
+                let start: usize = content[..byte].chars().map(char::len_utf16).sum();
+                let stop = start + word.chars().map(char::len_utf16).sum::<usize>();
+                found.push(json!({"uri": uri, "range": {
+                    "start": {"line": line, "character": start},
+                    "end": {"line": line, "character": stop}}}));
+            }
+            from = end;
+        }
+    }
+    found
 }
