@@ -357,6 +357,7 @@ impl IdeApp {
                 "completion": self.completion_visible(),
                 "notification": self.state.update_notification,
                 "about": self.state.about_open,
+                "crashReport": self.state.crash_report.is_some(),
             },
             "status": self.state.status,
             "busy": !self.background_idle(),
