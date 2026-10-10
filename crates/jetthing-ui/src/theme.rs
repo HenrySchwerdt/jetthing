@@ -140,6 +140,12 @@ pub fn project_initials(name: &str) -> String {
 pub const UI_FONT_SIZE: f32 = 13.0;
 pub const EDITOR_FONT_SIZE: f32 = 13.0;
 pub const SEMIBOLD: &str = "semibold";
+/// Bold monospace family (completion matches).
+pub const MONO_BOLD: &str = "mono-bold";
+
+pub fn mono_bold(size: f32) -> egui::FontId {
+    egui::FontId::new(size, FontFamily::Name(MONO_BOLD.into()))
+}
 
 pub fn semibold(size: f32) -> egui::FontId {
     egui::FontId::new(size, FontFamily::Name(SEMIBOLD.into()))
@@ -165,6 +171,12 @@ pub fn install(ctx: &egui::Context) {
             "../assets/fonts/JetBrainsMono-Regular.ttf"
         ))),
     );
+    fonts.font_data.insert(
+        "jetbrains-mono-bold".into(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../assets/fonts/JetBrainsMono-Bold.ttf"
+        ))),
+    );
     // Keep egui's bundled fonts as fallbacks for symbols such as ⌘ and ⇧.
     let fallbacks = fonts
         .families
@@ -181,6 +193,17 @@ pub fn install(ctx: &egui::Context) {
         .entry(FontFamily::Monospace)
         .or_default()
         .insert(0, "jetbrains-mono".into());
+    let mut mono_bold_family = vec!["jetbrains-mono-bold".to_owned()];
+    mono_bold_family.extend(
+        fonts
+            .families
+            .get(&FontFamily::Monospace)
+            .cloned()
+            .unwrap_or_default(),
+    );
+    fonts
+        .families
+        .insert(FontFamily::Name(MONO_BOLD.into()), mono_bold_family);
     let mut semibold_family = vec!["inter-semibold".to_owned()];
     semibold_family.extend(fallbacks);
     fonts

@@ -7,6 +7,7 @@
 
 mod about;
 mod chrome;
+mod completion_ui;
 mod control;
 mod crash_notice;
 mod editor;
@@ -43,7 +44,6 @@ pub struct IdeApp {
     terminal_selection: Option<(terminal_ui::GridPoint, terminal_ui::GridPoint)>,
     search_input: String,
     tree_selection: Option<PathBuf>,
-    completion_selected: usize,
     caret_screen_pos: Option<egui::Pos2>,
     run_label: Option<String>,
     last_shift_release: Option<Instant>,
@@ -123,7 +123,6 @@ impl IdeApp {
             terminal_selection: None,
             search_input: String::new(),
             tree_selection: None,
-            completion_selected: 0,
             caret_screen_pos: None,
             run_label,
             last_shift_release: None,
@@ -257,7 +256,11 @@ impl IdeApp {
         } else {
             Modifiers::ALT
         };
-        let completion_open = !self.state.lsp.completions().is_empty();
+        let completion_open = self
+            .state
+            .completion
+            .as_ref()
+            .is_some_and(|session| session.visible());
         let consumed_chord = std::cell::Cell::new(false);
         // Exact modifier matching: egui's consume_key ignores extra Shift/Alt, which
         // would let ⌘F swallow ⇧⌘F.
@@ -283,20 +286,21 @@ impl IdeApp {
             && self.dialog.is_none()
             && self.editor_focused(ctx)
         {
-            let count = self
-                .state
-                .lsp
-                .completions()
-                .len()
-                .min(editor::COMPLETION_LIMIT);
-            if consume(Modifiers::NONE, Key::ArrowDown) && count > 0 {
-                self.completion_selected = (self.completion_selected + 1) % count;
+            for (key, delta) in [
+                (Key::ArrowDown, 1),
+                (Key::ArrowUp, -1),
+                (Key::PageDown, 10),
+                (Key::PageUp, -10),
+            ] {
+                if consume(Modifiers::NONE, key) {
+                    self.state.move_completion_selection(delta);
+                }
             }
-            if consume(Modifiers::NONE, Key::ArrowUp) && count > 0 {
-                self.completion_selected = (self.completion_selected + count - 1) % count;
+            if consume(Modifiers::NONE, Key::Enter) {
+                self.dispatch("completion.accept", json!({"replace": false}));
             }
-            if consume(Modifiers::NONE, Key::Enter) || consume(Modifiers::NONE, Key::Tab) {
-                self.accept_completion(self.completion_selected);
+            if consume(Modifiers::NONE, Key::Tab) {
+                self.dispatch("completion.accept", json!({"replace": true}));
             }
         }
         let mac = cfg!(target_os = "macos");
@@ -382,13 +386,13 @@ impl IdeApp {
                 self.dialog = None;
             } else if self.palette.open {
                 self.palette.open = false;
+            } else if self.state.completion.is_some() {
+                self.dispatch("completion.close", Value::Null);
             } else if self.find.open
                 && (self.editor_focused(ctx) || ctx.memory(|m| m.has_focus(findbar::query_id())))
             {
                 self.find.open = false;
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
-            } else if !self.state.lsp.completions().is_empty() {
-                self.state.lsp.clear_completions();
             } else if self.state.tool_windows.visible(Anchor::Bottom).is_some()
                 && !self.palette.open
             {
@@ -519,19 +523,6 @@ impl IdeApp {
             }
         }
     }
-
-    fn accept_completion(&mut self, index: usize) {
-        let Some(item) = self.state.lsp.completions().get(index).cloned() else {
-            return;
-        };
-        let text = item.insert_text.unwrap_or(item.label);
-        self.dispatch(
-            "editor.insertText",
-            json!({"position": self.state.active_caret().unwrap_or(0), "text": text}),
-        );
-        self.state.lsp.clear_completions();
-        self.completion_selected = 0;
-    }
 }
 
 impl eframe::App for IdeApp {
@@ -586,7 +577,7 @@ impl eframe::App for IdeApp {
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }
-        editor::completion_popup(self, ctx);
+        completion_ui::show(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
         notifications::show(self, ctx);

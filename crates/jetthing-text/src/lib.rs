@@ -327,6 +327,26 @@ impl TextDocument {
         Ok((line, utf16_character))
     }
 
+    /// Converts an LSP UTF-16 line/character position to a rope character
+    /// offset. Positions past the end of a line clamp to the line end, and
+    /// lines past the end clamp to the document end, as the protocol requires.
+    pub fn char_from_lsp_position(&self, line: usize, character: usize) -> usize {
+        if line >= self.rope.len_lines() {
+            return self.rope.len_chars();
+        }
+        let line_start = self.rope.line_to_char(line);
+        let mut units = 0;
+        let mut offset = line_start;
+        for c in self.rope.line(line).chars() {
+            if units >= character || c == '\n' || c == '\r' {
+                break;
+            }
+            units += c.len_utf16();
+            offset += 1;
+        }
+        offset
+    }
+
     pub fn edit(
         &mut self,
         start_char: usize,
@@ -635,6 +655,20 @@ mod tests {
         assert_eq!(doc.lsp_position(4).unwrap(), (1, 0));
         assert_eq!(doc.lsp_position(6).unwrap(), (1, 3));
         assert!(doc.lsp_position(99).is_err());
+    }
+
+    #[test]
+    fn converts_lsp_utf16_positions_back_to_character_offsets() {
+        let doc = TextDocument::new("one\na🦀b\n");
+        assert_eq!(doc.char_from_lsp_position(1, 0), 4);
+        assert_eq!(doc.char_from_lsp_position(1, 3), 6);
+        assert_eq!(doc.char_from_lsp_position(1, 4), 7);
+        assert_eq!(doc.char_from_lsp_position(1, 99), 7, "clamps to line end");
+        assert_eq!(doc.char_from_lsp_position(9, 0), doc.len_chars());
+        for offset in 0..doc.len_chars() {
+            let (line, character) = doc.lsp_position(offset).unwrap();
+            assert_eq!(doc.char_from_lsp_position(line, character), offset);
+        }
     }
 
     #[test]

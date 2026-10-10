@@ -1,4 +1,4 @@
-//! Editor island: tabs, viewport-native text surface, and completion popup.
+//! Editor island: tabs and the viewport-native text surface.
 
 use crate::editor_keys;
 use crate::icons::{self, Icon};
@@ -11,7 +11,6 @@ use jetthing_text::Selection;
 use jetthing_text::ops;
 use serde_json::{Value, json};
 
-pub const COMPLETION_LIMIT: usize = 30;
 const TAB_BAR_HEIGHT: f32 = 38.0;
 const ROW_HEIGHT: f32 = 20.0;
 const TEXT_LEFT_PADDING: f32 = 14.0;
@@ -29,6 +28,8 @@ pub struct EditorOutput {
     pub changed: bool,
     pub caret_pos: Option<egui::Pos2>,
     pub requests: Vec<EditorRequest>,
+    /// Text typed this frame (drives completion auto-popup and filtering).
+    pub typed: String,
 }
 
 pub fn editor_id() -> egui::Id {
@@ -38,6 +39,8 @@ pub fn editor_id() -> egui::Id {
 pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
     let mut changed_document = None;
     let mut requests = Vec::new();
+    let mut typed = String::new();
+    let caret_before = app.state.active_caret();
     egui::CentralPanel::default()
         .frame(island_frame())
         .show(ctx, |ui| {
@@ -65,9 +68,11 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     changed,
                     caret_pos,
                     requests: editor_requests,
+                    typed: typed_text,
                 }) => {
                     app.caret_screen_pos = caret_pos;
                     requests = editor_requests;
+                    typed = typed_text;
                     if changed {
                         let snapshot = doc.text.text();
                         doc.analysis = jetthing_language::analyze(&doc.path, &snapshot);
@@ -83,6 +88,9 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
         });
     if let Some((path, text, version)) = changed_document {
         app.state.sync_document_lsp(&path, &text, version);
+        app.state.completion_after_typing(&typed);
+    } else if app.state.completion.is_some() && app.state.active_caret() != caret_before {
+        app.state.refresh_completion();
     }
     for request in requests {
         handle_request(app, ctx, request);
@@ -729,6 +737,7 @@ fn editor_surface(
             changed: false,
             caret_pos,
             requests,
+            typed: String::new(),
         });
     }
     ui.memory_mut(|memory| {
@@ -749,9 +758,11 @@ fn editor_surface(
     let text_error = |error: jetthing_text::TextError| error.to_string();
     let command = |id: &'static str| EditorRequest::Command(id, Value::Null);
     let clone_armed = editor_keys::clone_gesture_armed(ui.ctx(), response.id, mac);
+    let mut typed = String::new();
     for event in events {
         let (key, modifiers) = match event {
             egui::Event::Text(text) if !text.is_empty() => {
+                typed.push_str(&text);
                 let mut chars = text.chars();
                 let single = chars.next().filter(|_| chars.next().is_none());
                 let handled = match single {
@@ -956,83 +967,8 @@ fn editor_surface(
         changed: document.text.revision() != initial_revision,
         caret_pos,
         requests,
+        typed,
     })
-}
-
-pub fn completion_popup(app: &mut IdeApp, ctx: &egui::Context) {
-    let completions = app.state.lsp.completions().to_vec();
-    if completions.is_empty() {
-        app.completion_selected = 0;
-        return;
-    }
-    let anchor = app
-        .caret_screen_pos
-        .unwrap_or_else(|| ctx.content_rect().center());
-    let mut accept = None;
-    egui::Area::new(egui::Id::new("completion_popup"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(anchor + vec2(-20.0, 2.0))
-        .show(ctx, |ui| {
-            egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::same(4))
-                .show(ui, |ui| {
-                    ui.set_width(420.0);
-                    egui::ScrollArea::vertical()
-                        .max_height(260.0)
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 0.0;
-                            for (index, item) in
-                                completions.iter().take(COMPLETION_LIMIT).enumerate()
-                            {
-                                let selected = index == app.completion_selected;
-                                let (rect, response) = ui.allocate_exact_size(
-                                    vec2(ui.available_width(), 22.0),
-                                    Sense::click(),
-                                );
-                                if selected {
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        4.0,
-                                        theme::COMPLETION_SELECTION,
-                                    );
-                                    ui.scroll_to_rect(rect, None);
-                                } else if response.hovered() {
-                                    ui.painter().rect_filled(rect, 4.0, theme::HOVER);
-                                }
-                                let x = crate::widgets::row_text(
-                                    ui,
-                                    rect,
-                                    rect.left() + 8.0,
-                                    &item.label,
-                                    egui::FontId::monospace(theme::EDITOR_FONT_SIZE),
-                                    theme::TEXT_BRIGHT,
-                                );
-                                if let Some(detail) = &item.detail {
-                                    let galley = ui.painter().layout_no_wrap(
-                                        detail.clone(),
-                                        egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                                        theme::TEXT_INFO,
-                                    );
-                                    let pos = egui::pos2(
-                                        (rect.right() - galley.size().x - 8.0).max(x + 16.0),
-                                        rect.center().y - galley.size().y / 2.0,
-                                    );
-                                    ui.painter().with_clip_rect(rect).galley(
-                                        pos,
-                                        galley,
-                                        theme::TEXT_INFO,
-                                    );
-                                }
-                                if response.clicked() {
-                                    accept = Some(index);
-                                }
-                            }
-                        });
-                });
-        });
-    if let Some(index) = accept {
-        app.accept_completion(index);
-    }
 }
 
 #[cfg(test)]
