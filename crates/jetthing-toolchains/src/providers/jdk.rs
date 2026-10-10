@@ -147,6 +147,11 @@ impl ComponentProvider for FoojayJdk {
         &self.spec
     }
 
+    /// Unpinned projects get the newest LTS release, as the reference IDE suggests.
+    fn default_request(&self) -> VersionRequest {
+        VersionRequest::Channel("lts".into())
+    }
+
     fn resolve(
         &self,
         request: &VersionRequest,

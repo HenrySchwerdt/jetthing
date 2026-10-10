@@ -120,6 +120,7 @@ pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
     let mut dismiss = None;
     let mut restart = false;
     let mut copy = None;
+    let mut setup = None;
     egui::Area::new(egui::Id::new("lsp_notices"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::RIGHT_BOTTOM, vec2(-16.0, -bottom))
@@ -165,6 +166,12 @@ pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                 .clicked()
                             };
+                            if let Some(component) = &notice.setup
+                                && link(ui, "Set up")
+                            {
+                                setup = Some((notice.id.clone(), component.clone()));
+                            }
+                            ui.add_space(12.0);
                             if notice.id.starts_with("missing:") && link(ui, "Copy Install Hint") {
                                 copy = Some(notice.body.clone());
                             }
@@ -185,5 +192,11 @@ pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
     }
     if restart {
         app.dispatch("language.restartServers", Value::Null);
+    }
+    if let Some((id, component)) = setup {
+        // Installs the server and what it needs (jdtls → JDK); servers restart
+        // when the setup finishes.
+        app.dispatch("toolchain.setup", json!({ "components": [component] }));
+        app.dispatch("language.dismissNotice", json!({ "id": id }));
     }
 }
