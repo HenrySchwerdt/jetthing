@@ -73,6 +73,14 @@ workspace layout persistence, plugin manager, and recovery.
 Product-neutral bundles start with Web and Rust, then Java/Kotlin/Gradle and Android.
 Use installed SDK, ADB, emulator, and Gradle; do not depend on Android Studio.
 
+- [x] Toolchain provisioning core (`jetthing-toolchains`): verified resumable downloads, atomic
+      installs, PATH-first discovery, project pins, `toolchain.*` commands, status-bar progress
+- [ ] "Missing toolchain" editor notification with Set up, Settings > Toolchains page
+- [ ] Catalog: JDK (foojay Disco) + jdtls, rust-analyzer/rustup, Android cmdline-tools/sdkmanager,
+      kotlin-lsp, bazelisk/starpls, Node/typescript-language-server, pyright/ruff, gopls/delve,
+      clangd, lemminx, taplo, yaml-language-server
+- [ ] LSP "server not found" → Set up through the resolver; build/run, Android, Bazel use it
+
 ## Next task
 
 Add incremental Tree-sitter edit notifications and expand the editor interaction model

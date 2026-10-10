@@ -27,5 +27,14 @@
 | PLAT-023 | IntelliJ Platform | New Project wizard | Partial | `project.create` | generator golden/collision tests, command test, native macOS walkthrough | Empty, Rust app/library, Java Gradle Kotlin/Groovy with sample code; JDK 21 and Gradle required on PATH; JDK download, wrapper provisioning and trust prompts pending; `evidence/new-project.md` |
 | PLAT-030 | IntelliJ Platform | Editor color schemes | Partial | — | scheme lineage/inherit/fallback tests against `docs/spec/themes.md` values | text attributes (foreground, background, bold/italic, underline/strikeout) resolved from `docs/spec/data/color-schemes.json` by IntelliJ key; editor uses Islands Dark; scheme selection in Settings and wave/box effects pending; `evidence/syntax-highlighting.md` |
 
+## Toolchains
+
+| ID | Reference | Feature | Status | Commands | Tests | Limitations / evidence |
+|---|---|---|---|---|---|---|
+| TOOL-001 | IntelliJ Platform | Managed toolchain installs (Download JDK-style) | Partial | `toolchain.install`, `toolchain.cancel`, `toolchain.jobs`, `toolchain.uninstall` | fake download server tests: resolution, checksum mismatch, Range resume, failed extraction leaves nothing, uninstall, background service; command round-trip tests | SHA-256 verified (inline or checksum file), resumable, atomic rename from `.staging/`; tar.gz/tar.xz/zip/gz/raw; status-bar progress with cancel; no real catalog entries yet (JDK, rust-analyzer, Android SDK next), no signature (GPG/minisign) checks; `evidence/toolchains.md` |
+| TOOL-002 | IntelliJ Platform | Detect installed SDKs/tools before downloading | Partial | `toolchain.locate`, `toolchain.missing`, `toolchain.list`, `toolchain.usePath` | PATH/home-variable/configured/pinned-managed precedence tests | configured path → pinned managed → `JAVA_HOME`-style variable → PATH → managed; versions of PATH binaries are not probed yet; `evidence/toolchains.md` |
+| TOOL-003 | IntelliJ Platform | Project toolchain pinning | Partial | `toolchain.pins` | version-file parsing tests | `.jetthing/toolchains.toml`, `rust-toolchain(.toml)`, `.bazelversion`, Gradle `JavaLanguageVersion.of`/`jvmToolchain`, `gradle-daemon-jvm.properties`, `.sdkmanrc`, `.nvmrc`/`.node-version`, `.python-version`, `go.mod`; Maven toolchains and Gradle version catalogs pending |
+| TOOL-004 | IntelliJ Platform | Proxy-aware, offline-tolerant downloads | Partial | — | NO_PROXY matching and offline/HTTP error tests | `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` with `NO_PROXY` (hosts, suffixes, IPv4 CIDR), system trust store; offline error names the host and suggests proxy settings or an existing installation; proxy UI in Settings pending |
+
 Statuses are intentionally conservative. “Implemented” means the listed scope works;
 only “Verified” will count as independently parity-validated.

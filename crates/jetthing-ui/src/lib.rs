@@ -17,6 +17,7 @@ mod popups;
 mod syntax;
 mod terminal_ui;
 mod theme;
+mod toolchain_status;
 mod toolwindows;
 mod welcome;
 mod widgets;
@@ -517,6 +518,10 @@ impl eframe::App for IdeApp {
         self.state.poll_runner();
         self.state.poll_lsp();
         self.state.poll_updates();
+        self.state.poll_toolchains();
+        if self.state.toolchains.service.is_busy() {
+            ctx.request_repaint_after(Duration::from_millis(200));
+        }
         if self.state.lsp.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(100));
         } else if !self.state.lsp.servers().is_empty() {
