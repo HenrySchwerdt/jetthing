@@ -1,7 +1,7 @@
 use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
 use jetthing_git::RepositoryStatus;
 use jetthing_language::{LanguageAnalysis, analyze};
-use jetthing_lsp::{LspDiagnostic, LspService, ServerState};
+use jetthing_lsp::{LspDiagnostic, LspManager};
 use jetthing_plugins::PluginManifest;
 use jetthing_project::{FileEntry, Project};
 use jetthing_runner::{TaskPlan, TaskService, TaskState};
@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod editor_commands;
+mod lsp_commands;
 mod project_commands;
 mod terminal_commands;
 mod toolwindow;
@@ -45,8 +46,8 @@ pub struct IdeState {
     pub search_truncated: bool,
     pub git: Option<RepositoryStatus>,
     pub runner: TaskService,
-    pub lsp: Option<LspService>,
-    pub lsp_error: Option<String>,
+    /// Language servers of the open project, started lazily per language.
+    pub lsp: LspManager,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -93,14 +94,7 @@ impl IdeState {
         self.runner = TaskService::default();
         self.plugins.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
-        self.lsp = None;
-        self.lsp_error = None;
-        if project.root().join("Cargo.toml").is_file() {
-            match LspService::start_rust_analyzer(project.root()) {
-                Ok(service) => self.lsp = Some(service),
-                Err(error) => self.lsp_error = Some(error.to_string()),
-            }
-        }
+        self.lsp.set_project(Some(project.root()));
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -125,14 +119,9 @@ impl IdeState {
             selections: SelectionSet::default(),
         });
         self.active_document = Some(self.documents.len() - 1);
-        if let Some(lsp) = &mut self.lsp {
-            let absolute = project.root().join(path);
-            if let Err(error) = lsp.open_document(&absolute, &text, 0) {
-                self.lsp_error = Some(error.to_string());
-            }
-        }
         self.touch_recent(path);
         self.status = format!("Opened {}", path.display());
+        self.sync_document_lsp(path, &text, 0);
         Ok(())
     }
     pub fn save(&mut self, index: usize) -> Result<(), String> {
@@ -163,8 +152,11 @@ impl IdeState {
             Some(active) if active == index => Some(index.min(self.documents.len() - 1)),
             other => other,
         };
-        if let Some(lsp) = self.lsp.as_mut() {
-            lsp.clear_completions();
+        self.lsp.clear_completions();
+        if let Some(project) = &self.project {
+            let _ = self
+                .lsp
+                .close_document(&project.root().join(&document.path));
         }
         self.status = format!("Closed {}", document.path.display());
         Ok(())
@@ -177,9 +169,7 @@ impl IdeState {
         self.active_document = Some(index);
         let path = self.documents[index].path.clone();
         self.touch_recent(&path);
-        if let Some(lsp) = self.lsp.as_mut() {
-            lsp.clear_completions();
-        }
+        self.lsp.clear_completions();
         Ok(())
     }
 
@@ -397,25 +387,38 @@ impl IdeState {
         }
     }
 
+    /// Pumps the language servers and re-opens documents on restarted servers.
     pub fn poll_lsp(&mut self) {
-        if let Some(lsp) = &mut self.lsp
-            && let Err(error) = lsp.poll()
-        {
-            self.lsp_error = Some(error.to_string());
+        let restarted = self.lsp.poll();
+        let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
+            return;
+        };
+        for absolute in restarted {
+            let Some(document) = self
+                .documents
+                .iter()
+                .find(|document| root.join(&document.path) == absolute)
+            else {
+                continue;
+            };
+            let version = document.text.revision().min(i32::MAX as u64) as i32;
+            let _ = self
+                .lsp
+                .sync_document(&absolute, &document.text.text(), version);
         }
     }
 
+    /// Opens or updates a document on its language server, starting the
+    /// server on first use. A missing server raises a notice, not an error.
     pub fn sync_document_lsp(&mut self, relative_path: &Path, text: &str, version: i32) {
         let Some(project) = &self.project else {
             return;
         };
-        let Some(lsp) = &mut self.lsp else {
-            return;
-        };
-        lsp.clear_completions();
-        if let Err(error) = lsp.change_document(&project.root().join(relative_path), text, version)
-        {
-            self.lsp_error = Some(error.to_string());
+        self.lsp.clear_completions();
+        let absolute = project.root().join(relative_path);
+        match self.lsp.sync_document(&absolute, text, version) {
+            Ok(()) | Err(jetthing_lsp::LspError::ServerNotFound { .. }) => {}
+            Err(error) => self.status = error.to_string(),
         }
     }
 
@@ -455,8 +458,6 @@ impl IdeState {
             .root()
             .join(&document.path);
         self.lsp
-            .as_mut()
-            .ok_or("language server is not running")?
             .request_completion(&absolute, line, character)
             .map_err(|e| e.to_string())
     }
@@ -476,9 +477,7 @@ impl IdeState {
         if document.text.revision() != revision {
             document.analysis = analyze(&document.path, &document.text.text());
             self.sync_active_lsp();
-            if let Some(lsp) = &mut self.lsp {
-                lsp.clear_completions();
-            }
+            self.lsp.clear_completions();
         }
         Ok(result)
     }
@@ -498,9 +497,7 @@ impl IdeState {
             .selections
             .set_single(Selection::caret(position + text.chars().count()));
         self.sync_active_lsp();
-        if let Some(lsp) = &mut self.lsp {
-            lsp.clear_completions();
-        }
+        self.lsp.clear_completions();
         Ok(())
     }
 
@@ -514,13 +511,8 @@ impl IdeState {
         let Some(project) = &self.project else {
             return Vec::new();
         };
-        let Some(lsp) = &self.lsp else {
-            return Vec::new();
-        };
-        lsp.diagnostics()
-            .get(&project.root().join(&document.path))
-            .cloned()
-            .unwrap_or_default()
+        self.lsp
+            .diagnostics_for(&project.root().join(&document.path))
     }
 }
 
@@ -590,6 +582,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
+    lsp_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(
@@ -611,30 +604,6 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     registry
         .register(Command::new(
             spec(
-                "language.complete",
-                "Code Completion",
-                "Code",
-                Some("⌃Space"),
-                "{}",
-            ),
-            |state: &IdeState| {
-                state.active_document.is_some()
-                    && state
-                        .lsp
-                        .as_ref()
-                        .is_some_and(|lsp| lsp.state() == ServerState::Ready)
-            },
-            |state: &mut IdeState, _| {
-                let id = state
-                    .request_active_completion()
-                    .map_err(CommandError::Failed)?;
-                Ok(json!({"requestId": id}))
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec(
                 "editor.insertText",
                 "Insert Text",
                 "Editor",
@@ -649,40 +618,6 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .insert_active_text(position, &text)
                     .map_err(CommandError::Failed)?;
                 Ok(Value::Null)
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec(
-                "language.completion",
-                "Request Completion",
-                "Code",
-                None,
-                r#"{"path":"string","line":0,"character":0}"#,
-            ),
-            |state: &IdeState| {
-                state
-                    .lsp
-                    .as_ref()
-                    .is_some_and(|lsp| lsp.state() == ServerState::Ready)
-            },
-            |state: &mut IdeState, params| {
-                let relative = string_param(&params, "path")?;
-                let line = usize_param(&params, "line")?;
-                let character = usize_param(&params, "character")?;
-                let root = state
-                    .project
-                    .as_ref()
-                    .ok_or_else(|| CommandError::Disabled("language.completion".into()))?
-                    .root();
-                let id = state
-                    .lsp
-                    .as_mut()
-                    .ok_or_else(|| CommandError::Disabled("language.completion".into()))?
-                    .request_completion(&root.join(relative), line, character)
-                    .map_err(|error| CommandError::Failed(error.to_string()))?;
-                Ok(json!({"requestId": id}))
             },
         ))
         .expect("unique built-in id");
