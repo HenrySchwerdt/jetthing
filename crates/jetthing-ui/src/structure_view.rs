@@ -1,0 +1,232 @@
+//! Structure tool window (Alt+7), File Structure popup (Ctrl+F12) and the
+//! code part of the navigation-bar breadcrumbs, all from the language
+//! analysis' tags-query structure.
+
+use crate::widgets::row_text;
+use crate::{IdeApp, theme};
+use eframe::egui::{self, Color32, Sense, vec2};
+use jetthing_core::Document;
+use jetthing_language::{StructureItem, SymbolKind, structure};
+use serde_json::json;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+const ROW_HEIGHT: f32 = 24.0;
+
+type Cached = (PathBuf, u64, Arc<Vec<StructureItem>>);
+
+/// Structure of `document`, recomputed only when its text changes.
+pub fn items(ctx: &egui::Context, document: &Document) -> Arc<Vec<StructureItem>> {
+    let id = egui::Id::new("structure_view_cache");
+    let revision = document.text.revision();
+    if let Some((path, cached_revision, items)) = ctx.data(|data| data.get_temp::<Cached>(id))
+        && path == document.path
+        && cached_revision == revision
+    {
+        return items;
+    }
+    let items = Arc::new(document.analysis.structure());
+    ctx.data_mut(|data| {
+        data.insert_temp::<Cached>(id, (document.path.clone(), revision, items.clone()))
+    });
+    items
+}
+
+/// Depth-first rows of the structure tree.
+pub fn flatten<'a>(
+    items: &'a [StructureItem],
+    depth: usize,
+    out: &mut Vec<(usize, &'a StructureItem)>,
+) {
+    for item in items {
+        out.push((depth, item));
+        flatten(&item.children, depth + 1, out);
+    }
+}
+
+/// Badge letter and color per kind (original drawings: a filled circle with a letter).
+fn badge(kind: SymbolKind) -> (&'static str, Color32) {
+    match kind {
+        SymbolKind::Class => ("C", Color32::from_rgb(0x54, 0x8A, 0xF7)),
+        SymbolKind::Interface => ("I", Color32::from_rgb(0x5F, 0xB8, 0x65)),
+        SymbolKind::Enum => ("E", Color32::from_rgb(0xD5, 0x96, 0x37)),
+        SymbolKind::Function | SymbolKind::Method | SymbolKind::Constructor => {
+            ("m", Color32::from_rgb(0xE5, 0x6A, 0x73))
+        }
+        SymbolKind::Field => ("f", Color32::from_rgb(0xC7, 0x7D, 0xBB)),
+        SymbolKind::Constant => ("c", Color32::from_rgb(0xC7, 0x7D, 0xBB)),
+        SymbolKind::Module => ("M", Color32::from_rgb(0x86, 0x8A, 0x91)),
+        SymbolKind::Type => ("T", Color32::from_rgb(0x2A, 0xAC, 0xB8)),
+        SymbolKind::Macro => ("!", Color32::from_rgb(0x86, 0x8A, 0x91)),
+        SymbolKind::Other => ("•", Color32::from_rgb(0x86, 0x8A, 0x91)),
+    }
+}
+
+pub fn paint_badge(painter: &egui::Painter, center: egui::Pos2, kind: SymbolKind) {
+    let (letter, color) = badge(kind);
+    painter.circle_filled(center, 7.0, color.gamma_multiply(0.85));
+    painter.text(
+        center,
+        egui::Align2::CENTER_CENTER,
+        letter,
+        egui::FontId::proportional(10.0),
+        Color32::from_rgb(0x1E, 0x1F, 0x22),
+    );
+}
+
+/// Paints one structure row; returns its response.
+pub fn row(
+    ui: &mut egui::Ui,
+    depth: usize,
+    item: &StructureItem,
+    selected: bool,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+    if selected {
+        ui.painter().rect_filled(rect, 4.0, theme::SELECTION);
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 4.0, theme::HOVER);
+    }
+    let left = rect.left() + 8.0 + depth as f32 * 16.0;
+    paint_badge(
+        ui.painter(),
+        egui::pos2(left + 8.0, rect.center().y),
+        item.kind,
+    );
+    let x = row_text(
+        ui,
+        rect,
+        left + 22.0,
+        &item.name,
+        egui::FontId::proportional(theme::UI_FONT_SIZE),
+        theme::TEXT_BRIGHT,
+    );
+    if let Some(detail) = &item.detail {
+        row_text(
+            ui,
+            rect,
+            x + 2.0,
+            detail,
+            egui::FontId::proportional(theme::UI_FONT_SIZE),
+            theme::TEXT_SECONDARY,
+        );
+    }
+    response
+}
+
+/// Moves the caret to the item's name and focuses the editor.
+pub fn navigate(app: &mut IdeApp, ctx: &egui::Context, item: &StructureItem) {
+    let Some(document) = app
+        .state
+        .active_document
+        .and_then(|i| app.state.documents.get(i))
+    else {
+        return;
+    };
+    let line_start = document.text.line_to_char(item.line).unwrap_or(0);
+    let column = document
+        .text
+        .byte_to_char(item.name_range.start)
+        .saturating_sub(line_start);
+    app.dispatch(
+        "editor.gotoLine",
+        json!({"line": item.line + 1, "column": column + 1}),
+    );
+    ctx.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
+}
+
+/// The innermost item containing the primary caret (to highlight in lists).
+pub fn item_at_caret<'a>(
+    document: &Document,
+    items: &'a [StructureItem],
+) -> Option<&'a StructureItem> {
+    let byte = document
+        .text
+        .char_to_byte(document.selections.primary().head);
+    structure::path_at(items, byte).last().copied()
+}
+
+/// Names of the declarations around the caret, outermost first (breadcrumbs).
+pub fn breadcrumbs(ctx: &egui::Context, document: &Document) -> Vec<(SymbolKind, String)> {
+    let items = items(ctx, document);
+    let byte = document
+        .text
+        .char_to_byte(document.selections.primary().head);
+    structure::path_at(&items, byte)
+        .into_iter()
+        .map(|item| (item.kind, item.name.clone()))
+        .collect()
+}
+
+/// Structure tool window body.
+pub fn tool_window(app: &mut IdeApp, ui: &mut egui::Ui) {
+    let Some(document) = app
+        .state
+        .active_document
+        .and_then(|i| app.state.documents.get(i))
+    else {
+        ui.label(egui::RichText::new("No file open").color(theme::TEXT_SECONDARY));
+        return;
+    };
+    let items = items(ui.ctx(), document);
+    if items.is_empty() {
+        ui.label(egui::RichText::new("No structure for this file").color(theme::TEXT_SECONDARY));
+        return;
+    }
+    let current = item_at_caret(document, &items).map(|item| item.name_range.clone());
+    let mut rows = Vec::new();
+    flatten(&items, 0, &mut rows);
+    let mut clicked = None;
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (depth, item) in &rows {
+                let selected = current.as_ref() == Some(&item.name_range);
+                if row(ui, *depth, item, selected).clicked() {
+                    clicked = Some((*item).clone());
+                }
+            }
+        });
+    if let Some(item) = clicked {
+        navigate(app, ui.ctx(), &item);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_are_depth_first_and_cache_follows_revisions() {
+        let ctx = egui::Context::default();
+        let mut document = Document::new(
+            "A.java".into(),
+            "class A {\n    void f() {}\n    class B {\n        void g() {}\n    }\n}\n",
+        );
+        let first = items(&ctx, &document);
+        let mut rows = Vec::new();
+        flatten(&first, 0, &mut rows);
+        let names: Vec<_> = rows
+            .iter()
+            .map(|(depth, item)| (*depth, item.name.as_str()))
+            .collect();
+        assert_eq!(names, vec![(0, "A"), (1, "f"), (1, "B"), (2, "g")]);
+        assert!(Arc::ptr_eq(&first, &items(&ctx, &document)));
+
+        document.text.edit(0, 0, "// x\n").unwrap();
+        let source = document.text.text();
+        document.refresh_analysis(&source);
+        assert!(!Arc::ptr_eq(&first, &items(&ctx, &document)));
+        let caret = source.find("g()").unwrap();
+        document
+            .selections
+            .set_single(jetthing_text::Selection::caret(caret));
+        let crumbs: Vec<_> = breadcrumbs(&ctx, &document)
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
+        assert_eq!(crumbs, vec!["A", "B", "g"]);
+    }
+}

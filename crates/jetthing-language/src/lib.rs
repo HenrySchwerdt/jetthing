@@ -9,6 +9,7 @@ mod injection;
 pub mod registry;
 pub mod scheme;
 pub mod selection;
+pub mod structure;
 pub mod syntax;
 
 pub use captures::capture_key;
@@ -17,6 +18,7 @@ pub use highlight::{HighlightLayer, HighlightSpan, QueryError};
 pub use jetthing_text::{ByteEdit, BytePoint};
 pub use registry::{LANGUAGES, LanguageSpec};
 pub use scheme::{ColorScheme, EffectType, FontStyle, Rgba, TextAttributes};
+pub use structure::{StructureItem, SymbolKind};
 pub use syntax::SyntaxTree;
 
 use std::path::Path;
@@ -47,6 +49,14 @@ pub struct LanguageAnalysis {
 }
 
 impl LanguageAnalysis {
+    /// Declarations of the file, nested (empty without a tags query).
+    pub fn structure(&self) -> Vec<StructureItem> {
+        match &self.syntax {
+            Some(syntax) => structure::structure(syntax.language(), syntax.tree(), &self.source),
+            None => Vec::new(),
+        }
+    }
+
     /// Folding regions intersecting the byte `range` (see [`folding::fold_ranges`]).
     pub fn folds_in(&self, range: std::ops::Range<usize>) -> Vec<FoldRange> {
         match &self.syntax {

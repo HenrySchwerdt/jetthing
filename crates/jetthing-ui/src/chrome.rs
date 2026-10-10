@@ -528,6 +528,7 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
             ui.vertical(|ui| {
                 stripe_button(app, ui, ToolWindow::Project, Icon::Project);
                 stripe_button(app, ui, ToolWindow::Commit, Icon::Commit);
+                stripe_button(app, ui, ToolWindow::Structure, Icon::Structure);
                 let (rect, _) = ui.allocate_exact_size(vec2(32.0, 1.0), Sense::hover());
                 ui.painter().line_segment(
                     [
@@ -589,8 +590,11 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 let font = egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0);
-                // Navigation bar breadcrumbs: project › directories › file.
+                // Navigation bar breadcrumbs: project › directories › file, then
+                // the declarations around the caret (class › method).
                 let mut crumbs = vec![app.project_name()];
+                let mut code_crumbs = Vec::new();
+                let mut file_replaced = false;
                 if let Some(document) = app
                     .state
                     .active_document
@@ -602,17 +606,25 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                             .components()
                             .map(|part| part.as_os_str().to_string_lossy().into_owned()),
                     );
+                    code_crumbs = crate::structure_view::breadcrumbs(ctx, document);
+                    // Like IntelliJ, a top-level declaration named after the file
+                    // stands in for the file itself (`App.java` → `App`).
+                    let stem = document.path.file_stem().map(|stem| stem.to_string_lossy());
+                    if code_crumbs.first().map(|(_, name)| name.as_str()) == stem.as_deref() {
+                        crumbs.pop();
+                        file_replaced = true;
+                    }
                 }
                 let last = crumbs.len().saturating_sub(1);
                 for (index, crumb) in crumbs.iter().enumerate() {
                     let icon = if index == 0 {
                         Some((Icon::Project, theme::TEXT_SECONDARY))
-                    } else if index == last {
+                    } else if index == last && !file_replaced {
                         Some((Icon::for_file(crumb), icons::ICON))
                     } else {
                         None
                     };
-                    let color = if index == last {
+                    let color = if index == last && !file_replaced {
                         theme::TEXT
                     } else {
                         theme::TEXT_SECONDARY
@@ -621,6 +633,12 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                     if index != last {
                         icons::show(ui, Icon::ChevronRight, 12.0, theme::TEXT_INFO);
                     }
+                }
+                for (kind, name) in code_crumbs {
+                    icons::show(ui, Icon::ChevronRight, 12.0, theme::TEXT_INFO);
+                    let (rect, _) = ui.allocate_exact_size(vec2(20.0, 22.0), Sense::hover());
+                    crate::structure_view::paint_badge(ui.painter(), rect.center(), kind);
+                    widgets::flat_widget(ui, None, &name, font.clone(), theme::TEXT, false, 22.0);
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

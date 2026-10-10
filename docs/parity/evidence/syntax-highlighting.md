@@ -111,6 +111,25 @@ and moves Up/Down by visual rows.
 - `syntax-highlighting/folding-gutter-collapse.png`: after clicking the class's gutter marker the
   body shows as `{...}`. The next visible line is 16.
 
+## Structure, File Structure popup, breadcrumbs
+
+`jetthing-language::structure` runs each grammar's tags query (`@definition.<kind>` with `@name`).
+Java uses upstream plus `queries/java/tags.scm` (constructors, fields, enums, records); Kotlin uses
+the crate's own `tags.scm`, vendored with attribution because the crate does not export it.
+Definitions are nested by byte containment. Callables get an IntelliJ-style signature built from
+the tree's parameter `type` fields and the return type (`greeting(String): String`,
+`onCreate(Bundle?)`). The UI caches the structure per document revision.
+
+- `syntax-highlighting/22-file-structure-popup.png` vs IntelliJ `java-gradle/22-structure.png`:
+  Ctrl+F12 with the caret in `main`. Like the reference it has the centred `App.java` title,
+  `App` → `greeting(String): String`, `main(String[]): void`, and `main` preselected. Still
+  differs: there are no "Inherited members / Anonymous classes / Lambdas" checkboxes, no
+  visibility badges and no expand chevrons; the filter is a visible field rather than IntelliJ's
+  speed search.
+- `syntax-highlighting/22-structure-tool-window.png`: the Structure tool window (Alt+7, left
+  stripe) highlights the declaration at the caret. The status-bar navigation path reads
+  `java-gradle › src › main › java › com › example › App › main`, as in the reference.
+
 ## Languages
 
 Rust, Java, Kotlin (`tree-sitter-kotlin-sg`), Groovy (`*.gradle`, `*.groovy`, `Jenkinsfile`), XML, JSON, TOML, YAML, Markdown (block grammar, with the inline grammar injected),

@@ -16,6 +16,7 @@ mod lsp_status;
 mod notifications;
 mod palette;
 mod popups;
+mod structure_view;
 mod syntax;
 mod terminal_ui;
 mod theme;
@@ -424,9 +425,17 @@ impl IdeApp {
         if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::F12) {
             self.dispatch("toolwindow.hideAll", Value::Null);
         }
+        // File Structure: ⌘F12 (Ctrl+F12 on Windows/Linux).
+        if self.state.active_document.is_some() && consume(Modifiers::COMMAND, Key::F12) {
+            self.open_dialog(popups::Dialog::FileStructure {
+                query: String::new(),
+                selected: None,
+            });
+        }
         for (key, window) in [
             (Key::Num1, ToolWindow::Project),
             (Key::Num0, ToolWindow::Commit),
+            (Key::Num7, ToolWindow::Structure),
             (Key::Num3, ToolWindow::Find),
             (Key::Num4, ToolWindow::Build),
             (Key::Num6, ToolWindow::Problems),

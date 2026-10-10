@@ -24,7 +24,8 @@ pub struct LanguageSpec {
     pub(crate) locals: Option<&'static str>,
     /// Folding query (`folds.scm`) when the grammar ships one.
     pub(crate) folds: Option<&'static str>,
-    pub(crate) tags: Option<&'static str>,
+    /// Tags queries (definitions for Structure/breadcrumbs), concatenated.
+    pub(crate) tags: &'static [&'static str],
     /// Capture-name overrides for languages whose IntelliJ keys differ from
     /// the defaults (e.g. `tag` → `HTML_TAG_NAME`). Data, not code.
     pub(crate) capture_keys: &'static [(&'static str, &'static str)],
@@ -36,7 +37,7 @@ impl LanguageSpec {
     }
 
     pub fn has_tags(&self) -> bool {
-        self.tags.is_some()
+        !self.tags.is_empty()
     }
 
     pub fn has_injections(&self) -> bool {
@@ -83,7 +84,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: Some(tree_sitter_rust::INJECTIONS_QUERY),
         locals: None,
         folds: None,
-        tags: Some(tree_sitter_rust::TAGS_QUERY),
+        tags: &[tree_sitter_rust::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -97,7 +98,10 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: Some(tree_sitter_java::TAGS_QUERY),
+        tags: &[
+            tree_sitter_java::TAGS_QUERY,
+            include_str!("../queries/java/tags.scm"),
+        ],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -114,7 +118,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: None,
+        tags: &[include_str!("../queries/kotlin/tags.scm")],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -128,7 +132,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -142,7 +146,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: None,
+        tags: &[],
         capture_keys: XML_KEYS,
     },
     LanguageSpec {
@@ -156,7 +160,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -170,7 +174,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -184,7 +188,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -198,7 +202,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: Some(tree_sitter_md::INJECTION_QUERY_BLOCK),
         locals: None,
         folds: None,
-        tags: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -213,7 +217,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: Some(tree_sitter_md::INJECTION_QUERY_INLINE),
         locals: None,
         folds: None,
-        tags: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -235,7 +239,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: Some(tree_sitter_starlark::INJECTIONS_QUERY),
         locals: Some(tree_sitter_starlark::LOCALS_QUERY),
         folds: Some(tree_sitter_starlark::FOLDS_QUERY),
-        tags: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -249,7 +253,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: Some(tree_sitter_python::TAGS_QUERY),
+        tags: &[tree_sitter_python::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -266,7 +270,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: Some(tree_sitter_javascript::INJECTIONS_QUERY),
         locals: Some(tree_sitter_javascript::LOCALS_QUERY),
         folds: None,
-        tags: Some(tree_sitter_javascript::TAGS_QUERY),
+        tags: &[tree_sitter_javascript::TAGS_QUERY],
         capture_keys: HTML_KEYS,
     },
     LanguageSpec {
@@ -283,7 +287,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: Some(tree_sitter_javascript::INJECTIONS_QUERY),
         locals: Some(tree_sitter_typescript::LOCALS_QUERY),
         folds: None,
-        tags: Some(tree_sitter_typescript::TAGS_QUERY),
+        tags: &[tree_sitter_typescript::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -301,7 +305,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: Some(tree_sitter_javascript::INJECTIONS_QUERY),
         locals: Some(tree_sitter_typescript::LOCALS_QUERY),
         folds: None,
-        tags: Some(tree_sitter_typescript::TAGS_QUERY),
+        tags: &[tree_sitter_typescript::TAGS_QUERY],
         capture_keys: HTML_KEYS,
     },
     LanguageSpec {
@@ -315,7 +319,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: Some(tree_sitter_go::TAGS_QUERY),
+        tags: &[tree_sitter_go::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -329,7 +333,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: Some(tree_sitter_c::TAGS_QUERY),
+        tags: &[tree_sitter_c::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -348,7 +352,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: Some(tree_sitter_cpp::TAGS_QUERY),
+        tags: &[tree_sitter_cpp::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -369,7 +373,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -383,7 +387,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: Some(tree_sitter_html::INJECTIONS_QUERY),
         locals: None,
         folds: None,
-        tags: None,
+        tags: &[],
         capture_keys: HTML_KEYS,
     },
     LanguageSpec {
@@ -397,7 +401,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -411,7 +415,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: Some(tree_sitter_properties::TAGS_QUERY),
+        tags: &[tree_sitter_properties::TAGS_QUERY],
         capture_keys: PROPERTIES_KEYS,
     },
 ];
