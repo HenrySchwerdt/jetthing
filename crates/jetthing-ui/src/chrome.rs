@@ -635,12 +635,27 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                         widgets::flat_widget(
                             ui,
                             None,
-                            &format!("{}:{}", line + 1, column + 1),
+                            &crate::editor_keys::caret_position_label(
+                                &document.text,
+                                &document.selections,
+                                (line, column),
+                            ),
                             font.clone(),
                             secondary,
                             false,
                             22.0,
                         );
+                        if document.selections.column_mode() {
+                            widgets::flat_widget(
+                                ui,
+                                None,
+                                "Column",
+                                font.clone(),
+                                secondary,
+                                false,
+                                22.0,
+                            );
+                        }
                     }
                     if let jetthing_core::UpdateState::Available { version, .. }
                     | jetthing_core::UpdateState::Installed(version) = &app.state.update_state

@@ -7,6 +7,7 @@
 
 mod chrome;
 mod editor;
+mod editor_keys;
 mod findbar;
 mod icons;
 mod keys;
