@@ -10,6 +10,7 @@ mod control;
 mod editor;
 mod findbar;
 mod icons;
+mod intentions_ui;
 mod keys;
 mod lsp_status;
 mod navigation_ui;
@@ -568,6 +569,7 @@ impl eframe::App for IdeApp {
             && !ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
         {
             navigation_ui::handle_shortcuts(self, ctx);
+            intentions_ui::handle(self, ctx);
         }
         self.handle_shortcuts(ctx);
         self.follow_tool_window_focus(ctx);
@@ -586,6 +588,7 @@ impl eframe::App for IdeApp {
         }
         editor::completion_popup(self, ctx);
         navigation_ui::choices_popup(self, ctx);
+        intentions_ui::popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
         notifications::show(self, ctx);

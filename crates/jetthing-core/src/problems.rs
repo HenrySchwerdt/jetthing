@@ -450,6 +450,7 @@ mod tests {
             source: Some("test".into()),
             unnecessary: false,
             deprecated: false,
+            raw: serde_json::Value::Null,
         }
     }
 

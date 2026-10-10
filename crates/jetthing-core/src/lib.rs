@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod code_actions;
 mod editor_commands;
 mod lsp_commands;
 mod navigation;
@@ -20,12 +21,15 @@ mod project_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
+mod workspace_edit;
+pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
 };
+pub use workspace_edit::EditSummary;
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -56,6 +60,8 @@ pub struct IdeState {
     pub problems: ProblemIndex,
     /// Navigation history and pending/finished navigation requests.
     pub navigation: NavigationState,
+    /// Quick fixes and intentions at the caret (Alt+Enter).
+    pub code_actions: CodeActionState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -110,6 +116,7 @@ impl IdeState {
         self.git = RepositoryStatus::load(project.root()).ok();
         self.lsp.set_project(Some(project.root()));
         self.navigation = NavigationState::default();
+        self.code_actions = CodeActionState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -409,6 +416,7 @@ impl IdeState {
         let restarted = self.lsp.poll();
         self.refresh_problems();
         self.poll_navigation();
+        self.poll_code_actions();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };
@@ -604,6 +612,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     lsp_commands::register(&mut registry);
     problems::register(&mut registry);
     navigation::register(&mut registry);
+    code_actions::register(&mut registry);
     registry
         .register(Command::new(
             spec(

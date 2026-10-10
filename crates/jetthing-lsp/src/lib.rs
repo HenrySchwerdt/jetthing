@@ -15,8 +15,8 @@ pub mod registry;
 pub mod transport;
 
 pub use client::{
-    LaunchConfig, LspDiagnostic, LspResponse, LspService, ResponseError, ServerMessage,
-    ServerState, WorkProgress,
+    ApplyEditRequest, LaunchConfig, LspDiagnostic, LspResponse, LspService, ResponseError,
+    ServerMessage, ServerState, WorkProgress,
 };
 pub use locations::{LspLocation, parse_locations};
 pub use lsp_types;

@@ -7,7 +7,7 @@
 
 use crate::{
     LspError,
-    client::{LspDiagnostic, LspService, ServerState, WorkProgress},
+    client::{ApplyEditRequest, LspDiagnostic, LspService, ServerState, WorkProgress},
     registry::{LaunchContext, LspSettings, ServerRegistry, cache_dir, workspace_root},
 };
 use lsp_types::{CompletionItem, CompletionResponse, request::Completion};
@@ -70,6 +70,9 @@ pub enum Feature {
     TypeDefinition,
     Implementation,
     References,
+    CodeAction,
+    CodeActionResolve,
+    ExecuteCommand,
 }
 
 impl Feature {
@@ -79,6 +82,9 @@ impl Feature {
             Feature::TypeDefinition => "textDocument/typeDefinition",
             Feature::Implementation => "textDocument/implementation",
             Feature::References => "textDocument/references",
+            Feature::CodeAction => "textDocument/codeAction",
+            Feature::CodeActionResolve => "codeAction/resolve",
+            Feature::ExecuteCommand => "workspace/executeCommand",
         }
     }
 
@@ -88,6 +94,8 @@ impl Feature {
             Feature::TypeDefinition => "Go to Type Declaration",
             Feature::Implementation => "Go to Implementation",
             Feature::References => "Find Usages",
+            Feature::CodeAction | Feature::CodeActionResolve => "code actions",
+            Feature::ExecuteCommand => "commands",
         }
     }
 
@@ -113,6 +121,16 @@ impl Feature {
                 capabilities.references_provider,
                 None | Some(OneOf::Left(false))
             ),
+            Feature::CodeAction => !matches!(
+                capabilities.code_action_provider,
+                None | Some(lsp_types::CodeActionProviderCapability::Simple(false))
+            ),
+            Feature::CodeActionResolve => matches!(
+                &capabilities.code_action_provider,
+                Some(lsp_types::CodeActionProviderCapability::Options(options))
+                    if options.resolve_provider == Some(true)
+            ),
+            Feature::ExecuteCommand => capabilities.execute_command_provider.is_some(),
         }
     }
 }
@@ -648,6 +666,24 @@ impl LspManager {
         character: usize,
         extra: serde_json::Value,
     ) -> Result<RequestHandle, LspError> {
+        let mut params = json!({
+            "textDocument": {"uri": crate::client::file_uri(path)?},
+            "position": {"line": line, "character": character},
+        });
+        if let (Some(params), serde_json::Value::Object(extra)) = (params.as_object_mut(), extra) {
+            params.extend(extra);
+        }
+        self.request_with_params(path, feature, params)
+    }
+
+    /// Sends `feature`'s request with complete `params` to the ready server
+    /// of `path`, after checking the server advertises the feature.
+    pub fn request_with_params(
+        &mut self,
+        path: &Path,
+        feature: Feature,
+        params: serde_json::Value,
+    ) -> Result<RequestHandle, LspError> {
         let service = self.ready_server_for(path)?;
         if !feature.supported(service.capabilities()) {
             return Err(LspError::Protocol(format!(
@@ -660,13 +696,6 @@ impl LspManager {
             server: service.name().into(),
             root: service.root().to_owned(),
         };
-        let mut params = json!({
-            "textDocument": {"uri": crate::client::file_uri(path)?},
-            "position": {"line": line, "character": character},
-        });
-        if let (Some(params), serde_json::Value::Object(extra)) = (params.as_object_mut(), extra) {
-            params.extend(extra);
-        }
         let id = service.request_raw(feature.method(), params)?;
         let server = self
             .documents
@@ -678,6 +707,40 @@ impl LspManager {
             id,
             method: feature.method().into(),
         })
+    }
+
+    /// Whether the server of `path` is running and advertises `feature`.
+    pub fn supports(&self, path: &Path, feature: Feature) -> bool {
+        self.server_for(path)
+            .is_some_and(|service| feature.supported(service.capabilities()))
+    }
+
+    /// `workspace/applyEdit` requests the servers sent since the last call.
+    /// Each must be answered with [`respond_apply_edit`](Self::respond_apply_edit).
+    pub fn take_apply_edits(&mut self) -> Vec<(ServerKey, ApplyEditRequest)> {
+        let mut requests = Vec::new();
+        for server in &mut self.servers {
+            if let Some(service) = server.service.as_mut() {
+                requests.extend(
+                    service
+                        .take_apply_edits()
+                        .into_iter()
+                        .map(|request| (server.key.clone(), request)),
+                );
+            }
+        }
+        requests
+    }
+
+    pub fn respond_apply_edit(
+        &mut self,
+        server: &ServerKey,
+        id: serde_json::Value,
+        result: Result<(), String>,
+    ) {
+        if let Some(service) = self.service_mut(server) {
+            let _ = service.respond_apply_edit(id, result);
+        }
     }
 
     /// The result of `handle` once it arrived; an error when the server

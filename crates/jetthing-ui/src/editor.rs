@@ -28,6 +28,8 @@ pub enum EditorRequest {
 pub struct EditorOutput {
     pub changed: bool,
     pub caret_pos: Option<egui::Pos2>,
+    /// Where the lightbulb goes: left of the caret line's text, if visible.
+    pub bulb_anchor: Option<egui::Pos2>,
     pub requests: Vec<EditorRequest>,
 }
 
@@ -96,14 +98,17 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 ),
                 None => {}
             }
+            let mut bulb = None;
             let doc = &mut app.state.documents[index];
             match surface {
                 Ok(EditorOutput {
                     changed,
                     caret_pos,
+                    bulb_anchor,
                     requests: editor_requests,
                 }) => {
                     app.caret_screen_pos = caret_pos;
+                    bulb = bulb_anchor;
                     requests.extend(editor_requests);
                     if changed {
                         let snapshot = doc.text.text();
@@ -117,6 +122,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 }
                 Err(error) => app.state.status = error,
             }
+            crate::intentions_ui::lightbulb(app, ui, bulb);
         });
     if let Some((path, text, version)) = changed_document {
         app.state.sync_document_lsp(&path, &text, version);
@@ -421,6 +427,7 @@ fn editor_surface(
         .map(|(line, _)| line)
         .unwrap_or(0);
     let mut caret_pos = None;
+    let mut bulb_anchor = None;
     let brace_pair: Vec<usize> = {
         let head = document.selections.primary().head;
         ops::matching_bracket(&document.text, head)
@@ -679,6 +686,10 @@ fn editor_surface(
                         let x = column_x(selection.head - line_start);
                         if *selection == document.selections.primary() {
                             caret_pos = Some(egui::pos2(x, y + ROW_HEIGHT));
+                            bulb_anchor = Some(egui::pos2(
+                                rect.left() + gutter_width + 2.0,
+                                y + ROW_HEIGHT / 2.0,
+                            ));
                         }
                         if focused && blink_on {
                             painter.line_segment(
@@ -752,6 +763,7 @@ fn editor_surface(
         return Ok(EditorOutput {
             changed: false,
             caret_pos,
+            bulb_anchor,
             requests,
         });
     }
@@ -970,6 +982,7 @@ fn editor_surface(
     Ok(EditorOutput {
         changed: document.text.revision() != initial_revision,
         caret_pos,
+        bulb_anchor,
         requests,
     })
 }

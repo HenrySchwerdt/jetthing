@@ -18,3 +18,4 @@ jetthing-text = { path = "../jetthing-text" }
 jetthing-update = { path = "../jetthing-update" }
 serde.workspace = true
 serde_json.workspace = true
+url.workspace = true

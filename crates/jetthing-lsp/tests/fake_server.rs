@@ -356,3 +356,65 @@ fn navigation_requests_return_locations() {
     manager.shutdown();
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn code_actions_resolve_and_server_applied_edits() {
+    use jetthing_lsp::Feature;
+    use serde_json::json;
+    let root = workspace("actions");
+    let file = root.join("src/App.fake");
+    let mut manager = LspManager::new(registry(&[]));
+    manager.set_project(Some(&root));
+    manager.sync_document(&file, "x = @error\n", 0).unwrap();
+    assert!(wait_until(|| {
+        manager.poll();
+        manager.diagnostics_for(&file).len() == 1
+    }));
+    assert!(manager.supports(&file, Feature::CodeAction));
+    assert!(manager.supports(&file, Feature::CodeActionResolve));
+    let raw = manager.diagnostics_for(&file)[0].raw.clone();
+    assert_eq!(raw["message"], "marker @error");
+    let uri = format!("file://{}", file.display());
+    let call = |manager: &mut LspManager, feature, params| {
+        let handle = manager.request_with_params(&file, feature, params).unwrap();
+        let mut result = None;
+        assert!(wait_until(|| {
+            manager.poll();
+            result = manager.take_response(&handle);
+            result.is_some()
+        }));
+        result.unwrap().unwrap()
+    };
+    let actions = call(
+        &mut manager,
+        Feature::CodeAction,
+        json!({"textDocument": {"uri": uri}, "range": raw["range"],
+            "context": {"diagnostics": [raw], "triggerKind": 1}}),
+    );
+    let actions = actions.as_array().unwrap().clone();
+    assert_eq!(actions.len(), 3);
+    assert_eq!(actions[0]["kind"], "quickfix");
+    assert_eq!(actions[0]["edit"]["changes"][&uri][0]["newText"], "fixed");
+    let resolved = call(&mut manager, Feature::CodeActionResolve, actions[1].clone());
+    assert_eq!(
+        resolved["edit"]["documentChanges"][0]["edits"][0]["newText"],
+        "// resolved\n"
+    );
+    call(
+        &mut manager,
+        Feature::ExecuteCommand,
+        json!({"command": "fake.apply", "arguments": [uri]}),
+    );
+    let mut requests = Vec::new();
+    assert!(wait_until(|| {
+        manager.poll();
+        requests.extend(manager.take_apply_edits());
+        !requests.is_empty()
+    }));
+    let (server, request) = requests.remove(0);
+    assert_eq!(request.label.as_deref(), Some("Fake command"));
+    assert_eq!(request.edit["changes"][&uri][0]["newText"], "// applied\n");
+    manager.respond_apply_edit(&server, request.id, Ok(()));
+    manager.shutdown();
+    std::fs::remove_dir_all(root).unwrap();
+}

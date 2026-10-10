@@ -12,6 +12,11 @@
 //! the open documents (by URI), typeDefinition the same as a `LocationLink`,
 //! implementation every later occurrence and references all of them.
 //!
+//! Code actions: one preferred quick fix per diagnostic in the request
+//! context (replacing the marker with `fixed`), a refactoring that needs
+//! `codeAction/resolve` (inserting `// resolved` at the top) and a command
+//! (`fake.apply`) whose execution sends `workspace/applyEdit`.
+//!
 //! Completion returns a fixed Java-like member list. `textDocument/didOpen`
 //! and `didChange` publish one diagnostic per `@error`, `@warning`, `@weak`,
 //! `@hint` and `@unused` marker in the text, or one warning at 0:0 when the
@@ -75,7 +80,9 @@ fn main() {
                     "definitionProvider": true,
                     "typeDefinitionProvider": true,
                     "implementationProvider": true,
-                    "referencesProvider": true
+                    "referencesProvider": true,
+                    "codeActionProvider": {"resolveProvider": true},
+                    "executeCommandProvider": {"commands": ["fake.apply"]}
                 },"serverInfo":{"name":"fake"}}}));
             }
             ("initialized", None) => {
@@ -162,6 +169,52 @@ fn main() {
                     _ => json!(occurrences),
                 };
                 send(json!({"jsonrpc":"2.0","id":id,"result":result}));
+            }
+            ("textDocument/codeAction", Some(id)) => {
+                let uri = params["textDocument"]["uri"].clone();
+                let mut actions: Vec<Value> = params["context"]["diagnostics"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|diagnostic| {
+                        json!({"title": format!("Fix {}", diagnostic["message"].as_str().unwrap_or("")),
+                            "kind": "quickfix", "isPreferred": true, "diagnostics": [diagnostic],
+                            "edit": {"changes": {uri.as_str().unwrap_or_default():
+                                [{"range": diagnostic["range"], "newText": "fixed"}]}}})
+                    })
+                    .collect();
+                actions.push(
+                    json!({"title": "Add header comment", "kind": "refactor.rewrite",
+                    "data": {"uri": uri}}),
+                );
+                actions.push(json!({"title": "Run fake command", "command": "fake.apply",
+                    "arguments": [uri]}));
+                send(json!({"jsonrpc":"2.0","id":id,"result":actions}));
+            }
+            ("codeAction/resolve", Some(id)) => {
+                let mut action = params.clone();
+                let uri = params["data"]["uri"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                action["edit"] = json!({"documentChanges": [{
+                    "textDocument": {"uri": uri, "version": null},
+                    "edits": [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+                        "newText": "// resolved\n"}]}]});
+                send(json!({"jsonrpc":"2.0","id":id,"result":action}));
+            }
+            ("workspace/executeCommand", Some(id)) => {
+                let uri = params["arguments"][0]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                send(
+                    json!({"jsonrpc":"2.0","id":"apply1","method":"workspace/applyEdit","params":{
+                    "label": "Fake command",
+                    "edit": {"changes": {uri: [{"range": {"start": {"line": 0, "character": 0},
+                        "end": {"line": 0, "character": 0}}, "newText": "// applied\n"}]}}}}),
+                );
+                send(json!({"jsonrpc":"2.0","id":id,"result":null}));
             }
             ("textDocument/completion", Some(id)) => {
                 if let Some(delay) = delay {
