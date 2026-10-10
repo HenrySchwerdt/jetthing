@@ -12,6 +12,7 @@ use jetthing_lsp::{
     snippet::{self, Snippet},
 };
 use jetthing_text::{Selection, TextChange, TextDocument};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 /// Trigger characters that are better served by parameter info or that
@@ -40,6 +41,13 @@ pub struct CompletionSession {
     pub waiting: bool,
     /// Opened with Ctrl+Space: an empty result is reported, not hidden.
     pub explicit: bool,
+    /// Item indices already passed through `completionItem/resolve`.
+    pub resolved: HashSet<usize>,
+    /// What the language server was still doing (importing, indexing) when
+    /// it answered: results may be incomplete, and the popup says so.
+    pub indexing: Option<String>,
+    /// Ask again once the server has finished `indexing`.
+    pub requery_when_ready: bool,
 }
 
 impl CompletionSession {
@@ -50,6 +58,11 @@ impl CompletionSession {
     /// Whether the popup has rows to show.
     pub fn visible(&self) -> bool {
         !self.ranked.is_empty()
+    }
+
+    /// Whether the popup shows only the "Indexing…" notice (no rows yet).
+    pub fn indexing_only(&self) -> bool {
+        self.ranked.is_empty() && self.indexing.is_some()
     }
 }
 
@@ -100,10 +113,19 @@ impl IdeState {
             .text
             .slice(anchor, caret)
             .map_err(|error| error.to_string())?;
-        let id = self
+        let absolute = root.join(&path);
+        let (id, indexing) = match self
             .lsp
-            .request_completion(&root.join(&path), line, character, trigger)
-            .map_err(|error| error.to_string())?;
+            .request_completion(&absolute, line, character, trigger)
+        {
+            Ok(id) => (Some(id), self.lsp.indexing_status(&absolute)),
+            // The server is still starting: say so, and ask once it is ready.
+            Err(jetthing_lsp::LspError::Starting { server, detail }) => (
+                None,
+                Some(detail.unwrap_or_else(|| format!("{server}: starting"))),
+            ),
+            Err(error) => return Err(error.to_string()),
+        };
         // Keep the visible rows while an `isIncomplete` re-query is running.
         let previous = self
             .completion
@@ -124,10 +146,13 @@ impl IdeState {
             selected: 0,
             prefix,
             incomplete: false,
-            waiting: true,
+            waiting: id.is_some(),
             explicit: explicit || previous.is_some_and(|session| session.explicit),
+            resolved: HashSet::new(),
+            requery_when_ready: id.is_none(),
+            indexing,
         });
-        Ok(id)
+        Ok(id.unwrap_or(0))
     }
 
     /// Closes the popup and cancels its request.
@@ -149,21 +174,72 @@ impl IdeState {
         } else {
             self.refresh_completion();
         }
+        self.requery_completion_when_ready();
+    }
+
+    /// Re-queries a popup that was answered (or not sent) while the server was
+    /// still importing or indexing, once the server has finished.
+    fn requery_completion_when_ready(&mut self) {
+        let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
+            return;
+        };
+        let Some(session) = self.completion.as_mut() else {
+            return;
+        };
+        if session.indexing.is_none() || session.waiting {
+            return;
+        }
+        let absolute = root.join(&session.path);
+        // The footer follows the server's current activity.
+        let status = self.lsp.indexing_status(&absolute);
+        if status.is_some() || !session.requery_when_ready {
+            session.indexing = status;
+            if session.indexing_only() && session.indexing.is_none() && !session.explicit {
+                self.close_completion();
+            }
+            return;
+        }
+        if !self.lsp.is_idle_for(&absolute) {
+            return;
+        }
+        let explicit = session.explicit;
+        if let Err(error) = self.start_completion(CompletionTrigger::Invoked, explicit) {
+            self.status = error;
+            self.close_completion();
+        }
     }
 
     /// Installs a server response into the open session and filters it.
     pub fn receive_completion(&mut self, result: CompletionResult) {
+        let indexing = self.completion.as_ref().and_then(|session| {
+            let root = self.project.as_ref()?.root();
+            self.lsp.indexing_status(&root.join(&session.path))
+        });
         if let Some(session) = self.completion.as_mut() {
             session.items = result.items;
             session.incomplete = result.incomplete;
             session.waiting = false;
             session.selected = 0;
             session.ranked.clear();
-            if session.items.is_empty() && session.explicit {
+            session.resolved.clear();
+            // Answers given while the server imports the project can be empty:
+            // keep the popup with a notice and ask again when it is done.
+            session.requery_when_ready = indexing.is_some() && session.items.is_empty();
+            session.indexing = indexing;
+            if session.items.is_empty() && session.explicit && session.indexing.is_none() {
                 self.status = "No suggestions".into();
             }
         }
         self.refresh_completion();
+        // The server may ask for an item to be selected first (`preselect`).
+        if let Some(session) = self.completion.as_mut()
+            && let Some(row) = session
+                .ranked
+                .iter()
+                .position(|row| session.items[row.index].preselect == Some(true))
+        {
+            session.selected = row;
+        }
     }
 
     /// Re-filters after the document or caret changed; closes the session
@@ -203,10 +279,17 @@ impl IdeState {
             .selected_item()
             .map(|item| item.label.clone())
             .filter(|_| prefix == session.prefix);
+        let language = self.lsp.language_id(&absolute).unwrap_or("text");
+        let stats = &self.completion_stats;
         let ranked = self
             .lsp
-            .rank_completions(&absolute, &session.items, &prefix);
-        let close = !session.waiting && ranked.is_empty() && !session.explicit;
+            .rank_completions(&absolute, &session.items, &prefix, |item| {
+                stats.weight(language, item)
+            });
+        let close = !session.waiting
+            && ranked.is_empty()
+            && !session.explicit
+            && session.indexing.is_none();
         let Some(session) = self.completion.as_mut() else {
             return;
         };
@@ -352,6 +435,16 @@ impl IdeState {
             .selected_item()
             .cloned()
             .ok_or("no completion item is selected")?;
+        let resolved = session
+            .ranked
+            .get(session.selected)
+            .is_some_and(|row| session.resolved.contains(&row.index));
+        if let Some(language) = self
+            .active_absolute_path()
+            .and_then(|path| self.lsp.language_id(&path))
+        {
+            self.completion_stats.record(language, &item);
+        }
         let index = self.active_document.ok_or("no active document")?;
         let document = self
             .documents
@@ -397,6 +490,13 @@ impl IdeState {
             adjust_indentation(&new_text, &indent)
         } else {
             new_text
+        };
+        // A call without arguments for a method that takes parameters gets
+        // one tab stop per parameter, like the reference IDE's argument
+        // placeholders (`greeting()` -> `greeting(name)` with `name` selected).
+        let (new_text, snippet_format) = match parameter_snippet(&item, &new_text, snippet_format) {
+            Some(snippet) => (snippet, true),
+            None => (new_text, snippet_format),
         };
         let snippet = snippet_format.then(|| {
             let variables = |name: &str| match name {
@@ -450,9 +550,142 @@ impl IdeState {
             // Completing inside a template variable keeps the template.
             None => self.snippet_after_change(),
         }
+        if !resolved && item.additional_text_edits.is_none() {
+            self.resolve_accepted(item, inserted_at);
+        }
+        // Completing a call leaves the caret inside `(`: show parameter info,
+        // as the reference IDE does.
+        let after_paren = self
+            .active_document
+            .and_then(|index| self.documents.get(index))
+            .and_then(|document| {
+                let start = document.selections.primary().start();
+                start
+                    .checked_sub(1)
+                    .and_then(|before| document.text.char_at(before))
+            })
+            == Some('(');
+        if after_paren {
+            let _ = self.request_parameter_info(None, false);
+        }
         self.sync_active_lsp();
         Ok(())
     }
+}
+
+/// Parameter names of a method/function/constructor item, from its label
+/// details (`(String name, int count)`) or its label
+/// (`greeting(String name) : String`). Each name is the last identifier of
+/// the parameter (`String name` -> `name`, `name: &str` -> `name`).
+fn parameter_names(item: &CompletionItem) -> Vec<String> {
+    use jetthing_lsp::lsp_types::CompletionItemKind;
+    if !matches!(
+        item.kind,
+        Some(
+            CompletionItemKind::METHOD
+                | CompletionItemKind::FUNCTION
+                | CompletionItemKind::CONSTRUCTOR
+        )
+    ) {
+        return Vec::new();
+    }
+    let source = item
+        .label_details
+        .as_ref()
+        .and_then(|details| details.detail.as_deref())
+        .filter(|detail| detail.contains('('))
+        .unwrap_or(&item.label);
+    let Some(open) = source.find('(') else {
+        return Vec::new();
+    };
+    let mut depth = 0usize;
+    let mut params = Vec::new();
+    let mut current = String::new();
+    for c in source[open + 1..].chars() {
+        match c {
+            '(' | '<' | '[' | '{' => {
+                depth += 1;
+                current.push(c);
+            }
+            ')' if depth == 0 => {
+                params.push(std::mem::take(&mut current));
+                break;
+            }
+            ')' | '>' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                current.push(c);
+            }
+            ',' if depth == 0 => params.push(std::mem::take(&mut current)),
+            _ => current.push(c),
+        }
+    }
+    params
+        .iter()
+        .filter_map(|param| {
+            let param = param.trim();
+            // `name: Type` (Rust, Kotlin, TS) names come first; `Type name` last.
+            let name = match param.split_once(':') {
+                Some((name, _)) if !name.contains(' ') || name.starts_with("mut ") => {
+                    name.trim_start_matches("mut ").trim()
+                }
+                _ => param
+                    .trim_end_matches("...")
+                    .rsplit(|c: char| c.is_whitespace() || c == '*' || c == '&')
+                    .next()
+                    .unwrap_or_default(),
+            };
+            let name: String = name
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            (!name.is_empty() && name != "self").then_some(name)
+        })
+        .collect()
+}
+
+/// A snippet with one tab stop per parameter for a call inserted without
+/// arguments (`name()`, `name($0)`), or `None` when the item already has
+/// placeholders, is not a call, or takes no parameters.
+fn parameter_snippet(item: &CompletionItem, text: &str, snippet: bool) -> Option<String> {
+    let call = if snippet {
+        // Only bare calls; real snippets (`${1:...}`, `$1`) are kept.
+        let stripped = text.strip_suffix("$0").unwrap_or(text);
+        let stripped = stripped
+            .strip_suffix("($0)")
+            .or_else(|| stripped.strip_suffix("(${0})"))
+            .map(|name| format!("{name}()"))
+            .unwrap_or_else(|| stripped.to_owned());
+        if stripped.contains('$') {
+            return None;
+        }
+        stripped
+    } else {
+        text.to_owned()
+    };
+    let name = call.strip_suffix("()")?;
+    if name.is_empty() || name.contains(['\n', '(', ')']) {
+        return None;
+    }
+    let params = parameter_names(item);
+    if params.is_empty() {
+        return None;
+    }
+    let escape = |text: &str| {
+        text.replace('\\', "\\\\")
+            .replace('$', "\\$")
+            .replace('}', "\\}")
+    };
+    let stops: Vec<String> = params
+        .iter()
+        .enumerate()
+        .map(|(index, param)| format!("${{{}:{}}}", index + 1, escape(param)))
+        .collect();
+    let name = if snippet {
+        name.to_owned()
+    } else {
+        escape(name)
+    };
+    Some(format!("{name}({})$0", stops.join(", ")))
 }
 
 /// Indents every line after the first with `indent`, and expands tabs to the
@@ -473,7 +706,7 @@ fn adjust_indentation(text: &str, indent: &str) -> String {
     out
 }
 
-fn lsp_change(text: &TextDocument, edit: &TextEdit) -> TextChange {
+pub(crate) fn lsp_change(text: &TextDocument, edit: &TextEdit) -> TextChange {
     let start = text.char_from_lsp_position(
         edit.range.start.line as usize,
         edit.range.start.character as usize,
@@ -549,6 +782,9 @@ mod tests {
             incomplete: false,
             waiting: true,
             explicit,
+            resolved: Default::default(),
+            indexing: None,
+            requery_when_ready: false,
         });
     }
 
@@ -717,6 +953,61 @@ mod tests {
         assert!(state.snippet.is_some());
         state.snippet_next();
         assert!(state.snippet.is_none());
+        assert_eq!(state.documents[0].selections.primary().head, 18);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn calls_without_arguments_get_parameter_tab_stops() {
+        use jetthing_lsp::lsp_types::{CompletionItemKind, CompletionItemLabelDetails};
+        let mut greeting = item("greeting(String name) : String");
+        greeting.kind = Some(CompletionItemKind::METHOD);
+        assert_eq!(parameter_names(&greeting), ["name"]);
+        assert_eq!(
+            parameter_snippet(&greeting, "greeting()", false).as_deref(),
+            Some("greeting(${1:name})$0")
+        );
+        assert_eq!(
+            parameter_snippet(&greeting, "greeting($0)", true).as_deref(),
+            Some("greeting(${1:name})$0")
+        );
+        // Real snippets and parameterless methods are left alone.
+        assert_eq!(
+            parameter_snippet(&greeting, "greeting(${1:x})$0", true),
+            None
+        );
+        let mut to_string = item("toString() : String");
+        to_string.kind = Some(CompletionItemKind::METHOD);
+        assert_eq!(parameter_snippet(&to_string, "toString()", false), None);
+        // Label details (jdtls with labelDetailsSupport), generics and Rust/Kotlin style.
+        let mut put = item("put");
+        put.kind = Some(CompletionItemKind::METHOD);
+        put.label_details = Some(CompletionItemLabelDetails {
+            detail: Some("(Map<K, V> map, int... counts)".into()),
+            description: None,
+        });
+        assert_eq!(parameter_names(&put), ["map", "counts"]);
+        let mut rust = item("push(&mut self, value: T)");
+        rust.kind = Some(CompletionItemKind::FUNCTION);
+        assert_eq!(parameter_names(&rust), ["value"]);
+        let mut field = item("name");
+        field.kind = Some(CompletionItemKind::FIELD);
+        assert_eq!(parameter_snippet(&field, "name()", false), None);
+
+        // Accepting `greeting()` selects the `name` placeholder inside the parentheses.
+        let (mut state, root) = state_with("app.gr;", 6);
+        open_session(&mut state, 4, false);
+        greeting.insert_text = Some("greeting()".into());
+        state.receive_completion(CompletionResult {
+            items: vec![greeting],
+            incomplete: false,
+        });
+        state.accept_completion(false).unwrap();
+        assert_eq!(state.documents[0].text.text(), "app.greeting(name);");
+        let selection = state.documents[0].selections.primary();
+        assert_eq!((selection.start(), selection.end()), (13, 17));
+        assert!(state.snippet.is_some());
+        state.snippet_next();
         assert_eq!(state.documents[0].selections.primary().head, 18);
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -60,6 +60,11 @@ no crate below `jetthing-ui` imports UI types.
   defaults and validation), the Settings tree keyed by the reference configurable ids in
   `docs/spec/data/settings.json`, application/project layering, TOML persistence,
   search, and the dialog's draft/Apply/Reset model. No UI types.
+- `jetthing-plugin-ui`: egui helpers for plugin views and the declarative `ViewNode` renderer
+  (UI layer, used by plugin crates and script runtimes).
+- `jetthing-plugin-lua`: sandboxed Lua 5.4 plugin runtime (`LuaLoader`), registered by the app.
+- `jetthing-plugin-wasm`: WebAssembly component plugin runtime (`WasmLoader`, wasmtime + WIT) with
+  permission-gated WASI, registered by the app.
 - `jetthing-core`: application state, the plugin host (scoped `PluginHost`, command
   routing, plugin tool window/tab state), tool window layout model (one visible tool window
   per anchor), the problems model (`problems`: syntax errors and LSP diagnostics merged
@@ -179,8 +184,8 @@ Commands: `settings.open {page?}`, `settings.get/set/reset {id}`,
 The semantic platform will layer VFS snapshots, incremental syntax, symbol/stub
 indexes, dependency-aware invalidation, and prioritized cancellable jobs. LSP is one
 provider behind a richer language-service interface, not the semantic architecture.
-Untrusted plugins will use the WebAssembly Component Model with explicit capabilities;
-native plugins will require an explicit trusted tier and process isolation.
+Untrusted compiled plugins use the WebAssembly Component Model with explicit capabilities
+(`jetthing-plugin-wasm`); native plugins remain compiled-in and trusted.
 
 ## Reference findings
 

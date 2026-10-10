@@ -6,6 +6,12 @@
 //! dispatched through the typed command registry.
 
 mod about;
+mod ai_actions;
+mod ai_agent;
+mod ai_chat;
+mod ai_inline;
+mod ai_terminal;
+mod ai_vcs;
 mod android_run_ui;
 mod android_sdk;
 mod android_view;
@@ -23,6 +29,7 @@ mod crash_notice;
 mod device_manager;
 mod diff_ui;
 mod disk_banner;
+mod doc_ui;
 mod editor;
 mod editor_keys;
 mod file_icon;
@@ -33,6 +40,7 @@ mod git_log_ui;
 mod gradle_window;
 mod gutter_popup;
 mod icons;
+mod intentions_ui;
 mod keybindings;
 mod keys;
 mod logcat_ui;
@@ -40,8 +48,10 @@ mod lsp_status;
 mod main_menu;
 mod merged_manifest_ui;
 mod native_dialog;
+mod navigation_ui;
 mod notifications;
 mod palette;
+mod plugin_manager;
 mod plugin_ui;
 mod popups;
 mod problems_ui;
@@ -49,7 +59,6 @@ mod push_dialog;
 mod run_config_dialog;
 mod settings_dialog;
 mod settings_keymap;
-mod settings_plugins;
 mod structure_view;
 mod syntax;
 mod terminal_ui;
@@ -72,7 +81,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub use jetthing_core::{build_info, diagnostics};
-pub use jetthing_plugins::PluginFactory;
+pub use jetthing_plugins::{PluginFactory, PluginLoader, PluginSet};
 pub use theme::install as install_theme;
 
 pub struct IdeApp {
@@ -128,7 +137,6 @@ pub struct IdeApp {
     plugin_commands: Vec<String>,
     /// Registry generation the contributed commands were synced at.
     plugin_generation: u64,
-    plugins_window: Option<plugin_ui::PluginsWindow>,
     /// Amend toggle of the Commit tool window.
     commit_amend: bool,
     /// The OS file dialog implementation (replaced by a fake in tests).
@@ -144,6 +152,8 @@ pub struct IdeApp {
     /// Open gutter change-marker popup.
     change_popup: Option<change_popup::ChangePopup>,
     deploy_balloon: android_run_ui::DeployBalloon,
+    doc_view: doc_ui::DocView,
+    ai_ui: ai_chat::AiChatUi,
 }
 
 impl IdeApp {
@@ -160,8 +170,24 @@ impl IdeApp {
         files: Vec<PathBuf>,
         bundled: Vec<PluginFactory>,
     ) -> Self {
+        Self::with_plugin_set(
+            project,
+            files,
+            PluginSet {
+                bundled,
+                ..PluginSet::default()
+            },
+        )
+    }
+
+    /// Like [`Self::with_plugins`], also registering script plugin runtimes.
+    pub fn with_plugin_set(
+        project: Option<PathBuf>,
+        files: Vec<PathBuf>,
+        plugins: PluginSet,
+    ) -> Self {
         let check_updates = std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none();
-        let mut app = Self::build(project, files, bundled, check_updates);
+        let mut app = Self::build(project, files, plugins, check_updates);
         if let Some(dir) = diagnostics::active_log_dir() {
             app.state.check_crash_reports(&dir);
         }
@@ -177,13 +203,13 @@ impl IdeApp {
         files: Vec<PathBuf>,
         check_updates: bool,
     ) -> Self {
-        Self::build(project, files, Vec::new(), check_updates)
+        Self::build(project, files, PluginSet::default(), check_updates)
     }
 
     fn build(
         project: Option<PathBuf>,
         files: Vec<PathBuf>,
-        bundled: Vec<PluginFactory>,
+        plugins: PluginSet,
         check_updates: bool,
     ) -> Self {
         let commands = built_in_commands();
@@ -191,7 +217,10 @@ impl IdeApp {
         if let Some(dir) = jetthing_settings::default_config_dir() {
             state.load_user_settings(&dir);
         }
-        state.init_plugins(jetthing_plugins::PluginStore::user(), bundled);
+        state.init_plugins(jetthing_plugins::PluginStore::user(), plugins);
+        // Tests use in-memory statistics; the app keeps the user's.
+        state.completion_stats = jetthing_core::CompletionStats::user();
+        state.init_ai(None);
         if let Some(path) = project {
             if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
             {
@@ -256,12 +285,13 @@ impl IdeApp {
             repaint_hook_installed: false,
             plugin_commands: Vec::new(),
             plugin_generation: u64::MAX,
-            plugins_window: None,
             change_popup: None,
             git_dialog: None,
             push_dialog: None,
             deploy_balloon: android_run_ui::DeployBalloon::default(),
             commit_amend: false,
+            doc_view: doc_ui::DocView::default(),
+            ai_ui: ai_chat::AiChatUi::default(),
             file_dialogs: std::sync::Arc::new(native_dialog::SystemDialogs),
             pending_dialog: None,
             kind_cache: Default::default(),
@@ -270,8 +300,8 @@ impl IdeApp {
 
     /// Standalone app mode (`jetthing --app <plugin-id>`): a window showing
     /// only the plugin's app view.
-    pub fn standalone(plugin: &str, bundled: Vec<PluginFactory>) -> Result<Self, String> {
-        let mut app = Self::with_plugins(None, Vec::new(), bundled);
+    pub fn standalone(plugin: &str, plugins: PluginSet) -> Result<Self, String> {
+        let mut app = Self::with_plugin_set(None, Vec::new(), plugins);
         plugin_ui::app_mode_error(&app.state.plugin_host.registry, plugin)?;
         app.state.plugin_host.app_mode = Some(plugin.to_owned());
         Ok(app)
@@ -560,10 +590,16 @@ impl IdeApp {
                 self.push_dialog = None;
             } else if self.change_popup.is_some() {
                 self.change_popup = None;
+            } else if self.state.ai.pending_apply.is_some() {
+                self.dispatch("ai.chat.applyCancel", Value::Null);
             } else if self.palette.open {
                 self.palette.open = false;
+            } else if self.state.docs.popup.is_some() {
+                self.dispatch("language.closeQuickDoc", Value::Null);
             } else if self.state.completion.is_some() {
                 self.dispatch("completion.close", Value::Null);
+            } else if self.state.signature.popup.is_some() {
+                self.dispatch("language.closeParameterInfo", Value::Null);
             } else if self.state.snippet.is_some() {
                 self.dispatch("snippet.exit", Value::Null);
             } else if self.find.open
@@ -763,6 +799,16 @@ impl IdeApp {
             // Diagnostics, server messages and device changes arrive without user input.
             ctx.request_repaint_after(Duration::from_millis(500));
         }
+        self.state.poll_ai();
+        let agent_running = self
+            .state
+            .ai
+            .agent
+            .as_ref()
+            .is_some_and(|a| a.phase == jetthing_core::AgentPhase::RunningCommand);
+        if self.state.ai.service.is_busy() || agent_running {
+            ctx.request_repaint_after(Duration::from_millis(30));
+        }
         plugin_ui::sync(self, ctx);
         if let Some(plugin) = self.state.plugin_host.app_mode.clone() {
             plugin_ui::handle_keybindings(self, ctx);
@@ -797,6 +843,16 @@ impl IdeApp {
             self.state.request_git_refresh();
         }
         self.window_focused = focused;
+        ai_actions::tick(self, ctx);
+        ai_inline::tick(self, ctx);
+        ai_inline::handle_keys(self, ctx);
+        if self.dialog.is_none()
+            && !self.palette.open
+            && !ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
+        {
+            navigation_ui::handle_shortcuts(self, ctx);
+            intentions_ui::handle(self, ctx);
+        }
         self.handle_shortcuts(ctx);
         plugin_ui::handle_keybindings(self, ctx);
         self.follow_tool_window_focus(ctx);
@@ -812,6 +868,7 @@ impl IdeApp {
             plugin_ui::right_side(self, ctx);
             toolwindows::left(self, ctx);
             device_manager::right(self, ctx);
+            ai_chat::right(self, ctx);
             gradle_window::show(self, ctx);
             bazel_window::show(self, ctx);
             toolwindows::bottom(self, ctx);
@@ -820,12 +877,18 @@ impl IdeApp {
         change_popup::show(self, ctx);
         branches_popup::show_dialog(self, ctx);
         push_dialog::show(self, ctx);
-        completion_ui::show(self, ctx);
+        let lookup = completion_ui::show(self, ctx);
+        doc_ui::show_completion_panel(self, ctx, lookup);
+        doc_ui::show_quick_doc(self, ctx);
+        doc_ui::show_parameter_info(self, ctx);
+        navigation_ui::choices_popup(self, ctx);
+        intentions_ui::popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
         settings_dialog::show(self, ctx);
         android_sdk::show(self, ctx);
         merged_manifest_ui::show(self, ctx);
+        ai_chat::diff_preview(self, ctx);
         if let Some(focus) = self.state.edit_run_configurations.take() {
             run_config_dialog::open(self, ctx, Some(focus.as_str()).filter(|f| !f.is_empty()));
         }
@@ -837,7 +900,6 @@ impl IdeApp {
         about::show(self, ctx);
         android_run_ui::show(self, ctx);
         lsp_status::notices(self, ctx);
-        plugin_ui::plugins_window(self, ctx);
         plugin_ui::notifications(self, ctx);
         if self.settings_dialog.is_some() {
             settings_dialog::backdrop_to_top(ctx);

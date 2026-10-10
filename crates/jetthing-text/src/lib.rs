@@ -255,6 +255,8 @@ pub enum TextError {
     },
     #[error("text changes overlap or are not ordered")]
     OverlappingChanges,
+    #[error("invalid regular expression: {0}")]
+    InvalidPattern(String),
 }
 
 /// Revisioned UTF-8 text storage. All public offsets are Unicode scalar-value
@@ -415,6 +417,33 @@ impl TextDocument {
             offset += 1;
         }
         offset
+    }
+
+    /// Strict variant of [`Self::char_from_lsp_position`] for edits that must
+    /// be validated: a character past the end of the line still means the line
+    /// end, but a line past the end of the document is an error.
+    pub fn try_char_from_lsp_position(
+        &self,
+        line: usize,
+        utf16: usize,
+    ) -> Result<usize, TextError> {
+        let len = self.len_chars();
+        if line >= self.rope.len_lines() {
+            return Err(TextError::InvalidRange {
+                start: line,
+                end: line,
+                len,
+            });
+        }
+        let start = self.rope.line_to_char(line);
+        let mut units = 0;
+        for (index, c) in self.rope.line(line).chars().enumerate() {
+            if units >= utf16 || c == '\n' || c == '\r' {
+                return Ok(start + index);
+            }
+            units += c.len_utf16();
+        }
+        Ok(start + self.rope.line(line).len_chars())
     }
 
     pub fn edit(
@@ -719,6 +748,30 @@ impl TextDocument {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn lsp_positions_convert_to_character_offsets() {
+        let doc = TextDocument::new("a𝔸b\r\nxyz\n");
+        assert_eq!(doc.try_char_from_lsp_position(0, 0).unwrap(), 0);
+        // 𝔸 is two UTF-16 units.
+        assert_eq!(doc.try_char_from_lsp_position(0, 3).unwrap(), 2);
+        // Past the end of the line clamps to the line end, before "\r\n".
+        assert_eq!(doc.try_char_from_lsp_position(0, 99).unwrap(), 3);
+        assert_eq!(doc.try_char_from_lsp_position(1, 1).unwrap(), 6);
+        // The empty last line exists; beyond it is an error.
+        assert_eq!(doc.try_char_from_lsp_position(2, 0).unwrap(), 9);
+        assert!(doc.try_char_from_lsp_position(3, 0).is_err());
+        for offset in 0..doc.len_chars() {
+            let (line, character) = doc.lsp_position(offset).unwrap();
+            if doc.char_at(offset) != Some('\n') {
+                assert_eq!(
+                    doc.try_char_from_lsp_position(line, character).unwrap(),
+                    offset
+                );
+            }
+        }
+    }
+
     use super::*;
 
     #[test]

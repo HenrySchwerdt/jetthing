@@ -11,6 +11,12 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod ai_actions;
+mod ai_agent;
+mod ai_commands;
+mod ai_inline;
+mod ai_terminal;
+mod ai_vcs;
 mod android_commands;
 mod android_deploy;
 mod android_devices;
@@ -23,7 +29,9 @@ mod bazel_commands;
 mod branch_commands;
 mod build_commands;
 pub mod build_info;
+mod code_actions;
 mod completion;
+mod completion_stats;
 mod diagnostic_commands;
 pub mod diagnostics;
 mod disk_sync;
@@ -36,14 +44,17 @@ mod gutter_commands;
 pub mod keymap_commands;
 mod line_changes;
 mod lsp_commands;
+mod navigation;
 mod new_class;
 mod plugin_host;
 mod problems;
 pub use new_class::{JavaKind, KotlinKind};
 mod project_commands;
+mod quick_doc;
 mod remote_commands;
 mod run_config_commands;
 mod settings_commands;
+mod signature_help;
 mod snippet_session;
 pub mod tabs;
 mod terminal_commands;
@@ -67,7 +78,19 @@ pub use plugin_host::{
     PluginHostState, PluginStatusWidget, PluginTab, plugin_dirs, sync_plugin_commands,
     user_plugin_dir,
 };
+mod workspace_edit;
+pub use ai_agent::{
+    AgentPhase, AgentRun, AgentStep, StepKind as AgentStepKind, StepStatus as AgentStepStatus,
+};
+pub use ai_commands::{AiState, ApplyPreview, CHAT_FILE as AI_CHAT_FILE, MOCK_ENV as AI_MOCK_ENV};
+pub use ai_inline::InlineSuggestion;
+pub use ai_terminal::{ShellSuggestion, ShellSuggestionState};
+pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
+pub use completion_stats::CompletionStats;
+pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
+pub use quick_doc::{DocsState, QuickDoc};
+pub use signature_help::{ParameterInfo, SignatureLine, SignatureState};
 pub use snippet_session::SnippetSession;
 pub use toolchain_commands::ToolchainState;
 mod worktree_commands;
@@ -83,6 +106,7 @@ pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
 };
 pub use vcs::{DiffTab, DiffViewer, RepaintHook};
+pub use workspace_edit::EditSummary;
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -185,11 +209,21 @@ pub struct IdeState {
     pub toolchains: ToolchainState,
     /// The code completion popup, while open.
     pub completion: Option<CompletionSession>,
+    /// What the user picked before, to rank it first next time.
+    pub completion_stats: CompletionStats,
     /// Tab stops of an inserted snippet, while the user fills them in.
     pub snippet: Option<SnippetSession>,
     pub build_systems: BuildSystems,
     /// Build system of the open project, detected on open (`build.detect` refreshes it).
     pub detected_build: Option<DetectedBuild>,
+    /// Navigation history and pending/finished navigation requests.
+    pub navigation: NavigationState,
+    /// Quick fixes and intentions at the caret (Alt+Enter).
+    pub code_actions: CodeActionState,
+    /// Quick documentation popup and completion documentation panel.
+    pub docs: DocsState,
+    /// Parameter info popup.
+    pub signature: SignatureState,
     /// Gradle model from the last sync (cached in `.jetthing/gradle/model.json`).
     pub gradle_model: Option<jetthing_gradle::GradleModel>,
     pub gradle_error: Option<String>,
@@ -229,6 +263,7 @@ pub struct IdeState {
     pub android: AndroidState,
     /// Verified installer to run on quit (MSI/DMG/.deb installations).
     update_installer: Option<(PathBuf, jetthing_update::InstallKind)>,
+    pub ai: AiState,
     pub status: String,
     watcher: Option<jetthing_project::ProjectWatcher>,
     /// Lets background services (file watcher) wake the UI.
@@ -289,6 +324,8 @@ impl IdeState {
         self.invalidate_line_changes();
         self.git_log = GitLogState::default();
         self.refresh_toolchain_resolver();
+        self.navigation = NavigationState::default();
+        self.code_actions = CodeActionState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -304,6 +341,7 @@ impl IdeState {
         self.load_bazel_targets();
         self.load_run_configurations();
         self.restore_workspace();
+        self.load_ai_project();
         Ok(())
     }
     pub fn open_file(&mut self, path: &Path) -> Result<(), String> {
@@ -645,6 +683,10 @@ impl IdeState {
         let restarted = self.lsp.poll();
         self.poll_completion();
         self.refresh_problems();
+        self.poll_navigation();
+        self.poll_code_actions();
+        self.poll_docs();
+        self.poll_signature();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };
@@ -848,6 +890,9 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     remote_commands::register(&mut registry);
     annotations::register(&mut registry);
     worktree_commands::register(&mut registry);
+    navigation::register(&mut registry);
+    code_actions::register(&mut registry);
+    ai_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(

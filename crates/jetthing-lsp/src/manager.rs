@@ -7,7 +7,7 @@
 
 use crate::{
     LspError,
-    client::{LspDiagnostic, LspService, ServerState, WorkProgress},
+    client::{ApplyEditRequest, LspDiagnostic, LspService, ServerState, WorkProgress},
     registry::{
         LaunchContext, LspSettings, ProgramResolver, ServerRegistry, cache_dir, workspace_root,
     },
@@ -56,6 +56,87 @@ pub struct ServerInfo {
     pub status: ServerStatus,
     pub progress: Vec<WorkProgress>,
     pub message: Option<String>,
+}
+
+/// A request sent with [`LspManager::request`] or [`LspManager::send_request`],
+/// answered asynchronously.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestHandle {
+    pub server: ServerKey,
+    pub id: u64,
+    pub method: String,
+}
+
+/// Optional server features, checked against the advertised capabilities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Feature {
+    Definition,
+    TypeDefinition,
+    Implementation,
+    References,
+    CodeAction,
+    CodeActionResolve,
+    ExecuteCommand,
+}
+
+impl Feature {
+    pub fn method(self) -> &'static str {
+        match self {
+            Feature::Definition => "textDocument/definition",
+            Feature::TypeDefinition => "textDocument/typeDefinition",
+            Feature::Implementation => "textDocument/implementation",
+            Feature::References => "textDocument/references",
+            Feature::CodeAction => "textDocument/codeAction",
+            Feature::CodeActionResolve => "codeAction/resolve",
+            Feature::ExecuteCommand => "workspace/executeCommand",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Feature::Definition => "Go to Declaration",
+            Feature::TypeDefinition => "Go to Type Declaration",
+            Feature::Implementation => "Go to Implementation",
+            Feature::References => "Find Usages",
+            Feature::CodeAction | Feature::CodeActionResolve => "code actions",
+            Feature::ExecuteCommand => "commands",
+        }
+    }
+
+    fn supported(self, capabilities: &lsp_types::ServerCapabilities) -> bool {
+        use lsp_types::{
+            ImplementationProviderCapability as Impl, OneOf,
+            TypeDefinitionProviderCapability as TypeDef,
+        };
+        match self {
+            Feature::Definition => !matches!(
+                capabilities.definition_provider,
+                None | Some(OneOf::Left(false))
+            ),
+            Feature::TypeDefinition => !matches!(
+                capabilities.type_definition_provider,
+                None | Some(TypeDef::Simple(false))
+            ),
+            Feature::Implementation => !matches!(
+                capabilities.implementation_provider,
+                None | Some(Impl::Simple(false))
+            ),
+            Feature::References => !matches!(
+                capabilities.references_provider,
+                None | Some(OneOf::Left(false))
+            ),
+            Feature::CodeAction => !matches!(
+                capabilities.code_action_provider,
+                None | Some(lsp_types::CodeActionProviderCapability::Simple(false))
+            ),
+            Feature::CodeActionResolve => matches!(
+                &capabilities.code_action_provider,
+                Some(lsp_types::CodeActionProviderCapability::Options(options))
+                    if options.resolve_provider == Some(true)
+            ),
+            Feature::ExecuteCommand => capabilities.execute_command_provider.is_some(),
+        }
+    }
 }
 
 /// A notification balloon about a language server.
@@ -591,6 +672,24 @@ impl LspManager {
         self.missing.iter().map(String::as_str)
     }
 
+    /// What the server of `path` is still busy with (starting, importing the
+    /// project, indexing), if anything. Completion answers given meanwhile may
+    /// be empty or incomplete (jdtls answers nothing while "Building 0%").
+    pub fn indexing_status(&self, path: &Path) -> Option<String> {
+        let service = self.server_for(path)?;
+        if let Some(progress) = service.progress().values().next() {
+            return Some(describe_progress(progress));
+        }
+        (service.state() == ServerState::Starting).then(|| format!("{}: starting", service.name()))
+    }
+
+    /// Whether the server of `path` is ready and has no work in progress.
+    pub fn is_idle_for(&self, path: &Path) -> bool {
+        self.server_for(path).is_some_and(|service| {
+            service.state() == ServerState::Ready && service.progress().is_empty()
+        })
+    }
+
     /// Whether any server is starting or reporting progress.
     pub fn is_busy(&self) -> bool {
         self.servers.iter().any(|server| match &server.service {
@@ -616,6 +715,121 @@ impl LspManager {
         }
         self.notices.retain(|existing| existing.id != notice.id);
         self.notices.push(notice);
+    }
+
+    /// Sends `feature`'s request for the UTF-16 position in `path` to its
+    /// ready server. `extra` fields are merged into the position params
+    /// (e.g. `{"context": {"includeDeclaration": true}}`).
+    pub fn request(
+        &mut self,
+        path: &Path,
+        feature: Feature,
+        line: usize,
+        character: usize,
+        extra: serde_json::Value,
+    ) -> Result<RequestHandle, LspError> {
+        let mut params = json!({
+            "textDocument": {"uri": crate::client::file_uri(path)?},
+            "position": {"line": line, "character": character},
+        });
+        if let (Some(params), serde_json::Value::Object(extra)) = (params.as_object_mut(), extra) {
+            params.extend(extra);
+        }
+        self.request_with_params(path, feature, params)
+    }
+
+    /// Sends `feature`'s request with complete `params` to the ready server
+    /// of `path`, after checking the server advertises the feature.
+    pub fn request_with_params(
+        &mut self,
+        path: &Path,
+        feature: Feature,
+        params: serde_json::Value,
+    ) -> Result<RequestHandle, LspError> {
+        let service = self.ready_server_for(path)?;
+        if !feature.supported(service.capabilities()) {
+            return Err(LspError::Protocol(format!(
+                "{} does not support {}",
+                service.name(),
+                feature.label()
+            )));
+        }
+        let server = ServerKey {
+            server: service.name().into(),
+            root: service.root().to_owned(),
+        };
+        let id = service.request_raw(feature.method(), params)?;
+        let server = self
+            .documents
+            .get(path)
+            .map(|document| document.server.clone())
+            .unwrap_or(server);
+        Ok(RequestHandle {
+            server,
+            id,
+            method: feature.method().into(),
+        })
+    }
+
+    /// Whether the server of `path` is running and advertises `feature`.
+    pub fn supports(&self, path: &Path, feature: Feature) -> bool {
+        self.server_for(path)
+            .is_some_and(|service| feature.supported(service.capabilities()))
+    }
+
+    /// `workspace/applyEdit` requests the servers sent since the last call.
+    /// Each must be answered with [`respond_apply_edit`](Self::respond_apply_edit).
+    pub fn take_apply_edits(&mut self) -> Vec<(ServerKey, ApplyEditRequest)> {
+        let mut requests = Vec::new();
+        for server in &mut self.servers {
+            if let Some(service) = server.service.as_mut() {
+                requests.extend(
+                    service
+                        .take_apply_edits()
+                        .into_iter()
+                        .map(|request| (server.key.clone(), request)),
+                );
+            }
+        }
+        requests
+    }
+
+    pub fn respond_apply_edit(
+        &mut self,
+        server: &ServerKey,
+        id: serde_json::Value,
+        result: Result<(), String>,
+    ) {
+        if let Some(service) = self.service_mut(server) {
+            let _ = service.respond_apply_edit(id, result);
+        }
+    }
+
+    /// The result of `handle` once it arrived; an error when the server
+    /// answered with one or went away.
+    pub fn take_response(
+        &mut self,
+        handle: &RequestHandle,
+    ) -> Option<Result<serde_json::Value, LspError>> {
+        let Some(service) = self.service_mut(&handle.server) else {
+            return Some(Err(LspError::NotReady(handle.server.server.clone())));
+        };
+        if let Some(response) = service.take_response(handle.id) {
+            return Some(response.result.map_err(|error| LspError::Server {
+                code: error.code,
+                message: error.message,
+            }));
+        }
+        if !service.is_pending(handle.id) || service.state() == ServerState::Exited {
+            return Some(Err(LspError::NotReady(handle.server.server.clone())));
+        }
+        None
+    }
+
+    pub fn cancel_request(&mut self, handle: &RequestHandle) {
+        if let Some(service) = self.service_mut(&handle.server) {
+            service.cancel(handle.id);
+        }
     }
 
     /// Requests completion at a UTF-16 position, cancelling any older request.
@@ -715,12 +929,16 @@ impl LspManager {
         path: &Path,
         items: &[CompletionItem],
         prefix: &str,
+        usage: impl Fn(&CompletionItem) -> i32,
     ) -> Vec<crate::completion::RankedItem> {
         match self.registry.for_path(path) {
-            Some((provider, _)) => {
-                crate::completion::rank(items, prefix, |item| provider.completion_relevance(item))
-            }
-            None => crate::completion::rank(items, prefix, |_| 0),
+            Some((provider, _)) => crate::completion::rank_with_usage(
+                items,
+                prefix,
+                |item| provider.completion_relevance(item),
+                usage,
+            ),
+            None => crate::completion::rank_with_usage(items, prefix, |_| 0, usage),
         }
     }
 
@@ -730,6 +948,58 @@ impl LspManager {
             .and_then(|service| service.capabilities().completion_provider.as_ref())
             .and_then(|provider| provider.trigger_characters.clone())
             .unwrap_or_default()
+    }
+
+    /// Sends a typed request to the ready server of `path`. The handle is used
+    /// to collect (`take_response`) or cancel (`cancel_request`) the result.
+    pub fn send_request<R: lsp_types::request::Request>(
+        &mut self,
+        path: &Path,
+        params: R::Params,
+    ) -> Result<RequestHandle, LspError> {
+        let service = self.ready_server_for(path)?;
+        let server = ServerKey {
+            server: service.name().into(),
+            root: service.root().to_owned(),
+        };
+        let id = service.request::<R>(params)?;
+        let server = self
+            .documents
+            .get(path)
+            .map(|document| document.server.clone())
+            .unwrap_or(server);
+        Ok(RequestHandle {
+            server,
+            id,
+            method: R::METHOD.into(),
+        })
+    }
+
+    /// The decoded response for a [`send_request`](Self::send_request) handle,
+    /// once it has arrived.
+    pub fn take_typed_response<R: lsp_types::request::Request>(
+        &mut self,
+        handle: &RequestHandle,
+    ) -> Option<Result<R::Result, LspError>> {
+        let service = self.service_mut(&handle.server);
+        match service {
+            Some(service) => service.take_typed::<R>(handle.id),
+            None => Some(Err(LspError::NotReady(handle.server.server.clone()))),
+        }
+    }
+
+    /// Whether `handle` is still waiting for its response.
+    pub fn is_pending(&self, handle: &RequestHandle) -> bool {
+        self.servers
+            .iter()
+            .find(|server| server.key == handle.server)
+            .and_then(|server| server.service.as_ref())
+            .is_some_and(|service| service.is_pending(handle.id))
+    }
+
+    /// Server capabilities for `path`'s running server.
+    pub fn capabilities_for(&self, path: &Path) -> Option<&lsp_types::ServerCapabilities> {
+        self.server_for(path).map(LspService::capabilities)
     }
 
     /// The language id the server uses for `path`.

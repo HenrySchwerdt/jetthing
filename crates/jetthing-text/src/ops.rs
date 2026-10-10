@@ -724,12 +724,79 @@ pub fn matching_bracket(doc: &TextDocument, position: usize) -> Option<(usize, u
 pub struct FindOptions {
     pub match_case: bool,
     pub whole_words: bool,
+    /// Treat the query as a regular expression; `^`/`$` match at line ends.
+    pub regex: bool,
 }
 
-/// All non-overlapping matches of `query` as character ranges.
+/// Compiles a regex query (Words wraps it in `\b…\b`).
+pub fn compile_pattern(query: &str, options: FindOptions) -> Result<regex::Regex, TextError> {
+    let pattern = if options.whole_words {
+        format!(r"\b(?:{query})\b")
+    } else {
+        query.to_owned()
+    };
+    regex::RegexBuilder::new(&pattern)
+        .case_insensitive(!options.match_case)
+        .multi_line(true)
+        .size_limit(1 << 22)
+        .build()
+        .map_err(|error| TextError::InvalidPattern(error.to_string()))
+}
+
+/// Rejects a query that cannot run (an invalid regular expression).
+pub fn validate_query(query: &str, options: FindOptions) -> Result<(), TextError> {
+    if options.regex && !query.is_empty() {
+        compile_pattern(query, options)?;
+    }
+    Ok(())
+}
+
+/// Character offset of every byte offset that starts a character, plus the end.
+fn char_index(text: &str) -> impl Fn(usize) -> usize + '_ {
+    let boundaries: Vec<usize> = text.char_indices().map(|(byte, _)| byte).collect();
+    move |byte| boundaries.partition_point(|&b| b < byte)
+}
+
+/// Regex matches as character ranges with the replacement expanded per match
+/// (`$1`, `${name}`, `$$`). Empty matches are skipped.
+pub fn regex_replacements(
+    text: &str,
+    query: &str,
+    options: FindOptions,
+    replacement: &str,
+) -> Result<Vec<(usize, usize, String)>, TextError> {
+    let regex = compile_pattern(query, options)?;
+    let to_char = char_index(text);
+    Ok(regex
+        .captures_iter(text)
+        .filter_map(|captures| {
+            let whole = captures.get(0)?;
+            if whole.is_empty() {
+                return None;
+            }
+            let mut expanded = String::new();
+            captures.expand(replacement, &mut expanded);
+            Some((to_char(whole.start()), to_char(whole.end()), expanded))
+        })
+        .collect())
+}
+
+/// All non-overlapping matches of `query` as character ranges. An invalid
+/// regular expression matches nothing (see [`validate_query`]).
 pub fn find_all(text: &str, query: &str, options: FindOptions) -> Vec<(usize, usize)> {
     if query.is_empty() {
         return Vec::new();
+    }
+    if options.regex {
+        let Ok(regex) = compile_pattern(query, options) else {
+            return Vec::new();
+        };
+        let to_char = char_index(text);
+        return regex
+            .find_iter(text)
+            .filter(|found| !found.is_empty())
+            .map(|found| (to_char(found.start()), to_char(found.end())))
+            .collect();
     }
     let fold = |s: &str| -> Vec<char> {
         if options.match_case {
@@ -784,6 +851,54 @@ mod tests {
         let mut selections = SelectionSet::default();
         selections.set_single(selection);
         (doc, selections)
+    }
+
+    #[test]
+    fn regex_find_and_capture_group_replacement() {
+        let text = "let a = 1;\nlet bb = 22;\nconst c = 3;\n";
+        let options = FindOptions {
+            regex: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            find_all(text, r"^let (\w+)", options),
+            vec![(0, 5), (11, 17)]
+        );
+        assert_eq!(
+            find_all(text, r"\d+;$", options),
+            vec![(8, 10), (20, 23), (34, 36)]
+        );
+        let changes =
+            regex_replacements(text, r"let (\w+) = (\d+)", options, "val $1: Int = $2").unwrap();
+        assert_eq!(
+            changes,
+            vec![
+                (0, 9, "val a: Int = 1".to_owned()),
+                (11, 22, "val bb: Int = 22".to_owned())
+            ]
+        );
+        // Character (not byte) offsets after multibyte text.
+        assert_eq!(find_all("ä = 1", r"\d", options), vec![(4, 5)]);
+        // Words and case options apply to regexes too.
+        let words = FindOptions {
+            regex: true,
+            whole_words: true,
+            match_case: true,
+        };
+        assert_eq!(find_all("Let let letter", "let", words), vec![(4, 7)]);
+        assert!(
+            find_all("abc", "x*", options).is_empty(),
+            "empty matches skipped"
+        );
+        assert!(find_all("abc", "(", options).is_empty());
+        assert!(matches!(
+            validate_query("(", options),
+            Err(TextError::InvalidPattern(_))
+        ));
+        assert!(
+            validate_query("(", FindOptions::default()).is_ok(),
+            "plain text is literal"
+        );
     }
 
     #[test]
@@ -955,12 +1070,12 @@ mod tests {
         assert_eq!(find_all(text, "foo", FindOptions::default()).len(), 3);
         let case = FindOptions {
             match_case: true,
-            whole_words: false,
+            ..Default::default()
         };
         assert_eq!(find_all(text, "foo", case), vec![(4, 7), (8, 11)]);
         let words = FindOptions {
-            match_case: false,
             whole_words: true,
+            ..Default::default()
         };
         assert_eq!(find_all(text, "foo", words), vec![(0, 3), (4, 7)]);
         assert_eq!(

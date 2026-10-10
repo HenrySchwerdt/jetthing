@@ -14,6 +14,7 @@ pub struct FindBar {
     pub replacement: String,
     pub match_case: bool,
     pub whole_words: bool,
+    pub regex: bool,
     focus_requested: bool,
     /// Matches for (path, revision, query, options); searching a large file
     /// every frame would dominate the frame time.
@@ -47,7 +48,15 @@ impl FindBar {
         FindOptions {
             match_case: self.match_case,
             whole_words: self.whole_words,
+            regex: self.regex,
         }
+    }
+
+    /// Why the query cannot run (an invalid regular expression), if it can't.
+    pub fn error(&self) -> Option<String> {
+        ops::validate_query(&self.query, self.options())
+            .err()
+            .map(|error| error.to_string())
     }
 
     /// Matches of the query in `document`, recomputed only when the document,
@@ -75,6 +84,7 @@ impl FindBar {
             "replacement": self.replacement,
             "matchCase": self.match_case,
             "wholeWords": self.whole_words,
+            "regex": self.regex,
         })
     }
 }
@@ -150,7 +160,11 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                 }
                 toggle(ui, "Cc", &mut app.find.match_case, "Match Case");
                 toggle(ui, "W", &mut app.find.whole_words, "Words");
-                let summary = if app.find.query.is_empty() {
+                toggle(ui, ".*", &mut app.find.regex, "Regex");
+                let error = app.find.error();
+                let summary = if let Some(error) = &error {
+                    error.clone()
+                } else if app.find.query.is_empty() {
                     String::new()
                 } else if matches.is_empty() {
                     "0 results".into()
@@ -245,5 +259,22 @@ mod tests {
             2,
             "edits invalidate the cache"
         );
+    }
+
+    #[test]
+    fn regex_toggle_reaches_matches_params_and_errors() {
+        let mut bar = FindBar {
+            query: r"ne+dle\b".into(),
+            regex: true,
+            ..Default::default()
+        };
+        let document = jetthing_core::Document::new("n.txt".into(), "needle neeedles neeedle");
+        assert_eq!(bar.matches(&document).len(), 2);
+        assert_eq!(bar.params()["regex"], true);
+        assert_eq!(bar.error(), None);
+        bar.query = "(".into();
+        assert!(bar.error().unwrap().contains("invalid regular expression"));
+        bar.regex = false;
+        assert_eq!(bar.error(), None, "plain text is never invalid");
     }
 }

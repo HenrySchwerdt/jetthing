@@ -4,9 +4,9 @@
 use crate::{IdeState, spec, string_param, usize_param};
 use jetthing_command::{Command, CommandError, CommandRegistry, CommandResult};
 use jetthing_plugins::{
-    EditorTabRequest, Notification, Permission, Plugin, PluginError, PluginFactory, PluginHost,
-    PluginRegistry, PluginStatus, PluginStore, StatusWidgetState, ViewContext, ViewPlacement,
-    user_config_dir,
+    EditorTabRequest, Notification, Permission, Plugin, PluginError, PluginHost, PluginManifest,
+    PluginRegistry, PluginSet, PluginStatus, PluginStore, StatusWidgetState, ViewContext,
+    ViewPlacement, user_config_dir,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -57,6 +57,8 @@ pub struct PluginHostState {
     pub notifications: Vec<(String, Notification)>,
     /// Plugin shown alone in standalone app mode (`--app <id>`).
     pub app_mode: Option<String>,
+    /// Per-user directory that `.jtplugin` archives install into.
+    pub install_dir: Option<PathBuf>,
     pub repaint: bool,
     refresh: BTreeSet<String>,
 }
@@ -180,24 +182,36 @@ impl PluginHost for HostAdapter<'_> {
 impl IdeState {
     /// Sets up the registry with the user's store, compiled-in plugins and the
     /// per-user plugin directory, then activates enabled plugins.
-    pub fn init_plugins(&mut self, store: PluginStore, bundled: Vec<PluginFactory>) {
+    pub fn init_plugins(&mut self, store: PluginStore, set: PluginSet) {
         let mut registry = PluginRegistry::new(store);
-        for factory in bundled {
+        for loader in set.loaders {
+            registry.add_loader(loader);
+        }
+        for factory in set.bundled {
             if let Err(error) = registry.add_bundled(factory) {
                 registry.problems.push((PathBuf::from("<bundled>"), error));
             }
         }
         self.plugin_host.registry = registry;
+        self.plugin_host.install_dir = user_plugin_dir();
         self.discover_plugins();
     }
 
     /// Rediscovers manifests in the plugin directories ([`plugin_dirs`]) and
-    /// activates newly enabled plugins.
+    /// activates newly enabled plugins. The per-user directory is the install
+    /// directory (`.jtplugin` archives are unpacked there).
     pub fn discover_plugins(&mut self) {
         let project = self.project.as_ref().map(|p| p.root().to_owned());
+        let install_dir = self.plugin_host.install_dir.clone();
         let roots: Vec<PathBuf> = plugin_dirs(project.as_deref())
             .into_iter()
-            .map(|(_, dir)| dir)
+            .filter_map(|(label, dir)| {
+                if label == "User" {
+                    install_dir.clone()
+                } else {
+                    Some(dir)
+                }
+            })
             .collect();
         for root in roots {
             self.plugin_host.registry.discover(&root);
@@ -220,7 +234,12 @@ impl IdeState {
                     .set_status(&id, PluginStatus::Active);
                 continue;
             }
-            self.plugin_host.registry.ensure_instance(&id);
+            if let Err(error) = self.plugin_host.registry.ensure_instance(&id) {
+                self.plugin_host
+                    .registry
+                    .set_status(&id, PluginStatus::Failed(error.to_string()));
+                continue;
+            }
             let Some(mut instance) = self.plugin_host.registry.take_instance(&id) else {
                 continue;
             };
@@ -274,7 +293,19 @@ impl IdeState {
 
     /// Enables or disables a plugin, (de)activating its code immediately.
     pub fn set_plugin_enabled(&mut self, id: &str, enabled: bool) -> Result<(), PluginError> {
-        if !enabled && self.plugin_host.registry.is_active(id) {
+        if !enabled {
+            self.deactivate_plugin(id);
+        }
+        self.plugin_host.registry.set_enabled(id, enabled)?;
+        if enabled {
+            self.activate_pending_plugins();
+        }
+        Ok(())
+    }
+
+    /// Runs `deactivate`, drops the instance and closes the plugin's views.
+    fn deactivate_plugin(&mut self, id: &str) {
+        if self.plugin_host.registry.is_active(id) {
             self.with_plugin(id, |plugin, host| plugin.deactivate(host));
             // A fresh instance is created on re-enable.
             drop(self.plugin_host.registry.take_instance(id));
@@ -289,10 +320,74 @@ impl IdeState {
                 self.plugin_host.tool_window = None;
             }
         }
-        self.plugin_host.registry.set_enabled(id, enabled)?;
-        if enabled {
-            self.activate_pending_plugins();
+    }
+
+    /// Whether `id` was installed from an archive and can be uninstalled.
+    pub fn plugin_uninstallable(&self, id: &str) -> bool {
+        let Some(install_dir) = &self.plugin_host.install_dir else {
+            return false;
+        };
+        self.plugin_host.registry.get(id).is_some_and(|entry| {
+            matches!(&entry.source, jetthing_plugins::PluginSource::Directory(dir)
+                if dir.parent() == Some(install_dir.as_path()))
+        })
+    }
+
+    fn install_dir(&self) -> Result<PathBuf, PluginError> {
+        self.plugin_host.install_dir.clone().ok_or_else(|| {
+            PluginError::Io(
+                "plugins".into(),
+                "no per-user configuration directory; set JETTHING_CONFIG_DIR".into(),
+            )
+        })
+    }
+
+    /// Installs a `.jtplugin` archive into the per-user plugin directory and
+    /// activates it (replacing an installed version without a restart).
+    pub fn install_plugin_archive(
+        &mut self,
+        archive: &Path,
+    ) -> Result<PluginManifest, PluginError> {
+        let install_dir = self.install_dir()?;
+        let manifest = jetthing_plugins::archive::read_manifest(archive)?;
+        if let Some(entry) = self.plugin_host.registry.get(&manifest.id)
+            && !self.plugin_uninstallable(&manifest.id)
+        {
+            return Err(PluginError::Manifest(format!(
+                "{} is already provided by {}; it cannot be replaced from an archive",
+                manifest.id,
+                match &entry.source {
+                    jetthing_plugins::PluginSource::Bundled => "this Jetthing build".to_owned(),
+                    jetthing_plugins::PluginSource::Directory(dir) => dir.display().to_string(),
+                }
+            )));
         }
+        self.deactivate_plugin(&manifest.id);
+        // Rediscovery must load the new files, not keep the old entry.
+        self.plugin_host.registry.remove(&manifest.id);
+        let manifest = jetthing_plugins::archive::install(archive, &install_dir)?;
+        self.discover_plugins();
+        self.status = format!("Installed plugin {} {}", manifest.name, manifest.version);
+        Ok(manifest)
+    }
+
+    /// Deactivates and removes an installed plugin.
+    pub fn uninstall_plugin(&mut self, id: &str) -> Result<(), PluginError> {
+        if self.plugin_host.registry.get(id).is_none() {
+            return Err(PluginError::NotFound(id.into()));
+        }
+        if !self.plugin_uninstallable(id) {
+            return Err(PluginError::Manifest(format!(
+                "{id} is not an installed plugin (bundled and project plugins cannot be uninstalled)"
+            )));
+        }
+        let install_dir = self.install_dir()?;
+        self.deactivate_plugin(id);
+        jetthing_plugins::archive::uninstall(&install_dir, id)?;
+        // Forget the user's enable choice together with the plugin.
+        self.plugin_host.registry.store.set_disabled(id, false)?;
+        self.discover_plugins();
+        self.status = format!("Uninstalled plugin {id}");
         Ok(())
     }
 
@@ -574,6 +669,52 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
         ));
     }
     add(Command::new(
+        spec("plugin.manager.open", "Plugins…", "Plugins", None, "{}"),
+        |_| true,
+        |state: &mut IdeState, _| {
+            state.settings_request = Some("preferences.pluginManager".into());
+            Ok(Value::Null)
+        },
+    ));
+    add(Command::new(
+        spec(
+            "plugin.install",
+            "Install Plugin from Disk",
+            "Plugins",
+            None,
+            r#"{"path":"string"}"#,
+        ),
+        |_| true,
+        |state: &mut IdeState, params| {
+            let path = string_param(&params, "path")?;
+            let manifest = state
+                .install_plugin_archive(Path::new(path.trim()))
+                .map_err(|error| CommandError::Failed(error.to_string()))?;
+            Ok(json!({
+                "id": manifest.id,
+                "version": manifest.version,
+                "status": state.plugin_host.registry.get(&manifest.id).map(|e| e.status.label()),
+            }))
+        },
+    ));
+    add(Command::new(
+        spec(
+            "plugin.uninstall",
+            "Uninstall Plugin",
+            "Plugins",
+            None,
+            r#"{"id":"string"}"#,
+        ),
+        |_| true,
+        |state: &mut IdeState, params| {
+            let id = string_param(&params, "id")?;
+            state
+                .uninstall_plugin(&id)
+                .map_err(|error| CommandError::Failed(error.to_string()))?;
+            Ok(json!({"id": id}))
+        },
+    ));
+    add(Command::new(
         spec(
             "plugin.toolwindow.toggle",
             "Toggle Plugin Tool Window",
@@ -598,10 +739,15 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             "Activate Plugin Tab",
             "Window",
             None,
-            r#"{"index":"number"}"#,
+            r#"{"index":"number?"}"#,
         ),
         |_| true,
         |state: &mut IdeState, params| {
+            // Without an index the editor (or the standalone app view) is shown again.
+            if params.get("index").is_none_or(Value::is_null) {
+                state.plugin_host.active_tab = None;
+                return Ok(Value::Null);
+            }
             let index = usize_param(&params, "index")?;
             if index >= state.plugin_host.tabs.len() {
                 return Err(CommandError::InvalidParams(
@@ -737,7 +883,7 @@ mod tests {
         }
     }
 
-    fn factory(id: &'static str, fail: bool) -> PluginFactory {
+    fn factory(id: &'static str, fail: bool) -> jetthing_plugins::PluginFactory {
         Rc::new(move || {
             Box::new(Counter {
                 manifest: PluginManifest::parse(&format!(
@@ -754,7 +900,10 @@ mod tests {
         let mut state = IdeState::default();
         state.init_plugins(
             PluginStore::in_memory(),
-            vec![factory("test.counter", fail)],
+            PluginSet {
+                bundled: vec![factory("test.counter", fail)],
+                ..PluginSet::default()
+            },
         );
         let mut registry = built_in_commands();
         let mut registered = Vec::new();
@@ -907,11 +1056,69 @@ mod tests {
     }
 
     #[test]
+    fn archives_install_activate_and_uninstall_without_restart() {
+        let base =
+            std::env::temp_dir().join(format!("jetthing-host-install-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let source = base.join("theme");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("jetthing-plugin.toml"),
+            "id='x.theme'\nname='Theme'\nversion='1.0'\napi_version=1\n",
+        )
+        .unwrap();
+        let archive = base.join("theme.jtplugin");
+        jetthing_plugins::archive::pack(&source, &archive).unwrap();
+        let (mut state, registry, _) = setup(false);
+        state.plugin_host.install_dir = Some(base.join("plugins"));
+        let result = registry
+            .execute("plugin.install", &mut state, json!({"path": archive}))
+            .unwrap();
+        assert_eq!(result["status"], "Active");
+        assert!(state.plugin_uninstallable("x.theme"));
+        assert!(!state.plugin_uninstallable("test.counter"));
+        registry
+            .execute("plugin.disable", &mut state, json!({"id": "x.theme"}))
+            .unwrap();
+        registry
+            .execute("plugin.uninstall", &mut state, json!({"id": "x.theme"}))
+            .unwrap();
+        assert!(state.plugin_host.registry.get("x.theme").is_none());
+        assert!(!state.plugin_host.registry.store.is_disabled("x.theme"));
+        let error = registry
+            .execute(
+                "plugin.uninstall",
+                &mut state,
+                json!({"id": "test.counter"}),
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("cannot be uninstalled"),
+            "{error}"
+        );
+        // A bundled id cannot be shadowed by an archive.
+        std::fs::write(
+            source.join("jetthing-plugin.toml"),
+            "id='test.counter'\nname='Fake'\nversion='9'\napi_version=1\n",
+        )
+        .unwrap();
+        jetthing_plugins::archive::pack(&source, &archive).unwrap();
+        let error = registry
+            .execute("plugin.install", &mut state, json!({"path": archive}))
+            .unwrap_err();
+        assert!(error.to_string().contains("this Jetthing build"), "{error}");
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
     fn plugin_commands_never_replace_built_ins() {
         let mut state = IdeState::default();
         state.init_plugins(
             PluginStore::in_memory(),
-            vec![factory("test.counter", false)],
+            PluginSet {
+                bundled: vec![factory("test.counter", false)],
+                ..PluginSet::default()
+            },
         );
         let mut registry = built_in_commands();
         registry

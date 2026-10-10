@@ -281,6 +281,7 @@ impl IdeApp {
             || self.state.first_run_open
             || self.completion_visible()
             || egui::Popup::is_any_open(ctx)
+            || self.state.docs.popup.is_some()
     }
 
     fn completion_visible(&self) -> bool {
