@@ -103,6 +103,15 @@ impl IdeApp {
         if matches!(target, Target::Tree { .. }) {
             relabel(&mut items, "$Delete", "Delete…");
         }
+        if let Target::Tab(index) = target {
+            let label = if self.state.is_pinned(*index) {
+                "Unpin Tab"
+            } else {
+                "Pin Tab"
+            };
+            relabel(&mut items, "PinActiveEditorTab", label);
+            relabel(&mut items, "PinActiveTabToggle", label);
+        }
         let mut enabled = BTreeSet::new();
         let mut shortcuts = BTreeMap::new();
         collect(&items, &mut |action| {
@@ -127,6 +136,14 @@ impl IdeApp {
             ("CloseAllEditorsButActive", Target::Tab(_)) => documents > 1,
             ("CloseAllToTheLeft", Target::Tab(index)) => *index > 0,
             ("CloseAllToTheRight", Target::Tab(index)) => index + 1 < documents,
+            (
+                "CloseAllEditors"
+                | "CloseAllUnmodifiedEditors"
+                | "PinActiveEditorTab"
+                | "PinActiveTabToggle",
+                Target::Tab(_),
+            ) => true,
+            ("ReopenClosedTab", Target::Tab(_)) => !self.state.tabs.closed.is_empty(),
             (_, Target::Tree { .. } | Target::Tab(_)) if TARGET_ACTIONS.contains(&action) => true,
             _ => self.menu_action_enabled(action),
         }
