@@ -1,6 +1,7 @@
 use ropey::Rope;
 use thiserror::Error;
 
+pub mod format;
 pub mod multicaret;
 pub mod ops;
 pub mod transform;
@@ -327,6 +328,26 @@ impl TextDocument {
         Ok((line, utf16_character))
     }
 
+    /// Converts an LSP UTF-16 line/character position to a rope character
+    /// offset. Positions past the end of a line clamp to the line end, and
+    /// lines past the end clamp to the document end, as the protocol requires.
+    pub fn char_from_lsp_position(&self, line: usize, character: usize) -> usize {
+        if line >= self.rope.len_lines() {
+            return self.rope.len_chars();
+        }
+        let line_start = self.rope.line_to_char(line);
+        let mut units = 0;
+        let mut offset = line_start;
+        for c in self.rope.line(line).chars() {
+            if units >= character || c == '\n' || c == '\r' {
+                break;
+            }
+            units += c.len_utf16();
+            offset += 1;
+        }
+        offset
+    }
+
     pub fn edit(
         &mut self,
         start_char: usize,
@@ -517,9 +538,23 @@ impl TextDocument {
     }
 
     pub fn undo(&mut self) -> bool {
-        let Some(transaction) = self.undo.pop() else {
-            return false;
-        };
+        self.undo_carets().is_some()
+    }
+
+    pub fn redo(&mut self) -> bool {
+        self.redo_carets().is_some()
+    }
+
+    /// Undoes the last transaction and returns where carets belong afterwards:
+    /// one per edit, after the restored text (where the caret was before a
+    /// deletion, where typing started for an insertion).
+    pub fn undo_carets(&mut self) -> Option<Vec<usize>> {
+        let transaction = self.undo.pop()?;
+        let carets = transaction
+            .edits
+            .iter()
+            .map(|edit| edit.original_start + edit.deleted.chars().count())
+            .collect();
         for edit in transaction.edits.iter().rev() {
             self.apply(
                 edit.applied_start,
@@ -530,13 +565,17 @@ impl TextDocument {
         self.current_state = transaction.before_state;
         self.redo.push(transaction);
         self.revision = self.revision.saturating_add(1);
-        true
+        Some(carets)
     }
 
-    pub fn redo(&mut self) -> bool {
-        let Some(transaction) = self.redo.pop() else {
-            return false;
-        };
+    /// Redoes the next transaction; carets go after each re-applied edit.
+    pub fn redo_carets(&mut self) -> Option<Vec<usize>> {
+        let transaction = self.redo.pop()?;
+        let carets = transaction
+            .edits
+            .iter()
+            .map(|edit| edit.applied_start + edit.inserted.chars().count())
+            .collect();
         for edit in transaction.edits.iter().rev() {
             self.apply(
                 edit.original_start,
@@ -547,7 +586,7 @@ impl TextDocument {
         self.current_state = transaction.after_state;
         self.undo.push(transaction);
         self.revision = self.revision.saturating_add(1);
-        true
+        Some(carets)
     }
 
     fn validate_range(&self, start: usize, end: usize) -> Result<(), TextError> {
@@ -591,6 +630,34 @@ impl TextDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn undo_and_redo_report_carets_at_the_change() {
+        let mut doc = TextDocument::new("fn a() {}\nfn b() {}\n");
+        doc.type_text(10, "let").unwrap();
+        doc.type_text(13, " x").unwrap();
+        assert_eq!(doc.undo_carets(), Some(vec![10]), "where typing started");
+        assert_eq!(doc.redo_carets(), Some(vec![15]), "after the re-typed text");
+        doc.edit(0, 3, "").unwrap();
+        assert_eq!(doc.undo_carets(), Some(vec![3]), "after restored text");
+        doc.edit_many([
+            TextChange {
+                start_char: 0,
+                end_char: 0,
+                inserted: "// ".into(),
+            },
+            TextChange {
+                start_char: 10,
+                end_char: 10,
+                inserted: "// ".into(),
+            },
+        ])
+        .unwrap();
+        assert_eq!(doc.undo_carets(), Some(vec![0, 10]), "one caret per edit");
+        assert_eq!(doc.redo_carets(), Some(vec![3, 16]));
+        let mut empty = TextDocument::new("");
+        assert_eq!(empty.undo_carets(), None);
+    }
     use proptest::prelude::*;
 
     #[test]
@@ -635,6 +702,20 @@ mod tests {
         assert_eq!(doc.lsp_position(4).unwrap(), (1, 0));
         assert_eq!(doc.lsp_position(6).unwrap(), (1, 3));
         assert!(doc.lsp_position(99).is_err());
+    }
+
+    #[test]
+    fn converts_lsp_utf16_positions_back_to_character_offsets() {
+        let doc = TextDocument::new("one\na🦀b\n");
+        assert_eq!(doc.char_from_lsp_position(1, 0), 4);
+        assert_eq!(doc.char_from_lsp_position(1, 3), 6);
+        assert_eq!(doc.char_from_lsp_position(1, 4), 7);
+        assert_eq!(doc.char_from_lsp_position(1, 99), 7, "clamps to line end");
+        assert_eq!(doc.char_from_lsp_position(9, 0), doc.len_chars());
+        for offset in 0..doc.len_chars() {
+            let (line, character) = doc.lsp_position(offset).unwrap();
+            assert_eq!(doc.char_from_lsp_position(line, character), offset);
+        }
     }
 
     #[test]

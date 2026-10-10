@@ -66,6 +66,30 @@ pub fn user_plugin_dir() -> Option<PathBuf> {
     user_config_dir().map(|dir| dir.join("plugins"))
 }
 
+/// Directories searched for plugin manifests, in priority order, with a label
+/// for the Plugins page: `JETTHING_PLUGINS_DIR`, `plugins/` next to the
+/// executable, the per-user directory and the project's `plugins/`.
+pub fn plugin_dirs(project: Option<&Path>) -> Vec<(&'static str, PathBuf)> {
+    let mut dirs = Vec::new();
+    if let Some(dir) = std::env::var_os("JETTHING_PLUGINS_DIR").filter(|v| !v.is_empty()) {
+        dirs.push(("Bundled", PathBuf::from(dir)));
+    }
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("plugins")))
+    {
+        dirs.push(("Bundled", dir));
+    }
+    if let Some(dir) = user_plugin_dir() {
+        dirs.push(("User", dir));
+    }
+    if let Some(project) = project {
+        dirs.push(("Project", project.join("plugins")));
+    }
+    dirs.dedup_by(|a, b| a.1 == b.1);
+    dirs
+}
+
 struct HostAdapter<'a> {
     state: &'a mut IdeState,
     id: String,
@@ -167,12 +191,13 @@ impl IdeState {
         self.discover_plugins();
     }
 
-    /// Rediscovers manifests in the per-user and project plugin directories
-    /// and activates newly enabled plugins.
+    /// Rediscovers manifests in the plugin directories ([`plugin_dirs`]) and
+    /// activates newly enabled plugins.
     pub fn discover_plugins(&mut self) {
-        let roots: Vec<PathBuf> = user_plugin_dir()
+        let project = self.project.as_ref().map(|p| p.root().to_owned());
+        let roots: Vec<PathBuf> = plugin_dirs(project.as_deref())
             .into_iter()
-            .chain(self.project.as_ref().map(|p| p.root().join("plugins")))
+            .map(|(_, dir)| dir)
             .collect();
         for root in roots {
             self.plugin_host.registry.discover(&root);

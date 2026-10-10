@@ -9,12 +9,14 @@ eframe.workspace = true
 egui.workspace = true
 jetthing-android = { path = "../jetthing-android" }
 jetthing-bazel = { path = "../jetthing-bazel" }
+jetthing-actions = { path = "../jetthing-actions" }
 jetthing-command = { path = "../jetthing-command" }
 jetthing-control = { path = "../jetthing-control" }
 jetthing-core = { path = "../jetthing-core" }
 jetthing-dap = { path = "../jetthing-dap" }
 jetthing-git = { path = "../jetthing-git" }
 jetthing-gradle = { path = "../jetthing-gradle" }
+jetthing-keymap = { path = "../jetthing-keymap" }
 jetthing-language = { path = "../jetthing-language" }
 jetthing-lsp = { path = "../jetthing-lsp" }
 jetthing-plugins = { path = "../jetthing-plugins" }
@@ -24,3 +26,7 @@ jetthing-text = { path = "../jetthing-text" }
 jetthing-terminal = { path = "../jetthing-terminal" }
 serde.workspace = true
 serde_json.workspace = true
+
+[[bench]]
+name = "typing"
+harness = false

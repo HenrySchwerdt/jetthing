@@ -486,7 +486,21 @@ pub fn fixture_files(name: &str) -> Result<Vec<(&'static str, &'static str)>> {
                 "# java-gradle\n\nSample project for Jetthing parity scenes.\n",
             ),
         ]),
-        other => bail!("unknown fixture {other:?} (known: java-gradle)"),
+        "rust-cargo" => Ok(vec![
+            (
+                "Cargo.toml",
+                "[package]\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n# Standalone even when generated inside another Cargo workspace.\n[workspace]\n",
+            ),
+            (
+                "src/main.rs",
+                "fn greeting(name: &str) -> String {\n    format!(\"Hello, {name}!\")\n}\n\nfn main() {\n    println!(\"{}\", greeting(\"Cargo\"));\n    println!(\"{}\", greeting(\"Rust\"));\n}\n",
+            ),
+            // Not part of the crate (no `mod`), so builds stay green; it carries a
+            // syntax error for the Problems scene.
+            ("src/broken.rs", "fn broken( {\n    let x = ;\n}\n"),
+            (".gitignore", "target/\n.jetthing/\n"),
+        ]),
+        other => bail!("unknown fixture {other:?} (known: java-gradle, rust-cargo)"),
     }
 }
 

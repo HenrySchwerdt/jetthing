@@ -51,13 +51,20 @@ no crate below `jetthing-ui` imports UI types.
 - `jetthing-plugins`: plugin registry: discovery, activation order, enable/disable and
   settings persistence. Lua/Wasm loading is deliberately not claimed yet.
 - `jetthing-plugin-ui`: egui helpers for plugin views (UI layer, used by plugin crates).
+- `jetthing-keymap`: keystroke/chord/mouse/gesture parsing, the 26 bundled keymaps from
+  `docs/spec/data/keymaps.json`, desktop default selection, user overrides, lookup and
+  conflict detection.
+- `jetthing-actions`: catalog of the reference action ids, texts and groups from
+  `docs/spec/data/actions.json` (names for the keymap page, structure for menus).
 - `jetthing-settings`: typed settings registry (bool/int/float/text/path/enum/list with
   defaults and validation), the Settings tree keyed by the reference configurable ids in
   `docs/spec/data/settings.json`, application/project layering, TOML persistence,
   search, and the dialog's draft/Apply/Reset model. No UI types.
 - `jetthing-core`: application state, the plugin host (scoped `PluginHost`, command
   routing, plugin tool window/tab state), tool window layout model (one visible tool window
-  per anchor), and built-in command handlers.
+  per anchor), the problems model (`problems`: syntax errors and LSP diagnostics merged
+  into per-file problems with severities, counts and ancestor error propagation), and
+  built-in command handlers.
 - `jetthing-ui`: native workbench shell split into `chrome` (main toolbar, stripe, status
   bar, window controls), `toolwindows` (Project, Commit, Find, Build/Run, Problems,
   Terminal), `editor` (tabs, viewport-native highlighted editor, completion popup),
@@ -103,7 +110,14 @@ installs start only from the `toolchain.install` command. Downloads resume with 
 requests, are verified before extraction (a mismatch deletes the file), extract into
 `.staging/` and are renamed into place, so a version directory is either complete or absent.
 
-Commands: `toolchain.list`, `toolchain.locate`, `toolchain.missing`, `toolchain.install`
+Language servers reach managed installs through `jetthing_lsp::ProgramResolver`, a hook the
+`LspManager` consults after an `lsp.toml` command and before `PATH` candidates;
+`jetthing-core` implements it over `Toolchains` (`toolchain_lsp.rs`, e.g. jdtls runs on the
+resolved JDK) and attaches the providing component to missing-server notices, whose **Set up**
+action runs `toolchain.setup` and restarts the servers when it finishes.
+
+Commands: `toolchain.list`, `toolchain.locate`, `toolchain.missing`, `toolchain.setup`
+(component plus missing requirements), `toolchain.install`
 (`wait: true` blocks, for the CLI), `toolchain.cancel`, `toolchain.jobs`, `toolchain.uninstall`,
 `toolchain.usePath` ("use existing installation", stored in the user `toolchains.toml`) and
 `toolchain.pins`. Running installs show in the status bar with a progress bar; clicking it cancels.
@@ -116,6 +130,16 @@ capability requirements, an enabled predicate, and an execution handler. GUI and
 use the same registry, and the control socket's `execute` request reaches every command of
 a running workbench. Cancellation/progress and MCP transports are next-step extensions of
 this contract.
+
+## Keymap
+
+`IdeState::keymap` holds the effective keymap (Settings › Keymap plus the user's
+overrides in `keymap.overrides`). The UI turns key presses into keystrokes, resolves them
+with `Keymap::lookup` (two-stroke chords included) and runs the first applicable action:
+a command from `jetthing_core::keymap_commands::ACTION_COMMANDS` (IntelliJ action id →
+command id, global or editor scope) or a workbench popup (`jetthing-ui::keybindings`).
+To make a new command reachable by its reference shortcut, add its IntelliJ action id to
+`ACTION_COMMANDS`; menus and Find Action then show the keymap's shortcut for it.
 
 ## Settings extension point
 

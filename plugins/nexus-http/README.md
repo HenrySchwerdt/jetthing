@@ -5,10 +5,18 @@ and will also run standalone (`jetthing --app nexus-http`). Tracking issue: #49.
 
 | Crate | Purpose |
 |---|---|
-| `core` (`nexus-http-core`) | Headless engine with no UI dependency: data model, git-friendly `.nexus/` storage, `{{ variables }}` and `{% tags %}` templating with response chaining, auth (Basic, Bearer, API key, Digest, OAuth 2.0, AWS SigV4), request execution on reqwest + rustls with redirects, cookies, proxies, client certificates, timings and a timeline, JSONPath filters, assertions and response history. |
+| `.` (`nexus-http`) | egui views: sidebar, request editor, response viewer, environments, request switcher, import/export, code generation. Renders into any `egui::Ui` and follows the host theme. |
+| `core` (`nexus-http-core`) | Headless engine with no UI dependency: data model, git-friendly `.nexus/` storage, `{{ variables }}` and `{% tags %}` templating with response chaining, auth (Basic, Bearer, API key, Digest, OAuth 2.0, AWS SigV4), request execution on reqwest + rustls with redirects, cookies, proxies, client certificates, timings and a timeline, JSONPath filters, assertions, response history, importers (curl, Insomnia v4/v5, Postman v2.1, OpenAPI 3, own export) and code generation (curl, Python, JS fetch, Go, Rust, Java, Kotlin). |
 
-The UI crate (Islands-styled egui views) and importers/code generation follow in
-later slices. Status and evidence: `docs/parity/nexus-http.md`.
+Until the plugin API (#48) is merged, run the UI in the development host:
+
+```bash
+cargo run -p nexus-http --example standalone -- --demo   # seeded workspace + local demo API
+cargo run -p nexus-http --example standalone -- ~/my-api # stores in ~/my-api/.nexus
+```
+
+Shortcuts: Ctrl+Enter send, Ctrl+L focus URL, Ctrl+P request switcher, Ctrl+E
+environments, Ctrl+N new request, Ctrl+S save, Esc cancel. Status and evidence: `docs/parity/nexus-http.md`.
 
 ## Storage layout
 

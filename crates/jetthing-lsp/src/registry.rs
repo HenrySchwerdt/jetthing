@@ -52,6 +52,8 @@ pub struct ServerSpec {
     /// Whether a missing server deserves a notification balloon. Servers for
     /// configuration formats only show in the status bar.
     pub notify_missing: bool,
+    /// Default `initializationOptions` (JSON), unless set in `lsp.toml`.
+    pub initialization_options: Option<&'static str>,
 }
 
 impl ServerSpec {
@@ -70,7 +72,7 @@ impl ServerSpec {
 }
 
 /// Context for building a launch configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LaunchContext<'a> {
     /// Workspace root the server will serve.
     pub root: &'a Path,
@@ -78,6 +80,30 @@ pub struct LaunchContext<'a> {
     pub cache_dir: PathBuf,
     /// User settings for this server, if any.
     pub settings: Option<&'a ServerSettings>,
+    /// Finds servers installed outside `PATH` (managed toolchains).
+    pub resolver: Option<&'a dyn ProgramResolver>,
+}
+
+/// A server program found by a [`ProgramResolver`]: the full command line
+/// (without the per-workspace arguments a provider adds) and its environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedProgram {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+/// Hook through which the toolchain service supplies server executables.
+///
+/// `lsp.toml` commands still win; otherwise a resolved program is used before
+/// the spec's `PATH` candidates.
+pub trait ProgramResolver: Send + Sync {
+    /// How to start `spec`'s server, if the resolver knows it.
+    fn resolve(&self, spec: &ServerSpec) -> Option<ResolvedProgram>;
+
+    /// Toolchain component that provides `spec`'s server, for "Set up" actions
+    /// on missing-server notices.
+    fn setup_component(&self, spec: &ServerSpec) -> Option<String>;
 }
 
 /// A language integration that can provide a language server.
@@ -91,6 +117,13 @@ pub trait LanguageServerProvider: Send + Sync {
     /// the configured command, else the first candidate found on `PATH`.
     fn launch(&self, context: &LaunchContext<'_>) -> Result<LaunchConfig, LspError> {
         default_launch(self.spec(), context)
+    }
+
+    /// Relevance adjustment for a completion item; higher sorts first among
+    /// items that match equally well. Used where a server's `sortText` does
+    /// not distinguish items the reference IDE ranks differently.
+    fn completion_relevance(&self, _item: &lsp_types::CompletionItem) -> i32 {
+        0
     }
 }
 
@@ -113,6 +146,10 @@ pub fn default_launch(
             .and_then(|s| s.args.clone())
             .unwrap_or_default();
         LaunchConfig::new(spec.id, program).args(args)
+    } else if let Some(resolved) = context.resolver.and_then(|resolver| resolver.resolve(spec)) {
+        let mut config = LaunchConfig::new(spec.id, resolved.program).args(resolved.args);
+        config.env = resolved.env;
+        config
     } else {
         spec.candidates
             .iter()
@@ -126,6 +163,9 @@ pub fn default_launch(
                 hint: spec.install_hint.into(),
             })?
     };
+    config.initialization_options = spec
+        .initialization_options
+        .and_then(|options| serde_json::from_str(options).ok());
     if let Some(settings) = context.settings {
         if let Some(args) = &settings.args
             && settings.command.is_none()
@@ -337,6 +377,16 @@ impl LanguageServerProvider for JdtlsProvider {
 
     fn launch(&self, context: &LaunchContext<'_>) -> Result<LaunchConfig, LspError> {
         let mut config = default_launch(&self.0, context)?;
+        // jdtls' file system plugin reads this JVM property; without it the
+        // Gradle import writes .project/.classpath/.settings into the user's tree.
+        let launcher = config
+            .program
+            .file_stem()
+            .is_some_and(|stem| stem == "jdtls");
+        const NO_METADATA: &str = "-Djava.import.generatesMetadataFilesAtProjectRoot=false";
+        if launcher && !config.args.iter().any(|arg| arg.contains(NO_METADATA)) {
+            config.args.insert(0, format!("--jvm-arg={NO_METADATA}"));
+        }
         if !config.args.iter().any(|arg| arg == "-data") {
             let name = context
                 .root
@@ -361,6 +411,21 @@ impl LanguageServerProvider for JdtlsProvider {
         }
         Ok(config)
     }
+
+    /// jdtls gives members of the receiver's class and those inherited from
+    /// `java.lang.Object` the same `sortText`; the reference IDE lists the
+    /// class's own members first.
+    fn completion_relevance(&self, item: &lsp_types::CompletionItem) -> i32 {
+        if item
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.starts_with("Object."))
+        {
+            -1
+        } else {
+            0
+        }
+    }
 }
 
 const GRADLE_MAVEN: &[&str] = &[
@@ -383,6 +448,11 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: &["Cargo.toml"],
             install_hint: "Install it with `rustup component add rust-analyzer` and make sure it is on PATH.",
             notify_missing: true,
+            // Like the reference IDE: insert `name()` and put the caret inside,
+            // without argument placeholders.
+            initialization_options: Some(
+                r#"{"completion":{"callable":{"snippets":"add_parentheses"}}}"#,
+            ),
         },
         ServerSpec {
             id: "jdtls",
@@ -393,6 +463,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: GRADLE_MAVEN,
             install_hint: "Install Eclipse JDT Language Server (https://download.eclipse.org/jdtls/) and put its `bin/jdtls` launcher on PATH. It needs JDK 21 or newer.",
             notify_missing: true,
+            initialization_options: None,
         },
         ServerSpec {
             id: "kotlin",
@@ -406,6 +477,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: GRADLE_MAVEN,
             install_hint: "Install JetBrains kotlin-lsp (https://github.com/Kotlin/kotlin-lsp) or kotlin-language-server and put it on PATH.",
             notify_missing: true,
+            initialization_options: None,
         },
         ServerSpec {
             id: "starlark",
@@ -427,6 +499,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: &["MODULE.bazel", "WORKSPACE", "WORKSPACE.bazel"],
             install_hint: "Install starpls (https://github.com/withered-magic/starpls) or bazel-lsp and put it on PATH.",
             notify_missing: true,
+            initialization_options: None,
         },
         ServerSpec {
             id: "pyright",
@@ -445,6 +518,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             ],
             install_hint: "Install it with `pip install basedpyright` or `npm install -g pyright`.",
             notify_missing: true,
+            initialization_options: None,
         },
         ServerSpec {
             id: "gopls",
@@ -455,6 +529,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: &["go.work", "go.mod"],
             install_hint: "Install it with `go install golang.org/x/tools/gopls@latest`.",
             notify_missing: true,
+            initialization_options: None,
         },
         ServerSpec {
             id: "typescript",
@@ -474,6 +549,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: &["tsconfig.json", "jsconfig.json", "package.json"],
             install_hint: "Install it with `npm install -g typescript typescript-language-server`.",
             notify_missing: true,
+            initialization_options: None,
         },
         ServerSpec {
             id: "clangd",
@@ -493,6 +569,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: &["compile_commands.json", "compile_flags.txt", ".clangd"],
             install_hint: "Install clangd from your LLVM distribution or package manager.",
             notify_missing: true,
+            initialization_options: None,
         },
         ServerSpec {
             id: "lemminx",
@@ -503,6 +580,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: &[],
             install_hint: "Install Eclipse LemMinX (https://github.com/eclipse/lemminx) and put `lemminx` on PATH.",
             notify_missing: false,
+            initialization_options: None,
         },
         ServerSpec {
             id: "taplo",
@@ -513,6 +591,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: &[],
             install_hint: "Install it with `cargo install taplo-cli --features lsp`.",
             notify_missing: false,
+            initialization_options: None,
         },
         ServerSpec {
             id: "yaml",
@@ -523,6 +602,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: &[],
             install_hint: "Install it with `npm install -g yaml-language-server`.",
             notify_missing: false,
+            initialization_options: None,
         },
         ServerSpec {
             id: "json",
@@ -536,6 +616,7 @@ pub fn builtin_specs() -> Vec<ServerSpec> {
             root_markers: &[],
             install_hint: "Install it with `npm install -g vscode-langservers-extracted`.",
             notify_missing: false,
+            initialization_options: None,
         },
     ]
 }
@@ -562,6 +643,7 @@ mod tests {
             root,
             cache_dir: PathBuf::from("/cache/jetthing"),
             settings,
+            resolver: None,
         }
     }
 
@@ -629,6 +711,25 @@ mod tests {
         let again = provider.launch(&context(root, Some(&settings))).unwrap();
         assert_eq!(config.args, again.args);
         assert!(config.initialization_options.is_some());
+        assert!(!config.args.iter().any(|arg| arg.starts_with("--jvm-arg")));
+
+        // The Python launcher gets the JVM property that keeps Eclipse
+        // metadata out of the project.
+        let bin = std::env::temp_dir().join(format!("jetthing-jdtls-bin-{}", std::process::id()));
+        std::fs::create_dir_all(&bin).unwrap();
+        let launcher = bin.join("jdtls");
+        std::fs::write(&launcher, "#!/bin/sh\n").unwrap();
+        let settings = ServerSettings {
+            command: Some(launcher.display().to_string()),
+            enabled: true,
+            ..Default::default()
+        };
+        let config = provider.launch(&context(root, Some(&settings))).unwrap();
+        assert_eq!(
+            config.args[0],
+            "--jvm-arg=-Djava.import.generatesMetadataFilesAtProjectRoot=false"
+        );
+        std::fs::remove_dir_all(bin).unwrap();
     }
 
     #[cfg(unix)]
@@ -666,10 +767,72 @@ mod tests {
         std::fs::remove_dir_all(base).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rust_analyzer_inserts_parentheses_without_argument_placeholders() {
+        let settings = ServerSettings {
+            command: Some("/bin/sh".into()),
+            enabled: true,
+            ..Default::default()
+        };
+        let spec = builtin_specs().remove(0);
+        let config = default_launch(&spec, &context(Path::new("/p"), Some(&settings))).unwrap();
+        assert_eq!(
+            config.initialization_options.unwrap()["completion"]["callable"]["snippets"],
+            "add_parentheses"
+        );
+    }
+
     #[test]
     fn stable_hash_is_deterministic() {
         assert_eq!(stable_hash(""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(stable_hash("a"), stable_hash("a"));
         assert_ne!(stable_hash("a"), stable_hash("b"));
+    }
+
+    struct FixedResolver;
+
+    impl ProgramResolver for FixedResolver {
+        fn resolve(&self, spec: &ServerSpec) -> Option<ResolvedProgram> {
+            (spec.id == "jdtls").then(|| ResolvedProgram {
+                program: PathBuf::from("/managed/jdk/bin/java"),
+                args: vec!["-jar".into(), "launcher.jar".into()],
+                env: vec![("JAVA_HOME".into(), "/managed/jdk".into())],
+            })
+        }
+
+        fn setup_component(&self, spec: &ServerSpec) -> Option<String> {
+            Some(spec.id.to_owned())
+        }
+    }
+
+    #[test]
+    fn resolved_programs_come_after_configured_commands_and_before_path() {
+        let registry = ServerRegistry::default();
+        let jdtls = registry.get("jdtls").unwrap();
+        let root = Path::new("/work/demo");
+        let mut context = context(root, None);
+        context.resolver = Some(&FixedResolver);
+        let config = jdtls.launch(&context).unwrap();
+        assert_eq!(config.program, PathBuf::from("/managed/jdk/bin/java"));
+        assert_eq!(&config.args[..2], ["-jar", "launcher.jar"]);
+        // The jdtls provider still adds its per-workspace data directory.
+        assert!(config.args.contains(&"-data".to_string()));
+        assert_eq!(
+            config.env,
+            vec![("JAVA_HOME".into(), "/managed/jdk".into())]
+        );
+
+        // An lsp.toml command wins over the resolver.
+        let settings = ServerSettings {
+            command: Some("/definitely/missing/jdtls".into()),
+            ..ServerSettings::default()
+        };
+        let mut context = super::tests::context(root, Some(&settings));
+        context.resolver = Some(&FixedResolver);
+        assert!(matches!(
+            jdtls.launch(&context),
+            Err(LspError::ServerNotFound { .. })
+        ));
     }
 }

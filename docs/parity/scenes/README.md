@@ -36,9 +36,11 @@ and uploads the PNGs and app logs as the `parity-scenes` artifact.
 ```
 
 - `fixture` (optional) generates a project and commits it to a fresh Git repository on
-  `master`. Known fixtures: `java-gradle`. Without a fixture the welcome screen shows.
+  `master`. Known fixtures: `java-gradle`, `rust-cargo` (builds with Cargo; `src/broken.rs`
+  is outside the crate and has syntax errors). Without a fixture the welcome screen shows.
 - `open` lists project-relative files passed on the command line.
-- Steps are control requests (`execute`, `state`, `key`, `type`, `wait`) or runner steps:
+- Steps are control requests (`execute`, `state`, `key`, `type`, `click`, `move`, `wait`)
+  or runner steps:
   - `screenshot {name}` writes `<out>/<name>`;
   - `assert {pointer, equals | contains}` checks a JSON pointer into the `state` snapshot;
   - `sleep {ms}`;
@@ -50,8 +52,16 @@ Chords use the Linux keymap (`Alt+0`, `Alt+F12`); `Primary` means ⌘ on macOS a
 | Scene | Script | Asserts |
 |---|---|---|
 | 01 Welcome | `01-welcome.json` | no project, no tabs |
-| 04 Editor + project tree | `04-editor-project-tree.json` | App.java active, Project tool window visible, editor text |
+| 04 Editor + project tree | `04-editor-project-tree.json` | App.java active and revealed/selected in the tree, Project tool window visible, editor text |
 | 05 Search Everywhere | `05-search-everywhere.json` | Double Shift opens the All tab; Escape closes it |
 | 06 Find Action | `06-find-action.json` | Ctrl+Shift+A opens the Actions tab |
 | 11 Terminal | `11-terminal.json` | terminal visible and focused; `ls --color` and `git log --oneline` output on screen |
 | 12 Commit | `12-commit.json` | Alt+0 shows Commit after an outside change and an unversioned file |
+| 07 Main menu | `07-main-menu.json` | hamburger click opens the menu; hovering Code shows its submenu |
+| 10 Find in Files | `10-find-in-files.json` | Ctrl+Shift+F focuses the query; `greeting` gives 4 results |
+| 16 Build output | `16-build-output.json` | Ctrl+F9 runs `cargo build` in the Build window and finishes successfully |
+| 17 Run output | `17-run-output.json` | Shift+F10 runs `cargo run` and finishes successfully |
+| 19 Project context menu | `19-project-context-menu.json` | right-click on a tree row opens the context menu with New ▸ |
+| 20 Problems | `20-problems.json` | Alt+6 lists the 2 syntax errors of `src/broken.rs` |
+
+Coordinates in `click`/`move` are logical points in the default 1440×900 window.

@@ -40,6 +40,18 @@ pub enum Request {
     Key { chord: String },
     /// Types text into the focused component.
     Type { text: String },
+    /// Clicks at window coordinates in logical points (move, press, release),
+    /// `count` times for double clicks.
+    Click {
+        x: f32,
+        y: f32,
+        #[serde(default)]
+        button: PointerButton,
+        #[serde(default = "one")]
+        count: u8,
+    },
+    /// Moves the pointer, e.g. to open a submenu on hover.
+    Move { x: f32, y: f32 },
     /// Writes a PNG of the window to `path`.
     Screenshot { path: PathBuf },
     /// Blocks until a condition holds or `timeout_ms` elapses.
@@ -65,12 +77,25 @@ impl Request {
     }
 }
 
+fn one() -> u8 {
+    1
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PointerButton {
+    #[default]
+    Primary,
+    Secondary,
+    Middle,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum WaitCondition {
     /// No background search, task, or screenshot is in flight.
     Idle,
-    /// A popup (Search Everywhere, a dialog, completion) is visible.
+    /// A popup (Search Everywhere, a dialog, a menu, completion) is visible.
     Popup,
     /// The active editor or the status bar contains `text`.
     Text,
@@ -480,6 +505,26 @@ mod tests {
             json!({"op": "key", "chord": "Escape"})
         );
         assert!(serde_json::from_str::<Request>(r#"{"op":"explode"}"#).is_err());
+        assert_eq!(
+            serde_json::from_str::<Request>(r#"{"op":"click","x":18,"y":20}"#).unwrap(),
+            Request::Click {
+                x: 18.0,
+                y: 20.0,
+                button: PointerButton::Primary,
+                count: 1
+            }
+        );
+        assert!(matches!(
+            serde_json::from_str::<Request>(
+                r#"{"op":"click","x":1,"y":2,"button":"secondary","count":2}"#
+            )
+            .unwrap(),
+            Request::Click {
+                button: PointerButton::Secondary,
+                count: 2,
+                ..
+            }
+        ));
         assert_eq!(
             serde_json::to_value(Response::error("nope")).unwrap(),
             json!({"ok": false, "error": "nope"})

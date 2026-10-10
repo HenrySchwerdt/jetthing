@@ -8,9 +8,7 @@ license.workspace = true
 regex = "1"
 roxmltree = "0.20"
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 walkdir.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true

@@ -12,41 +12,66 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod android_commands;
+mod android_deploy;
 mod android_devices;
 mod android_logcat;
+mod android_manifest;
+mod android_resources;
+mod android_variants;
+mod annotations;
 mod bazel_commands;
+mod branch_commands;
 mod build_commands;
 pub mod build_info;
+mod completion;
 mod debug_commands;
 mod diagnostic_commands;
 pub mod diagnostics;
 mod disk_sync;
 mod editor_commands;
+mod git_log;
 mod gradle_commands;
 mod gutter_commands;
+pub mod keymap_commands;
+mod line_changes;
 mod lsp_commands;
 mod plugin_host;
+mod problems;
 mod project_commands;
+mod remote_commands;
 mod run_config_commands;
 mod settings_commands;
+mod snippet_session;
+pub mod tabs;
 mod terminal_commands;
 mod toolchain_commands;
+mod toolchain_lsp;
 mod toolwindow;
 mod update_commands;
 pub use android_commands::AndroidState;
+pub use android_deploy::{DeployPhase, DeployState};
 pub use android_devices::DeviceHub;
 pub use android_logcat::LogcatState;
 pub use disk_sync::{DiskConflict, Waker, content_hash};
 pub use settings_commands::Settings;
 mod vcs;
 pub use build_commands::{BuildSystems, DetectedBuild};
+pub use completion::CompletionSession;
 pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
 pub use gutter_commands::GutterMark;
 pub use jetthing_runnables::RunnableKind;
+pub use jetthing_search::SearchOptions;
 pub use plugin_host::{
-    PluginHostState, PluginStatusWidget, PluginTab, sync_plugin_commands, user_plugin_dir,
+    PluginHostState, PluginStatusWidget, PluginTab, plugin_dirs, sync_plugin_commands,
+    user_plugin_dir,
 };
+pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
+pub use snippet_session::SnippetSession;
 pub use toolchain_commands::ToolchainState;
+mod worktree_commands;
+pub use branch_commands::abort_label;
+pub use git_log::GitLogState;
+pub use line_changes::hunk_at_line;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -72,26 +97,50 @@ pub struct IdeState {
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
     pub plugin_host: PluginHostState,
+    /// Pinned tabs, closed-tab history and the tab limit.
+    pub tabs: tabs::EditorTabs,
     pub terminal: Option<TerminalSession>,
     pub search: SearchService,
     pub search_results: Vec<TextMatch>,
     pub search_query: String,
+    /// Options of the last Find in Files run.
+    pub search_options: SearchOptions,
     pub search_files_scanned: usize,
     pub search_truncated: bool,
     pub git: Option<RepositoryStatus>,
     /// Background status refresh for external changes.
     git_watcher: Option<jetthing_git::StatusWatcher>,
+    /// Interrupted merge/rebase/cherry-pick, if any.
+    pub git_pending: Option<jetthing_git::PendingOperation>,
+    /// Running fetch/pull/push.
+    pub remote_job: Option<jetthing_git::RemoteJob>,
+    /// Latest progress line of the running remote operation.
+    pub remote_progress: Option<String>,
+    /// Message of the last failed remote operation.
+    pub remote_error: Option<String>,
+    /// Blame annotations of documents that have them switched on.
+    annotations: std::collections::HashMap<PathBuf, annotations::Annotation>,
+    /// Git tool window Log tab.
+    pub git_log: GitLogState,
     /// The diff viewer tab, if open.
     pub diff: Option<DiffTab>,
     /// Whether the diff tab (rather than a document) is the selected editor tab.
     pub diff_active: bool,
     /// Lets background services wake the UI.
     pub repaint: RepaintHook,
+    /// Per-document changed lines against HEAD (gutter markers).
+    line_changes: std::collections::HashMap<PathBuf, line_changes::LineChanges>,
     pub runner: TaskService,
     /// Language servers of the open project, started lazily per language.
     pub lsp: LspManager,
+    /// Project-wide problems, refreshed by [`IdeState::refresh_problems`].
+    pub problems: ProblemIndex,
     /// Toolchain provisioning: discovery, pins and background installs.
     pub toolchains: ToolchainState,
+    /// The code completion popup, while open.
+    pub completion: Option<CompletionSession>,
+    /// Tab stops of an inserted snippet, while the user fills them in.
+    pub snippet: Option<SnippetSession>,
     pub build_systems: BuildSystems,
     /// Build system of the open project, detected on open (`build.detect` refreshes it).
     pub detected_build: Option<DetectedBuild>,
@@ -126,6 +175,7 @@ pub struct IdeState {
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
     pub settings: Settings,
+    pub keymap: keymap_commands::KeymapState,
     /// Settings page the UI should open (set by `settings.open`, taken by the UI).
     pub settings_request: Option<String>,
     pub android: AndroidState,
@@ -167,6 +217,10 @@ impl IdeState {
         self.files = project.entries(20_000);
         self.documents.clear();
         self.active_document = None;
+        self.tabs = tabs::EditorTabs {
+            limit: self.tabs.limit,
+            ..Default::default()
+        };
         self.search.cancel();
         self.search_results.clear();
         self.search_query.clear();
@@ -177,8 +231,13 @@ impl IdeState {
         self.git = RepositoryStatus::load(project.root()).ok();
         self.lsp.set_project(Some(project.root()));
         self.start_git_watcher();
+        self.refresh_pending_operation();
         self.close_diff();
         self.toolchains.reload(Some(project.root()));
+        self.annotations.clear();
+        self.invalidate_line_changes();
+        self.git_log = GitLogState::default();
+        self.refresh_toolchain_resolver();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -203,6 +262,7 @@ impl IdeState {
             self.diff_active = false;
             self.plugin_host.active_tab = None;
             self.touch_recent(path);
+            self.reveal_in_tree(path);
             return Ok(());
         }
         let project = self.project.as_ref().ok_or("no project is open")?;
@@ -219,9 +279,20 @@ impl IdeState {
         self.diff_active = false;
         self.plugin_host.active_tab = None;
         self.touch_recent(path);
+        self.reveal_in_tree(path);
         self.status = format!("Opened {}", path.display());
         self.sync_document_lsp(path, &text, 0);
-        Ok(())
+        self.enforce_tab_limit()
+    }
+
+    /// Expands the Project tree down to `path` so an opened file is visible
+    /// (the reference IDE's "Always Select Opened File").
+    pub fn reveal_in_tree(&mut self, path: &Path) {
+        for ancestor in path.ancestors().skip(1) {
+            if !ancestor.as_os_str().is_empty() {
+                self.expanded_dirs.insert(ancestor.to_owned());
+            }
+        }
     }
     pub fn save(&mut self, index: usize) -> Result<(), String> {
         disk_sync::ensure_no_conflict(self, index)?;
@@ -237,6 +308,8 @@ impl IdeState {
         document.text.mark_saved();
         document.disk_hash = content_hash(&text);
         self.status = format!("Saved {}", document.path.display());
+        let absolute = project.root().join(&document.path);
+        let _ = self.lsp.save_document(&absolute);
         Ok(())
     }
 
@@ -247,6 +320,7 @@ impl IdeState {
         if document.text.is_dirty() {
             self.save(index)?;
         }
+        self.remember_closed(index);
         let document = self.documents.remove(index);
         self.active_document = match self.active_document {
             _ if self.documents.is_empty() => None,
@@ -254,7 +328,7 @@ impl IdeState {
             Some(active) if active == index => Some(index.min(self.documents.len() - 1)),
             other => other,
         };
-        self.lsp.clear_completions();
+        self.close_completion();
         if let Some(project) = &self.project {
             let _ = self
                 .lsp
@@ -273,7 +347,7 @@ impl IdeState {
         self.plugin_host.active_tab = None;
         let path = self.documents[index].path.clone();
         self.touch_recent(&path);
-        self.lsp.clear_completions();
+        self.close_completion();
         Ok(())
     }
 
@@ -297,9 +371,34 @@ impl IdeState {
         if self.expanded_dirs.remove(path) {
             Ok(false)
         } else {
+            self.load_children(path)?;
             self.expanded_dirs.insert(path.to_owned());
             Ok(true)
         }
+    }
+
+    /// Lists a directory the initial walk did not descend into (symbolic links
+    /// such as `bazel-bin`, and directories below them) when it is expanded.
+    fn load_children(&mut self, path: &Path) -> Result<(), String> {
+        let loaded = self
+            .files
+            .iter()
+            .any(|entry| entry.relative_path.parent() == Some(path));
+        let linked = path.ancestors().any(|ancestor| {
+            self.files
+                .iter()
+                .any(|entry| entry.is_symlink && entry.relative_path == ancestor)
+        });
+        if loaded || !linked {
+            return Ok(());
+        }
+        let project = self.project.as_ref().ok_or("no project is open")?;
+        let children = project.children(path).map_err(|error| error.to_string())?;
+        let Some(position) = self.files.iter().position(|e| e.relative_path == path) else {
+            return Ok(());
+        };
+        self.files.splice(position + 1..position + 1, children);
+        Ok(())
     }
 
     /// Entries visible in the Project tree: every ancestor directory is expanded.
@@ -324,10 +423,20 @@ impl IdeState {
         else {
             return false;
         };
-        if !document.text.undo() {
+        let Some(carets) = document.text.undo_carets() else {
             return false;
+        };
+        // Put the caret where the change happened, not where it last was.
+        let len = document.text.len_chars();
+        let carets: Vec<Selection> = carets
+            .into_iter()
+            .map(|caret| Selection::caret(caret.min(len)))
+            .collect();
+        if carets.is_empty() {
+            document.selections.clamp(len);
+        } else {
+            document.selections.set_all(carets);
         }
-        document.selections.clamp(document.text.len_chars());
         true
     }
 
@@ -338,10 +447,20 @@ impl IdeState {
         else {
             return false;
         };
-        if !document.text.redo() {
+        let Some(carets) = document.text.redo_carets() else {
             return false;
+        };
+        // Put the caret where the change happened, not where it last was.
+        let len = document.text.len_chars();
+        let carets: Vec<Selection> = carets
+            .into_iter()
+            .map(|caret| Selection::caret(caret.min(len)))
+            .collect();
+        if carets.is_empty() {
+            document.selections.clamp(len);
+        } else {
+            document.selections.set_all(carets);
         }
-        document.selections.clamp(document.text.len_chars());
         true
     }
 
@@ -384,9 +503,17 @@ impl IdeState {
     }
 
     pub fn start_search(&mut self, query: String) -> Result<u64, String> {
-        if query.is_empty() {
-            return Err("search query cannot be empty".into());
-        }
+        self.start_search_with(query, SearchOptions::default())
+    }
+
+    /// Find in Files with match-case, whole-word, regex and file-mask options.
+    pub fn start_search_with(
+        &mut self,
+        query: String,
+        options: SearchOptions,
+    ) -> Result<u64, String> {
+        // Validate before clearing the previous results.
+        jetthing_search::Matcher::new(&query, &options).map_err(|error| error.to_string())?;
         let project = self.project.as_ref().ok_or("no project is open")?;
         let files = self
             .files
@@ -401,8 +528,9 @@ impl IdeState {
         self.tool_windows.show(ToolWindow::Find);
         let job = self
             .search
-            .start(project.root().to_owned(), files, query)
-            .map_err(|error| format!("failed to start search: {error}"))?;
+            .start(project.root().to_owned(), files, query, &options)
+            .map_err(|error| error.to_string())?;
+        self.search_options = options;
         self.status = format!("Searching project (job {job})");
         Ok(job)
     }
@@ -440,6 +568,10 @@ impl IdeState {
         if let Some(git) = &self.git {
             self.status = changes_summary(git.changes.len(), &git.branch);
         }
+        self.invalidate_line_changes();
+        self.invalidate_git_log();
+        self.invalidate_annotations();
+        self.refresh_pending_operation();
         self.refresh_diff();
         Ok(())
     }
@@ -465,6 +597,8 @@ impl IdeState {
     /// Pumps the language servers and re-opens documents on restarted servers.
     pub fn poll_lsp(&mut self) {
         let restarted = self.lsp.poll();
+        self.poll_completion();
+        self.refresh_problems();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };
@@ -489,7 +623,6 @@ impl IdeState {
         let Some(project) = &self.project else {
             return;
         };
-        self.lsp.clear_completions();
         let absolute = project.root().join(relative_path);
         match self.lsp.sync_document(&absolute, text, version) {
             Ok(()) | Err(jetthing_lsp::LspError::ServerNotFound { .. }) => {}
@@ -516,27 +649,6 @@ impl IdeState {
             .map(|document| document.selections.primary().head)
     }
 
-    pub fn request_active_completion(&mut self) -> Result<u64, String> {
-        let index = self.active_document.ok_or("no active document")?;
-        let document = self
-            .documents
-            .get(index)
-            .ok_or("active document does not exist")?;
-        let (line, character) = document
-            .text
-            .lsp_position(document.selections.primary().head)
-            .map_err(|e| e.to_string())?;
-        let absolute = self
-            .project
-            .as_ref()
-            .ok_or("no project is open")?
-            .root()
-            .join(&document.path);
-        self.lsp
-            .request_completion(&absolute, line, character)
-            .map_err(|e| e.to_string())
-    }
-
     /// Runs an edit on the active document and refreshes analysis/LSP if it changed.
     pub fn edit_active<T>(
         &mut self,
@@ -552,7 +664,7 @@ impl IdeState {
         if document.text.revision() != revision {
             document.analysis = analyze(&document.path, &document.text.text());
             self.sync_active_lsp();
-            self.lsp.clear_completions();
+            self.close_completion();
         }
         Ok(result)
     }
@@ -572,7 +684,7 @@ impl IdeState {
             .selections
             .set_single(Selection::caret(position + text.chars().count()));
         self.sync_active_lsp();
-        self.lsp.clear_completions();
+        self.close_completion();
         Ok(())
     }
 
@@ -655,6 +767,10 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
     android_commands::register(&mut registry);
     android_devices::register(&mut registry);
+    android_deploy::register(&mut registry);
+    android_variants::register(&mut registry);
+    android_resources::register(&mut registry);
+    android_manifest::register(&mut registry);
     android_logcat::register(&mut registry);
     bazel_commands::register(&mut registry);
     build_commands::register(&mut registry);
@@ -664,15 +780,24 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     gradle_commands::register(&mut registry);
     gutter_commands::register(&mut registry);
     run_config_commands::register(&mut registry);
+    tabs::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
     diagnostic_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     settings_commands::register(&mut registry);
+    keymap_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
     vcs::register(&mut registry);
     plugin_host::register(&mut registry);
+    problems::register(&mut registry);
     toolchain_commands::register(&mut registry);
+    line_changes::register(&mut registry);
+    git_log::register(&mut registry);
+    branch_commands::register(&mut registry);
+    remote_commands::register(&mut registry);
+    annotations::register(&mut registry);
+    worktree_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(
@@ -764,12 +889,25 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Find in Files",
                 "Search",
                 Some("⇧⌘F"),
-                r#"{"query":"string"}"#,
+                r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?","fileMask":"string?"}"#,
             ),
             |state: &IdeState| state.project.is_some(),
             |state: &mut IdeState, params| {
                 let query = string_param(&params, "query")?;
-                let job = state.start_search(query).map_err(CommandError::Failed)?;
+                let flag = |name: &str| params.get(name).and_then(Value::as_bool).unwrap_or(false);
+                let options = SearchOptions {
+                    match_case: flag("matchCase"),
+                    whole_words: flag("wholeWords"),
+                    regex: flag("regex"),
+                    file_mask: params
+                        .get("fileMask")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                };
+                let job = state
+                    .start_search_with(query, options)
+                    .map_err(CommandError::InvalidParams)?;
                 Ok(json!({"job": job}))
             },
         ))
@@ -844,13 +982,27 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Open File",
                 "Editor",
                 None,
-                r#"{"path":"string"}"#,
+                r#"{"path":"string","line":"number?","column":"number?","length":"number?"}"#,
             ),
             |s: &IdeState| s.project.is_some(),
             |state: &mut IdeState, params| {
                 state
                     .open_file(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
+                // Navigation targets (Find in Files, diagnostics) land on the
+                // match and select it.
+                if params.get("line").is_some() {
+                    let line = usize_param(&params, "line")?;
+                    let column = params.get("column").and_then(Value::as_u64).unwrap_or(1);
+                    let length = params.get("length").and_then(Value::as_u64).unwrap_or(0);
+                    editor_commands::select_in_active(
+                        state,
+                        line,
+                        column as usize,
+                        length as usize,
+                    )
+                    .map_err(CommandError::Failed)?;
+                }
                 Ok(Value::Null)
             },
         ))
@@ -926,7 +1078,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Toggle Tool Window",
                 "Window",
                 None,
-                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat"}"#,
+                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat|buildVariants"}"#,
             ),
             |_| true,
             |state: &mut IdeState, params| {
@@ -1065,6 +1217,58 @@ mod tests {
         assert_eq!(super::changes_summary(2, "main"), "2 changes on main");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn linked_directories_expand_and_their_files_open() {
+        use super::*;
+        let base = std::env::temp_dir().join(format!("jetthing-core-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("out/pkg")).unwrap();
+        std::fs::write(base.join("out/pkg/App.class.txt"), "bytes").unwrap();
+        std::fs::create_dir_all(base.join("ws")).unwrap();
+        std::os::unix::fs::symlink(base.join("out"), base.join("ws/bazel-bin")).unwrap();
+        let registry = built_in_commands();
+        let mut state = IdeState::default();
+        state.open_project(&base.join("ws")).unwrap();
+        let visible = |state: &IdeState| -> Vec<String> {
+            state
+                .visible_files()
+                .iter()
+                .map(|e| e.relative_path.display().to_string())
+                .collect()
+        };
+        assert_eq!(visible(&state), ["bazel-bin"]);
+        for dir in ["bazel-bin", "bazel-bin/pkg"] {
+            registry
+                .execute("project.toggleDirectory", &mut state, json!({"path": dir}))
+                .unwrap();
+        }
+        assert_eq!(
+            visible(&state),
+            ["bazel-bin", "bazel-bin/pkg", "bazel-bin/pkg/App.class.txt"]
+        );
+        // Collapsing and expanding again does not duplicate children.
+        for _ in 0..2 {
+            registry
+                .execute(
+                    "project.toggleDirectory",
+                    &mut state,
+                    json!({"path": "bazel-bin"}),
+                )
+                .unwrap();
+        }
+        assert_eq!(visible(&state).len(), 3);
+        registry
+            .execute(
+                "editor.openFile",
+                &mut state,
+                json!({"path": "bazel-bin/pkg/App.class.txt"}),
+            )
+            .unwrap();
+        assert_eq!(state.documents[0].text.text(), "bytes");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
     use super::*;
     use std::{
         thread,
@@ -1183,6 +1387,61 @@ mod tests {
         state.poll_search();
         assert_eq!(state.search_results.len(), 1);
         assert_eq!(state.search_results[0].path, Path::new("sample.txt"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_search_honours_options_and_rejects_bad_regex() {
+        use super::*;
+        let root =
+            std::env::temp_dir().join(format!("jetthing-core-search-opts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("App.java"), "Greet greet\ngreeting\n").unwrap();
+        std::fs::write(root.join("notes.txt"), "greet\n").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        state.open_project(&root).unwrap();
+        let run = |state: &mut IdeState, params: Value| {
+            commands.execute("search.project", state, params).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while state.search.is_running() && Instant::now() < deadline {
+                state.poll_search();
+                thread::sleep(Duration::from_millis(5));
+            }
+            state.poll_search();
+            state
+                .search_results
+                .iter()
+                .map(|result| (result.path.display().to_string(), result.line))
+                .collect::<Vec<_>>()
+        };
+        let hits = run(
+            &mut state,
+            json!({"query": "greet", "matchCase": true, "wholeWords": true, "fileMask": "*.java"}),
+        );
+        assert_eq!(hits, [("App.java".to_owned(), 1)]);
+        assert_eq!(state.search_results[0].highlights, vec![6..11]);
+        assert!(state.search_options.match_case && state.search_options.whole_words);
+        let hits = run(&mut state, json!({"query": "^greet", "regex": true}));
+        assert_eq!(hits.len(), 3, "{hits:?}");
+        let previous = state.search_results.len();
+        let error = commands
+            .execute(
+                "search.project",
+                &mut state,
+                json!({"query": "(", "regex": true}),
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("invalid regular expression"),
+            "{error}"
+        );
+        assert_eq!(
+            state.search_results.len(),
+            previous,
+            "bad input keeps old results"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -41,7 +41,8 @@
 - [x] Release packaging (`cargo xtask dist`) and CI/release workflows
 - [x] Typed settings model and Settings dialog with search, Apply/Reset and Advanced Settings
 - [x] Theme engine from spec data with live Islands Dark / Islands Light switching
-- [ ] Keymap switching and bundled icon set beyond the core actions
+- [x] Keymap engine loading all bundled keymaps, keymap-driven shortcuts and Keymap settings page
+- [ ] Bundled icon set beyond the core actions
 - [x] Native installers: MSI, DMG (`Jetthing.app`) and `.deb`, smoke-tested in CI
 - [ ] Code signing and notarization with project certificates (pipeline supports it)
 - [x] Editor actions: duplicate/delete/comment/move lines, pairing, smart Enter, word moves
@@ -51,6 +52,7 @@
 - [x] Check for Updates with verified self-update from GitHub releases
 - [x] `--version` and Help → About with embedded build info (commit, date, target)
 - [x] Log file per OS, crash reports with backtrace, crash notice on next start
+- [x] Release notes from conventional commits (`cargo xtask changelog`)
 - [x] Versioned release pipeline (0.0.2) publishing on every version bump
 
 ## M2 — language intelligence
@@ -65,7 +67,9 @@ Rust via rust-analyzer.
 - [x] Rust document open/change synchronization and published diagnostics
 - [x] Completion request transport and result modeling
 - [x] Completion popup, UTF-16 caret integration, and transactional insertion
-- [ ] Completion filtering/snippets, hover, navigation, formatting, and code actions
+- [x] IntelliJ-style completion popup: auto-popup, camel-hump filtering/ranking, Enter/Tab
+- [x] Completion snippets with tab stops, mirrors and auto-import edits
+- [ ] Completion documentation, hover, signature help, navigation, formatting, code actions
 
 ## M3 — professional workflows
 
@@ -92,7 +96,8 @@ Use installed SDK, ADB, emulator, and Gradle; do not depend on Android Studio.
 - [ ] Catalog: JDK (foojay Disco) + jdtls, rust-analyzer/rustup, Android cmdline-tools/sdkmanager,
       kotlin-lsp, bazelisk/starpls, Node/typescript-language-server, pyright/ruff, gopls/delve,
       clangd, lemminx, taplo, yaml-language-server
-- [ ] LSP "server not found" → Set up through the resolver; build/run, Android, Bazel use it
+- [x] LSP "server not found" → Set up through the resolver (jdtls on a managed JDK, rust-analyzer, taplo)
+- [ ] Build/run, Android, Bazel and debuggers resolve their tools through `Toolchains`
 
 ## Next task
 

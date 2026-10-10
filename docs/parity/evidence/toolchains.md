@@ -79,11 +79,52 @@ rust-analyzer: located PATH (/root/.cargo/bin/rust-analyzer)
 blocked by the network policy, so no live rust-analyzer/bazelisk/taplo install is recorded;
 their release assets themselves download fine.
 
+## Slice 4 — LSP integration and the Java end-to-end case
+
+`jetthing-lsp` gained a minimal hook: `ProgramResolver` (`resolve(spec)` →
+`ResolvedProgram { program, args, env }`, `setup_component(spec)`), consulted after an
+`lsp.toml` command and before `PATH` candidates. `jetthing-core` implements it over
+`Toolchains` (`toolchain_lsp.rs`): managed `rust-analyzer`/`taplo` start from their install;
+managed jdtls runs the Equinox launcher directly on the resolved JDK (its `bin/jdtls` needs
+Python). Missing-server notices carry `setup`, the UI shows **Set up**, which dispatches
+`toolchain.setup` (component + missing requirements); when the setup finishes, missing
+language servers restart.
+
+### GUI walkthrough (Linux, Xvfb, 2026-10-10)
+
+"Clean machine": `PATH` without `java`/`javac`/`jdtls`, `JAVA_HOME` unset, empty
+`JETTHING_TOOLCHAINS_DIR`. Java Gradle sample (`settings.gradle`, `build.gradle` with the
+`java` plugin, `src/main/java/demo/App.java`).
+
+1. Opening `App.java` raises *Java language server not found* with **Set up**
+   (`toolchains/java-01-missing-server-setup.png`).
+2. Clicking **Set up** (xdotool) starts `jdtls` and its requirement `jdk`; the status bar
+   shows `Downloading jdtls 1.61.0… (+1)` with a progress bar
+   (`toolchains/java-02-setup-progress.png`). `toolchain.jobs` at the same moment:
+   `Downloading Eclipse JDT Language Server 1.61.0… 62%`, `Downloading JDK 25.0.4.1+1… 98%`
+   (unpinned projects get the newest LTS JDK).
+3. When both finish, jdtls restarts from the managed install on the managed JDK; typing
+   `app.gr` + Ctrl+Space shows `greeting  App.greeting(String name) : String`
+   (`toolchains/java-03-completion.png`). `toolchain.list` afterwards: `jdk` managed
+   `…/jdk/25.0.4.1+1/bin/java`, `jdtls` managed `…/jdtls/1.61.0/bin/jdtls`.
+
+### Headless end-to-end test
+
+`cargo test -p jetthing-core --test toolchain_e2e -- --ignored --nocapture` repeats the flow
+through commands with an empty `PATH`:
+
+```text
+setup in 12.6s: [{"component":"jdk","version":"25.0.4.1+1",...}]   # jdtls reused from JETTHING_E2E_TOOLCHAINS
+completion after 9.9s: ["clone", "equals", "finalize", "getClass", "greeting", ...]
+servers: [("jdtls", "Ready")]
+test result: ok. 1 passed
+```
+
+(A first run without a cached root installed both: `setup in 14.1s` for jdtls 1.61.0 + JDK.)
+
 ## Pending (next slices)
 
-- More catalog entries (rustup toolchains, Android SDK, kotlin-lsp, Node, Python, Go, ...)
-  and end-to-end runs on a clean container: open a Java Gradle project without a JDK →
-  Set up → completion (needs the LSP resolver hook so jdtls starts from the managed install).
+- More catalog entries (rustup toolchains, Android SDK, kotlin-lsp, Node, Python, Go, ...);
+  Rust (rust-analyzer) and Android SDK end-to-end runs.
 - "Missing toolchain" editor notification and Settings > Languages & Frameworks > Toolchains.
-- Status-bar progress screenshot (the widget only appears while an install runs).
 - Probing versions of `PATH` binaries; signature (GPG/minisign) verification.

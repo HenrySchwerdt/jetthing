@@ -30,6 +30,8 @@ pub struct SettingsDialog {
     forward: Vec<String>,
     error: Option<String>,
     focus_search: bool,
+    keymap_page: crate::settings_keymap::KeymapPage,
+    plugins_page: crate::settings_plugins::PluginsPage,
 }
 
 enum Outcome {
@@ -50,6 +52,8 @@ impl SettingsDialog {
             forward: Vec::new(),
             error: None,
             focus_search: true,
+            keymap_page: Default::default(),
+            plugins_page: Default::default(),
         };
         dialog.select(registry, page);
         dialog.back.clear();
@@ -102,12 +106,25 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     let Some(mut dialog) = app.settings_dialog.take() else {
         return;
     };
+    let mut requests = Vec::new();
     let outcome = draw(
         &mut dialog,
-        &app.state.settings.registry,
-        &app.state.settings.store,
+        PageContext {
+            registry: &app.state.settings.registry,
+            store: &app.state.settings.store,
+            keymap: &app.state.keymap,
+            plugins: &app.state.plugin_host.registry,
+            project: app.state.project.as_ref().map(|p| p.root()),
+            requests: &mut requests,
+        },
         ctx,
     );
+    // Pages that edit through commands (Keymap) queue them while drawing.
+    for (id, params) in requests {
+        if let Err(error) = app.commands.execute(&id, &mut app.state, params) {
+            dialog.error = Some(error.to_string());
+        }
+    }
     let apply = matches!(outcome, Outcome::Apply | Outcome::Ok) && dialog.draft.is_modified();
     if apply {
         let changes: serde_json::Map<_, _> = dialog
@@ -138,14 +155,30 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     }
 }
 
-fn draw(
-    dialog: &mut SettingsDialog,
-    registry: &SettingsRegistry,
-    store: &SettingsStore,
-    ctx: &egui::Context,
-) -> Outcome {
+/// What a page may read and the commands it may queue.
+struct PageContext<'a> {
+    registry: &'a SettingsRegistry,
+    store: &'a SettingsStore,
+    keymap: &'a jetthing_core::keymap_commands::KeymapState,
+    plugins: &'a jetthing_plugins::PluginRegistry,
+    project: Option<&'a std::path::Path>,
+    requests: &'a mut Vec<(String, serde_json::Value)>,
+}
+
+fn draw(dialog: &mut SettingsDialog, context: PageContext<'_>, ctx: &egui::Context) -> Outcome {
+    let PageContext {
+        registry,
+        store,
+        keymap,
+        plugins,
+        project,
+        requests,
+    } = context;
     let mut outcome = Outcome::Keep;
-    if ctx.input(|input| input.key_pressed(egui::Key::Escape)) && !egui::Popup::is_any_open(ctx) {
+    if ctx.input(|input| input.key_pressed(egui::Key::Escape))
+        && !egui::Popup::is_any_open(ctx)
+        && !dialog.keymap_page.capturing()
+    {
         return Outcome::Cancel;
     }
     let screen = ctx.content_rect();
@@ -227,7 +260,20 @@ fn draw(
                     .max_rect(page_rect.shrink2(vec2(18.0, 10.0)))
                     .layout(egui::Layout::top_down(egui::Align::Min)),
             );
-            page(&mut page_ui, dialog, registry, store, &search, searching);
+            page(
+                &mut page_ui,
+                dialog,
+                PageContext {
+                    registry,
+                    store,
+                    keymap,
+                    plugins,
+                    project,
+                    requests,
+                },
+                &search,
+                searching,
+            );
 
             let footer = Rect::from_min_max(
                 pos2(rect.left() + 16.0, body.bottom()),
@@ -449,11 +495,18 @@ fn toggle(set: &mut BTreeSet<String>, id: &str) {
 fn page(
     ui: &mut egui::Ui,
     dialog: &mut SettingsDialog,
-    registry: &SettingsRegistry,
-    store: &SettingsStore,
+    context: PageContext<'_>,
     search: &SearchResult,
     searching: bool,
 ) {
+    let PageContext {
+        registry,
+        store,
+        keymap,
+        plugins,
+        project,
+        requests,
+    } = context;
     let page_id = dialog.page.clone();
     // Header: breadcrumbs, Reset link, back/forward.
     ui.horizontal(|ui| {
@@ -497,6 +550,14 @@ fn page(
         });
     });
     ui.add_space(6.0);
+    if page_id == "preferences.keymap" {
+        keymap_page(ui, dialog, registry, store, keymap, requests);
+        return;
+    }
+    if page_id == "preferences.pluginManager" {
+        crate::settings_plugins::show(ui, &mut dialog.plugins_page, plugins, project, requests);
+        return;
+    }
     let settings = registry.page_settings(&page_id);
     egui::ScrollArea::vertical()
         .id_salt(("settings_page", &page_id))
@@ -521,6 +582,28 @@ fn page(
             }
             ui.add_space(12.0);
         });
+}
+
+/// Keymap: the selector is the generic `keymap.active` row; the rest is custom.
+fn keymap_page(
+    ui: &mut egui::Ui,
+    dialog: &mut SettingsDialog,
+    registry: &SettingsRegistry,
+    store: &SettingsStore,
+    keymap: &jetthing_core::keymap_commands::KeymapState,
+    requests: &mut Vec<(String, serde_json::Value)>,
+) {
+    use jetthing_settings::ids;
+    if let Some(def) = registry.setting(ids::KEYMAP) {
+        setting_row(ui, dialog, registry, store, def, false, false);
+    }
+    let selected = dialog
+        .draft
+        .value(registry, store, ids::KEYMAP)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| keymap.keymap.id.clone());
+    crate::settings_keymap::show(ui, &mut dialog.keymap_page, keymap, &selected, requests);
 }
 
 fn empty_page(

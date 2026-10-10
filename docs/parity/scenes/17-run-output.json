@@ -1,0 +1,15 @@
+{
+  "id": "17",
+  "title": "Run output (cargo run)",
+  "reference": "reference/intellij-community/java-gradle/17-run-output.png",
+  "fixture": "rust-cargo",
+  "open": ["src/main.rs"],
+  "steps": [
+    {"op": "wait", "until": "idle"},
+    {"op": "key", "chord": "Shift+F10"},
+    {"op": "assert", "pointer": "/toolWindows/bottom", "equals": "build"},
+    {"op": "wait", "until": "idle", "timeoutMs": 120000},
+    {"op": "assert", "pointer": "/status", "contains": "finished successfully"},
+    {"op": "screenshot", "name": "17-run-output.png"}
+  ]
+}

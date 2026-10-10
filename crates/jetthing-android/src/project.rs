@@ -75,6 +75,8 @@ pub struct AndroidModule {
     /// `src/main/AndroidManifest.xml` relative to the project root, if present.
     pub manifest: Option<PathBuf>,
     pub launcher: Option<LauncherActivity>,
+    /// Build types × product flavors declared in the build script.
+    pub variants: crate::variants::VariantModel,
 }
 
 impl AndroidModule {
@@ -134,6 +136,7 @@ impl AndroidProject {
                 target_sdk: dsl_value(&script, &["targetSdk", "targetSdkVersion"]),
                 manifest: manifest_abs.is_file().then(|| manifest_rel.clone()),
                 launcher: None,
+                variants: crate::variants::VariantModel::parse(&script),
                 gradle_path,
                 dir,
                 kind,
@@ -335,7 +338,8 @@ fn applied_android_plugin(script: &str, catalog: &Catalog) -> Option<ModuleKind>
 /// Value of the first `key = value` / `key value` / `key(value)` DSL assignment
 /// that is a string or integer literal.
 fn dsl_value(script: &str, keys: &[&str]) -> Option<String> {
-    for line in script.lines() {
+    // Statements end at newlines, braces and semicolons (`android { namespace = "x" }`).
+    for line in script.split(['\n', '{', '}', ';']) {
         let line = line.trim();
         for key in keys {
             let Some(rest) = line.strip_prefix(key) else {
@@ -717,6 +721,16 @@ android {
         );
         assert_eq!(project.problems.len(), 1, "{:?}", project.problems);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn one_line_blocks() {
+        let script = "android { namespace = \"com.example.app\"; defaultConfig { minSdk = 26 } }";
+        assert_eq!(
+            dsl_value(script, &["namespace"]).as_deref(),
+            Some("com.example.app")
+        );
+        assert_eq!(dsl_value(script, &["minSdk"]).as_deref(), Some("26"));
     }
 
     #[test]

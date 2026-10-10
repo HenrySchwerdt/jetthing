@@ -18,6 +18,7 @@ pub struct Workspace {
     pub right_tool_window: Option<String>,
     pub selected_run_configuration: Option<String>,
     pub recent_files: Vec<PathBuf>,
+    pub pinned_files: Vec<PathBuf>,
 }
 
 pub const WORKSPACE_FILE: &str = ".jetthing/workspace.json";
@@ -108,6 +109,16 @@ impl IdeState {
 
     /// Commits the given project-relative paths with `message`.
     pub fn commit_paths(&mut self, message: &str, paths: &[PathBuf]) -> Result<String, String> {
+        self.commit_paths_with(message, paths, false)
+    }
+
+    /// Commits project-relative `paths`, or amends the last commit.
+    pub fn commit_paths_with(
+        &mut self,
+        message: &str,
+        paths: &[PathBuf],
+        amend: bool,
+    ) -> Result<String, String> {
         let project = self.project.as_ref().ok_or("no project is open")?;
         let git = self
             .git
@@ -130,11 +141,16 @@ impl IdeState {
             .git
             .as_ref()
             .ok_or("the project is not a Git repository")?
-            .commit(message, &repo_paths)
+            .commit_with(message, &repo_paths, amend)
             .map_err(|error| error.to_string())?;
         self.refresh_git()?;
         self.status = format!(
-            "Committed {} file{} ({hash})",
+            "{} {} file{} ({hash})",
+            if amend {
+                "Amended commit with"
+            } else {
+                "Committed"
+            },
             paths.len(),
             if paths.len() == 1 { "" } else { "s" }
         );
@@ -191,6 +207,7 @@ impl IdeState {
                 .selected()
                 .filter(|config| !config.temporary)
                 .map(|config| config.name.clone()),
+            pinned_files: self.tabs.pinned.iter().cloned().collect(),
         }
     }
 
@@ -233,6 +250,11 @@ impl IdeState {
         for path in keep(&workspace.open_files) {
             let _ = self.open_file(&path);
         }
+        self.tabs.pinned = keep(&workspace.pinned_files)
+            .into_iter()
+            .filter(|path| self.documents.iter().any(|d| &d.path == path))
+            .collect();
+        self.sort_pinned_first();
         if let Some(active) = &workspace.active_file
             && let Some(index) = self.documents.iter().position(|d| &d.path == active)
         {
@@ -344,7 +366,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 "Commit",
                 "Git",
                 Some("⌘K"),
-                r#"{"message":"string","paths":["string"]}"#,
+                r#"{"message":"string","paths":["string"],"amend":"bool?"}"#,
             ),
             |state: &IdeState| state.git.is_some(),
             |state: &mut IdeState, params| {
@@ -353,8 +375,12 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                     .into_iter()
                     .map(PathBuf::from)
                     .collect();
+                let amend = params
+                    .get("amend")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 let hash = state
-                    .commit_paths(&message, &paths)
+                    .commit_paths_with(&message, &paths, amend)
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"commit": hash}))
             },

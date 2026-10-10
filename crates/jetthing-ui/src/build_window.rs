@@ -67,7 +67,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         if let Some(plan) = &plan {
             ui.label(
                 RichText::new(&plan.name)
-                    .color(*theme::TEXT_SECONDARY)
+                    .color(theme::TEXT_SECONDARY)
                     .size(theme::UI_FONT_SIZE),
             );
         }
@@ -78,7 +78,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     let Some(plan) = plan else {
         ui.add_space(16.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("Nothing has run yet").color(*theme::TEXT_SECONDARY));
+            ui.label(RichText::new("Nothing has run yet").color(theme::TEXT_SECONDARY));
             let hint = match &app.state.detected_build {
                 Some(build) => format!(
                     "{} project · Build Project or Run from the toolbar",
@@ -90,7 +90,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                 }
                 None => "Open a project to build it".into(),
             };
-            ui.label(RichText::new(hint).color(*theme::TEXT_INFO));
+            ui.label(RichText::new(hint).color(theme::TEXT_INFO));
         });
         return;
     };
@@ -112,7 +112,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     ui.allocate_rect(available, egui::Sense::hover());
     ui.painter().line_segment(
         [tree_rect.right_top(), tree_rect.right_bottom()],
-        egui::Stroke::new(1.0_f32, *theme::TOOLBAR_SEPARATOR),
+        egui::Stroke::new(1.0_f32, theme::TOOLBAR_SEPARATOR),
     );
 
     let mut toolbar = ui.new_child(
@@ -130,9 +130,9 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         app.dispatch("run.rerun", Value::Null);
     }
     let stop_color = if running {
-        *theme::STOP_RED
+        theme::STOP_RED
     } else {
-        *theme::TEXT_DISABLED
+        theme::TEXT_DISABLED
     };
     if toolbar
         .add_enabled_ui(running, |ui| {
@@ -229,7 +229,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                         );
                         ui.put(
                             spinner,
-                            egui::Spinner::new().size(12.0).color(*theme::ACCENT),
+                            egui::Spinner::new().size(12.0).color(theme::ACCENT),
                         );
                     }
                 }
@@ -248,7 +248,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     x,
                     &verb,
                     egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    *theme::TEXT,
+                    theme::TEXT,
                 );
                 if let Some(elapsed) = app.state.runner.elapsed() {
                     row_text(
@@ -257,7 +257,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                         x + 8.0,
                         &format_duration(elapsed),
                         egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                        *theme::TEXT_INFO,
+                        theme::TEXT_INFO,
                     );
                 }
                 if response.clicked() {
@@ -489,7 +489,7 @@ fn message_row(
         x,
         text,
         egui::FontId::proportional(theme::UI_FONT_SIZE),
-        *theme::TEXT,
+        theme::TEXT,
     );
     if let Some(location) = location {
         row_text(
@@ -498,10 +498,19 @@ fn message_row(
             x + 8.0,
             location,
             egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-            *theme::TEXT_INFO,
+            theme::TEXT_INFO,
         );
     }
     response.on_hover_text(text)
+}
+
+/// Height for the console viewport that holds whole rows only, so a view
+/// stuck to the bottom never shows a half-cut first line under the header.
+pub fn whole_rows_height(available: f32, row_height: f32) -> f32 {
+    if row_height <= 0.0 {
+        return available.max(0.0);
+    }
+    (available / row_height).floor().max(1.0) * row_height
 }
 
 fn console_view(app: &IdeApp, ui: &mut egui::Ui, command_line: &str, reveal: Option<usize>) {
@@ -517,7 +526,8 @@ fn console_view(app: &IdeApp, ui: &mut egui::Ui, command_line: &str, reveal: Opt
     let total = 1 + lines.len() + partial.len();
     let mut area = egui::ScrollArea::both()
         .id_salt("build_console")
-        .auto_shrink([false, false]);
+        .auto_shrink([false, false])
+        .max_height(whole_rows_height(ui.available_height(), CONSOLE_ROW));
     if let Some(line) = reveal {
         let row = line.saturating_sub(dropped) + 1;
         area = area.vertical_scroll_offset((row as f32 * CONSOLE_ROW - 40.0).max(0.0));
@@ -527,7 +537,7 @@ fn console_view(app: &IdeApp, ui: &mut egui::Ui, command_line: &str, reveal: Opt
     let font = egui::FontId::monospace(theme::UI_FONT_SIZE - 0.5);
     if let TaskState::Failed(reason) = app.state.runner.state() {
         // Nothing ran; show the complete, wrapped reason instead of an empty console.
-        ui.label(RichText::new(reason).font(font).color(*theme::ERROR));
+        ui.label(RichText::new(reason).font(font).color(theme::ERROR));
         return;
     }
     area.show_rows(ui, CONSOLE_ROW, total, |ui, range| {
@@ -619,6 +629,13 @@ mod tests {
         assert_eq!(stderr_color("error[E0308]: mismatched"), *theme::ERROR);
         assert_eq!(stderr_color("   Compiling foo"), *theme::editor::TEXT);
         assert_eq!(stdout_color("BUILD SUCCESSFUL in 4s"), *theme::SUCCESS);
+    }
+
+    #[test]
+    fn viewport_holds_whole_rows() {
+        assert_eq!(whole_rows_height(250.0, 18.0), 234.0);
+        assert_eq!(whole_rows_height(10.0, 18.0), 18.0);
+        assert_eq!(whole_rows_height(100.0, 0.0), 100.0);
     }
 
     #[test]

@@ -51,6 +51,7 @@ pub fn left(app: &mut IdeApp, ctx: &egui::Context) {
                 }
                 ToolWindow::Project => project_tree(app, ui),
                 ToolWindow::Commit => commit(app, ui),
+                ToolWindow::BuildVariants => crate::build_variants_ui::show(app, ui),
                 _ => {}
             }
         });
@@ -73,6 +74,7 @@ pub fn bottom(app: &mut IdeApp, ctx: &egui::Context) {
             ToolWindow::Terminal => terminal(app, ui),
             ToolWindow::Logcat => crate::logcat_ui::show(app, ui),
             ToolWindow::Debug => crate::debug_window::show(app, ui),
+            ToolWindow::Git => crate::git_log_ui::show(app, ui),
             _ => {}
         });
 }
@@ -123,6 +125,8 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     let root_name = IdeApp::file_name(project.root());
     let root_path = project.root().display().to_string();
     let colors = git_colors(app);
+    app.state.refresh_problems();
+    let root_has_errors = app.state.problems.counts().errors > 0;
     let entries: Vec<(PathBuf, bool)> = app
         .state
         .visible_files()
@@ -132,119 +136,165 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     let mut toggle = None;
     let mut open = None;
     let mut dialog = None;
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show_rows(ui, widgets::ROW_HEIGHT, entries.len() + 1, |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for row in range {
-                if row == 0 {
-                    let (rect, response) = list_row(ui, false);
-                    tree_context_menu(&response, Path::new(""), true, &mut dialog, &mut open);
-                    let mut x = rect.left() + 12.0 + 16.0;
-                    icons::paint(
-                        ui.painter(),
-                        Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-                        Icon::Folder,
-                        *icons::ICON,
-                    );
-                    x += 22.0;
-                    x = row_text(
-                        ui,
-                        rect,
-                        x,
-                        &root_name,
-                        theme::semibold(theme::UI_FONT_SIZE),
-                        *theme::TEXT_BRIGHT,
-                    );
-                    row_text(
-                        ui,
-                        rect,
-                        x + 8.0,
-                        &root_path,
-                        egui::FontId::proportional(theme::UI_FONT_SIZE),
-                        *theme::TEXT_INFO,
-                    );
-                    continue;
-                }
-                let (path, is_dir) = &entries[row - 1];
-                let depth = path.components().count();
-                let selected = app.tree_selection.as_deref() == Some(path.as_path());
-                let (rect, response) = list_row(ui, selected);
-                let mut x = rect.left() + 12.0 + depth as f32 * TREE_INDENT;
-                let chevron =
-                    Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0));
-                if *is_dir {
-                    let expanded = app.state.expanded_dirs.contains(path);
-                    icons::paint(
-                        ui.painter(),
-                        chevron,
-                        if expanded {
-                            Icon::ChevronDown
-                        } else {
-                            Icon::ChevronRight
-                        },
-                        *theme::TEXT_SECONDARY,
-                    );
-                }
-                x += 16.0;
-                let name = IdeApp::file_name(path);
-                let icon = if *is_dir {
-                    Icon::Folder
-                } else {
-                    Icon::for_file(&name)
-                };
+    let mut context_choice = None;
+    // Like "Always Select Opened File": the selection follows the active
+    // editor and the row scrolls into view when it is off-screen.
+    let active = app
+        .state
+        .active_document
+        .and_then(|index| app.state.documents.get(index))
+        .map(|document| document.path.clone());
+    let mut scroll_target = None;
+    if active.is_some() && active != app.tree_revealed {
+        app.tree_revealed = active.clone();
+        if let Some(path) = active
+            && let Some(row) = entries.iter().position(|(entry, _)| *entry == path)
+        {
+            app.tree_selection = Some(path);
+            let id = ui.make_persistent_id("project_tree");
+            let offset = egui::scroll_area::State::load(ui.ctx(), id)
+                .map(|state| state.offset.y)
+                .unwrap_or(0.0);
+            scroll_target =
+                reveal_offset(row + 1, widgets::ROW_HEIGHT, offset, ui.available_height());
+        }
+    }
+    let mut area = egui::ScrollArea::vertical()
+        .id_salt("project_tree")
+        .auto_shrink([false, false]);
+    if let Some(target) = scroll_target {
+        area = area.vertical_scroll_offset(target);
+    }
+    area.show_rows(ui, widgets::ROW_HEIGHT, entries.len() + 1, |ui, range| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for row in range {
+            if row == 0 {
+                let (rect, response) = list_row(ui, false);
+                tree_context_menu(app, &response, Path::new(""), true, &mut context_choice);
+                let mut x = rect.left() + 12.0 + 16.0;
                 icons::paint(
                     ui.painter(),
                     Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-                    icon,
-                    *icons::ICON,
+                    Icon::Folder,
+                    icons::ICON,
                 );
                 x += 22.0;
-                let kind = colors.get(path).copied().or_else(|| {
-                    is_dir
-                        .then(|| {
-                            colors
-                                .keys()
-                                .any(|changed| changed.starts_with(path))
-                                .then_some(ChangeKind::Modified)
-                        })
-                        .flatten()
-                });
-                let (_, elided) = widgets::row_text_elided(
+                let name_start = x;
+                x = row_text(
                     ui,
                     rect,
                     x,
-                    &name,
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    change_color(kind),
+                    &root_name,
+                    theme::semibold(theme::UI_FONT_SIZE),
+                    *theme::TEXT_BRIGHT,
                 );
-                let response = if elided {
-                    response.on_hover_text(&name)
-                } else {
-                    response
-                };
-                if response.secondary_clicked() {
-                    app.tree_selection = Some(path.clone());
+                if root_has_errors {
+                    crate::problems_ui::squiggle(
+                        ui.painter(),
+                        name_start,
+                        x,
+                        rect.center().y + 8.0,
+                        *theme::editor::ERROR_EFFECT,
+                    );
                 }
-                tree_context_menu(&response, path, *is_dir, &mut dialog, &mut open);
-                if response.clicked() {
-                    app.tree_selection = Some(path.clone());
-                    let on_chevron = response
-                        .interact_pointer_pos()
-                        .is_some_and(|pos| chevron.expand(4.0).contains(pos));
-                    if *is_dir && on_chevron {
-                        toggle = Some(path.clone());
-                    }
-                }
-                if response.double_clicked() {
-                    if *is_dir {
-                        toggle = Some(path.clone());
+                row_text(
+                    ui,
+                    rect,
+                    x + 8.0,
+                    &root_path,
+                    egui::FontId::proportional(theme::UI_FONT_SIZE),
+                    theme::TEXT_INFO,
+                );
+                continue;
+            }
+            let (path, is_dir) = &entries[row - 1];
+            let depth = path.components().count();
+            let selected = app.tree_selection.as_deref() == Some(path.as_path());
+            let (rect, response) = list_row(ui, selected);
+            let mut x = rect.left() + 12.0 + depth as f32 * TREE_INDENT;
+            let chevron =
+                Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0));
+            if *is_dir {
+                let expanded = app.state.expanded_dirs.contains(path);
+                icons::paint(
+                    ui.painter(),
+                    chevron,
+                    if expanded {
+                        Icon::ChevronDown
                     } else {
-                        open = Some(path.clone());
-                    }
+                        Icon::ChevronRight
+                    },
+                    theme::TEXT_SECONDARY,
+                );
+            }
+            x += 16.0;
+            let name = IdeApp::file_name(path);
+            let icon = if *is_dir {
+                Icon::Folder
+            } else {
+                Icon::for_file(&name)
+            };
+            icons::paint(
+                ui.painter(),
+                Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
+                icon,
+                icons::ICON,
+            );
+            x += 22.0;
+            let kind = colors.get(path).copied().or_else(|| {
+                is_dir
+                    .then(|| {
+                        colors
+                            .keys()
+                            .any(|changed| changed.starts_with(path))
+                            .then_some(ChangeKind::Modified)
+                    })
+                    .flatten()
+            });
+            let (end, elided) = widgets::row_text_elided(
+                ui,
+                rect,
+                x,
+                &name,
+                egui::FontId::proportional(theme::UI_FONT_SIZE),
+                change_color(kind),
+            );
+            if app.state.problems.has_errors(path) {
+                crate::problems_ui::squiggle(
+                    ui.painter(),
+                    x,
+                    end,
+                    rect.center().y + 8.0,
+                    *theme::editor::ERROR_EFFECT,
+                );
+            }
+            let response = if elided {
+                response.on_hover_text(&name)
+            } else {
+                response
+            };
+            if response.secondary_clicked() {
+                app.tree_selection = Some(path.clone());
+            }
+            tree_context_menu(app, &response, path, *is_dir, &mut context_choice);
+            if response.clicked() {
+                app.tree_selection = Some(path.clone());
+                let on_chevron = response
+                    .interact_pointer_pos()
+                    .is_some_and(|pos| chevron.expand(4.0).contains(pos));
+                if *is_dir && on_chevron {
+                    toggle = Some(path.clone());
                 }
             }
-        });
+            if response.double_clicked() {
+                if *is_dir {
+                    toggle = Some(path.clone());
+                } else {
+                    open = Some(path.clone());
+                }
+            }
+        }
+    });
     if ui.ui_contains_pointer()
         && ui.memory(|m| m.focused().is_none())
         && ui.input(|input| input.key_pressed(egui::Key::Enter))
@@ -303,6 +353,20 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     if let Some(path) = open {
         app.dispatch("editor.openFile", json!({"path": path}));
     }
+    if let Some((action, target)) = context_choice {
+        let ctx = ui.ctx().clone();
+        app.run_context_action(&action, &target, &ctx);
+    }
+}
+
+/// Scroll offset that centres `row`, or `None` when it is already fully visible.
+fn reveal_offset(row: usize, row_height: f32, offset: f32, viewport: f32) -> Option<f32> {
+    let top = row as f32 * row_height;
+    let bottom = top + row_height;
+    if top >= offset && bottom <= offset + viewport {
+        return None;
+    }
+    Some((top + row_height / 2.0 - viewport / 2.0).max(0.0))
 }
 
 fn new_entry_parent(path: &Path, is_dir: bool) -> PathBuf {
@@ -315,53 +379,22 @@ fn new_entry_parent(path: &Path, is_dir: bool) -> PathBuf {
 
 /// Right-click menu of a Project tree node.
 fn tree_context_menu(
+    app: &IdeApp,
     response: &egui::Response,
     path: &Path,
     is_dir: bool,
-    dialog: &mut Option<Dialog>,
-    open: &mut Option<PathBuf>,
+    chosen: &mut Option<(String, crate::context_menus::Target)>,
 ) {
-    let is_root = path.as_os_str().is_empty();
     response.context_menu(|ui| {
-        ui.set_min_width(220.0);
-        ui.menu_button("New", |ui| {
-            ui.set_min_width(160.0);
-            for (label, directory) in [("File", false), ("Directory", true)] {
-                if ui.button(label).clicked() {
-                    *dialog = Some(Dialog::NewEntry {
-                        parent: new_entry_parent(path, is_dir),
-                        directory,
-                        name: String::new(),
-                    });
-                    ui.close();
-                }
-            }
-        });
-        if !is_dir && ui.button("Open").clicked() {
-            *open = Some(path.to_owned());
-            ui.close();
-        }
-        if !is_root {
-            ui.separator();
-            if ui
-                .add(egui::Button::new("Rename…").shortcut_text(crate::keys::display("⇧F6")))
-                .clicked()
-            {
-                *dialog = Some(Dialog::Rename {
-                    path: path.to_owned(),
-                    name: IdeApp::file_name(path),
-                });
-                ui.close();
-            }
-            if ui
-                .add(egui::Button::new("Delete…").shortcut_text("Delete"))
-                .clicked()
-            {
-                *dialog = Some(Dialog::Delete {
-                    path: path.to_owned(),
-                });
-                ui.close();
-            }
+        let target = crate::context_menus::Target::Tree {
+            path: path.to_owned(),
+            is_dir,
+        };
+        let model = app.context_menu_model(&target);
+        let mut action = None;
+        crate::context_menus::show(ui, &model, &mut action);
+        if let Some(action) = action {
+            *chosen = Some((action, target));
         }
     });
 }
@@ -452,7 +485,37 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
         .collect();
     let mut open = None;
     let mut toggles: Vec<(PathBuf, bool)> = Vec::new();
-    let form_height = 132.0;
+    let selection_id = egui::Id::new("commit_selected_row");
+    let mut selected_row: Option<PathBuf> = ui.data(|data| data.get_temp(selection_id));
+    // Toolbar: rollback checked files, diff of the selected row.
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let rollback = icons::button(
+            ui,
+            Icon::Rollback,
+            &format!("Rollback… ({})", crate::keys::display("⌥⌘Z")),
+        );
+        if rollback.clicked() && !selected.is_empty() {
+            app.git_dialog = Some(crate::branches_popup::GitDialog::Rollback {
+                paths: selected
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect(),
+            });
+        }
+        let diff = icons::button(
+            ui,
+            Icon::Diff,
+            &format!("Show Diff ({})", crate::keys::display("⌘D")),
+        );
+        if diff.clicked()
+            && let Some(path) = selected_row.clone().or_else(|| selected.first().cloned())
+        {
+            open = Some(path);
+        }
+    });
+    let form_height = 160.0;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .max_height((ui.available_height() - form_height).max(60.0))
@@ -506,7 +569,10 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     toggles.extend(files.iter().map(|(p, _)| (p.clone(), value)));
                 }
                 for (path, kind) in files {
-                    let (rect, response) = list_row(ui, false);
+                    let (rect, response) = list_row(ui, selected_row.as_ref() == Some(path));
+                    if response.clicked() {
+                        selected_row = Some(path.clone());
+                    }
                     let check = Rect::from_min_size(
                         egui::pos2(rect.left() + 46.0, rect.center().y - 7.0),
                         vec2(14.0, 14.0),
@@ -562,8 +628,22 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
     for (path, value) in toggles {
         app.commit_overrides.insert(path, value);
     }
+    ui.data_mut(|data| match &selected_row {
+        Some(path) => data.insert_temp(selection_id, path.clone()),
+        None => data.remove::<PathBuf>(selection_id),
+    });
+    // Ctrl+D (⌘D) shows the diff of the selected row.
+    if selected_row.is_some()
+        // Only while no text field or the editor has keyboard focus, so the
+        // editor's own ⌘D (duplicate line) keeps working.
+        && ui.memory(|memory| memory.focused().is_none())
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::D))
+    {
+        open = selected_row.clone();
+    }
     // Commit message and actions.
     let mut commit_now = false;
+    let mut push_after = false;
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(10, 6))
         .show(ui, |ui| {
@@ -572,6 +652,32 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                 ui.max_rect().top(),
                 egui::Stroke::new(1.0_f32, theme::POPUP_BORDER),
             );
+            ui.horizontal(|ui| {
+                let mut amend = app.commit_amend;
+                if ui
+                    .checkbox(&mut amend, "Amend")
+                    .on_hover_text("Amend the last commit instead of creating a new one")
+                    .changed()
+                {
+                    app.commit_amend = amend;
+                    if amend && app.commit_message.trim().is_empty() {
+                        app.commit_message = app.state.last_commit_message().unwrap_or_default();
+                    }
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let modified = git
+                        .changes
+                        .iter()
+                        .filter(|change| change.kind != ChangeKind::Untracked)
+                        .count();
+                    if modified > 0 {
+                        ui.label(
+                            RichText::new(widgets::pluralize(modified, "modified", "modified"))
+                                .color(theme::ACCENT),
+                        );
+                    }
+                });
+            });
             let response = ui.add(
                 egui::TextEdit::multiline(&mut app.commit_message)
                     .id(commit_message_id())
@@ -586,8 +692,14 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
             }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                let enabled = !app.commit_message.trim().is_empty() && !selected.is_empty();
-                let button = egui::Button::new(RichText::new("Commit").color(Color32::WHITE))
+                let enabled = !app.commit_message.trim().is_empty()
+                    && (!selected.is_empty() || app.commit_amend);
+                let label = if app.commit_amend {
+                    "Amend Commit"
+                } else {
+                    "Commit"
+                };
+                let button = egui::Button::new(RichText::new(label).color(Color32::WHITE))
                     .fill(if enabled {
                         theme::ACCENT
                     } else {
@@ -604,6 +716,14 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                 {
                     commit_now = true;
                 }
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Commit and Push…"))
+                    .on_hover_text("Commit, then open the Push dialog")
+                    .clicked()
+                {
+                    commit_now = true;
+                    push_after = true;
+                }
                 ui.label(
                     RichText::new(widgets::pluralize(
                         selected.len(),
@@ -614,16 +734,27 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                 );
             });
         });
-    if commit_now && !app.commit_message.trim().is_empty() && !selected.is_empty() {
+    if commit_now
+        && !app.commit_message.trim().is_empty()
+        && (!selected.is_empty() || app.commit_amend)
+    {
         let result = app.commands.execute(
             "git.commit",
             &mut app.state,
-            json!({"message": app.commit_message.trim_end(), "paths": selected}),
+            json!({
+                "message": app.commit_message.trim_end(),
+                "paths": selected,
+                "amend": app.commit_amend,
+            }),
         );
         match result {
             Ok(_) => {
                 app.commit_message.clear();
                 app.commit_overrides.clear();
+                app.commit_amend = false;
+                if push_after {
+                    crate::push_dialog::open(app);
+                }
             }
             Err(error) => app.state.status = error.to_string(),
         }
@@ -657,9 +788,36 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
             "Text to find",
             360.0,
         );
-        let submit = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let mut submit = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        // Option toggles re-run the search, like the reference popup.
+        let options = &mut app.find_options;
+        for (label, tooltip, value) in [
+            ("Cc", "Match Case", &mut options.match_case),
+            ("W", "Words", &mut options.whole_words),
+            (".*", "Regex", &mut options.regex),
+        ] {
+            let toggle = ui
+                .selectable_label(*value, RichText::new(label).monospace())
+                .on_hover_text(tooltip);
+            if toggle.clicked() {
+                *value = !*value;
+                submit = true;
+            }
+        }
+        ui.add_space(8.0);
+        let mask = widgets::search_field(
+            ui,
+            egui::Id::new("find_file_mask"),
+            &mut options.file_mask,
+            "File mask, e.g. *.java, !*Test.java",
+            220.0,
+        );
+        submit |= mask.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if submit && !app.search_input.is_empty() {
-            app.dispatch("search.project", json!({"query": app.search_input.clone()}));
+            app.dispatch(
+                "search.project",
+                find_params(&app.search_input, &app.find_options),
+            );
         }
         let count = app.state.search_results.len();
         let mut summary = widgets::pluralize(count, "match", "matches");
@@ -681,13 +839,12 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.y = 0.0;
             for result in &results[range] {
                 let (rect, response) = list_row(ui, false);
-                let mono = egui::FontId::monospace(theme::EDITOR_FONT_SIZE);
-                let x = row_text(
-                    ui,
-                    rect,
-                    rect.left() + 16.0,
-                    result.preview.trim(),
-                    mono,
+                let job = highlighted_preview(&result.preview, &result.highlights);
+                let galley = ui.painter().layout_job(job);
+                let x = rect.left() + 16.0 + galley.size().x;
+                ui.painter().with_clip_rect(rect).galley(
+                    egui::pos2(rect.left() + 16.0, rect.center().y - galley.size().y / 2.0),
+                    galley,
                     *theme::editor::TEXT,
                 );
                 let location = format!("{} {}", IdeApp::file_name(&result.path), result.line);
@@ -707,118 +864,136 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
                     .on_hover_text(result.path.display().to_string())
                     .clicked()
                 {
-                    open = Some(result.path.clone());
+                    open = Some(result.clone());
                 }
             }
         });
-    if let Some(path) = open {
-        app.dispatch("editor.openFile", json!({"path": path}));
+    if let Some(result) = open {
+        app.dispatch(
+            "editor.openFile",
+            json!({
+                "path": result.path,
+                "line": result.line,
+                "column": result.column,
+                "length": result.length,
+            }),
+        );
+        ui.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
     }
 }
 
-fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
-    if tool_window_header(ui, "Problems", |_| {}) {
-        app.toggle_tool_window(ToolWindow::Problems);
-    }
-    let Some(index) = app.state.active_document else {
-        ui.add_space(12.0);
-        ui.vertical_centered(|ui| {
-            ui.label(RichText::new("No file is open").color(theme::TEXT_SECONDARY));
-        });
-        return;
+/// Parameters of `search.project` for the query and the toggled options.
+fn find_params(query: &str, options: &jetthing_core::SearchOptions) -> Value {
+    json!({
+        "query": query,
+        "matchCase": options.match_case,
+        "wholeWords": options.whole_words,
+        "regex": options.regex,
+        "fileMask": options.file_mask,
+    })
+}
+
+/// Result preview with every occurrence on a search-result background.
+fn highlighted_preview(
+    preview: &str,
+    highlights: &[std::ops::Range<usize>],
+) -> egui::text::LayoutJob {
+    let plain = egui::TextFormat {
+        font_id: egui::FontId::monospace(theme::EDITOR_FONT_SIZE),
+        color: *theme::editor::TEXT,
+        ..Default::default()
     };
-    let path = app.state.documents[index].path.clone();
-    let mut rows: Vec<(Icon, String, usize, usize)> = app.state.documents[index]
-        .analysis
-        .diagnostics
-        .iter()
-        .map(|d| (Icon::Error, d.message.clone(), d.row, d.column))
-        .collect();
-    rows.extend(app.state.active_lsp_diagnostics().into_iter().map(|d| {
-        let icon = if d.severity == Some(1) {
-            Icon::Error
-        } else {
-            Icon::Warning
-        };
-        (icon, d.message, d.start_line + 1, d.start_character + 1)
-    }));
-    let mut jump = None;
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            let (rect, _) = list_row(ui, false);
-            let name = IdeApp::file_name(&path);
-            icons::paint(
-                ui.painter(),
-                Rect::from_min_size(
-                    egui::pos2(rect.left() + 12.0, rect.center().y - 8.0),
-                    vec2(16.0, 16.0),
-                ),
-                Icon::for_file(&name),
-                *icons::ICON,
-            );
-            let x = row_text(
-                ui,
-                rect,
-                rect.left() + 34.0,
-                &name,
-                egui::FontId::proportional(theme::UI_FONT_SIZE),
-                *theme::TEXT_BRIGHT,
-            );
-            row_text(
-                ui,
-                rect,
-                x + 8.0,
-                &widgets::pluralize(rows.len(), "problem", "problems"),
-                egui::FontId::proportional(theme::UI_FONT_SIZE),
-                *theme::TEXT_INFO,
-            );
-            for (icon, message, line, column) in &rows {
-                let (rect, response) = list_row(ui, false);
-                icons::paint(
-                    ui.painter(),
-                    Rect::from_min_size(
-                        egui::pos2(rect.left() + 34.0, rect.center().y - 7.0),
-                        vec2(14.0, 14.0),
-                    ),
-                    *icon,
-                    *icons::ICON,
-                );
-                let first_line = message.lines().next().unwrap_or_default();
-                let x = row_text(
-                    ui,
-                    rect,
-                    rect.left() + 56.0,
-                    first_line,
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    *theme::TEXT,
-                );
-                row_text(
-                    ui,
-                    rect,
-                    x + 8.0,
-                    &format!(":{line}:{column}"),
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    *theme::TEXT_INFO,
-                );
-                if response.on_hover_text(message).clicked() {
-                    jump = Some((*line, *column));
-                }
-            }
-            if rows.is_empty() {
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(34.0);
-                    ui.label(RichText::new("No problems found").color(theme::TEXT_SECONDARY));
-                });
-            }
-        });
-    if let Some((line, column)) = jump {
-        crate::editor::move_caret_to(app, line.saturating_sub(1), column.saturating_sub(1));
+    let matched = egui::TextFormat {
+        background: *theme::editor::SEARCH_RESULT,
+        color: *theme::TEXT_BRIGHT,
+        ..plain.clone()
+    };
+    let chars: Vec<char> = preview.chars().collect();
+    let mut job = egui::text::LayoutJob::default();
+    let mut cursor = 0;
+    for range in highlights {
+        let start = range.start.min(chars.len()).max(cursor);
+        let end = range.end.min(chars.len());
+        if start >= end {
+            continue;
+        }
+        job.append(
+            &chars[cursor..start].iter().collect::<String>(),
+            0.0,
+            plain.clone(),
+        );
+        job.append(
+            &chars[start..end].iter().collect::<String>(),
+            0.0,
+            matched.clone(),
+        );
+        cursor = end;
     }
+    job.append(&chars[cursor..].iter().collect::<String>(), 0.0, plain);
+    job
+}
+
+fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
+    crate::problems_ui::tool_window(app, ui);
 }
 
 fn terminal(app: &mut IdeApp, ui: &mut egui::Ui) {
     crate::terminal_ui::show(app, ui);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_options_become_command_parameters() {
+        let options = jetthing_core::SearchOptions {
+            match_case: true,
+            regex: true,
+            file_mask: "*.kt".into(),
+            ..Default::default()
+        };
+        let params = find_params("gr.*t", &options);
+        assert_eq!(
+            params,
+            json!({"query": "gr.*t", "matchCase": true, "wholeWords": false, "regex": true, "fileMask": "*.kt"})
+        );
+        let specs = jetthing_core::built_in_commands().specs();
+        let spec = specs
+            .iter()
+            .find(|spec| spec.id == "search.project")
+            .unwrap();
+        for key in ["matchCase", "wholeWords", "regex", "fileMask"] {
+            assert!(spec.params.contains(key), "{key} documented in the schema");
+        }
+    }
+
+    #[test]
+    fn find_preview_highlights_each_occurrence() {
+        let job = highlighted_preview("val greeting = greet(name)", &[4..9, 15..20]);
+        let texts: Vec<&str> = job
+            .sections
+            .iter()
+            .map(|section| &job.text[section.byte_range.clone()])
+            .collect();
+        assert_eq!(texts, ["val ", "greet", "ing = ", "greet", "(name)"]);
+        assert_eq!(
+            job.sections[1].format.background,
+            *theme::editor::SEARCH_RESULT
+        );
+        assert_eq!(job.sections[2].format.background, Color32::TRANSPARENT);
+        // Out-of-range or overlapping highlights never panic.
+        let job = highlighted_preview("ab", &[1..9, 0..1]);
+        assert_eq!(job.text, "ab");
+    }
+
+    #[test]
+    fn reveal_scrolls_only_when_the_row_is_hidden() {
+        assert_eq!(reveal_offset(3, 24.0, 0.0, 400.0), None);
+        assert_eq!(
+            reveal_offset(40, 24.0, 0.0, 400.0),
+            Some(40.0 * 24.0 + 12.0 - 200.0)
+        );
+        assert_eq!(reveal_offset(0, 24.0, 300.0, 400.0), Some(0.0));
+    }
 }

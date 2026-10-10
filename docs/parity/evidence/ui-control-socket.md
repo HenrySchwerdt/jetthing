@@ -17,10 +17,12 @@ JSON line and gets one JSON response line (`{"ok":true,"result":…}` or
 | Request | Effect |
 |---|---|
 | `{"op":"execute","command":"editor.openFile","args":{"path":"src/main.rs"}}` | runs any registered command |
-| `{"op":"state"}` | project, tabs (modified flag, `diskConflict` for outside changes), active tab, visible tool windows, focused component, active editor text/caret/selection count, popups (Search Everywhere tab, dialog kind, find bar, completion, notification), status text, background busy flag |
+| `{"op":"state"}` | project, tabs (modified flag, `diskConflict` for outside changes), active tab, visible tool windows, Project tree selection and expanded directories, focused component, active editor text/caret/selection count, popups (Search Everywhere tab, dialog kind, find bar, completion, notification, any open menu), Find in Files query and result count, Problems count for the active file, run task and running flag, status text, background busy flag |
 | `{"op":"key","chord":"Ctrl+Shift+A"}` | injects press/text/release events through egui input, i.e. the same shortcut and focus paths as a real keystroke; modifiers `Ctrl`, `Alt`, `Shift`, `Cmd`, and `Primary` (⌘ on macOS, Ctrl elsewhere) |
 | `{"op":"key","chord":"DoubleShift"}` | the modifier-only Search Everywhere gesture, injected over four frames |
 | `{"op":"type","text":"save"}` | text input into the focused component |
+| `{"op":"click","x":18,"y":20,"button":"secondary","count":2}` | pointer move, then press/release per frame (`button` primary/secondary/middle, `count` 1–3) |
+| `{"op":"move","x":60,"y":168}` | pointer move, e.g. to open a submenu on hover |
 | `{"op":"screenshot","path":"out.png"}` | PNG of the window via egui's viewport screenshot (glow and wgpu; no X11 dependency) |
 | `{"op":"wait","until":"idle\|popup\|text","text":"…","timeoutMs":10000}` | blocks until no search/task/update/screenshot is running and input has settled for 3 frames, a popup is visible, or the active editor, terminal screen or status bar contains `text` |
 

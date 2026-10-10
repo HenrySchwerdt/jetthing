@@ -25,10 +25,12 @@ pub enum ToolWindow {
     Gradle,
     Bazel,
     Debug,
+    Git,
+    BuildVariants,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 11] = [
+    pub const ALL: [ToolWindow; 13] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Find,
@@ -40,6 +42,8 @@ impl ToolWindow {
         ToolWindow::Gradle,
         ToolWindow::Bazel,
         ToolWindow::Debug,
+        ToolWindow::Git,
+        ToolWindow::BuildVariants,
     ];
 
     pub fn id(self) -> &'static str {
@@ -55,6 +59,8 @@ impl ToolWindow {
             ToolWindow::Gradle => "gradle",
             ToolWindow::Bazel => "bazel",
             ToolWindow::Debug => "debug",
+            ToolWindow::Git => "git",
+            ToolWindow::BuildVariants => "buildVariants",
         }
     }
 
@@ -71,6 +77,8 @@ impl ToolWindow {
             ToolWindow::Gradle => "Gradle",
             ToolWindow::Bazel => "Bazel",
             ToolWindow::Debug => "Debug",
+            ToolWindow::Git => "Git",
+            ToolWindow::BuildVariants => "Build Variants",
         }
     }
 
@@ -88,20 +96,23 @@ impl ToolWindow {
             ToolWindow::DeviceManager
             | ToolWindow::Logcat
             | ToolWindow::Gradle
-            | ToolWindow::Bazel => "",
+            | ToolWindow::Bazel
+            | ToolWindow::BuildVariants => "",
             ToolWindow::Debug => "⌘5",
+            ToolWindow::Git => "⌘9",
         }
     }
 
     pub fn anchor(self) -> Anchor {
         match self {
-            ToolWindow::Project | ToolWindow::Commit => Anchor::Left,
+            ToolWindow::Project | ToolWindow::Commit | ToolWindow::BuildVariants => Anchor::Left,
             ToolWindow::Find
             | ToolWindow::Build
             | ToolWindow::Problems
             | ToolWindow::Terminal
             | ToolWindow::Logcat
-            | ToolWindow::Debug => Anchor::Bottom,
+            | ToolWindow::Debug
+            | ToolWindow::Git => Anchor::Bottom,
             ToolWindow::DeviceManager | ToolWindow::Gradle | ToolWindow::Bazel => Anchor::Right,
         }
     }

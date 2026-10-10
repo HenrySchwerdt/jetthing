@@ -30,6 +30,8 @@ pub struct ServerInfo {
 #[derive(Clone)]
 pub struct Connection {
     client: Client,
+    /// Driver URI including credentials and tunnel endpoint (never displayed).
+    uri: Arc<str>,
     profile: Arc<ConnectionProfile>,
     server: ServerInfo,
     _tunnel: Option<Arc<SshTunnel>>,
@@ -242,6 +244,7 @@ impl Connection {
         let uri =
             profile.connection_string(password.as_deref(), tunnel.as_ref().map(|t| t.local()))?;
         let mut options = ClientOptions::parse(&uri).await?;
+        let full_uri: Arc<str> = Arc::from(uri.as_str());
         if options.server_selection_timeout.is_none() {
             options.server_selection_timeout = Some(timeout);
         }
@@ -255,6 +258,7 @@ impl Connection {
         let server = Self::probe(&client).await?;
         Ok(Self {
             client,
+            uri: full_uri,
             profile: Arc::new(profile.clone()),
             server,
             _tunnel: tunnel,
@@ -292,6 +296,12 @@ impl Connection {
             max_wire_version: as_i64(hello.get("maxWireVersion")).unwrap_or(0),
             round_trip,
         })
+    }
+
+    /// The connection string the driver uses, **including the password** and the SSH
+    /// tunnel endpoint. Only hand it to child processes through the environment.
+    pub fn connection_uri(&self) -> &str {
+        &self.uri
     }
 
     pub fn client(&self) -> &Client {
