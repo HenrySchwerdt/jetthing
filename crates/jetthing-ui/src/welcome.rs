@@ -23,6 +23,13 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 );
                 ui.add_space(24.0);
                 if ui
+                    .add_sized([180.0, 36.0], egui::Button::new("New Project…"))
+                    .clicked()
+                {
+                    app.new_project_dialog();
+                }
+                ui.add_space(8.0);
+                if ui
                     .add_sized([180.0, 36.0], egui::Button::new("Open Project…"))
                     .clicked()
                 {

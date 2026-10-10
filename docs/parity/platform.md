@@ -24,6 +24,7 @@
 | PLAT-020 | IntelliJ Platform | Find / Replace in file | Implemented | `editor.findNext`, `editor.findPrevious`, `editor.replace`, `editor.replaceAll` | find/replace command tests | match case and whole words, highlighted results, n/m counter, F3/⇧F3; regex pending |
 | PLAT-021 | IntelliJ Platform | Project file operations | Partial | `project.newFile`, `project.newDirectory`, `project.rename`, `project.delete` | path validation and editor-consistency tests | context menu, Shift+F6, Delete with confirmation; refactoring-aware rename, copy/move and undo pending |
 | PLAT-022 | IntelliJ Platform | Workspace restore and Recent Files | Implemented | `workspace.save`, Recent Files (⌘E), Go to File | workspace round-trip test | open tabs, active tab, tree expansion, tool windows and recent files stored in `.jetthing/workspace.json` |
+| PLAT-023 | IntelliJ Platform | New Project wizard | Partial | `project.create` | generator golden/collision tests, command test, native macOS walkthrough | Empty, Rust app/library, Java Gradle Kotlin/Groovy with sample code; JDK 21 and Gradle required on PATH; JDK download, wrapper provisioning and trust prompts pending; `evidence/new-project.md` |
 
 Statuses are intentionally conservative. “Implemented” means the listed scope works;
 only “Verified” will count as independently parity-validated.

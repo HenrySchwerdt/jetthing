@@ -87,6 +87,10 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
         for (menu, categories) in MENUS {
             ui.menu_button(menu, |ui| {
                 ui.set_min_width(240.0);
+                if menu == "File" && ui.button("New Project…").clicked() {
+                    app.new_project_dialog();
+                    ui.close();
+                }
                 if menu == "File"
                     && ui
                         .add(egui::Button::new("Open Project…").shortcut_text(keys::display("⌘O")))
@@ -173,6 +177,10 @@ fn project_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         if ui.button("Open Project…").clicked() {
             app.open_project_dialog();
+            ui.close();
+        }
+        if ui.button("New Project…").clicked() {
+            app.new_project_dialog();
             ui.close();
         }
         if ui.button("Refresh Plugins").clicked() {

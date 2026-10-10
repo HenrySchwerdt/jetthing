@@ -6,6 +6,8 @@ use std::{
 use thiserror::Error;
 use walkdir::WalkDir;
 
+pub mod generator;
+
 #[derive(Debug, Error)]
 pub enum ProjectError {
     #[error("project path is not a directory: {0}")]
@@ -16,6 +18,11 @@ pub enum ProjectError {
     NonUtf8(PathBuf),
     #[error("already exists: {0}")]
     AlreadyExists(PathBuf),
+    #[error("could not finish creating project at {root}; partial files were kept: {source}")]
+    Generation {
+        root: PathBuf,
+        source: std::io::Error,
+    },
     #[error("invalid name `{0}`: use a relative path without `..`")]
     InvalidName(String),
     #[error("filesystem error: {0}")]

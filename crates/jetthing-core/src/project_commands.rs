@@ -231,6 +231,24 @@ fn path_param(params: &Value) -> Result<PathBuf, CommandError> {
 }
 
 pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
+    registry.register(Command::new(
+        spec("project.create", "Create Project", "Project", None,
+            r#"{"parent":"string","name":"string","kind":"empty|rust-binary|rust-library|java-gradle-kotlin|java-gradle-groovy","group":"string?"}"#),
+        |_| true,
+        |state: &mut IdeState, params| {
+            let parent = string_param(&params, "parent")?;
+            let name = string_param(&params, "name")?;
+            let kind = jetthing_project::generator::ProjectKind::parse(&string_param(&params, "kind")?)
+                .ok_or_else(|| CommandError::InvalidParams("unknown project template".into()))?;
+            let group = params.get("group").and_then(Value::as_str).unwrap_or("org.example");
+            state.prepare_project_switch().map_err(CommandError::Failed)?;
+            let project = jetthing_project::generator::create_project(Path::new(&parent), &name, kind, group)
+                .map_err(|error| CommandError::Failed(error.to_string()))?;
+            let root = project.root().to_owned();
+            state.install_project(project).map_err(CommandError::Failed)?;
+            Ok(json!({"root": root}))
+        },
+    )).expect("unique built-in id");
     for (id, label, directory) in [
         ("project.newFile", "New File", false),
         ("project.newDirectory", "New Directory", true),
@@ -340,6 +358,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn create_project_command_generates_and_opens_without_overwriting() {
+        let parent = temp_root("create-project");
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        let params = json!({"parent": parent, "name": "hello", "kind": "java-gradle-kotlin", "group": "org.example"});
+        commands
+            .execute("project.create", &mut state, params.clone())
+            .unwrap();
+        let root = parent.join("hello").canonicalize().unwrap();
+        assert_eq!(state.project.as_ref().unwrap().root(), root);
+        assert!(
+            state
+                .files
+                .iter()
+                .any(|entry| entry.relative_path == Path::new("build.gradle.kts"))
+        );
+        let original = std::fs::read_to_string(root.join("build.gradle.kts")).unwrap();
+        assert!(
+            commands
+                .execute("project.create", &mut state, params)
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("build.gradle.kts")).unwrap(),
+            original
+        );
+        assert!(
+            commands
+                .execute(
+                    "project.create",
+                    &mut state,
+                    json!({"parent": parent, "name": "bad", "kind": "missing"})
+                )
+                .is_err()
+        );
+        assert!(!parent.join("bad").exists());
+        std::fs::remove_dir_all(parent).unwrap();
     }
 
     #[test]
