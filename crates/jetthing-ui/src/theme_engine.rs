@@ -135,6 +135,10 @@ pub mod tokens {
         TAB_SELECTED = ["ui:EditorTabs.underlinedTabBackground"] or 0x233558;
         /// `EditorTabs.underlinedBorderColor`.
         TAB_SELECTED_BORDER = ["ui:EditorTabs.underlinedBorderColor"] or 0x2E4D89;
+        /// `Banner.warningBackground` (editor notification banners).
+        BANNER_WARNING = ["ui:Banner.warningBackground"] or 0x44321D;
+        /// `Banner.warningBorderColor`.
+        BANNER_WARNING_BORDER = ["ui:Banner.warningBorderColor"] or 0x694820;
         /// Editor `TEXT` background.
         EDITOR_BACKGROUND = ["attr:TEXT.BACKGROUND"] or 0x191A1C;
         /// Editor `TEXT` foreground.

@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 mod android_commands;
 mod android_devices;
 mod android_logcat;
+mod disk_sync;
 mod editor_commands;
 mod lsp_commands;
 mod project_commands;
@@ -26,6 +27,7 @@ pub use settings_commands::Settings;
 pub use android_commands::AndroidState;
 pub use android_devices::DeviceHub;
 pub use android_logcat::LogcatState;
+pub use disk_sync::{DiskConflict, Waker, content_hash};
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -37,6 +39,10 @@ pub struct Document {
     pub text: TextDocument,
     pub analysis: LanguageAnalysis,
     pub selections: SelectionSet,
+    /// Hash of the content last loaded from or saved to disk.
+    pub disk_hash: u64,
+    /// Unresolved outside change; saving is refused while set.
+    pub conflict: Option<DiskConflict>,
 }
 
 #[derive(Default)]
@@ -73,6 +79,11 @@ pub struct IdeState {
     pub settings_request: Option<String>,
     pub android: AndroidState,
     pub status: String,
+    watcher: Option<jetthing_project::ProjectWatcher>,
+    /// Lets background services (file watcher) wake the UI.
+    pub waker: Waker,
+    /// Files or `.git` changed outside the IDE since VCS status was loaded.
+    pub vcs_stale: bool,
 }
 
 /// Status bar summary after a Git refresh: "1 change on main", "3 changes on main".
@@ -121,6 +132,8 @@ impl IdeState {
         self.load_project_settings(project.root());
         self.android.project_opened(project.root());
         self.project = Some(project);
+        self.start_watcher();
+        self.vcs_stale = false;
         self.restore_workspace();
         Ok(())
     }
@@ -137,6 +150,8 @@ impl IdeState {
             text: TextDocument::new(&text),
             analysis: analyze(path, &text),
             selections: SelectionSet::default(),
+            disk_hash: content_hash(&text),
+            conflict: None,
         });
         self.active_document = Some(self.documents.len() - 1);
         self.touch_recent(path);
@@ -145,15 +160,18 @@ impl IdeState {
         Ok(())
     }
     pub fn save(&mut self, index: usize) -> Result<(), String> {
+        disk_sync::ensure_no_conflict(self, index)?;
         let project = self.project.as_ref().ok_or("no project is open")?;
         let document = self
             .documents
             .get_mut(index)
             .ok_or("document does not exist")?;
+        let text = document.text.text();
         project
-            .write_text(&document.path, &document.text.text())
+            .write_text(&document.path, &text)
             .map_err(|e| e.to_string())?;
         document.text.mark_saved();
+        document.disk_hash = content_hash(&text);
         self.status = format!("Saved {}", document.path.display());
         Ok(())
     }
@@ -613,6 +631,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_devices::register(&mut registry);
     android_logcat::register(&mut registry);
     editor_commands::register(&mut registry);
+    disk_sync::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
