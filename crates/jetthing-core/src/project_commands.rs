@@ -22,7 +22,7 @@ pub struct Workspace {
 pub const WORKSPACE_FILE: &str = ".jetthing/workspace.json";
 
 impl IdeState {
-    fn refresh_files(&mut self) {
+    pub(crate) fn refresh_files(&mut self) {
         if let Some(project) = &self.project {
             self.files = project.entries(20_000);
         }
