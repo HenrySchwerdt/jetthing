@@ -89,6 +89,7 @@ impl IdeState {
             return;
         }
         self.vcs_stale = true;
+        self.request_git_refresh();
         if changes.structure_changed
             && let Some(project) = &self.project
         {
@@ -110,6 +111,7 @@ impl IdeState {
             self.files = project.entries(20_000);
         }
         self.vcs_stale = true;
+        self.request_git_refresh();
         let paths: Vec<_> = self.documents.iter().map(|d| d.path.clone()).collect();
         let changed = self.sync_paths(&paths);
         if changed == 0 && !self.documents.iter().any(|d| d.conflict.is_some()) {

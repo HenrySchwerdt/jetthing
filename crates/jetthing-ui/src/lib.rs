@@ -11,6 +11,7 @@ mod chrome;
 mod control;
 mod device_manager;
 mod disk_banner;
+mod diff_ui;
 mod editor;
 mod findbar;
 mod icons;
@@ -70,6 +71,7 @@ pub struct IdeApp {
     android_view: android_view::AndroidViewState,
     /// Whether background services can wake this window yet.
     waker_installed: bool,
+    repaint_hook_installed: bool,
 }
 
 impl IdeApp {
@@ -150,6 +152,7 @@ impl IdeApp {
             logcat: logcat_ui::LogcatView::default(),
             android_view: android_view::AndroidViewState::default(),
             waker_installed: false,
+            repaint_hook_installed: false,
         }
     }
 
@@ -363,7 +366,16 @@ impl IdeApp {
                 selected: usize::from(self.state.recent_files.len() > 1),
             });
         }
-        if self.state.active_document.is_some() {
+        let diff_tab = self.state.diff_active && self.state.diff.is_some();
+        if diff_tab && self.dialog.is_none() && !self.palette.open {
+            if consume(Modifiers::NONE, Key::F7) {
+                self.dispatch("diff.nextChange", Value::Null);
+            }
+            if consume(Modifiers::SHIFT, Key::F7) {
+                self.dispatch("diff.previousChange", Value::Null);
+            }
+        }
+        if self.state.active_document.is_some() && !diff_tab {
             // Go to Line: ⌘L on macOS, Ctrl+G elsewhere.
             if (mac && consume(Modifiers::COMMAND, Key::L))
                 || (!mac && consume(Modifiers::COMMAND, Key::G))
@@ -432,7 +444,9 @@ impl IdeApp {
         let close_tab = consume(Modifiers::COMMAND, Key::W)
             || consume(Modifiers::COMMAND, Key::F4)
             || consume(Modifiers::CTRL, Key::F4);
-        if close_tab && self.state.active_document.is_some() {
+        if close_tab && diff_tab {
+            self.dispatch("diff.close", Value::Null);
+        } else if close_tab && self.state.active_document.is_some() {
             self.dispatch("editor.close", Value::Null);
         }
         if consume(Modifiers::COMMAND, Key::F9) {
@@ -574,6 +588,13 @@ impl eframe::App for IdeApp {
             self.waker_installed = true;
         }
         self.state.poll_files();
+        if !self.repaint_hook_installed {
+            let ctx = ctx.clone();
+            self.state
+                .repaint
+                .set(std::sync::Arc::new(move || ctx.request_repaint()));
+            self.repaint_hook_installed = true;
+        }
         self.state.poll_search();
         self.state.poll_runner();
         self.state.poll_lsp();
@@ -581,6 +602,7 @@ impl eframe::App for IdeApp {
         if self.state.poll_android() {
             ctx.request_repaint();
         }
+        self.state.poll_git();
         if self.state.lsp.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(100));
         } else if !self.state.lsp.servers().is_empty() || self.state.android.devices.is_tracking() {
@@ -605,6 +627,10 @@ impl eframe::App for IdeApp {
                 .unwrap_or(true)
         {
             self.autosave();
+        }
+        if !self.window_focused && focused {
+            // Pick up changes made in other applications right away.
+            self.state.request_git_refresh();
         }
         self.window_focused = focused;
         self.handle_shortcuts(ctx);

@@ -4,7 +4,7 @@ Generated from `docs/parity/*.md`.
 
 | Status | Count |
 |---|---:|
-| Missing | 9 |
+| Missing | 22 |
 | Planned | 1 |
 | Partial | 19 |
 | Implemented | 6 |
