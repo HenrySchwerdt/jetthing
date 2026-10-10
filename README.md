@@ -145,6 +145,6 @@ JetBrains s.r.o.; Jetthing is not affiliated with or endorsed by JetBrains.
 See `docs/roadmap.md` for honest status and limitations.
 
 <!-- parity:begin -->
-**Parity progress:** 18.1% implemented (weighted), 0.0% verified, across 767 tracked
+**Parity progress:** 18.4% implemented (weighted), 0.0% verified, across 768 tracked
 features in 17 areas. See [`docs/parity/dashboard.md`](docs/parity/dashboard.md).
 <!-- parity:end -->
