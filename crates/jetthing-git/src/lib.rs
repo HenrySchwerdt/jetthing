@@ -4,11 +4,13 @@ use std::{
 };
 use thiserror::Error;
 
+mod blame;
 mod branch;
 mod diff;
 mod log;
 mod remote;
 mod watcher;
+pub use blame::{BlameLine, blame};
 pub use branch::{
     PendingOperation, abort_operation, checkout, create_branch, delete_branch, merge,
     pending_operation, rebase, rename_branch, validate_branch_name,

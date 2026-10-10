@@ -5,6 +5,7 @@
 //! islands and a status bar with navigation breadcrumbs. Every user action is
 //! dispatched through the typed command registry.
 
+mod blame_gutter;
 mod branches_popup;
 mod change_popup;
 mod chrome;

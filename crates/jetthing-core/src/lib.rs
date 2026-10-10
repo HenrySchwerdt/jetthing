@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod annotations;
 mod branch_commands;
 mod editor_commands;
 mod git_log;
@@ -64,6 +65,8 @@ pub struct IdeState {
     pub remote_progress: Option<String>,
     /// Message of the last failed remote operation.
     pub remote_error: Option<String>,
+    /// Blame annotations of documents that have them switched on.
+    annotations: std::collections::HashMap<PathBuf, annotations::Annotation>,
     /// Git tool window Log tab.
     pub git_log: GitLogState,
     /// The diff viewer tab, if open.
@@ -133,6 +136,8 @@ impl IdeState {
         self.start_git_watcher();
         self.refresh_pending_operation();
         self.close_diff();
+        self.annotations.clear();
+        self.invalidate_line_changes();
         self.git_log = GitLogState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
@@ -369,6 +374,7 @@ impl IdeState {
         }
         self.invalidate_line_changes();
         self.invalidate_git_log();
+        self.invalidate_annotations();
         self.refresh_pending_operation();
         self.refresh_diff();
         Ok(())
@@ -634,6 +640,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     git_log::register(&mut registry);
     branch_commands::register(&mut registry);
     remote_commands::register(&mut registry);
+    annotations::register(&mut registry);
     registry
         .register(Command::new(
             spec(

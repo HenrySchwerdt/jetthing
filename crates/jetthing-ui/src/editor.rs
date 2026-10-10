@@ -24,6 +24,8 @@ pub enum EditorRequest {
     Paste(String),
     /// A gutter change marker was clicked: hunk index and screen position.
     ShowChange(usize, egui::Pos2),
+    /// A blame annotation was clicked: commit hash.
+    ShowCommit(String),
 }
 
 pub struct EditorOutput {
@@ -66,8 +68,16 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 Vec::new()
             };
             let changes = app.state.document_changes(index).to_vec();
+            let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
             let doc = &mut app.state.documents[index];
-            match editor_surface(ui, doc, &diagnostics, &highlights, &changes) {
+            match editor_surface(
+                ui,
+                doc,
+                &diagnostics,
+                &highlights,
+                &changes,
+                blame.as_deref(),
+            ) {
                 Ok(EditorOutput {
                     changed,
                     caret_pos,
@@ -99,6 +109,10 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
 fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: EditorRequest) {
     match request {
         EditorRequest::Command(id, params) => app.dispatch(id, params),
+        EditorRequest::ShowCommit(hash) => {
+            app.dispatch("git.log.show", Value::Null);
+            app.dispatch("git.log.selectCommit", json!({ "hash": hash }));
+        }
         EditorRequest::ShowChange(hunk, position) => {
             app.change_popup = Some(crate::change_popup::ChangePopup::new(hunk, position));
         }
@@ -470,13 +484,19 @@ fn editor_surface(
     lsp_diagnostics: &[jetthing_lsp::LspDiagnostic],
     highlights: &[(usize, usize)],
     changes: &[jetthing_git::Hunk],
+    blame: Option<&[jetthing_git::BlameLine]>,
 ) -> Result<EditorOutput, String> {
     let mut requests = Vec::new();
     let font = egui::FontId::monospace(theme::EDITOR_FONT_SIZE);
     let char_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'm'));
     let line_count = document.text.len_lines();
     let digits = line_count.max(1).to_string().len().max(2);
-    let gutter_width = 20.0 + digits as f32 * char_width + 18.0;
+    let blame_width = if blame.is_some() {
+        crate::blame_gutter::WIDTH
+    } else {
+        0.0
+    };
+    let gutter_width = blame_width + 20.0 + digits as f32 * char_width + 18.0;
     let text_left = gutter_width + TEXT_LEFT_PADDING;
     let caret_line = document
         .text
@@ -533,7 +553,24 @@ fn editor_surface(
                     let line = ((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize;
                     jetthing_core::hunk_at_line(changes, line).map(|hunk| (hunk, position))
                 });
-            if response.clicked()
+            let blame_line = response
+                .hover_pos()
+                .or(response.interact_pointer_pos())
+                .filter(|position| position.x - rect.left() < blame_width)
+                .map(|position| ((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize);
+            if let (Some(lines), Some(line)) = (blame, blame_line) {
+                if let Some(text) = crate::blame_gutter::tooltip(lines, line) {
+                    response.clone().on_hover_text_at_pointer(text);
+                }
+                if response.clicked()
+                    && let Some(entry) = lines.get(line).filter(|entry| !entry.is_uncommitted())
+                {
+                    requests.push(EditorRequest::ShowCommit(entry.hash.clone()));
+                }
+            }
+            if response.clicked() && blame_line.is_some() {
+                // Handled above: annotation clicks never move the caret.
+            } else if response.clicked()
                 && let Some((hunk, position)) = marker_hit
             {
                 requests.push(EditorRequest::ShowChange(hunk, position));
@@ -626,6 +663,26 @@ fn editor_surface(
                     requests.push(EditorRequest::Command("editor.selectAll", Value::Null));
                     ui.close();
                 }
+                ui.separator();
+                ui.menu_button("Git", |ui| {
+                    ui.set_min_width(220.0);
+                    let annotate = if blame.is_some() {
+                        "Close Annotations"
+                    } else {
+                        "Annotate with Git Blame"
+                    };
+                    for (label, id) in [
+                        (annotate, "git.annotate"),
+                        ("Show History", "git.fileHistory"),
+                        ("Show Diff", "vcs.showChangeDiff"),
+                        ("Rollback Lines", "vcs.rollbackChange"),
+                    ] {
+                        if ui.button(label).clicked() {
+                            requests.push(EditorRequest::Command(id, Value::Null));
+                            ui.close();
+                        }
+                    }
+                });
             });
             if response.dragged()
                 && let Some(position) = response.interact_pointer_pos()
@@ -639,6 +696,9 @@ fn editor_surface(
             }
 
             let painter = ui.painter().clone();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs() as i64);
             // Gutter background matches the editor in Islands; draw caret row first.
             let first_line =
                 ((viewport.top() / ROW_HEIGHT).floor().max(0.0) as usize).min(line_count);
@@ -670,6 +730,16 @@ fn editor_surface(
                         theme::editor::LINE_NUMBER
                     },
                 );
+                if let Some(lines) = blame {
+                    crate::blame_gutter::paint(
+                        &painter,
+                        lines,
+                        line,
+                        egui::pos2(rect.left(), y),
+                        ROW_HEIGHT,
+                        now,
+                    );
+                }
                 crate::change_popup::paint_marker(
                     &painter,
                     changes,

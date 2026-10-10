@@ -148,6 +148,7 @@ impl IdeState {
         self.git = Some(status);
         self.invalidate_line_changes();
         self.invalidate_git_log();
+        self.invalidate_annotations();
         self.refresh_pending_operation();
         if rescan && let Some(project) = &self.project {
             self.files = project.entries(20_000);
