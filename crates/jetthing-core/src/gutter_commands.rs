@@ -35,6 +35,22 @@ impl IdeState {
             .collect()
     }
 
+    /// The last computed icons when they belong to the active document, even if
+    /// its text has changed since (`None` otherwise). The editor shows these
+    /// while the user types and refreshes once typing pauses, because finding
+    /// runnables walks the whole syntax tree.
+    pub fn cached_gutter_marks(&self) -> Option<Vec<GutterMark>> {
+        let path = &self.documents.get(self.active_document?)?.path;
+        let (cached_path, _) = self.runnable_cache.key.as_ref()?;
+        (cached_path == path).then(|| {
+            self.runnable_cache
+                .marks
+                .iter()
+                .map(|(mark, _)| mark.clone())
+                .collect()
+        })
+    }
+
     fn refresh_runnables(&mut self) {
         let Some(document) = self
             .active_document
@@ -49,14 +65,19 @@ impl IdeState {
         }
         let path = document.path.clone();
         let source = document.text.text();
-        let marks = self.compute_marks(&path, &source);
+        let marks = self.compute_marks(&path, &source, document);
         self.runnable_cache = RunnableCache {
             key: Some(key),
             marks,
         };
     }
 
-    fn compute_marks(&self, relative: &Path, source: &str) -> Vec<(GutterMark, RunConfiguration)> {
+    fn compute_marks(
+        &self,
+        relative: &Path,
+        source: &str,
+        document: &crate::Document,
+    ) -> Vec<(GutterMark, RunConfiguration)> {
         let Some(root) = self
             .project
             .as_ref()
@@ -104,7 +125,21 @@ impl IdeState {
             .as_ref()
             .map(|crate_root| jetthing_runnables::rust_module_path(crate_root, &absolute))
             .unwrap_or_default();
-        jetthing_runnables::find(relative, source, &module)
+        // Reuse the editor's incremental syntax tree when it describes this text;
+        // reparsing a large file on every keystroke costs hundreds of ms.
+        let runnables = match &document.analysis.syntax {
+            Some(syntax) if &*document.analysis.source == source => {
+                jetthing_runnables::find_in_tree(
+                    syntax.language().id,
+                    syntax.tree(),
+                    relative,
+                    source,
+                    &module,
+                )
+            }
+            _ => jetthing_runnables::find(relative, source, &module),
+        };
+        runnables
             .into_iter()
             .filter_map(|runnable| {
                 let config = self.configuration_for(&root, &absolute, &runnable).ok()?;

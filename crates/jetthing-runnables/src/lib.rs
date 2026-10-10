@@ -57,10 +57,23 @@ pub fn find(path: &Path, source: &str, module_path: &str) -> Vec<Runnable> {
     let Some(tree) = parser.parse(source, None) else {
         return Vec::new();
     };
+    find_in_tree(spec.id, &tree, path, source, module_path)
+}
+
+/// Like [`find`], on an existing syntax tree of `source` (the editor's
+/// incrementally maintained one), so large files are not reparsed per edit.
+/// `language` is the registry id (`java`, `kotlin`, `rust`, `go`).
+pub fn find_in_tree(
+    language: &str,
+    tree: &tree_sitter::Tree,
+    path: &Path,
+    source: &str,
+    module_path: &str,
+) -> Vec<Runnable> {
     let root = tree.root_node();
     let text = |node: Node<'_>| node.utf8_text(source.as_bytes()).unwrap_or_default();
     let mut found = Vec::new();
-    match spec.id {
+    match language {
         "java" => java(root, &text, &mut found),
         "kotlin" => kotlin(root, &text, path, &mut found),
         "rust" => rust(root, &text, module_path, path, &mut found),

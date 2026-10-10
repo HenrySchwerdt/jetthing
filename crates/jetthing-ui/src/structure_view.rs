@@ -13,21 +13,59 @@ use std::sync::Arc;
 
 const ROW_HEIGHT: f32 = 24.0;
 
-type Cached = (PathBuf, u64, Arc<Vec<StructureItem>>);
+/// Last computed structure and the edit it is waiting out.
+#[derive(Clone)]
+struct Cached {
+    path: PathBuf,
+    /// Text revision the items were computed from.
+    items_revision: u64,
+    items: Arc<Vec<StructureItem>>,
+    /// Newest revision seen, and when (egui time) it was first seen.
+    seen_revision: u64,
+    last_edit: f64,
+}
 
-/// Structure of `document`, recomputed only when its text changes.
+/// While the user types, the previous structure is reused until this long
+/// after the latest edit: the tags query walks the whole file, which takes
+/// hundreds of milliseconds on very large files, too slow for every keystroke.
+const STALE_FOR: f64 = 0.25;
+
+/// Structure of `document`. A newly opened file is computed at once; after an
+/// edit the previous items are kept until typing pauses for [`STALE_FOR`].
 pub fn items(ctx: &egui::Context, document: &Document) -> Arc<Vec<StructureItem>> {
     let id = egui::Id::new("structure_view_cache");
     let revision = document.text.revision();
-    if let Some((path, cached_revision, items)) = ctx.data(|data| data.get_temp::<Cached>(id))
-        && path == document.path
-        && cached_revision == revision
+    let now = ctx.input(|input| input.time);
+    if let Some(mut cached) = ctx
+        .data(|data| data.get_temp::<Cached>(id))
+        .filter(|cached| cached.path == document.path)
     {
-        return items;
+        if cached.items_revision == revision {
+            return cached.items;
+        }
+        if cached.seen_revision != revision {
+            cached.seen_revision = revision;
+            cached.last_edit = now;
+        }
+        if now - cached.last_edit < STALE_FOR {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(STALE_FOR));
+            let items = cached.items.clone();
+            ctx.data_mut(|data| data.insert_temp(id, cached));
+            return items;
+        }
     }
     let items = Arc::new(document.analysis.structure());
     ctx.data_mut(|data| {
-        data.insert_temp::<Cached>(id, (document.path.clone(), revision, items.clone()))
+        data.insert_temp(
+            id,
+            Cached {
+                path: document.path.clone(),
+                items_revision: revision,
+                items: items.clone(),
+                seen_revision: revision,
+                last_edit: now,
+            },
+        )
     });
     items
 }
@@ -237,7 +275,25 @@ mod tests {
         document.text.edit(0, 0, "// x\n").unwrap();
         let source = document.text.text();
         document.refresh_analysis(&source);
-        assert!(!Arc::ptr_eq(&first, &items(&ctx, &document)));
+        // While typing, the previous structure is reused...
+        let at = |time: f64| egui::RawInput {
+            time: Some(time),
+            ..Default::default()
+        };
+        let mut during = None;
+        let _ = ctx.run(at(10.0), |ctx| during = Some(items(ctx, &document)));
+        assert!(Arc::ptr_eq(&first, &during.unwrap()));
+        let mut soon = None;
+        let _ = ctx.run(at(10.0 + STALE_FOR / 2.0), |ctx| {
+            soon = Some(items(ctx, &document))
+        });
+        assert!(Arc::ptr_eq(&first, &soon.unwrap()));
+        // ...and rebuilt once typing pauses.
+        let mut later = None;
+        let _ = ctx.run(at(10.0 + STALE_FOR + 0.01), |ctx| {
+            later = Some(items(ctx, &document))
+        });
+        assert!(!Arc::ptr_eq(&first, &later.unwrap()));
         let caret = source.find("g()").unwrap();
         document
             .selections

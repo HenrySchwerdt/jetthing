@@ -115,7 +115,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
             let changes = app.state.document_changes(index).to_vec();
             let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
-            let gutter = app.state.gutter_marks();
+            let gutter = run_icons(app, ui.ctx());
             let doc = &mut app.state.documents[index];
             let surface = editor_surface(
                 &mut text_ui,
@@ -688,6 +688,34 @@ impl GutterLayout {
     fn in_fold_column(&self, x: f32) -> bool {
         (x - self.fold_center).abs() <= Self::FOLD_COLUMN / 2.0
     }
+}
+
+/// Run icons are recomputed this long after the latest edit; until then the
+/// previous icons stay (finding runnables walks the whole syntax tree, too slow
+/// for every keystroke in large files).
+const RUN_ICONS_STALE_FOR: f64 = 0.25;
+
+/// Gutter run icons of the active editor, refreshed once typing pauses.
+fn run_icons(app: &mut IdeApp, ctx: &egui::Context) -> Vec<jetthing_core::GutterMark> {
+    let id = egui::Id::new("run_icons_last_edit");
+    let revision = app
+        .state
+        .active_document
+        .and_then(|index| app.state.documents.get(index))
+        .map(|document| document.text.revision());
+    let now = ctx.input(|input| input.time);
+    let (seen, last_edit) = ctx
+        .data(|data| data.get_temp::<(Option<u64>, f64)>(id))
+        .unwrap_or((None, f64::NEG_INFINITY));
+    let last_edit = if seen != revision { now } else { last_edit };
+    ctx.data_mut(|data| data.insert_temp(id, (revision, last_edit)));
+    if now - last_edit < RUN_ICONS_STALE_FOR
+        && let Some(marks) = app.state.cached_gutter_marks()
+    {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(RUN_ICONS_STALE_FOR));
+        return marks;
+    }
+    app.state.gutter_marks()
 }
 
 /// What the gutter shows next to the line numbers.
