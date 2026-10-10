@@ -1683,6 +1683,7 @@ dependencies = [
  "jetthing-project",
  "jetthing-runner",
  "jetthing-search",
+ "jetthing-settings",
  "jetthing-terminal",
  "jetthing-text",
  "jetthing-update",
@@ -1770,6 +1771,16 @@ name = "jetthing-search"
 version = "0.0.2"
 
 [[package]]
+name = "jetthing-settings"
+version = "0.0.2"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml",
+]
+
+[[package]]
 name = "jetthing-terminal"
 version = "0.0.2"
 dependencies = [
@@ -1800,6 +1811,7 @@ dependencies = [
  "jetthing-language",
  "jetthing-lsp",
  "jetthing-runner",
+ "jetthing-settings",
  "jetthing-terminal",
  "jetthing-text",
  "serde_json",

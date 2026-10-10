@@ -38,7 +38,7 @@ const fn menu(
 }
 
 const MENUS: [Menu; 9] = [
-    menu("File", &["Project", "Plugins"], &[]),
+    menu("File", &["File", "Project", "Plugins"], &[]),
     menu("Edit", &["Editor"], &[]),
     menu("View", &["Window"], &[]),
     menu("Navigate", &["Navigate", "Search"], &[]),

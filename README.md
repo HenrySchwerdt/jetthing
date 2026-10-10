@@ -74,6 +74,7 @@ Shortcuts follow the default keymap of the reference IDE (macOS / Windows & Linu
 |---|---|---|
 | Search Everywhere | Double ⇧ | Double Shift |
 | Find Action | ⇧⌘A | Ctrl+Shift+A |
+| Settings | ⌘, | Ctrl+Alt+S |
 | Project / Commit tool window | ⌘1 / ⌘0 | Alt+1 / Alt+0 |
 | Find in Files | ⇧⌘F | Ctrl+Shift+F |
 | Terminal | ⌥F12 | Alt+F12 |

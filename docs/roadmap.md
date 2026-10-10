@@ -37,7 +37,8 @@
 - [x] Collapsible, sorted project tree with VCS file colors
 - [x] Run widget (`run.project`) next to Build, with OpenGL fallback renderer
 - [x] Release packaging (`cargo xtask dist`) and CI/release workflows
-- [ ] Light theme, settings dialog, and bundled icon set beyond the core actions
+- [x] Typed settings model and Settings dialog with search, Apply/Reset and Advanced Settings
+- [ ] Light theme, keymap switching, and bundled icon set beyond the core actions
 - [x] Editor actions: duplicate/delete/comment/move lines, pairing, smart Enter, word moves
 - [x] Find/Replace in file, Go to Line, Recent Files, Go to File
 - [x] Project tree New/Rename/Delete, commit with message and file selection

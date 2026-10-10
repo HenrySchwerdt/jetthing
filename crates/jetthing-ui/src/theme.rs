@@ -145,6 +145,53 @@ pub fn semibold(size: f32) -> egui::FontId {
     egui::FontId::new(size, FontFamily::Name(SEMIBOLD.into()))
 }
 
+/// Editor font: the Monospace text style, sized by Settings | Editor | Font.
+pub fn editor_font(style: &egui::Style) -> egui::FontId {
+    egui::TextStyle::Monospace.resolve(style)
+}
+
+fn line_height_id() -> egui::Id {
+    egui::Id::new("editor_line_height")
+}
+
+/// Editor row height for `font`: `base` at the default 13 pt / 1.2 line height,
+/// scaled by the configured size and line height.
+pub fn editor_row_height(ctx: &egui::Context, font: &egui::FontId, base: f32) -> f32 {
+    let line_height = ctx
+        .data(|data| data.get_temp::<f32>(line_height_id()))
+        .unwrap_or(DEFAULT_LINE_HEIGHT);
+    (base * font.size / EDITOR_FONT_SIZE * line_height / DEFAULT_LINE_HEIGHT)
+        .round()
+        .max(8.0)
+}
+
+const DEFAULT_LINE_HEIGHT: f32 = 1.2;
+
+/// Applies settings that change the look live (editor font size and line height).
+pub fn apply_settings(ctx: &egui::Context, settings: &jetthing_core::Settings) {
+    let line_height = settings
+        .float(jetthing_settings::ids::EDITOR_LINE_HEIGHT)
+        .map(|value| value as f32)
+        .unwrap_or(DEFAULT_LINE_HEIGHT);
+    ctx.data_mut(|data| data.insert_temp(line_height_id(), line_height));
+    let size = settings
+        .int(jetthing_settings::ids::EDITOR_FONT_SIZE)
+        .map(|size| size as f32)
+        .unwrap_or(EDITOR_FONT_SIZE);
+    let current = ctx
+        .style()
+        .text_styles
+        .get(&egui::TextStyle::Monospace)
+        .map(|font| font.size);
+    if current != Some(size) {
+        ctx.style_mut(|style| {
+            style
+                .text_styles
+                .insert(egui::TextStyle::Monospace, egui::FontId::monospace(size));
+        });
+    }
+}
+
 pub fn install(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
