@@ -5,6 +5,7 @@
 //! hosts spawn them on their own Tokio runtime.
 
 pub mod aggregate;
+pub mod builder;
 pub mod codegen;
 pub mod connection;
 pub mod error;
@@ -16,6 +17,7 @@ pub mod secrets;
 pub mod shell;
 pub mod shell_eval;
 pub mod sql;
+pub mod stage_form;
 pub mod transfer;
 pub mod tunnel;
 

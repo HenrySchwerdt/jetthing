@@ -2474,6 +2474,7 @@ dependencies = [
  "eframe",
  "jetthing-plugin-hello",
  "jetthing-ui",
+ "mongo-raabit",
 ]
 
 [[package]]
@@ -3174,6 +3175,8 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
+ "jetthing-plugin-api",
+ "jetthing-plugin-ui",
  "jetthing-ui",
  "mongo-raabit-core",
  "serde",
