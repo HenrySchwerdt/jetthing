@@ -21,6 +21,7 @@ mod disk_banner;
 mod editor;
 mod editor_keys;
 mod findbar;
+mod git_log_ui;
 mod icons;
 mod keybindings;
 mod keys;

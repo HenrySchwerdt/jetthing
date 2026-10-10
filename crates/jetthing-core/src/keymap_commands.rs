@@ -105,6 +105,11 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
         r#"{"id":"problems"}"#,
     ),
     global(
+        "ActivateVersionControlToolWindow",
+        "toolwindow.toggle",
+        r#"{"id":"git"}"#,
+    ),
+    global(
         "ActivateTerminalToolWindow",
         "toolwindow.toggle",
         r#"{"id":"terminal"}"#,

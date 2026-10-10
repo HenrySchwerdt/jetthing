@@ -73,6 +73,7 @@ pub fn bottom(app: &mut IdeApp, ctx: &egui::Context) {
             ToolWindow::Problems => problems(app, ui),
             ToolWindow::Terminal => terminal(app, ui),
             ToolWindow::Logcat => crate::logcat_ui::show(app, ui),
+            ToolWindow::Git => crate::git_log_ui::show(app, ui),
             _ => {}
         });
 }
