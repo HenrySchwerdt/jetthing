@@ -16,6 +16,8 @@
 - [x] Save and Save All commands
 - [x] Command palette
 - [x] Manifest plugin discovery
+- [x] Plugin API 1: Rust plugins contribute commands, menus, keybindings, settings, tool windows, editor tabs and status widgets; live enable/disable; `--app <id>` standalone mode (`docs/plugins/api.md`)
+- [ ] `.jtplugin` install/uninstall, Settings ▸ Plugins (Marketplace/Installed), Lua and WASM plugin runtimes, JetBrains Marketplace conversion
 - [x] Revisioned rope-backed text engine with Unicode-safe undo/redo
 - [x] Viewport-native editor that shapes and paints only visible lines
 - [x] Multi-cursor selections, atomic edits, and coalesced primary typing transactions
@@ -37,12 +39,18 @@
 - [x] Collapsible, sorted project tree with VCS file colors
 - [x] Run widget (`run.project`) next to Build, with OpenGL fallback renderer
 - [x] Release packaging (`cargo xtask dist`) and CI/release workflows
-- [ ] Light theme, settings dialog, and bundled icon set beyond the core actions
+- [x] Typed settings model and Settings dialog with search, Apply/Reset and Advanced Settings
+- [x] Theme engine from spec data with live Islands Dark / Islands Light switching
+- [ ] Keymap switching and bundled icon set beyond the core actions
+- [x] Native installers: MSI, DMG (`Jetthing.app`) and `.deb`, smoke-tested in CI
+- [ ] Code signing and notarization with project certificates (pipeline supports it)
 - [x] Editor actions: duplicate/delete/comment/move lines, pairing, smart Enter, word moves
 - [x] Find/Replace in file, Go to Line, Recent Files, Go to File
 - [x] Project tree New/Rename/Delete, commit with message and file selection
 - [x] Workspace restore (`.jetthing/workspace.json`), autosave on focus loss
 - [x] Check for Updates with verified self-update from GitHub releases
+- [x] `--version` and Help → About with embedded build info (commit, date, target)
+- [x] Log file per OS, crash reports with backtrace, crash notice on next start
 - [x] Versioned release pipeline (0.0.2) publishing on every version bump
 
 ## M2 — language intelligence
@@ -73,6 +81,14 @@ workspace layout persistence, plugin manager, and recovery.
 
 Product-neutral bundles start with Web and Rust, then Java/Kotlin/Gradle and Android.
 Use installed SDK, ADB, emulator, and Gradle; do not depend on Android Studio.
+
+- [x] Toolchain provisioning core (`jetthing-toolchains`): verified resumable downloads, atomic
+      installs, PATH-first discovery, project pins, `toolchain.*` commands, status-bar progress
+- [ ] "Missing toolchain" editor notification with Set up, Settings > Toolchains page
+- [ ] Catalog: JDK (foojay Disco) + jdtls, rust-analyzer/rustup, Android cmdline-tools/sdkmanager,
+      kotlin-lsp, bazelisk/starpls, Node/typescript-language-server, pyright/ruff, gopls/delve,
+      clangd, lemminx, taplo, yaml-language-server
+- [ ] LSP "server not found" → Set up through the resolver; build/run, Android, Bazel use it
 
 ## Next task
 

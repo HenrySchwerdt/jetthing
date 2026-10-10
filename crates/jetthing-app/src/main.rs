@@ -1,7 +1,19 @@
 // Release builds are GUI apps on Windows (no console window).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod plugins;
+
+use jetthing_ui::diagnostics;
 use std::path::PathBuf;
+
+enum Mode {
+    Ide {
+        project: Option<PathBuf>,
+        files: Vec<PathBuf>,
+    },
+    /// `--app <plugin-id>`: only the plugin's app view.
+    App(String),
+}
 
 fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOptions {
     let mut viewport = eframe::egui::ViewportBuilder::default()
@@ -9,6 +21,12 @@ fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOpti
         .with_app_id("jetthing")
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([800.0, 500.0]);
+    // Taskbar / dock icon from the original artwork in `assets/icon`.
+    if let Ok(icon) =
+        eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/jetthing.png"))
+    {
+        viewport = viewport.with_icon(icon);
+    }
     viewport = if cfg!(target_os = "macos") {
         // Keep native window controls in the OS title bar. The toolbar below it
         // starts at the content edge and needs no traffic-light spacer.
@@ -24,19 +42,14 @@ fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOpti
     }
 }
 
-fn run(
-    renderer: eframe::Renderer,
-    title: &str,
-    project: Option<PathBuf>,
-    files: Vec<PathBuf>,
-) -> eframe::Result<()> {
+fn run(renderer: eframe::Renderer, title: &str, app: jetthing_ui::IdeApp) -> eframe::Result<()> {
     eframe::run_native(
         "Jetthing",
         native_options(renderer, title),
         Box::new(move |cc| {
             cc.egui_ctx.set_theme(eframe::egui::Theme::Dark);
             jetthing_ui::install_theme(&cc.egui_ctx);
-            let mut app = jetthing_ui::IdeApp::new(project, files);
+            let mut app = app;
             app.start_control_from_env(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
@@ -85,7 +98,8 @@ fn missing_library_hint(message: &str) -> Option<String> {
 }
 
 /// Missing desktop libraries make winit panic during startup; report them
-/// as an actionable error instead of a backtrace.
+/// as an actionable error instead of a backtrace. Any other panic leaves a
+/// crash report in the log directory, offered to the user on the next start.
 fn install_startup_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -97,21 +111,147 @@ fn install_startup_panic_hook() {
             .unwrap_or_default();
         match missing_library_hint(message) {
             Some(hint) => {
+                diagnostics::log(diagnostics::Level::Error, &hint);
                 eprintln!("{hint}");
                 std::process::exit(1);
             }
-            None => default_hook(info),
+            None => {
+                let location = info.location().map(ToString::to_string);
+                match diagnostics::write_crash_report(message, location.as_deref()) {
+                    Ok(path) => eprintln!("jetthing: crash report written to {}", path.display()),
+                    Err(error) => eprintln!("jetthing: could not write a crash report: {error}"),
+                }
+                default_hook(info)
+            }
         }
     }));
 }
 
+fn parse_args() -> Result<Mode, String> {
+    let mut args = std::env::args_os().skip(1);
+    let mut positional = Vec::new();
+    while let Some(arg) = args.next() {
+        if arg == "--app" {
+            let id = args
+                .next()
+                .and_then(|id| id.into_string().ok())
+                .ok_or("--app needs a plugin id, e.g. --app dev.jetthing.hello")?;
+            return Ok(Mode::App(id));
+        }
+        if let Some(id) = arg.to_str().and_then(|arg| arg.strip_prefix("--app=")) {
+            return Ok(Mode::App(id.to_owned()));
+        }
+        positional.push(PathBuf::from(arg));
+    }
+    let mut positional = positional.into_iter();
+    Ok(Mode::Ide {
+        project: positional.next(),
+        files: positional.collect(),
+    })
+}
+
+fn build_app(mode: &Mode) -> Result<jetthing_ui::IdeApp, String> {
+    match mode {
+        Mode::Ide { project, files } => Ok(jetthing_ui::IdeApp::with_plugins(
+            project.clone(),
+            files.clone(),
+            plugins::bundled(),
+        )),
+        Mode::App(id) => jetthing_ui::IdeApp::standalone(id, plugins::bundled()),
+    }
+}
+
+const USAGE: &str = "usage: jetthing [PROJECT_DIR] [FILE...]
+       jetthing --app <PLUGIN_ID>
+
+Opens PROJECT_DIR (or the welcome screen) and FILEs relative to it.
+  --app ID        run only the plugin's app view
+  -V, --version   print version and build information
+  -h, --help      print this help
+Environment: JETTHING_RENDERER=glow, JETTHING_NO_UPDATE_CHECK,
+JETTHING_CONTROL_SOCKET. See README.md.";
+
+/// Release builds on Windows have no console of their own; print `--version`
+/// into the terminal that started them.
+#[cfg(windows)]
+fn attach_parent_console() {
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    // SAFETY: no pointers are passed; failure only means there is no console.
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_parent_console() {}
+
 fn main() -> eframe::Result<()> {
+    let first = std::env::args_os().nth(1);
+    if let Some(text) = jetthing_ui::build_info::cli_flag_output(
+        "jetthing",
+        USAGE,
+        first.as_deref().and_then(|arg| arg.to_str()),
+    ) {
+        attach_parent_console();
+        println!("{text}");
+        return Ok(());
+    }
+    if let Err(error) = diagnostics::init() {
+        eprintln!("jetthing: logging disabled: {error}");
+    }
     install_startup_panic_hook();
-    // Usage: jetthing-app [PROJECT_DIR] [FILE...]
-    let mut args = std::env::args_os().skip(1).map(PathBuf::from);
-    let project = args.next();
-    let files: Vec<PathBuf> = args.collect();
-    let title = project
+    // Debug builds only: exercise the crash-report path end to end.
+    if cfg!(debug_assertions) && std::env::var_os("JETTHING_DEBUG_PANIC").is_some() {
+        panic!("JETTHING_DEBUG_PANIC requested a test crash");
+    }
+    // Usage: jetthing [PROJECT_DIR] [FILE...]  |  jetthing --app <PLUGIN_ID>
+    let mode = match parse_args() {
+        Ok(mode) => mode,
+        Err(error) => {
+            eprintln!("jetthing: {error}");
+            std::process::exit(2);
+        }
+    };
+    let app = match build_app(&mode) {
+        Ok(app) => app,
+        Err(error) => {
+            eprintln!("jetthing: {error}");
+            std::process::exit(2);
+        }
+    };
+    let project = match &mode {
+        Mode::Ide { project, .. } => project.clone(),
+        Mode::App(_) => None,
+    };
+    let title = app.app_title().unwrap_or_else(|| title_for(project));
+    let forced_gl = std::env::var("JETTHING_RENDERER").is_ok_and(|value| value == "glow");
+    if forced_gl {
+        return run(eframe::Renderer::Glow, &title, app);
+    }
+    match run(eframe::Renderer::Wgpu, &title, app) {
+        // No usable wgpu adapter/surface (VMs, old drivers): fall back to OpenGL.
+        // The first app was consumed by the failed attempt; build a fresh one.
+        Err(eframe::Error::Wgpu(error)) => {
+            let message = format!("wgpu unavailable ({error}); falling back to OpenGL");
+            diagnostics::log(diagnostics::Level::Warn, &message);
+            eprintln!("jetthing: {message}");
+            match build_app(&mode) {
+                Ok(app) => run(eframe::Renderer::Glow, &title, app),
+                Err(error) => {
+                    eprintln!("jetthing: {error}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        other => other,
+    }
+}
+
+fn title_for(project: Option<PathBuf>) -> String {
+    project
         .as_deref()
         .and_then(|path| path.canonicalize().ok())
         .and_then(|path| {
@@ -119,24 +259,7 @@ fn main() -> eframe::Result<()> {
                 .map(|name| name.to_string_lossy().into_owned())
         })
         .map(|name| format!("{name} – Jetthing"))
-        .unwrap_or_else(|| "Jetthing".into());
-    let forced_gl = std::env::var("JETTHING_RENDERER").is_ok_and(|value| value == "glow");
-    if forced_gl {
-        return run(eframe::Renderer::Glow, &title, project, files);
-    }
-    match run(
-        eframe::Renderer::Wgpu,
-        &title,
-        project.clone(),
-        files.clone(),
-    ) {
-        // No usable wgpu adapter/surface (VMs, old drivers): fall back to OpenGL.
-        Err(eframe::Error::Wgpu(error)) => {
-            eprintln!("jetthing: wgpu unavailable ({error}); falling back to OpenGL");
-            run(eframe::Renderer::Glow, &title, project, files)
-        }
-        other => other,
-    }
+        .unwrap_or_else(|| "Jetthing".into())
 }
 
 #[cfg(test)]

@@ -128,15 +128,15 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     cell_height,
                 ),
             );
-            let mut fg = ansi_color(cell.fgcolor(), theme::editor::TEXT, cell.bold());
-            let mut bg = ansi_color(cell.bgcolor(), theme::ISLAND, false);
+            let mut fg = ansi_color(cell.fgcolor(), *theme::editor::TEXT, cell.bold());
+            let mut bg = ansi_color(cell.bgcolor(), *theme::ISLAND, false);
             if cell.inverse() {
                 std::mem::swap(&mut fg, &mut bg);
             }
             if selection.is_some_and(|(start, end)| (row, col) >= start && (row, col) < end) {
-                bg = theme::editor::SELECTION;
+                bg = *theme::editor::SELECTION;
             }
-            if bg != theme::ISLAND {
+            if bg != *theme::ISLAND {
                 painter.rect_filled(cell_rect, 0, bg);
             }
             if !cell.contents().is_empty() {

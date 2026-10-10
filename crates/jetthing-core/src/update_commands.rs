@@ -2,7 +2,10 @@
 
 use crate::{IdeState, spec};
 use jetthing_command::{Command, CommandError, CommandRegistry};
-use jetthing_update::{CheckOutcome, Release, UpdateEvent, UpdateSource, Version};
+use jetthing_update::{
+    CheckOutcome, InstallKind, Installed, InstalledUpdate, Release, UpdateEvent, UpdateSource,
+    Version,
+};
 use serde_json::{Value, json};
 
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -98,8 +101,16 @@ impl IdeState {
                 }
                 UpdateState::Failed(error)
             }
-            UpdateEvent::Installed(Ok(version)) => {
-                self.status = format!("Jetthing {version} installed; restart to finish");
+            UpdateEvent::Installed(Ok(InstalledUpdate { version, installed })) => {
+                self.update_installer = match installed {
+                    Installed::InPlace => None,
+                    Installed::Installer { path, kind } => Some((path, kind)),
+                };
+                self.status = if self.update_installer.is_some() {
+                    format!("Jetthing {version} downloaded; quit to install")
+                } else {
+                    format!("Jetthing {version} installed; restart to finish")
+                };
                 self.update_notification = true;
                 UpdateState::Installed(version)
             }
@@ -115,6 +126,25 @@ impl IdeState {
     /// Use the installation target captured before replacement instead.
     pub fn update_restart_target(&self) -> Option<&std::path::Path> {
         self.update_executable.as_deref()
+    }
+
+    /// How the downloaded update is applied: `None` for an in-place update
+    /// (restart), otherwise the installer kind to run on quit.
+    pub fn update_installer_kind(&self) -> Option<InstallKind> {
+        self.update_installer.as_ref().map(|(_, kind)| *kind)
+    }
+
+    /// Saves the session and opens the downloaded installer. The caller quits
+    /// the IDE afterwards so the installer can replace its files.
+    pub fn run_update_installer(&mut self) -> Result<(), String> {
+        let Some((path, _)) = self.update_installer.clone() else {
+            return Err("no downloaded installer; check for updates first".into());
+        };
+        if self.project.is_some() {
+            self.save_all()?;
+            self.save_workspace()?;
+        }
+        jetthing_update::launch_installer(&path).map_err(|error| error.to_string())
     }
 }
 
@@ -177,6 +207,22 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     registry
         .register(Command::new(
             spec(
+                "app.runUpdateInstaller",
+                "Quit and Install Update",
+                "Help",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.update_installer.is_some(),
+            |state: &mut IdeState, _| {
+                state.run_update_installer().map_err(CommandError::Failed)?;
+                Ok(json!({"quit": true}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
                 "app.dismissUpdate",
                 "Dismiss Update Notification",
                 "Help",
@@ -195,8 +241,10 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             spec("app.about", "About Jetthing", "Help", None, "{}"),
             |_| true,
             |state: &mut IdeState, _| {
-                state.status = format!("Jetthing {CURRENT_VERSION}");
-                Ok(json!({"version": CURRENT_VERSION}))
+                let build = crate::build_info::BUILD;
+                state.status = build.version_line("Jetthing");
+                state.about_open = true;
+                Ok(build.to_json())
             },
         ))
         .expect("unique built-in id");
@@ -245,8 +293,51 @@ mod tests {
     }
 
     #[test]
+    fn about_opens_the_dialog_and_reports_the_build() {
+        let mut state = IdeState::default();
+        let info = crate::built_in_commands()
+            .execute("app.about", &mut state, Value::Null)
+            .unwrap();
+        assert!(state.about_open);
+        assert_eq!(info["version"], CURRENT_VERSION);
+        assert_eq!(info["commit"], crate::build_info::BUILD.commit);
+        assert!(
+            state
+                .status
+                .starts_with(&format!("Jetthing {CURRENT_VERSION} ("))
+        );
+    }
+
+    #[test]
     fn version_comes_from_the_workspace() {
         assert_eq!(current_version().to_string(), CURRENT_VERSION);
+    }
+
+    #[test]
+    fn installer_downloads_switch_restart_to_quit_and_install() {
+        let mut state = IdeState::default();
+        let commands = crate::built_in_commands();
+        assert!(
+            commands
+                .execute("app.runUpdateInstaller", &mut state, Value::Null)
+                .is_err()
+        );
+        state.update_installer = Some((
+            std::path::PathBuf::from("jetthing-9.0.0-windows-x86_64.msi"),
+            InstallKind::Msi,
+        ));
+        assert_eq!(state.update_installer_kind(), Some(InstallKind::Msi));
+        let in_place = InstalledUpdate {
+            version: Version::parse("9.0.0").unwrap(),
+            installed: Installed::InPlace,
+        };
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender.send(UpdateEvent::Installed(Ok(in_place))).unwrap();
+        state.updates = jetthing_update::UpdateService::with_receiver(receiver);
+        state.poll_updates();
+        assert_eq!(state.update_installer_kind(), None);
+        assert!(matches!(state.update_state, UpdateState::Installed(_)));
+        assert!(state.status.contains("restart"));
     }
 
     #[test]

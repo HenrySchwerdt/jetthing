@@ -23,6 +23,13 @@ pub fn for_windows_linux(mac: &str) -> String {
         "⌃R" => return "Shift+F10".into(),
         "⌘W" => return "Ctrl+F4".into(),
         "⌥F12" => return "Alt+F12".into(),
+        "⌘," => return "Ctrl+Alt+S".into(),
+        "⌃G" => return "Alt+J".into(),
+        "⌃⇧G" => return "Alt+Shift+J".into(),
+        "⌃⌘G" => return "Ctrl+Alt+Shift+J".into(),
+        "⇧⌘8" => return "Alt+Shift+Insert".into(),
+        "⌘↩" => return "Ctrl+Enter".into(),
+        "⌥⌘↩" => return "Ctrl+Alt+Enter".into(),
         _ => {}
     }
     let mut chars = mac.chars().peekable();
@@ -100,6 +107,8 @@ mod tests {
         assert_eq!(for_windows_linux("Double ⇧"), "Double Shift");
         assert_eq!(for_windows_linux(""), "");
         assert_eq!(for_windows_linux("⌘S"), "Ctrl+S");
+        assert_eq!(for_windows_linux("⌃G"), "Alt+J");
+        assert_eq!(for_windows_linux("⇧⌘8"), "Alt+Shift+Insert");
     }
 
     fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {

@@ -5,19 +5,32 @@
 //! islands and a status bar with navigation breadcrumbs. Every user action is
 //! dispatched through the typed command registry.
 
+mod about;
+mod android_sdk;
+mod android_view;
 mod chrome;
 mod control;
+mod crash_notice;
+mod device_manager;
+mod diff_ui;
+mod disk_banner;
 mod editor;
+mod editor_keys;
 mod findbar;
 mod icons;
 mod keys;
+mod logcat_ui;
 mod lsp_status;
 mod notifications;
 mod palette;
+mod plugin_ui;
 mod popups;
+mod settings_dialog;
 mod syntax;
 mod terminal_ui;
 mod theme;
+mod theme_engine;
+mod toolchain_status;
 mod toolwindows;
 mod welcome;
 mod widgets;
@@ -25,10 +38,13 @@ mod widgets;
 use eframe::egui;
 use jetthing_command::{CommandRegistry, CommandSpec};
 use jetthing_core::{Anchor, IdeState, ToolWindow, built_in_commands};
+use jetthing_settings::ids;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+pub use jetthing_core::{build_info, diagnostics};
+pub use jetthing_plugins::PluginFactory;
 pub use theme::install as install_theme;
 
 pub struct IdeApp {
@@ -48,6 +64,7 @@ pub struct IdeApp {
     /// Text of the last whole-line copy, so pasting it inserts a line.
     clipboard_line: Option<String>,
     dialog: Option<popups::Dialog>,
+    settings_dialog: Option<settings_dialog::SettingsDialog>,
     dialog_focus: bool,
     commit_message: String,
     /// Commit checkbox overrides; by default tracked changes are included and
@@ -56,23 +73,62 @@ pub struct IdeApp {
     window_focused: bool,
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
+    android_sdk: android_sdk::SdkPage,
+    logcat: logcat_ui::LogcatView,
+    android_view: android_view::AndroidViewState,
+    /// Whether background services can wake this window yet.
+    waker_installed: bool,
+    repaint_hook_installed: bool,
+    /// Contributed command ids currently registered in `commands`.
+    plugin_commands: Vec<String>,
+    /// Registry generation the contributed commands were synced at.
+    plugin_generation: u64,
+    plugins_window: Option<plugin_ui::PluginsWindow>,
 }
 
 impl IdeApp {
     /// Opens `project` (if any) and then each of `files`, relative to the project root
     /// or absolute inside it.
     pub fn new(project: Option<PathBuf>, files: Vec<PathBuf>) -> Self {
-        let check_updates = std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none();
-        Self::with_update_check(project, files, check_updates)
+        Self::with_plugins(project, files, Vec::new())
     }
 
+    /// Like [`Self::new`], with compiled-in plugins. Plugin state is read from
+    /// the per-user configuration directory.
+    pub fn with_plugins(
+        project: Option<PathBuf>,
+        files: Vec<PathBuf>,
+        bundled: Vec<PluginFactory>,
+    ) -> Self {
+        let check_updates = std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none();
+        let mut app = Self::build(project, files, bundled, check_updates);
+        if let Some(dir) = diagnostics::active_log_dir() {
+            app.state.check_crash_reports(&dir);
+        }
+        app
+    }
+
+    #[cfg(test)]
     fn with_update_check(
         project: Option<PathBuf>,
         files: Vec<PathBuf>,
         check_updates: bool,
     ) -> Self {
+        Self::build(project, files, Vec::new(), check_updates)
+    }
+
+    fn build(
+        project: Option<PathBuf>,
+        files: Vec<PathBuf>,
+        bundled: Vec<PluginFactory>,
+        check_updates: bool,
+    ) -> Self {
         let commands = built_in_commands();
         let mut state = IdeState::default();
+        if let Some(dir) = jetthing_settings::default_config_dir() {
+            state.load_user_settings(&dir);
+        }
+        state.init_plugins(jetthing_plugins::PluginStore::user(), bundled);
         if let Some(path) = project {
             if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
             {
@@ -98,7 +154,7 @@ impl IdeApp {
                 state.status = error.to_string();
             }
         }
-        if check_updates {
+        if check_updates && state.settings.bool(ids::CHECK_UPDATES).unwrap_or(true) {
             let _ = commands.execute("app.checkForUpdates", &mut state, json!({"silent": true}));
         }
         let run_label = state.project.as_ref().and_then(|project| {
@@ -123,16 +179,42 @@ impl IdeApp {
             find: findbar::FindBar::default(),
             clipboard_line: None,
             dialog: None,
+            settings_dialog: None,
             dialog_focus: false,
             commit_message: String::new(),
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
             control: None,
+            android_sdk: android_sdk::SdkPage::default(),
+            logcat: logcat_ui::LogcatView::default(),
+            android_view: android_view::AndroidViewState::default(),
+            waker_installed: false,
+            repaint_hook_installed: false,
+            plugin_commands: Vec::new(),
+            plugin_generation: u64::MAX,
+            plugins_window: None,
         }
+    }
+
+    /// Standalone app mode (`jetthing --app <plugin-id>`): a window showing
+    /// only the plugin's app view.
+    pub fn standalone(plugin: &str, bundled: Vec<PluginFactory>) -> Result<Self, String> {
+        let mut app = Self::with_plugins(None, Vec::new(), bundled);
+        plugin_ui::app_mode_error(&app.state.plugin_host.registry, plugin)?;
+        app.state.plugin_host.app_mode = Some(plugin.to_owned());
+        Ok(app)
+    }
+
+    /// Window title for standalone app mode.
+    pub fn app_title(&self) -> Option<String> {
+        let plugin = self.state.plugin_host.app_mode.as_deref()?;
+        let entry = self.state.plugin_host.registry.get(plugin)?;
+        Some(entry.manifest.app_title())
     }
 
     fn dispatch(&mut self, id: &str, params: Value) {
         if let Err(error) = self.commands.execute(id, &mut self.state, params) {
+            diagnostics::log(diagnostics::Level::Warn, &format!("{id}: {error}"));
             self.state.status = error.to_string();
         }
     }
@@ -290,6 +372,16 @@ impl IdeApp {
             }
         }
         let mac = cfg!(target_os = "macos");
+        // Settings: ⌘, on macOS, Ctrl+Alt+S elsewhere.
+        if (mac && consume(Modifiers::COMMAND, Key::Comma))
+            || (!mac && consume(Modifiers::CTRL | Modifiers::ALT, Key::S))
+        {
+            self.dispatch("settings.open", Value::Null);
+        }
+        if self.settings_dialog.is_some() || self.state.settings_request.is_some() {
+            // The dialog is modal and handles its own keys (Escape closes it).
+            return;
+        }
         if ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
             && self.dialog.is_none()
             && !self.palette.open
@@ -331,7 +423,16 @@ impl IdeApp {
                 selected: usize::from(self.state.recent_files.len() > 1),
             });
         }
-        if self.state.active_document.is_some() {
+        let diff_tab = self.state.diff_active && self.state.diff.is_some();
+        if diff_tab && self.dialog.is_none() && !self.palette.open {
+            if consume(Modifiers::NONE, Key::F7) {
+                self.dispatch("diff.nextChange", Value::Null);
+            }
+            if consume(Modifiers::SHIFT, Key::F7) {
+                self.dispatch("diff.previousChange", Value::Null);
+            }
+        }
+        if self.state.active_document.is_some() && !diff_tab {
             // Go to Line: ⌘L on macOS, Ctrl+G elsewhere.
             if (mac && consume(Modifiers::COMMAND, Key::L))
                 || (!mac && consume(Modifiers::COMMAND, Key::G))
@@ -366,7 +467,9 @@ impl IdeApp {
             self.dispatch("language.complete", Value::Null);
         }
         if consume(Modifiers::NONE, Key::Escape) {
-            if self.dialog.is_some() {
+            if self.state.about_open {
+                self.state.about_open = false;
+            } else if self.dialog.is_some() {
                 self.dialog = None;
             } else if self.palette.open {
                 self.palette.open = false;
@@ -387,6 +490,10 @@ impl IdeApp {
         if consume(Modifiers::COMMAND, Key::S) {
             self.autosave();
         }
+        // Reload All from Disk: ⌥⌘Y on macOS, Ctrl+Alt+Y elsewhere.
+        if consume(Modifiers::COMMAND | Modifiers::ALT, Key::Y) {
+            self.dispatch("file.synchronize", Value::Null);
+        }
         if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z) {
             self.dispatch("editor.redo", Value::Null);
         }
@@ -396,7 +503,9 @@ impl IdeApp {
         let close_tab = consume(Modifiers::COMMAND, Key::W)
             || consume(Modifiers::COMMAND, Key::F4)
             || consume(Modifiers::CTRL, Key::F4);
-        if close_tab && self.state.active_document.is_some() {
+        if close_tab && diff_tab {
+            self.dispatch("diff.close", Value::Null);
+        } else if close_tab && self.state.active_document.is_some() {
             self.dispatch("editor.close", Value::Null);
         }
         if consume(Modifiers::COMMAND, Key::F9) {
@@ -532,15 +641,46 @@ impl eframe::App for IdeApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.waker_installed {
+            let ctx = ctx.clone();
+            self.state.waker.set(move || ctx.request_repaint());
+            self.waker_installed = true;
+        }
+        self.state.poll_files();
+        if !self.repaint_hook_installed {
+            let ctx = ctx.clone();
+            self.state
+                .repaint
+                .set(std::sync::Arc::new(move || ctx.request_repaint()));
+            self.repaint_hook_installed = true;
+        }
         self.state.poll_search();
         self.state.poll_runner();
         self.state.poll_lsp();
         self.state.poll_updates();
+        if self.state.poll_android() {
+            ctx.request_repaint();
+        }
+        self.state.poll_git();
+        self.state.poll_toolchains();
+        if self.state.toolchains.service.is_busy() {
+            ctx.request_repaint_after(Duration::from_millis(200));
+        }
         if self.state.lsp.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(100));
-        } else if !self.state.lsp.servers().is_empty() {
-            // Diagnostics and server messages arrive without user input.
+        } else if !self.state.lsp.servers().is_empty() || self.state.android.devices.is_tracking() {
+            // Diagnostics, server messages and device changes arrive without user input.
             ctx.request_repaint_after(Duration::from_millis(500));
+        }
+        plugin_ui::sync(self, ctx);
+        if let Some(plugin) = self.state.plugin_host.app_mode.clone() {
+            plugin_ui::handle_keybindings(self, ctx);
+            chrome::window_resize_handles(ctx);
+            plugin_ui::app_window(self, ctx, &plugin);
+            palette::show(self, ctx);
+            plugin_ui::notifications(self, ctx);
+            self.control_after_frame(ctx);
+            return;
         }
         if self.state.search.is_running() || self.state.runner.is_running() {
             ctx.request_repaint_after(Duration::from_millis(50));
@@ -551,12 +691,25 @@ impl eframe::App for IdeApp {
         }
         // Like the reference IDE, save all files when the window loses focus.
         let focused = ctx.input(|input| input.focused);
-        if self.window_focused && !focused {
+        if self.window_focused
+            && !focused
+            && self
+                .state
+                .settings
+                .bool(ids::AUTOSAVE_FOCUS)
+                .unwrap_or(true)
+        {
             self.autosave();
+        }
+        if !self.window_focused && focused {
+            // Pick up changes made in other applications right away.
+            self.state.request_git_refresh();
         }
         self.window_focused = focused;
         self.handle_shortcuts(ctx);
+        plugin_ui::handle_keybindings(self, ctx);
         self.follow_tool_window_focus(ctx);
+        theme::apply_settings(ctx, &self.state.settings);
 
         chrome::window_resize_handles(ctx);
         chrome::main_toolbar(self, ctx);
@@ -565,16 +718,23 @@ impl eframe::App for IdeApp {
             welcome::show(self, ctx);
         } else {
             chrome::left_stripe(self, ctx);
-            chrome::right_stripe(ctx);
+            plugin_ui::right_side(self, ctx);
             toolwindows::left(self, ctx);
+            device_manager::right(self, ctx);
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }
         editor::completion_popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
+        settings_dialog::show(self, ctx);
+        android_sdk::show(self, ctx);
         notifications::show(self, ctx);
+        crash_notice::show(self, ctx);
+        about::show(self, ctx);
         lsp_status::notices(self, ctx);
+        plugin_ui::plugins_window(self, ctx);
+        plugin_ui::notifications(self, ctx);
         // Include operations started by controls in this frame, and keep
         // polling even when their notification balloon is hidden.
         if self.state.updates.is_busy() {
@@ -584,6 +744,7 @@ impl eframe::App for IdeApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.state.shutdown_plugins();
         if self.state.project.is_some() {
             self.autosave();
             self.dispatch("workspace.save", Value::Null);

@@ -1,5 +1,6 @@
 //! Editor island: tabs, viewport-native text surface, and completion popup.
 
+use crate::editor_keys;
 use crate::icons::{self, Icon};
 use crate::widgets::island_frame;
 use crate::{IdeApp, theme};
@@ -41,11 +42,22 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
         .frame(island_frame())
         .show(ctx, |ui| {
             tabs(app, ui);
+            if app.state.diff_active && app.state.diff.is_some() {
+                crate::diff_ui::show(app, ui);
+                app.caret_screen_pos = None;
+                return;
+            }
+            if app.state.plugin_host.active_tab.is_some() {
+                crate::plugin_ui::active_tab_body(app, ui);
+                app.caret_screen_pos = None;
+                return;
+            }
             if app.state.active_document.is_none() {
                 empty_state(ui);
                 app.caret_screen_pos = None;
                 return;
             }
+            crate::disk_banner::show(app, ui);
             if app.find.open {
                 crate::findbar::show(app, ui);
             }
@@ -134,14 +146,14 @@ fn empty_state(ui: &mut egui::Ui) {
             egui::Align2::RIGHT_CENTER,
             label,
             egui::FontId::proportional(theme::UI_FONT_SIZE),
-            theme::TEXT_SECONDARY,
+            *theme::TEXT_SECONDARY,
         );
         painter.text(
             egui::pos2(rect.center().x + 8.0, y),
             egui::Align2::LEFT_CENTER,
             crate::keys::display(shortcut),
             egui::FontId::proportional(theme::UI_FONT_SIZE),
-            theme::MODIFIED,
+            *theme::MODIFIED,
         );
         y += 28.0;
     }
@@ -157,11 +169,13 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     for index in 0..app.state.documents.len() {
         let doc = &app.state.documents[index];
         let name = IdeApp::file_name(&doc.path);
-        let active = app.state.active_document == Some(index);
+        let active = app.state.active_document == Some(index)
+            && !app.state.diff_active
+            && app.state.plugin_host.active_tab.is_none();
         let color = if active {
-            theme::TEXT_BRIGHT
+            *theme::TEXT_BRIGHT
         } else {
-            theme::TEXT_SECONDARY
+            *theme::TEXT_SECONDARY
         };
         let galley = ui
             .painter()
@@ -174,9 +188,9 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         let response = ui.interact(rect, egui::Id::new(("editor_tab", index)), Sense::click());
         let fill = if active {
-            Color32::from_rgb(0x23, 0x35, 0x58) // EditorTabs.underlinedTabBackground
+            *theme::TAB_SELECTED
         } else if response.hovered() {
-            theme::HOVER
+            *theme::HOVER
         } else {
             Color32::TRANSPARENT
         };
@@ -185,7 +199,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.painter().rect_stroke(
                 rect,
                 6.0,
-                Stroke::new(1.0_f32, Color32::from_rgb(0x2E, 0x4D, 0x89)), // EditorTabs.underlinedBorderColor
+                Stroke::new(1.0_f32, theme::TAB_SELECTED_BORDER),
                 egui::StrokeKind::Inside,
             );
         }
@@ -194,7 +208,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.painter(),
             layout.icon,
             Icon::for_file(&name),
-            icons::ICON,
+            *icons::ICON,
         );
         ui.painter().galley(layout.text.min, galley, color);
         let close_rect = layout.close;
@@ -211,7 +225,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
                 ui.painter(),
                 close_rect.shrink(2.0),
                 Icon::Close,
-                theme::TEXT_SECONDARY,
+                *theme::TEXT_SECONDARY,
             );
         } else if dirty {
             ui.painter()
@@ -233,6 +247,18 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             close = Some(index);
         }
     }
+    if let Some(tab) = app.state.diff.as_ref() {
+        let title = crate::diff_ui::tab_title(tab);
+        let tooltip = format!("Diff of {} against HEAD", tab.path.display());
+        let (clicked, closed, end) = diff_tab(ui, bar, x, &title, &tooltip, app.state.diff_active);
+        x = end;
+        if closed {
+            app.dispatch("diff.close", Value::Null);
+        } else if clicked {
+            app.dispatch("diff.activate", Value::Null);
+        }
+    }
+    crate::plugin_ui::editor_tabs(app, ui, bar, x);
     if let Some(index) = close {
         app.dispatch("editor.close", json!({"index": index}));
     } else if let Some(index) = activate {
@@ -271,15 +297,94 @@ impl TabLayout {
     }
 }
 
-fn highlighted_line_job(
+/// The diff viewer's tab, after the document tabs. Returns (clicked, closed, x after
+/// the tab).
+fn diff_tab(
+    ui: &mut egui::Ui,
+    bar: Rect,
+    x: f32,
+    title: &str,
+    tooltip: &str,
+    active: bool,
+) -> (bool, bool, f32) {
+    let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
+    let color = if active {
+        *theme::TEXT_BRIGHT
+    } else {
+        *theme::TEXT_SECONDARY
+    };
+    let galley = ui.painter().layout_no_wrap(title.to_owned(), font, color);
+    let width = 10.0 + 16.0 + 6.0 + galley.size().x + 6.0 + 16.0 + 8.0;
+    let rect = Rect::from_min_size(egui::pos2(x, bar.top() + 5.0), vec2(width, 28.0));
+    if rect.left() > bar.right() {
+        return (false, false, rect.right() + 2.0);
+    }
+    let response = ui.interact(rect, egui::Id::new("editor_diff_tab"), Sense::click());
+    let fill = if active {
+        *theme::TAB_SELECTED
+    } else if response.hovered() {
+        *theme::HOVER
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(rect, 6.0, fill);
+    if active {
+        ui.painter().rect_stroke(
+            rect,
+            6.0,
+            Stroke::new(1.0_f32, theme::TAB_SELECTED_BORDER),
+            egui::StrokeKind::Inside,
+        );
+    }
+    icons::paint(
+        ui.painter(),
+        Rect::from_min_size(rect.left_center() + vec2(10.0, -8.0), vec2(16.0, 16.0)),
+        Icon::Commit,
+        *icons::ICON,
+    );
+    ui.painter().galley(
+        rect.left_center() + vec2(32.0, -galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    let close_rect = Rect::from_min_size(
+        egui::pos2(rect.right() - 24.0, rect.center().y - 8.0),
+        vec2(16.0, 16.0),
+    );
+    let on_close = response
+        .hover_pos()
+        .is_some_and(|pos| close_rect.expand(2.0).contains(pos));
+    if response.hovered() || active {
+        if on_close {
+            ui.painter()
+                .rect_filled(close_rect.expand(2.0), 4.0, theme::HOVER);
+        }
+        icons::paint(
+            ui.painter(),
+            close_rect.shrink(2.0),
+            Icon::Close,
+            *theme::TEXT_SECONDARY,
+        );
+    }
+    let response = response.on_hover_text(tooltip);
+    let clicked = response.clicked();
+    (
+        clicked && !on_close,
+        (clicked && on_close) || response.middle_clicked(),
+        rect.right() + 2.0,
+    )
+}
+
+pub(crate) fn highlighted_line_job(
     text: &str,
     line_start_byte: usize,
     analysis: &LanguageAnalysis,
+    font: &egui::FontId,
 ) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     let base = egui::TextFormat {
-        font_id: egui::FontId::monospace(theme::EDITOR_FONT_SIZE),
-        color: theme::editor::TEXT,
+        font_id: font.clone(),
+        color: *theme::editor::TEXT,
         ..Default::default()
     };
     let line_end_byte = line_start_byte + text.len();
@@ -374,7 +479,19 @@ fn editor_surface(
     highlights: &[(usize, usize)],
 ) -> Result<EditorOutput, String> {
     let mut requests = Vec::new();
-    let font = egui::FontId::monospace(theme::EDITOR_FONT_SIZE);
+    let font = theme::editor_font(ui.style());
+    // Rows scale with Settings | Editor | Font (size and line height).
+    let row_height = theme::editor_row_height(ui.ctx(), &font, ROW_HEIGHT);
+    // The color scheme's background (equal to the island in the theme's own scheme).
+    ui.painter().rect_filled(
+        ui.available_rect_before_wrap(),
+        egui::CornerRadius {
+            sw: theme::ISLAND_RADIUS,
+            se: theme::ISLAND_RADIUS,
+            ..Default::default()
+        },
+        theme::editor::BACKGROUND,
+    );
     let char_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'm'));
     let line_count = document.text.len_lines();
     let digits = line_count.max(1).to_string().len().max(2);
@@ -403,7 +520,7 @@ fn editor_surface(
             let longest = 400.0_f32;
             let content_size = egui::vec2(
                 ui.available_width().max(text_left + longest * char_width),
-                line_count as f32 * ROW_HEIGHT + ui.available_height() * 0.5,
+                line_count as f32 * row_height + ui.available_height() * 0.5,
             );
             let (rect, response) = ui.allocate_exact_size(content_size, Sense::click_and_drag());
             let response = ui
@@ -414,7 +531,7 @@ fn editor_surface(
                 response.request_focus();
             }
             let position_to_offset = |position: egui::Pos2| {
-                let line = (((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize)
+                let line = (((position.y - rect.top()) / row_height).floor().max(0.0) as usize)
                     .min(line_count.saturating_sub(1));
                 let line_text = document.text.line(line).unwrap_or_default();
                 let content = line_text.trim_end_matches(['\r', '\n']);
@@ -424,13 +541,22 @@ fn editor_surface(
                     .min(content.chars().count());
                 document.text.line_to_char(line).unwrap_or(0) + column
             };
+            // Line/column under the pointer; the column may lie past the line end.
+            let position_to_point = |position: egui::Pos2| jetthing_text::multicaret::BlockPoint {
+                line: (((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize)
+                    .min(line_count.saturating_sub(1)),
+                column: ((position.x - rect.left() - text_left) / char_width)
+                    .round()
+                    .max(0.0) as usize,
+            };
+            let block_drag_id = editor_id().with("block_drag_anchor");
             if response.clicked()
                 && let Some(position) = response.interact_pointer_pos()
             {
                 let offset = position_to_offset(position);
                 let modifiers = ui.input(|input| input.modifiers);
-                if modifiers.alt {
-                    document.selections.add(Selection::caret(offset));
+                if modifiers.alt && modifiers.shift {
+                    editor_keys::toggle_caret(&mut document.selections, offset);
                 } else if modifiers.shift {
                     let anchor = document.selections.primary().anchor;
                     document.selections.set_single(Selection {
@@ -461,8 +587,16 @@ fn editor_surface(
                 });
             }
             if response.drag_started()
-                && let Some(position) = response.interact_pointer_pos()
+                && let Some(position) = ui
+                    .input(|input| input.pointer.press_origin())
+                    .or(response.interact_pointer_pos())
             {
+                // Alt-drag, middle-drag or column mode: rectangular selection.
+                let block = ui.input(|input| input.modifiers.alt)
+                    || response.dragged_by(egui::PointerButton::Middle)
+                    || document.selections.column_mode();
+                let anchor = block.then(|| position_to_point(position));
+                ui.data_mut(|data| data.insert_temp(block_drag_id, anchor));
                 document
                     .selections
                     .set_single(Selection::caret(position_to_offset(position)));
@@ -514,7 +648,19 @@ fn editor_surface(
                     ui.close();
                 }
             });
+            let block_anchor: Option<jetthing_text::multicaret::BlockPoint> =
+                ui.data(|data| data.get_temp(block_drag_id)).flatten();
             if response.dragged()
+                && let Some(position) = response.interact_pointer_pos()
+                && let Some(anchor) = block_anchor
+            {
+                editor_keys::drag_block(
+                    &document.text,
+                    &mut document.selections,
+                    anchor,
+                    position_to_point(position),
+                );
+            } else if response.dragged()
                 && let Some(position) = response.interact_pointer_pos()
             {
                 let offset = position_to_offset(position);
@@ -528,33 +674,33 @@ fn editor_surface(
             let painter = ui.painter().clone();
             // Gutter background matches the editor in Islands; draw caret row first.
             let first_line =
-                ((viewport.top() / ROW_HEIGHT).floor().max(0.0) as usize).min(line_count);
-            let last_line = ((viewport.bottom() / ROW_HEIGHT).ceil() as usize + 1).min(line_count);
+                ((viewport.top() / row_height).floor().max(0.0) as usize).min(line_count);
+            let last_line = ((viewport.bottom() / row_height).ceil() as usize + 1).min(line_count);
             let focused = response.has_focus();
             let blink_on = {
                 let time = ui.input(|input| input.time);
                 (time * 2.0) as i64 % 2 == 0
             };
             for line in first_line..last_line {
-                let y = rect.top() + line as f32 * ROW_HEIGHT;
+                let y = rect.top() + line as f32 * row_height;
                 let line_start = document.text.line_to_char(line).unwrap_or(0);
                 let line_text = document.text.line(line).unwrap_or_default();
                 let content = line_text.trim_end_matches(['\r', '\n']);
                 let line_end = line_start + content.chars().count();
                 let row =
-                    Rect::from_min_size(egui::pos2(rect.left(), y), vec2(rect.width(), ROW_HEIGHT));
+                    Rect::from_min_size(egui::pos2(rect.left(), y), vec2(rect.width(), row_height));
                 if line == caret_line && document.selections.primary().is_caret() {
                     painter.rect_filled(row, 0.0, theme::editor::CARET_ROW);
                 }
                 painter.text(
-                    egui::pos2(rect.left() + gutter_width - 18.0, y + ROW_HEIGHT / 2.0),
+                    egui::pos2(rect.left() + gutter_width - 18.0, y + row_height / 2.0),
                     egui::Align2::RIGHT_CENTER,
                     format!("{}", line + 1),
                     font.clone(),
                     if line == caret_line {
-                        theme::editor::LINE_NUMBER_CARET
+                        *theme::editor::LINE_NUMBER_CARET
                     } else {
-                        theme::editor::LINE_NUMBER
+                        *theme::editor::LINE_NUMBER
                     },
                 );
                 // Indent guides every four columns of leading whitespace.
@@ -562,7 +708,7 @@ fn editor_surface(
                 for level in (4..=indent.saturating_sub(1)).step_by(4) {
                     let x = rect.left() + text_left + level as f32 * char_width;
                     painter.line_segment(
-                        [egui::pos2(x, y), egui::pos2(x, y + ROW_HEIGHT)],
+                        [egui::pos2(x, y), egui::pos2(x, y + row_height)],
                         Stroke::new(1.0_f32, theme::editor::INDENT_GUIDE),
                     );
                 }
@@ -573,7 +719,7 @@ fn editor_surface(
                         let x1 = rect.left() + text_left + (start - line_start) as f32 * char_width;
                         let x2 = rect.left() + text_left + (end - line_start) as f32 * char_width;
                         painter.rect_filled(
-                            Rect::from_min_max(egui::pos2(x1, y), egui::pos2(x2, y + ROW_HEIGHT)),
+                            Rect::from_min_max(egui::pos2(x1, y), egui::pos2(x2, y + row_height)),
                             2.0,
                             theme::editor::SEARCH_RESULT,
                         );
@@ -584,7 +730,7 @@ fn editor_surface(
                         let x1 =
                             rect.left() + text_left + (offset - line_start) as f32 * char_width;
                         painter.rect_filled(
-                            Rect::from_min_size(egui::pos2(x1, y), vec2(char_width, ROW_HEIGHT)),
+                            Rect::from_min_size(egui::pos2(x1, y), vec2(char_width, row_height)),
                             2.0,
                             theme::editor::MATCHED_BRACE,
                         );
@@ -602,16 +748,16 @@ fn editor_surface(
                             x2 += char_width * 0.6;
                         }
                         painter.rect_filled(
-                            Rect::from_min_max(egui::pos2(x1, y), egui::pos2(x2, y + ROW_HEIGHT)),
+                            Rect::from_min_max(egui::pos2(x1, y), egui::pos2(x2, y + row_height)),
                             2.0,
                             theme::editor::SELECTION,
                         );
                     }
                 }
                 let line_start_byte = document.text.line_to_byte(line).unwrap_or(0);
-                let job = highlighted_line_job(content, line_start_byte, &document.analysis);
+                let job = highlighted_line_job(content, line_start_byte, &document.analysis, &font);
                 let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-                let text_y = y + (ROW_HEIGHT - galley.size().y) / 2.0;
+                let text_y = y + (row_height - galley.size().y) / 2.0;
                 painter.galley(
                     egui::pos2(rect.left() + text_left, text_y),
                     galley,
@@ -626,8 +772,8 @@ fn editor_surface(
                             &painter,
                             column_x(start),
                             column_x(start + 1),
-                            y + ROW_HEIGHT - 2.0,
-                            theme::editor::ERROR_EFFECT,
+                            y + row_height - 2.0,
+                            *theme::editor::ERROR_EFFECT,
                         );
                     }
                 }
@@ -644,15 +790,15 @@ fn editor_surface(
                             content.chars().count()
                         };
                         let color = if diagnostic.severity == Some(1) {
-                            theme::editor::ERROR_EFFECT
+                            *theme::editor::ERROR_EFFECT
                         } else {
-                            theme::editor::WARNING_EFFECT
+                            *theme::editor::WARNING_EFFECT
                         };
                         squiggle(
                             &painter,
                             column_x(start),
                             column_x(end.max(start + 1)),
-                            y + ROW_HEIGHT - 2.0,
+                            y + row_height - 2.0,
                             color,
                         );
                     }
@@ -661,11 +807,11 @@ fn editor_surface(
                     if selection.head >= line_start && selection.head <= line_end {
                         let x = column_x(selection.head - line_start);
                         if *selection == document.selections.primary() {
-                            caret_pos = Some(egui::pos2(x, y + ROW_HEIGHT));
+                            caret_pos = Some(egui::pos2(x, y + row_height));
                         }
                         if focused && blink_on {
                             painter.line_segment(
-                                [egui::pos2(x, y + 2.0), egui::pos2(x, y + ROW_HEIGHT - 2.0)],
+                                [egui::pos2(x, y + 2.0), egui::pos2(x, y + row_height - 2.0)],
                                 Stroke::new(2.0_f32, theme::editor::CARET),
                             );
                         }
@@ -682,12 +828,12 @@ fn editor_surface(
                 && let Some(pos) = caret_pos
             {
                 let caret_rect =
-                    Rect::from_min_size(pos - vec2(0.0, ROW_HEIGHT), vec2(char_width, ROW_HEIGHT));
+                    Rect::from_min_size(pos - vec2(0.0, row_height), vec2(char_width, row_height));
                 if !viewport
                     .translate(rect.min.to_vec2())
                     .contains_rect(caret_rect)
                 {
-                    ui.scroll_to_rect(caret_rect.expand2(vec2(char_width * 4.0, ROW_HEIGHT)), None);
+                    ui.scroll_to_rect(caret_rect.expand2(vec2(char_width * 4.0, row_height)), None);
                 }
             }
             response
@@ -714,9 +860,11 @@ fn editor_surface(
     });
     let events = ui.input(|input| input.events.clone());
     let initial_revision = document.text.revision();
-    let page = (ui.available_height() / ROW_HEIGHT).max(1.0) as isize;
+    let page = (ui.available_height() / row_height).max(1.0) as isize;
     let mac = cfg!(target_os = "macos");
     let text_error = |error: jetthing_text::TextError| error.to_string();
+    let command = |id: &'static str| EditorRequest::Command(id, Value::Null);
+    let clone_armed = editor_keys::clone_gesture_armed(ui.ctx(), response.id, mac);
     for event in events {
         let (key, modifiers) = match event {
             egui::Event::Text(text) if !text.is_empty() => {
@@ -755,12 +903,29 @@ fn editor_surface(
             } => (key, modifiers),
             _ => continue,
         };
+        if let Some(id) = editor_keys::action_for(key, modifiers, mac) {
+            requests.push(command(id));
+            continue;
+        }
+        if clone_armed && matches!(key, egui::Key::ArrowUp | egui::Key::ArrowDown) {
+            requests.push(command(if key == egui::Key::ArrowUp {
+                "editor.cloneCaretAbove"
+            } else {
+                "editor.cloneCaretBelow"
+            }));
+            continue;
+        }
+        if document.selections.column_mode()
+            && let Some((lines, columns)) = editor_keys::column_delta(key, modifiers)
+        {
+            editor_keys::extend_block(document, lines, columns);
+            continue;
+        }
         let head = document.selections.primary().head;
         let len = document.text.len_chars();
         let extend = modifiers.shift;
         // Word-wise movement: ⌥ on macOS, Ctrl elsewhere.
         let word = if mac { modifiers.alt } else { modifiers.ctrl };
-        let command = |id: &'static str| EditorRequest::Command(id, Value::Null);
         match key {
             egui::Key::D if modifiers.command => requests.push(command("editor.duplicate")),
             egui::Key::Y if modifiers.command && !mac => {
@@ -840,32 +1005,30 @@ fn editor_surface(
                 });
             }
             egui::Key::ArrowLeft if word => {
-                move_primary(document, ops::word_left(&document.text, head), extend)
+                editor_keys::move_carets(document, extend, |d, s| ops::word_left(&d.text, s.head))
             }
             egui::Key::ArrowRight if word => {
-                move_primary(document, ops::word_right(&document.text, head), extend)
+                editor_keys::move_carets(document, extend, |d, s| ops::word_right(&d.text, s.head))
             }
-            egui::Key::ArrowLeft => {
-                let target = if !extend && !document.selections.primary().is_caret() {
-                    document.selections.primary().start()
+            egui::Key::ArrowLeft => editor_keys::move_carets(document, extend, |_, s| {
+                if !extend && !s.is_caret() {
+                    s.start()
                 } else {
-                    head.saturating_sub(1)
-                };
-                move_primary(document, target, extend);
-            }
-            egui::Key::ArrowRight => {
-                let target = if !extend && !document.selections.primary().is_caret() {
-                    document.selections.primary().end()
+                    s.head.saturating_sub(1)
+                }
+            }),
+            egui::Key::ArrowRight => editor_keys::move_carets(document, extend, |_, s| {
+                if !extend && !s.is_caret() {
+                    s.end()
                 } else {
-                    (head + 1).min(len)
-                };
-                move_primary(document, target, extend);
-            }
+                    (s.head + 1).min(len)
+                }
+            }),
             egui::Key::ArrowUp => {
-                move_primary(document, vertical_target(document, head, -1), extend)
+                editor_keys::move_carets(document, extend, |d, s| vertical_target(d, s.head, -1))
             }
             egui::Key::ArrowDown => {
-                move_primary(document, vertical_target(document, head, 1), extend)
+                editor_keys::move_carets(document, extend, |d, s| vertical_target(d, s.head, 1))
             }
             egui::Key::PageUp => {
                 move_primary(document, vertical_target(document, head, -page), extend)
@@ -873,37 +1036,29 @@ fn editor_surface(
             egui::Key::PageDown => {
                 move_primary(document, vertical_target(document, head, page), extend)
             }
-            egui::Key::Home => {
-                let target = if modifiers.command {
-                    0
+            egui::Key::Home if modifiers.command => move_primary(document, 0, extend),
+            egui::Key::Home => editor_keys::move_carets(document, extend, |d, s| {
+                let line = d.text.char_to_line(s.head);
+                let start = d.text.line_to_char(line).unwrap_or(0);
+                let indent = d
+                    .text
+                    .line(line)
+                    .unwrap_or_default()
+                    .chars()
+                    .take_while(|c| c.is_whitespace() && *c != '\n')
+                    .count();
+                // Smart home: toggle between first non-blank character and column 0.
+                if s.head == start + indent {
+                    start
                 } else {
-                    let line = document.text.char_to_line(head);
-                    let start = document.text.line_to_char(line).unwrap_or(0);
-                    let indent = document
-                        .text
-                        .line(line)
-                        .unwrap_or_default()
-                        .chars()
-                        .take_while(|c| c.is_whitespace() && *c != '\n')
-                        .count();
-                    // Smart home: toggle between first non-blank character and column 0.
-                    if head == start + indent {
-                        start
-                    } else {
-                        start + indent
-                    }
-                };
-                move_primary(document, target, extend);
-            }
-            egui::Key::End => {
-                let target = if modifiers.command {
-                    len
-                } else {
-                    let line = document.text.char_to_line(head);
-                    document.text.line_to_char(line).unwrap_or(0) + line_length(document, line)
-                };
-                move_primary(document, target, extend);
-            }
+                    start + indent
+                }
+            }),
+            egui::Key::End if modifiers.command => move_primary(document, len, extend),
+            egui::Key::End => editor_keys::move_carets(document, extend, |d, s| {
+                let line = d.text.char_to_line(s.head);
+                d.text.line_to_char(line).unwrap_or(0) + line_length(d, line)
+            }),
             egui::Key::Escape if document.selections.selections().len() > 1 => {
                 let primary = document.selections.primary();
                 document
@@ -965,14 +1120,14 @@ pub fn completion_popup(app: &mut IdeApp, ctx: &egui::Context) {
                                     rect,
                                     rect.left() + 8.0,
                                     &item.label,
-                                    egui::FontId::monospace(theme::EDITOR_FONT_SIZE),
-                                    theme::TEXT_BRIGHT,
+                                    theme::editor_font(ui.style()),
+                                    *theme::TEXT_BRIGHT,
                                 );
                                 if let Some(detail) = &item.detail {
                                     let galley = ui.painter().layout_no_wrap(
                                         detail.clone(),
                                         egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                                        theme::TEXT_INFO,
+                                        *theme::TEXT_INFO,
                                     );
                                     let pos = egui::pos2(
                                         (rect.right() - galley.size().x - 8.0).max(x + 16.0),
@@ -981,7 +1136,7 @@ pub fn completion_popup(app: &mut IdeApp, ctx: &egui::Context) {
                                     ui.painter().with_clip_rect(rect).galley(
                                         pos,
                                         galley,
-                                        theme::TEXT_INFO,
+                                        *theme::TEXT_INFO,
                                     );
                                 }
                                 if response.clicked() {
@@ -1030,7 +1185,7 @@ mod tests {
             ]),
             diagnostics: Vec::new(),
         };
-        let job = highlighted_line_job("ä", 0, &analysis);
+        let job = highlighted_line_job("ä", 0, &analysis, &egui::FontId::monospace(13.0));
         assert_eq!(job.text, "ä");
     }
 }

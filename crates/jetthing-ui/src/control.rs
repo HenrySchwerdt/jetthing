@@ -256,7 +256,10 @@ impl IdeApp {
     }
 
     fn popup_visible(&self) -> bool {
-        self.palette.open || self.dialog.is_some() || self.completion_visible()
+        self.palette.open
+            || self.dialog.is_some()
+            || self.state.about_open
+            || self.completion_visible()
     }
 
     fn completion_visible(&self) -> bool {
@@ -300,6 +303,10 @@ impl IdeApp {
                 json!({
                     "path": relative(&document.path),
                     "modified": document.text.is_dirty(),
+                    "diskConflict": document.conflict.map(|conflict| match conflict {
+                        jetthing_core::DiskConflict::Modified => "modified",
+                        jetthing_core::DiskConflict::Deleted => "deleted",
+                    }),
                 })
             })
             .collect();
@@ -353,6 +360,8 @@ impl IdeApp {
                 "findBar": self.find.open,
                 "completion": self.completion_visible(),
                 "notification": self.state.update_notification,
+                "about": self.state.about_open,
+                "crashReport": self.state.crash_report.is_some(),
             },
             "status": self.state.status,
             "busy": !self.background_idle(),
@@ -515,6 +524,9 @@ mod tests {
         assert!(app.shows_text("fn main"));
         let unknown = app.control_execute(&ctx, "no.such.command", Value::Null);
         assert!(!unknown.ok);
+        assert_eq!(app.control_state(&ctx)["popups"]["about"], false);
+        assert!(app.control_execute(&ctx, "app.about", Value::Null).ok);
+        assert_eq!(app.control_state(&ctx)["popups"]["about"], true);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

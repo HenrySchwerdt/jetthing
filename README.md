@@ -13,7 +13,10 @@ window islands, Search Everywhere, and a status bar with navigation breadcrumbs.
 cargo run -p jetthing-app                           # welcome screen, Open Project
 cargo run -p jetthing-app -- .                      # open a project
 cargo run -p jetthing-app -- . src/main.rs          # open a project and files
+cargo run -p jetthing-app --features example-plugins -- --app dev.jetthing.hello
+                                                    # a plugin as a standalone app
 cargo run -p jetthing-cli -- commands               # headless command discovery
+cargo run -p jetthing-app -- --version              # version, commit, date, target
 cargo run -p xtask -- parity                        # regenerate the parity dashboard
 ```
 
@@ -28,10 +31,32 @@ Use **New Project** on the welcome screen or in File to generate an Empty, Rust,
 or Java/Gradle project. Choose an existing parent folder and a new project name.
 Java templates require JDK 21 and Gradle on PATH; Rust templates require Cargo.
 
+## Install
+
+Download from the [latest release](https://github.com/HenrySchwerdt/jetthing/releases/latest):
+
+| Platform | Installer | Portable archive |
+|---|---|---|
+| Windows | `jetthing-<version>-windows-x86_64.msi` | `….zip` |
+| macOS (Apple silicon / Intel) | `jetthing-<version>-macos-aarch64.dmg` / `…-x86_64.dmg` | `….tar.gz` |
+| Linux | `jetthing_<version>_amd64.deb` (`sudo apt install ./jetthing_*.deb`) | `….tar.gz` with `.desktop` file |
+
+- **Windows:** run the MSI. It installs to Program Files, adds a Start Menu entry and
+  puts `jetthing` on `PATH`. Uninstall it from **Installed apps**.
+- **macOS:** drag Jetthing from the DMG to Applications. To uninstall, move it to the
+  Bin.
+- **Linux:** install the `.deb` with the command in the table. Uninstall it with
+  `sudo apt remove jetthing`.
+
+Builds are not signed by default, so Windows SmartScreen and macOS Gatekeeper warn on
+first launch. [`docs/release.md`](docs/release.md) explains how to proceed, and covers
+checksums, silent installs and optional signing.
+
 ## UI automation
 
 Set `JETTHING_CONTROL_SOCKET=/path/ctl.sock` to let scripts drive a running IDE over
-JSON lines: run commands, read state, send keys and text, wait, and take screenshots.
+JSON lines: run commands, read state, send keys, text and clicks, wait, and take screenshots.
+On Windows the value names a named pipe (`jetthing` → `\\.\pipe\jetthing`).
 
 ```bash
 JETTHING_CONTROL_SOCKET=/tmp/jt.sock cargo run -p jetthing-app -- . &
@@ -43,28 +68,43 @@ cargo run -p jetthing-cli -- ui state
 ```
 
 See `docs/parity/evidence/ui-control-socket.md` for the protocol.
+## Plugins
+
+Plugins add commands, menu items, keybindings, settings, tool windows, editor
+tabs and status bar widgets. Manage them in **File → Plugins…**. Run a plugin
+that declares an `[app]` view on its own with `jetthing --app <plugin-id>`. See
+`docs/plugins/api.md`; `plugins/hello` is the example plugin (bundled with
+`--features example-plugins`).
 
 ## Builds, releases and updates
 
 ```bash
-cargo run -p xtask -- dist     # release build staged in dist/jetthing-<version>-<os>-<arch>/
+cargo run -p xtask -- dist               # archive in dist/ (the self-updater's format)
+cargo run -p xtask -- dist --installer   # + .msi / .dmg / .deb for the host OS
 ```
 
-Every push to `main` runs `.github/workflows/release.yml`: it builds Linux, macOS and
-Windows archives (with `.sha256` checksums). When the version in `Cargo.toml` has no
-`v<version>` tag yet, the workflow publishes them as GitHub release `v<version>`. To ship
-a new version, bump `[workspace.package] version` and merge.
+`.github/workflows/release.yml` builds and smoke-tests the archives and installers for
+Linux, Windows and macOS (arm64 and x86_64), each with a `.sha256` checksum. A push to
+`main` publishes GitHub release `v<version>` when that release is missing or
+incomplete. Pushing tag `v<version>` publishes or repairs it. To ship a new version,
+bump `[workspace.package] version` and merge.
 
 The IDE checks for a newer release on startup and via **Help → Check for Updates…**.
-A notification offers **Update and Restart**: the archive is downloaded, verified against
-its checksum and swapped in place of the running executable (the previous one is kept as
-`jetthing.old`). Development builds (`cargo run`) only link to the release page.
+For archive installs, **Update and Restart** downloads the archive, verifies its
+checksum and swaps it in place of the running executable. The previous one is kept as
+`jetthing.old`. For MSI, DMG and `.deb` installs, it downloads and verifies the new
+installer instead, and **Quit and Install** hands it to the OS. Development builds
+(`cargo run`) only link to the release page. Details and environment variables
+(`JETTHING_NO_UPDATE_CHECK`, `JETTHING_GITHUB_TOKEN`, `JETTHING_UPDATE_REPOSITORY`)
+are in [`docs/release.md`](docs/release.md).
 
-| Variable | Effect |
-|---|---|
-| `JETTHING_NO_UPDATE_CHECK` | disable the startup check |
-| `JETTHING_GITHUB_TOKEN` / `GITHUB_TOKEN` | token for a private release repository |
-| `JETTHING_UPDATE_REPOSITORY` | `owner/repo` to update from (default `HenrySchwerdt/jetthing`) |
+## Logs and crash reports
+
+`jetthing.log` lives in `~/.local/state/jetthing/logs` (Linux), `~/Library/Logs/Jetthing`
+(macOS) or `%LOCALAPPDATA%\Jetthing\logs` (Windows); `JETTHING_LOG_DIR` overrides it.
+**Help → Show Log in Files** opens it. A crash writes `crash-*.txt` there (build, panic,
+backtrace, log tail) and the next start offers it in a notification; attach it to bug
+reports together with **Help → About → Copy**.
 
 ## Keyboard
 
@@ -74,6 +114,7 @@ Shortcuts follow the default keymap of the reference IDE (macOS / Windows & Linu
 |---|---|---|
 | Search Everywhere | Double ⇧ | Double Shift |
 | Find Action | ⇧⌘A | Ctrl+Shift+A |
+| Settings | ⌘, | Ctrl+Alt+S |
 | Project / Commit tool window | ⌘1 / ⌘0 | Alt+1 / Alt+0 |
 | Find in Files | ⇧⌘F | Ctrl+Shift+F |
 | Terminal | ⌥F12 | Alt+F12 |
@@ -93,13 +134,14 @@ Shortcuts follow the default keymap of the reference IDE (macOS / Windows & Linu
 
 UI colors are facts extracted from IntelliJ Community theme files (Apache-2.0, see
 `docs/spec/data/NOTICE.md`). Fonts are Inter and JetBrains Mono under the SIL Open Font
-License (`crates/jetthing-ui/assets/fonts/`). Icons are original vector drawings; no
-JetBrains icons or artwork are bundled. IntelliJ and JetBrains are trademarks of
+License (`crates/jetthing-ui/assets/fonts/`). Icons, including the app icon
+(`assets/icon/jetthing.svg`), are original vector drawings; no JetBrains icons or
+artwork are bundled. IntelliJ and JetBrains are trademarks of
 JetBrains s.r.o.; Jetthing is not affiliated with or endorsed by JetBrains.
 
 See `docs/roadmap.md` for honest status and limitations.
 
 <!-- parity:begin -->
-**Parity progress:** 9.5% implemented (weighted), 0.0% verified, across 665 tracked
-features in 13 areas. See [`docs/parity/dashboard.md`](docs/parity/dashboard.md).
+**Parity progress:** 12.9% implemented (weighted), 0.0% verified, across 745 tracked
+features in 17 areas. See [`docs/parity/dashboard.md`](docs/parity/dashboard.md).
 <!-- parity:end -->
