@@ -20,6 +20,12 @@ fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOpti
         .with_app_id("jetthing")
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([800.0, 500.0]);
+    // Taskbar / dock icon from the original artwork in `assets/icon`.
+    if let Ok(icon) =
+        eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/jetthing.png"))
+    {
+        viewport = viewport.with_icon(icon);
+    }
     viewport = if cfg!(target_os = "macos") {
         // Keep native window controls in the OS title bar. The toolbar below it
         // starts at the content edge and needs no traffic-light spacer.

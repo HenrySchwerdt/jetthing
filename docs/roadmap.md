@@ -42,6 +42,8 @@
 - [x] Typed settings model and Settings dialog with search, Apply/Reset and Advanced Settings
 - [x] Theme engine from spec data with live Islands Dark / Islands Light switching
 - [ ] Keymap switching and bundled icon set beyond the core actions
+- [x] Native installers: MSI, DMG (`Jetthing.app`) and `.deb`, smoke-tested in CI
+- [ ] Code signing and notarization with project certificates (pipeline supports it)
 - [x] Editor actions: duplicate/delete/comment/move lines, pairing, smart Enter, word moves
 - [x] Find/Replace in file, Go to Line, Recent Files, Go to File
 - [x] Project tree New/Rename/Delete, commit with message and file selection

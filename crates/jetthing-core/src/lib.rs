@@ -91,6 +91,8 @@ pub struct IdeState {
     /// Settings page the UI should open (set by `settings.open`, taken by the UI).
     pub settings_request: Option<String>,
     pub android: AndroidState,
+    /// Verified installer to run on quit (MSI/DMG/.deb installations).
+    update_installer: Option<(PathBuf, jetthing_update::InstallKind)>,
     pub status: String,
     watcher: Option<jetthing_project::ProjectWatcher>,
     /// Lets background services (file watcher) wake the UI.

@@ -6770,9 +6770,13 @@ name = "xtask"
 version = "0.0.2"
 dependencies = [
  "anyhow",
+ "flate2",
  "jetthing-control",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "zip",
 ]
 
 [[package]]
