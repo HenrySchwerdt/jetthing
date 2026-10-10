@@ -563,7 +563,7 @@ fn editor_surface(
                     x >= gutter_width - 18.0 && x < gutter_width + 2.0
                 })
                 .and_then(|position| {
-                    let line = ((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize;
+                    let line = ((position.y - rect.top()) / row_height).floor().max(0.0) as usize;
                     gutter
                         .iter()
                         .any(|mark| mark.line == line)
@@ -729,7 +729,7 @@ fn editor_surface(
                 if let Some(mark) = gutter.iter().find(|mark| mark.line == line) {
                     crate::gutter_popup::paint_icon(
                         &painter,
-                        egui::pos2(rect.left() + gutter_width - 9.0, y + ROW_HEIGHT / 2.0),
+                        egui::pos2(rect.left() + gutter_width - 9.0, y + row_height / 2.0),
                         mark.kind,
                     );
                 }
