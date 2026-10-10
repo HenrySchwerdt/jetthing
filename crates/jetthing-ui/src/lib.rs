@@ -14,6 +14,7 @@ mod keys;
 mod lsp_status;
 mod notifications;
 mod palette;
+mod plugin_manager;
 mod plugin_ui;
 mod popups;
 mod syntax;
@@ -62,7 +63,8 @@ pub struct IdeApp {
     plugin_commands: Vec<String>,
     /// Registry generation the contributed commands were synced at.
     plugin_generation: u64,
-    plugins_window: Option<plugin_ui::PluginsWindow>,
+    plugin_manager: Option<plugin_manager::PluginManager>,
+    plugin_manager_close: bool,
 }
 
 impl IdeApp {
@@ -158,7 +160,8 @@ impl IdeApp {
             control: None,
             plugin_commands: Vec::new(),
             plugin_generation: u64::MAX,
-            plugins_window: None,
+            plugin_manager: None,
+            plugin_manager_close: false,
         }
     }
 
@@ -633,7 +636,7 @@ impl eframe::App for IdeApp {
         popups::show(self, ctx);
         notifications::show(self, ctx);
         lsp_status::notices(self, ctx);
-        plugin_ui::plugins_window(self, ctx);
+        plugin_manager::show(self, ctx);
         plugin_ui::notifications(self, ctx);
         // Include operations started by controls in this frame, and keep
         // polling even when their notification balloon is hidden.

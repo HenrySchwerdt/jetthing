@@ -17,7 +17,8 @@
 - [x] Command palette
 - [x] Manifest plugin discovery
 - [x] Plugin API 1: Rust plugins contribute commands, menus, keybindings, settings, tool windows, editor tabs and status widgets; live enable/disable; `--app <id>` standalone mode (`docs/plugins/api.md`)
-- [ ] `.jtplugin` install/uninstall, Settings ▸ Plugins (Marketplace/Installed), Lua and WASM plugin runtimes, JetBrains Marketplace conversion
+- [x] `.jtplugin` install/uninstall without restart and Plugins page (Marketplace/Installed tabs)
+- [ ] Lua and WASM plugin runtimes, JetBrains Marketplace browsing and conversion
 - [x] Revisioned rope-backed text engine with Unicode-safe undo/redo
 - [x] Viewport-native editor that shapes and paints only visible lines
 - [x] Multi-cursor selections, atomic edits, and coalesced primary typing transactions

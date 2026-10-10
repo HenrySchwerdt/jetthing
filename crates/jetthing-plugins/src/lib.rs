@@ -2,6 +2,7 @@
 //! the loaded plugin instances. Activation needs a [`PluginHost`], which the
 //! application core provides.
 
+pub mod archive;
 mod store;
 
 pub use jetthing_plugin_api::*;

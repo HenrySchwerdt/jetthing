@@ -1776,6 +1776,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "toml",
+ "zip",
 ]
 
 [[package]]
@@ -5035,6 +5036,7 @@ version = "0.0.2"
 dependencies = [
  "anyhow",
  "jetthing-control",
+ "jetthing-plugins",
  "serde",
  "serde_json",
 ]

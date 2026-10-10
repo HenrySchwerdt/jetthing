@@ -150,10 +150,6 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
                     app.open_project_dialog();
                     ui.close();
                 }
-                if menu.title == "File" && ui.button("Plugins…").clicked() {
-                    app.plugins_window = Some(Default::default());
-                    ui.close();
-                }
                 for spec in menu_commands(menu, &specs) {
                     let enabled = app.commands.is_enabled(&spec.id, &app.state);
                     let button = egui::Button::new(&spec.label)

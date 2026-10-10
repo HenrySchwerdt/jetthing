@@ -8,8 +8,7 @@ use std::{
     process::Command,
 };
 
-const USAGE: &str =
-    "usage: cargo xtask parity [--check] | dist | scenes [--only 01,05] [--out DIR] [--release]";
+const USAGE: &str = "usage: cargo xtask parity [--check] | dist | scenes [--only 01,05] [--out DIR] [--release] | pack-plugin <dir> [output]";
 
 fn workspace_root() -> PathBuf {
     // Prefer the current directory when it holds the inventory (normal `cargo run`
@@ -37,6 +36,12 @@ fn main() -> Result<()> {
         }
         Some("dist") => dist(),
         Some("scenes") => scenes::run(args.into_iter().skip(1)),
+        Some("pack-plugin") => {
+            let dir = args
+                .get(1)
+                .context("usage: cargo xtask pack-plugin <plugin dir> [output]")?;
+            pack_plugin(Path::new(dir), args.get(2).map(Path::new))
+        }
         _ => bail!(USAGE),
     }
 }
@@ -106,5 +111,30 @@ fn dist() -> Result<()> {
     }
     // Forward slashes on every platform so CI scripts can parse the path.
     println!("dist/{name}");
+    Ok(())
+}
+
+/// Packs a plugin directory into `dist/plugins/<id>-<version>.jtplugin`.
+fn pack_plugin(dir: &Path, output: Option<&Path>) -> Result<()> {
+    let manifest_text = fs::read_to_string(dir.join(jetthing_plugins::MANIFEST_FILE))
+        .with_context(|| {
+            format!(
+                "{} has no {}",
+                dir.display(),
+                jetthing_plugins::MANIFEST_FILE
+            )
+        })?;
+    let manifest = jetthing_plugins::PluginManifest::parse(&manifest_text)?;
+    let default = Path::new("dist/plugins").join(format!(
+        "{}-{}.{}",
+        manifest.id,
+        manifest.version,
+        jetthing_plugins::archive::ARCHIVE_EXTENSION
+    ));
+    let output = output.unwrap_or(&default);
+    jetthing_plugins::archive::pack(dir, output)?;
+    // Installing validates the archive the same way the IDE will.
+    jetthing_plugins::archive::read_manifest(output)?;
+    println!("{}", output.display());
     Ok(())
 }
