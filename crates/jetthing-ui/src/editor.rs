@@ -789,21 +789,9 @@ fn editor_surface(
         // Word-wise movement: ⌥ on macOS, Ctrl elsewhere.
         let word = if mac { modifiers.alt } else { modifiers.ctrl };
         let command = |id: &'static str| EditorRequest::Command(id, Value::Null);
+        // Duplicate, Delete Line, Comment and Move Line come from the active keymap
+        // (`keybindings`), which consumes their keys before the editor sees them.
         match key {
-            egui::Key::D if modifiers.command => requests.push(command("editor.duplicate")),
-            egui::Key::Y if modifiers.command && !mac => {
-                requests.push(command("editor.deleteLine"))
-            }
-            egui::Key::Backspace if modifiers.command && mac => {
-                requests.push(command("editor.deleteLine"))
-            }
-            egui::Key::Slash if modifiers.command => requests.push(command("editor.commentLine")),
-            egui::Key::ArrowUp if modifiers.alt && modifiers.shift => {
-                requests.push(command("editor.moveLineUp"))
-            }
-            egui::Key::ArrowDown if modifiers.alt && modifiers.shift => {
-                requests.push(command("editor.moveLineDown"))
-            }
             egui::Key::Enter if modifiers.shift => {
                 // Start New Line: open a line below without splitting the current one.
                 let line = document.text.char_to_line(head);

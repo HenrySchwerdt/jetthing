@@ -1623,6 +1623,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jetthing-actions"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jetthing-app"
 version = "0.0.1"
 dependencies = [
@@ -1654,6 +1662,7 @@ version = "0.0.1"
 dependencies = [
  "jetthing-command",
  "jetthing-git",
+ "jetthing-keymap",
  "jetthing-language",
  "jetthing-lsp",
  "jetthing-plugins",
@@ -1672,6 +1681,15 @@ dependencies = [
 name = "jetthing-git"
 version = "0.0.1"
 dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "jetthing-keymap"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -1728,6 +1746,7 @@ version = "0.0.1"
 name = "jetthing-settings"
 version = "0.0.1"
 dependencies = [
+ "jetthing-keymap",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1758,9 +1777,11 @@ version = "0.0.1"
 dependencies = [
  "eframe",
  "egui",
+ "jetthing-actions",
  "jetthing-command",
  "jetthing-core",
  "jetthing-git",
+ "jetthing-keymap",
  "jetthing-language",
  "jetthing-lsp",
  "jetthing-runner",

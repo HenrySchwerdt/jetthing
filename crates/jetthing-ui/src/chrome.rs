@@ -67,7 +67,10 @@ pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
                 if icons::button(
                     ui,
                     Icon::Search,
-                    &format!("Search Everywhere ({})", keys::display("Double ⇧")),
+                    &format!(
+                        "Search Everywhere ({})",
+                        app.action_shortcut("SearchEverywhere").unwrap_or_default()
+                    ),
                 )
                 .clicked()
                 {
@@ -103,8 +106,8 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
                     categories.contains(&spec.category.as_str()) && IdeApp::parameterless(spec)
                 }) {
                     let enabled = app.commands.is_enabled(&spec.id, &app.state);
-                    let button = egui::Button::new(&spec.label)
-                        .shortcut_text(keys::display(spec.shortcut.as_deref().unwrap_or_default()));
+                    let button =
+                        egui::Button::new(&spec.label).shortcut_text(app.command_shortcut(spec));
                     if ui.add_enabled(enabled, button).clicked() {
                         app.dispatch(&spec.id, Value::Null);
                         ui.close();
@@ -114,7 +117,10 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         ui.separator();
         if ui
-            .add(egui::Button::new("Find Action…").shortcut_text(keys::display("⇧⌘A")))
+            .add(
+                egui::Button::new("Find Action…")
+                    .shortcut_text(app.action_shortcut("GotoAction").unwrap_or_default()),
+            )
             .clicked()
         {
             app.palette.show();
@@ -220,7 +226,10 @@ fn vcs_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         );
         ui.separator();
         if ui
-            .add(egui::Button::new("Commit…").shortcut_text(keys::display("⌘K")))
+            .add(
+                egui::Button::new("Commit…")
+                    .shortcut_text(app.action_shortcut("CheckinProject").unwrap_or_default()),
+            )
             .clicked()
         {
             app.dispatch("toolwindow.activate.commit", Value::Null);
@@ -241,7 +250,7 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui,
             Icon::Stop,
             *theme::STOP_RED,
-            &format!("Stop ({})", keys::display("⌘F2")),
+            &format!("Stop ({})", app.action_shortcut("Stop").unwrap_or_default()),
             false,
         )
         .clicked()
@@ -253,7 +262,10 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         icons::button(
             ui,
             Icon::Build,
-            &format!("Build Project ({})", keys::display("⌘F9")),
+            &format!(
+                "Build Project ({})",
+                app.action_shortcut("CompileDirty").unwrap_or_default()
+            ),
         )
     });
     if build.inner.clicked() {
@@ -269,7 +281,7 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui,
             Icon::Run,
             run_color,
-            &format!("Run ({})", keys::display("⌃R")),
+            &format!("Run ({})", app.action_shortcut("Run").unwrap_or_default()),
             false,
         )
     });

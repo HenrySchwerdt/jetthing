@@ -107,6 +107,7 @@ fn items(app: &IdeApp, query: &str, tab: Tab) -> Vec<Item> {
         .filter_map(|spec| {
             let score = fuzzy_score(&spec.label, query)
                 .or_else(|| fuzzy_score(&spec.id, query).map(|score| score + 50))?;
+            let shortcut = app.command_shortcut(&spec);
             Some((
                 score,
                 Item::Action {
@@ -114,7 +115,7 @@ fn items(app: &IdeApp, query: &str, tab: Tab) -> Vec<Item> {
                     id: spec.id,
                     label: spec.label,
                     category: spec.category,
-                    shortcut: crate::keys::display(spec.shortcut.as_deref().unwrap_or_default()),
+                    shortcut,
                 },
             ))
         })

@@ -7,9 +7,11 @@ license.workspace = true
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
+jetthing-actions = { path = "../jetthing-actions" }
 jetthing-command = { path = "../jetthing-command" }
 jetthing-core = { path = "../jetthing-core" }
 jetthing-git = { path = "../jetthing-git" }
+jetthing-keymap = { path = "../jetthing-keymap" }
 jetthing-language = { path = "../jetthing-language" }
 jetthing-lsp = { path = "../jetthing-lsp" }
 jetthing-runner = { path = "../jetthing-runner" }

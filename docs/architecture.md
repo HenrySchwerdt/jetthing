@@ -25,6 +25,11 @@ no crate below `jetthing-ui` imports UI types.
   diagnostics, and completion transport; providers remain behind platform abstractions.
 - `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,
   and validation. Executable/Wasm loading is deliberately not claimed yet.
+- `jetthing-keymap`: keystroke/chord/mouse/gesture parsing, the 26 bundled keymaps from
+  `docs/spec/data/keymaps.json`, desktop default selection, user overrides, lookup and
+  conflict detection.
+- `jetthing-actions`: catalog of the reference action ids, texts and groups from
+  `docs/spec/data/actions.json` (names for the keymap page, structure for menus).
 - `jetthing-settings`: typed settings registry (bool/int/float/text/path/enum/list with
   defaults and validation), the Settings tree keyed by the reference configurable ids in
   `docs/spec/data/settings.json`, application/project layering, TOML persistence,
@@ -47,6 +52,16 @@ Commands have stable IDs, human labels, JSON schemas expressed as documentation,
 capability requirements, an enabled predicate, and an execution handler. GUI and CLI
 use the same registry. Cancellation/progress and MCP/control transports are next-step
 extensions of this contract.
+
+## Keymap
+
+`IdeState::keymap` holds the effective keymap (Settings › Keymap plus the user's
+overrides in `keymap.overrides`). The UI turns key presses into keystrokes, resolves them
+with `Keymap::lookup` (two-stroke chords included) and runs the first applicable action:
+a command from `jetthing_core::keymap_commands::ACTION_COMMANDS` (IntelliJ action id →
+command id, global or editor scope) or a workbench popup (`jetthing-ui::keybindings`).
+To make a new command reachable by its reference shortcut, add its IntelliJ action id to
+`ACTION_COMMANDS`; menus and Find Action then show the keymap's shortcut for it.
 
 ## Settings extension point
 

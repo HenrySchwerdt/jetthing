@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod editor_commands;
+pub mod keymap_commands;
 mod project_commands;
 mod settings_commands;
 mod terminal_commands;
@@ -62,6 +63,7 @@ pub struct IdeState {
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
     pub settings: Settings,
+    pub keymap: keymap_commands::KeymapState,
     /// Settings page the UI should open (set by `settings.open`, taken by the UI).
     pub settings_request: Option<String>,
     pub status: String,
@@ -608,6 +610,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     update_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     settings_commands::register(&mut registry);
+    keymap_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(
