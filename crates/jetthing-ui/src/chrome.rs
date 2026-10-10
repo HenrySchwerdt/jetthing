@@ -1,7 +1,7 @@
 //! Workbench chrome: merged main toolbar, tool window stripes and status bar.
 
 use crate::icons::{self, Icon};
-use crate::widgets::{self, chrome_frame};
+use crate::widgets::{self, chrome_frame, glow_through_frame};
 use crate::{IdeApp, keys, theme};
 use eframe::egui::{self, Color32, Rect, Sense, vec2};
 use jetthing_core::{Anchor, ToolWindow};
@@ -467,7 +467,7 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
         .exact_width(STRIPE_WIDTH)
         .resizable(false)
         .show_separator_line(false)
-        .frame(chrome_frame().inner_margin(egui::Margin::symmetric(4, 6)))
+        .frame(glow_through_frame().inner_margin(egui::Margin::symmetric(4, 6)))
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.vertical(|ui| {

@@ -17,6 +17,12 @@ pub fn chrome_frame() -> egui::Frame {
     egui::Frame::new().fill(*theme::FRAME)
 }
 
+/// Like [`chrome_frame`] without a fill: the window clears to the frame color, so
+/// the toolbar glow shows through (the stripe beside the toolbar's strongest glow).
+pub fn glow_through_frame() -> egui::Frame {
+    egui::Frame::new()
+}
+
 pub const TOOL_WINDOW_HEADER_HEIGHT: f32 = 31.0;
 pub const ROW_HEIGHT: f32 = 24.0;
 
