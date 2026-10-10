@@ -18,7 +18,7 @@ pub fn custom_title_bar() -> bool {
 }
 
 /// Menu groups of the main menu, mapping command categories to menus.
-const MENUS: [(&str, &[&str]); 8] = [
+const MENUS: [(&str, &[&str]); 9] = [
     ("File", &["Project", "Plugins"]),
     ("Edit", &["Editor"]),
     ("View", &["Window"]),
@@ -27,6 +27,7 @@ const MENUS: [(&str, &[&str]); 8] = [
     ("Build", &["Build"]),
     ("Run", &["Run"]),
     ("Git", &["Git"]),
+    ("Help", &["Help"]),
 ];
 
 pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
@@ -499,6 +500,18 @@ pub fn right_stripe(ctx: &egui::Context) {
         .show(ctx, |_| {});
 }
 
+/// First line of `text`, shortened to `max` characters with an ellipsis.
+fn first_line_truncated(text: &str, max: usize) -> String {
+    let line = text.lines().next().unwrap_or_default();
+    if line.chars().count() > max {
+        let mut short: String = line.chars().take(max.saturating_sub(1)).collect();
+        short.push('…');
+        short
+    } else {
+        line.to_owned()
+    }
+}
+
 fn line_ending(text: &str) -> &'static str {
     if text.contains("\r\n") { "CRLF" } else { "LF" }
 }
@@ -632,20 +645,47 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                             22.0,
                         );
                     }
+                    if let jetthing_core::UpdateState::Available { version, .. }
+                    | jetthing_core::UpdateState::Installed(version) = &app.state.update_state
+                    {
+                        let label = if matches!(
+                            app.state.update_state,
+                            jetthing_core::UpdateState::Installed(_)
+                        ) {
+                            "Restart to update".to_owned()
+                        } else {
+                            format!("Update {version}")
+                        };
+                        if widgets::flat_widget(
+                            ui,
+                            Some((Icon::Refresh, theme::MODIFIED)),
+                            &label,
+                            font.clone(),
+                            theme::MODIFIED,
+                            false,
+                            22.0,
+                        )
+                        .clicked()
+                        {
+                            app.state.update_notification = true;
+                        }
+                    }
                     if app.state.runner.is_running() || app.state.search.is_running() {
                         ui.add(egui::Spinner::new().size(12.0).color(theme::ACCENT));
                         ui.add_space(6.0);
                     }
                     if !app.state.status.is_empty() {
+                        let status = first_line_truncated(&app.state.status, 70);
                         let response = widgets::flat_widget(
                             ui,
                             None,
-                            &app.state.status,
+                            &status,
                             font.clone(),
                             theme::TEXT_INFO,
                             false,
                             22.0,
                         );
+                        let response = response.on_hover_text(app.state.status.clone());
                         if response.clicked()
                             && app.state.tool_windows.visible(Anchor::Bottom).is_none()
                         {
@@ -660,6 +700,13 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncates_status_messages() {
+        assert_eq!(first_line_truncated("short", 10), "short");
+        assert_eq!(first_line_truncated("abcdefghijkl", 5), "abcd…");
+        assert_eq!(first_line_truncated("one\ntwo", 10), "one");
+    }
 
     #[test]
     fn detects_line_endings_and_indentation() {

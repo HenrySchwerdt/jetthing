@@ -12,8 +12,14 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod editor_commands;
+mod project_commands;
 mod toolwindow;
+mod update_commands;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
+pub use update_commands::{
+    CURRENT_VERSION, UpdateState, installable_executable as update_installable,
+};
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -43,6 +49,13 @@ pub struct IdeState {
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
+    /// Most recently used files, newest first (Recent Files, ⌘E).
+    pub recent_files: Vec<PathBuf>,
+    pub updates: jetthing_update::UpdateService,
+    pub update_state: UpdateState,
+    /// Whether the update balloon is showing.
+    pub update_notification: bool,
+    update_silent: bool,
     pub status: String,
 }
 
@@ -64,14 +77,18 @@ impl IdeState {
             }
         }
         self.expanded_dirs.clear();
+        self.recent_files.clear();
+        self.tool_windows = ToolWindowLayout::default();
         self.tool_windows.show(ToolWindow::Project);
         self.status = format!("Opened {}", project.root().display());
         self.project = Some(project);
+        self.restore_workspace();
         Ok(())
     }
     pub fn open_file(&mut self, path: &Path) -> Result<(), String> {
         if let Some(index) = self.documents.iter().position(|d| d.path == path) {
             self.active_document = Some(index);
+            self.touch_recent(path);
             return Ok(());
         }
         let project = self.project.as_ref().ok_or("no project is open")?;
@@ -89,6 +106,7 @@ impl IdeState {
                 self.lsp_error = Some(error.to_string());
             }
         }
+        self.touch_recent(path);
         self.status = format!("Opened {}", path.display());
         Ok(())
     }
@@ -132,10 +150,19 @@ impl IdeState {
             return Err("document does not exist".into());
         }
         self.active_document = Some(index);
+        let path = self.documents[index].path.clone();
+        self.touch_recent(&path);
         if let Some(lsp) = self.lsp.as_mut() {
             lsp.clear_completions();
         }
         Ok(())
+    }
+
+    /// Moves `path` to the front of the recent-files list.
+    pub fn touch_recent(&mut self, path: &Path) {
+        self.recent_files.retain(|recent| recent != path);
+        self.recent_files.insert(0, path.to_owned());
+        self.recent_files.truncate(50);
     }
 
     /// Expands or collapses a directory in the Project tool window.
@@ -405,6 +432,28 @@ impl IdeState {
             .map_err(|e| e.to_string())
     }
 
+    /// Runs an edit on the active document and refreshes analysis/LSP if it changed.
+    pub fn edit_active<T>(
+        &mut self,
+        edit: impl FnOnce(&mut Document) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let index = self.active_document.ok_or("no active document")?;
+        let document = self
+            .documents
+            .get_mut(index)
+            .ok_or("active document does not exist")?;
+        let revision = document.text.revision();
+        let result = edit(document)?;
+        if document.text.revision() != revision {
+            document.analysis = analyze(&document.path, &document.text.text());
+            self.sync_active_lsp();
+            if let Some(lsp) = &mut self.lsp {
+                lsp.clear_completions();
+            }
+        }
+        Ok(result)
+    }
+
     pub fn insert_active_text(&mut self, position: usize, text: &str) -> Result<(), String> {
         let index = self.active_document.ok_or("no active document")?;
         let document = self
@@ -446,7 +495,7 @@ impl IdeState {
     }
 }
 
-fn spec(
+pub(crate) fn spec(
     id: &str,
     label: &str,
     category: &str,
@@ -461,7 +510,7 @@ fn spec(
         params: params.into(),
     }
 }
-fn string_param(params: &Value, name: &str) -> Result<String, CommandError> {
+pub(crate) fn string_param(params: &Value, name: &str) -> Result<String, CommandError> {
     params
         .get(name)
         .and_then(Value::as_str)
@@ -469,7 +518,7 @@ fn string_param(params: &Value, name: &str) -> Result<String, CommandError> {
         .ok_or_else(|| CommandError::InvalidParams(format!("expected string field `{name}`")))
 }
 
-fn string_array_param(params: &Value, name: &str) -> Result<Vec<String>, CommandError> {
+pub(crate) fn string_array_param(params: &Value, name: &str) -> Result<Vec<String>, CommandError> {
     params
         .get(name)
         .map(|value| {
@@ -496,7 +545,7 @@ fn tool_window_param(params: &Value) -> Result<ToolWindow, CommandError> {
         .ok_or_else(|| CommandError::InvalidParams(format!("unknown tool window `{id}`")))
 }
 
-fn usize_param(params: &Value, name: &str) -> Result<usize, CommandError> {
+pub(crate) fn usize_param(params: &Value, name: &str) -> Result<usize, CommandError> {
     params
         .get(name)
         .and_then(Value::as_u64)
@@ -508,6 +557,9 @@ fn usize_param(params: &Value, name: &str) -> Result<usize, CommandError> {
 
 pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
+    editor_commands::register(&mut registry);
+    project_commands::register(&mut registry);
+    update_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(

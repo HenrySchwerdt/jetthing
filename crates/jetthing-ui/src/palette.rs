@@ -8,20 +8,54 @@ use std::path::PathBuf;
 
 const MAX_ROWS: usize = 14;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Tab {
+    #[default]
+    All,
+    Files,
+    Actions,
+}
+
+impl Tab {
+    const ALL: [Tab; 3] = [Tab::All, Tab::Files, Tab::Actions];
+
+    fn label(self) -> &'static str {
+        match self {
+            Tab::All => "All",
+            Tab::Files => "Files",
+            Tab::Actions => "Actions",
+        }
+    }
+
+    fn next(self) -> Tab {
+        match self {
+            Tab::All => Tab::Files,
+            Tab::Files => Tab::Actions,
+            Tab::Actions => Tab::All,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Palette {
     pub open: bool,
     query: String,
     selected: usize,
     just_opened: bool,
+    tab: Tab,
 }
 
 impl Palette {
     pub fn show(&mut self) {
+        self.show_tab(Tab::All);
+    }
+
+    pub fn show_tab(&mut self, tab: Tab) {
         self.open = true;
         self.query.clear();
         self.selected = 0;
         self.just_opened = true;
+        self.tab = tab;
     }
 }
 
@@ -61,11 +95,14 @@ pub fn fuzzy_score(candidate: &str, query: &str) -> Option<usize> {
     Some(100 + gaps)
 }
 
-fn items(app: &IdeApp, query: &str) -> Vec<Item> {
+fn items(app: &IdeApp, query: &str, tab: Tab) -> Vec<Item> {
+    let want_actions = tab != Tab::Files;
+    let want_files = tab != Tab::Actions;
     let actions: Vec<(usize, Item)> = app
         .commands
         .specs()
         .into_iter()
+        .filter(|_| want_actions)
         .filter(IdeApp::parameterless)
         .filter_map(|spec| {
             let score = fuzzy_score(&spec.label, query)
@@ -82,8 +119,16 @@ fn items(app: &IdeApp, query: &str) -> Vec<Item> {
             ))
         })
         .collect();
-    let mut files: Vec<(usize, Item)> = if query.is_empty() {
+    let mut files: Vec<(usize, Item)> = if !want_files {
         Vec::new()
+    } else if query.is_empty() {
+        // An empty Files search lists recent files first, like the reference IDE.
+        app.state
+            .recent_files
+            .iter()
+            .take(MAX_ROWS)
+            .map(|path| (0, Item::File(path.clone())))
+            .collect()
     } else {
         app.state
             .files
@@ -98,7 +143,9 @@ fn items(app: &IdeApp, query: &str) -> Vec<Item> {
             .collect()
     };
     files.sort_by_key(|(score, _)| *score);
-    files.truncate(MAX_ROWS / 2);
+    if tab == Tab::All {
+        files.truncate(MAX_ROWS / 2);
+    }
     // Stable sort keeps files ahead of actions with an equal score.
     let mut all: Vec<(usize, Item)> = files.into_iter().chain(actions).collect();
     all.sort_by_key(|(score, _)| *score);
@@ -112,7 +159,11 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     if !app.palette.open {
         return;
     }
-    let found = items(app, &app.palette.query);
+    if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
+        app.palette.tab = app.palette.tab.next();
+        app.palette.selected = 0;
+    }
+    let found = items(app, &app.palette.query, app.palette.tab);
     if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         app.palette.open = false;
         return;
@@ -144,24 +195,37 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 .show(ui, |ui| {
                     ui.set_width(width);
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    // Header tabs.
+                    // Header tabs (Tab switches).
                     ui.horizontal(|ui| {
-                        ui.add_space(12.0);
-                        let (rect, _) = ui.allocate_exact_size(vec2(44.0, 32.0), Sense::hover());
-                        ui.painter().rect_filled(
-                            rect.shrink2(vec2(0.0, 5.0)),
-                            4.0,
-                            theme::SELECTION,
-                        );
-                        ui.painter().text(
-                            rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "All",
-                            egui::FontId::proportional(theme::UI_FONT_SIZE),
-                            theme::TEXT_BRIGHT,
-                        );
                         ui.add_space(8.0);
-                        ui.label(egui::RichText::new("Actions · Files").color(theme::TEXT_INFO));
+                        for tab in Tab::ALL {
+                            let galley = ui.painter().layout_no_wrap(
+                                tab.label().to_owned(),
+                                egui::FontId::proportional(theme::UI_FONT_SIZE),
+                                theme::TEXT_BRIGHT,
+                            );
+                            let (rect, response) = ui.allocate_exact_size(
+                                vec2(galley.size().x + 20.0, 32.0),
+                                Sense::click(),
+                            );
+                            let pill = rect.shrink2(vec2(0.0, 5.0));
+                            if tab == app.palette.tab {
+                                ui.painter().rect_filled(pill, 4.0, theme::SELECTION);
+                            } else if response.hovered() {
+                                ui.painter().rect_filled(pill, 4.0, theme::HOVER);
+                            }
+                            let color = if tab == app.palette.tab {
+                                theme::TEXT_BRIGHT
+                            } else {
+                                theme::TEXT_SECONDARY
+                            };
+                            ui.painter()
+                                .galley(rect.center() - galley.size() / 2.0, galley, color);
+                            if response.clicked() {
+                                app.palette.tab = tab;
+                                app.palette.selected = 0;
+                            }
+                        }
                     });
                     ui.painter().hline(
                         ui.min_rect().x_range(),

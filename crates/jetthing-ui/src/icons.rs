@@ -20,6 +20,7 @@ const SCRIPT: Color32 = Color32::from_rgb(0x5F, 0xAD, 0x65);
 pub enum Icon {
     MainMenu,
     ChevronDown,
+    ChevronUp,
     ChevronRight,
     Folder,
     File,
@@ -43,8 +44,6 @@ pub enum Icon {
     Refresh,
     Error,
     Warning,
-    Plus,
-    Minus,
 }
 
 impl Icon {
@@ -137,6 +136,7 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             }
         }
         Icon::ChevronDown => line(&[(4.5, 6.5), (8.0, 10.0), (11.5, 6.5)]),
+        Icon::ChevronUp => line(&[(4.5, 9.5), (8.0, 6.0), (11.5, 9.5)]),
         Icon::ChevronRight => line(&[(6.5, 4.5), (10.0, 8.0), (6.5, 11.5)]),
         Icon::Folder | Icon::Project => {
             let fill = if icon == Icon::Folder {
@@ -285,11 +285,6 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             painter.line_segment([g.p(8.0, 6.0), g.p(8.0, 10.0)], dark);
             painter.circle_filled(g.p(8.0, 12.0), g.len(0.9), theme::ISLAND);
         }
-        Icon::Plus => {
-            line(&[(8.0, 3.0), (8.0, 13.0)]);
-            line(&[(3.0, 8.0), (13.0, 8.0)]);
-        }
-        Icon::Minus => line(&[(3.0, 8.0), (13.0, 8.0)]),
     }
 }
 

@@ -1,6 +1,8 @@
 use ropey::Rope;
 use thiserror::Error;
 
+pub mod ops;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AtomicEdit {
     original_start: usize,
@@ -74,6 +76,17 @@ impl SelectionSet {
 
     pub fn primary(&self) -> Selection {
         self.selections[0]
+    }
+
+    /// Replaces all selections; overlapping ones are merged. An empty input keeps
+    /// a caret at offset 0 so there is always a primary selection.
+    pub fn set_all(&mut self, selections: Vec<Selection>) {
+        self.selections = if selections.is_empty() {
+            vec![Selection::caret(0)]
+        } else {
+            selections
+        };
+        self.normalize();
     }
 
     pub fn set_single(&mut self, selection: Selection) {
@@ -217,6 +230,20 @@ impl TextDocument {
 
     pub fn line(&self, line: usize) -> Option<String> {
         (line < self.len_lines()).then(|| self.rope.line(line).to_string())
+    }
+
+    /// Text between two character offsets.
+    pub fn slice(&self, start: usize, end: usize) -> Result<String, TextError> {
+        self.validate_range(start, end)?;
+        Ok(self.rope.slice(start..end).to_string())
+    }
+
+    pub fn char_at(&self, index: usize) -> Option<char> {
+        (index < self.len_chars()).then(|| self.rope.char(index))
+    }
+
+    pub fn char_to_line(&self, index: usize) -> usize {
+        self.rope.char_to_line(index.min(self.len_chars()))
     }
 
     pub fn line_to_char(&self, line: usize) -> Option<usize> {

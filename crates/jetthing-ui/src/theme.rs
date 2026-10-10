@@ -42,6 +42,10 @@ pub const PRESSED: Color32 = white_alpha(0x29);
 pub const SELECTION: Color32 = hex(0x2A4371);
 /// `ToolWindow.Button.selectedBackground`, `*.focusColor`.
 pub const ACCENT: Color32 = hex(0x3871E1);
+/// Disabled default button fill (palette `Gray5`).
+pub const SELECTION_DISABLED: Color32 = hex(0x4E5157);
+/// `Notification.background`.
+pub const NOTIFICATION: Color32 = hex(0x33353B);
 /// `Component.borderColor`.
 pub const BORDER: Color32 = hex(0x40434A);
 /// `TextField.background`.
@@ -85,6 +89,9 @@ pub mod editor {
     pub const LINE_NUMBER: Color32 = hex(0x4B5059); // LINE_NUMBERS_COLOR
     pub const LINE_NUMBER_CARET: Color32 = hex(0xA1A3AB); // LINE_NUMBER_ON_CARET_ROW_COLOR
     pub const SELECTION: Color32 = hex(0x214283); // SELECTION_BACKGROUND
+    pub const BACKGROUND_PANEL: Color32 = hex(0x212326); // Editor.SearchField.background
+    pub const SEARCH_RESULT: Color32 = hex(0x114957); // TEXT_SEARCH_RESULT_ATTRIBUTES
+    pub const MATCHED_BRACE: Color32 = hex(0x43454A); // MATCHED_BRACE_ATTRIBUTES
     pub const INDENT_GUIDE: Color32 = hex(0x323438); // INDENT_GUIDE
     pub const KEYWORD: Color32 = hex(0xCF8E6D); // DEFAULT_KEYWORD
     pub const STRING: Color32 = hex(0x6AAB73); // DEFAULT_STRING
