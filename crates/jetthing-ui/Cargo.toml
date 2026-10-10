@@ -8,6 +8,7 @@ license.workspace = true
 eframe.workspace = true
 egui.workspace = true
 jetthing-command = { path = "../jetthing-command" }
+jetthing-control = { path = "../jetthing-control" }
 jetthing-core = { path = "../jetthing-core" }
 jetthing-git = { path = "../jetthing-git" }
 jetthing-language = { path = "../jetthing-language" }

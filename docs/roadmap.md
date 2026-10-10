@@ -29,7 +29,8 @@
 - [ ] Terminal hyperlinks, mouse reporting and multiple sessions
 - [x] Cancellable background project text search with streamed result navigation
 - [x] Detected Cargo/Gradle/Maven/npm/Go builds with streamed output and cancellation
-- [ ] UI automation/control socket and screenshot tests
+- [x] UI automation control socket (`JETTHING_CONTROL_SOCKET`, `jetthing-cli ui`)
+- [ ] Scripted parity scenes (`xtask scenes`) and headless screenshot CI job
 - [x] New UI "Islands Dark" workbench: merged toolbar, stripe, islands, breadcrumbs status bar
 - [x] One-tool-window-per-anchor model with typed `toolwindow.*` commands
 - [x] Search Everywhere (Double Shift) over actions and files with fuzzy ranking
