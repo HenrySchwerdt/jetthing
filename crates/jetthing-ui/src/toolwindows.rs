@@ -768,7 +768,25 @@ pub fn commit_message_id() -> egui::Id {
     egui::Id::new("commit_message")
 }
 
+impl IdeApp {
+    /// Copies the query and toggles of a search started outside the Find
+    /// inputs into them; typing an unsubmitted query is left alone.
+    fn sync_find_inputs(&mut self) {
+        let state = (&self.state.search_query, &self.state.search_options);
+        if state == (&self.find_synced.0, &self.find_synced.1) {
+            return;
+        }
+        self.find_synced = (
+            self.state.search_query.clone(),
+            self.state.search_options.clone(),
+        );
+        self.search_input = self.state.search_query.clone();
+        self.find_options = self.state.search_options.clone();
+    }
+}
+
 fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
+    app.sync_find_inputs();
     let hide = tool_window_header(ui, "Find in Files", |ui| {
         if app.state.search.is_running()
             && icons::button_colored(ui, Icon::Stop, *theme::STOP_RED, "Cancel", false).clicked()
@@ -966,6 +984,23 @@ mod tests {
         for key in ["matchCase", "wholeWords", "regex", "fileMask"] {
             assert!(spec.params.contains(key), "{key} documented in the schema");
         }
+    }
+
+    #[test]
+    fn a_search_started_by_command_fills_the_find_inputs() {
+        let (mut app, _ctx) = crate::tests::headless_app("find-sync", "a.txt", "needle\n");
+        app.dispatch(
+            "search.project",
+            json!({"query": "ne+dle", "regex": true, "matchCase": true}),
+        );
+        app.sync_find_inputs();
+        assert_eq!(app.search_input, "ne+dle");
+        assert!(app.find_options.regex && app.find_options.match_case);
+        assert!(!app.find_options.whole_words);
+        // A query being typed is not overwritten while the last search is unchanged.
+        app.search_input = "typing".into();
+        app.sync_find_inputs();
+        assert_eq!(app.search_input, "typing");
     }
 
     #[test]

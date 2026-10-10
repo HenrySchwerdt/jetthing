@@ -81,6 +81,10 @@ pub struct IdeApp {
     search_input: String,
     /// Find in Files option toggles and file mask.
     find_options: jetthing_core::SearchOptions,
+    /// Query and options of the last search shown in the Find inputs, so a
+    /// search started elsewhere (`search.project` from automation, the palette
+    /// or a context menu) fills them in.
+    find_synced: (String, jetthing_core::SearchOptions),
     tree_selection: Option<PathBuf>,
     /// Active editor file last revealed in the Project tree.
     tree_revealed: Option<PathBuf>,
@@ -211,6 +215,7 @@ impl IdeApp {
             terminal_selection: None,
             search_input: String::new(),
             find_options: jetthing_core::SearchOptions::default(),
+            find_synced: Default::default(),
             tree_selection: None,
             tree_revealed: None,
             caret_screen_pos: None,
