@@ -117,6 +117,9 @@ pub struct PluginManifest {
     pub vendor: String,
     #[serde(default)]
     pub license: Option<String>,
+    /// Plugin homepage shown on the Plugins page.
+    #[serde(default)]
+    pub homepage: Option<String>,
     #[serde(default)]
     pub kind: PluginKind,
     /// Entry point relative to the plugin directory (`main.lua`, `plugin.wasm`).

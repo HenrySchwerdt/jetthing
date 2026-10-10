@@ -8,16 +8,10 @@ use crate::widgets::{self, chrome_frame, island_frame, tool_window_header};
 use crate::{IdeApp, keys, theme};
 use eframe::egui::{self, Color32, Rect, RichText, Sense, vec2};
 use jetthing_plugins::{
-    KeyChord, NotificationLevel, PluginRegistry, PluginSource, PluginStatus, SettingKind,
-    ViewContext, ViewFrame, ViewPlacement,
+    KeyChord, NotificationLevel, PluginRegistry, PluginStatus, ViewContext, ViewFrame,
+    ViewPlacement,
 };
 use serde_json::{Value, json};
-
-/// State of the Plugins dialog.
-#[derive(Debug, Default)]
-pub struct PluginsWindow {
-    pub selected: Option<String>,
-}
 
 /// Renders `context` of `plugin` into `ui`, or a placeholder when the plugin
 /// is not active.
@@ -392,8 +386,19 @@ pub fn active_tab_body(app: &mut IdeApp, ui: &mut egui::Ui) {
 }
 
 /// Contributed status bar widgets (call inside a right-to-left layout).
-pub fn status_widgets(app: &mut IdeApp, ui: &mut egui::Ui, font: &egui::FontId) {
-    for widget in app.state.plugin_status_widgets() {
+/// `only` restricts them to one plugin (standalone app mode).
+pub fn status_widgets(
+    app: &mut IdeApp,
+    ui: &mut egui::Ui,
+    font: &egui::FontId,
+    only: Option<&str>,
+) {
+    for widget in app
+        .state
+        .plugin_status_widgets()
+        .into_iter()
+        .filter(|widget| only.is_none_or(|plugin| widget.plugin == plugin))
+    {
         let mut response = widgets::flat_widget(
             ui,
             None,
@@ -480,249 +485,6 @@ pub fn notifications(app: &mut IdeApp, ctx: &egui::Context) {
         });
     if let Some(index) = dismiss {
         app.state.plugin_host.notifications.remove(index);
-    }
-}
-
-/// File ▸ Plugins… dialog: installed plugins, enable/disable, details,
-/// permissions, contributions and plugin settings pages.
-pub fn plugins_window(app: &mut IdeApp, ctx: &egui::Context) {
-    let Some(mut window) = app.plugins_window.take() else {
-        return;
-    };
-    let mut open = true;
-    egui::Window::new("Plugins")
-        .open(&mut open)
-        .collapsible(false)
-        .default_size(vec2(760.0, 480.0))
-        .min_width(640.0)
-        .min_height(420.0)
-        .show(ctx, |ui| {
-            ui.horizontal_top(|ui| {
-                plugin_list(app, ui, &mut window);
-                ui.separator();
-                ui.vertical(|ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("plugin_details")
-                        .show(ui, |ui| plugin_details(app, ui, window.selected.as_deref()));
-                });
-            });
-        });
-    if open {
-        app.plugins_window = Some(window);
-    }
-}
-
-fn plugin_list(app: &mut IdeApp, ui: &mut egui::Ui, window: &mut PluginsWindow) {
-    ui.vertical(|ui| {
-        ui.set_width(260.0);
-        let mut toggles = Vec::new();
-        egui::ScrollArea::vertical()
-            .id_salt("plugin_list")
-            .show(ui, |ui| {
-                for entry in app.state.plugin_host.registry.entries() {
-                    let selected = window.selected.as_deref() == Some(entry.id());
-                    let (rect, response) = widgets::list_row(ui, selected);
-                    let mut enabled = !matches!(
-                        entry.status,
-                        PluginStatus::Disabled | PluginStatus::Unsupported(_)
-                    );
-                    let mut child = ui.new_child(
-                        egui::UiBuilder::new()
-                            .max_rect(rect.shrink2(vec2(6.0, 0.0)))
-                            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                    );
-                    if child
-                        .add_enabled(
-                            entry.can_toggle(),
-                            egui::Checkbox::without_text(&mut enabled),
-                        )
-                        .changed()
-                    {
-                        toggles.push((entry.id().to_owned(), enabled));
-                    }
-                    let color = match entry.status {
-                        PluginStatus::Failed(_) => theme::ERROR,
-                        PluginStatus::Unsupported(_) | PluginStatus::Disabled => theme::TEXT_INFO,
-                        _ => theme::TEXT,
-                    };
-                    child.label(RichText::new(&entry.manifest.name).color(color));
-                    if response.clicked() {
-                        window.selected = Some(entry.id().to_owned());
-                    }
-                }
-                for (path, problem) in &app.state.plugin_host.registry.problems {
-                    ui.label(
-                        RichText::new(format!("{}: {problem}", path.display()))
-                            .small()
-                            .color(theme::ERROR),
-                    );
-                }
-            });
-        for (id, enabled) in toggles {
-            let command = if enabled {
-                "plugin.enable"
-            } else {
-                "plugin.disable"
-            };
-            app.dispatch(command, json!({"id": id}));
-        }
-    });
-}
-
-fn plugin_details(app: &mut IdeApp, ui: &mut egui::Ui, selected: Option<&str>) {
-    let Some(entry) = selected.and_then(|id| app.state.plugin_host.registry.get(id)) else {
-        ui.label(RichText::new("Select a plugin to see its details.").color(theme::TEXT_INFO));
-        return;
-    };
-    let manifest = entry.manifest.clone();
-    let contributions = entry.contributions.clone();
-    let status = entry.status.clone();
-    let source = match &entry.source {
-        PluginSource::Bundled => "Bundled".to_owned(),
-        PluginSource::Directory(dir) => dir.display().to_string(),
-    };
-    ui.label(
-        RichText::new(&manifest.name)
-            .font(theme::semibold(16.0))
-            .color(theme::TEXT_BRIGHT),
-    );
-    ui.label(
-        RichText::new(format!(
-            "{}  ·  {}  ·  {}",
-            manifest.version,
-            if manifest.vendor.is_empty() {
-                "Unknown vendor"
-            } else {
-                &manifest.vendor
-            },
-            manifest.kind.label()
-        ))
-        .color(theme::TEXT_SECONDARY),
-    );
-    let status_text = match &status {
-        PluginStatus::Failed(reason) => format!("Failed: {reason}"),
-        PluginStatus::Unsupported(reason) => format!("Unsupported: {reason}"),
-        other => other.label().to_owned(),
-    };
-    ui.label(RichText::new(status_text).color(match status {
-        PluginStatus::Failed(_) => theme::ERROR,
-        PluginStatus::Active => theme::SUCCESS,
-        _ => theme::TEXT_INFO,
-    }));
-    ui.add_space(6.0);
-    if !manifest.description.is_empty() {
-        ui.label(&manifest.description);
-    }
-    ui.label(
-        RichText::new(format!("{}  ·  {source}", manifest.id))
-            .small()
-            .color(theme::TEXT_INFO),
-    );
-    ui.add_space(8.0);
-    ui.label(RichText::new("Permissions").font(theme::semibold(theme::UI_FONT_SIZE)));
-    if manifest.permissions.is_empty() {
-        ui.label(RichText::new("None").color(theme::TEXT_INFO));
-    }
-    for permission in &manifest.permissions {
-        ui.label(format!("• {}", permission.description()));
-    }
-    ui.add_space(8.0);
-    ui.label(RichText::new("Contributes").font(theme::semibold(theme::UI_FONT_SIZE)));
-    let counts = [
-        (contributions.commands.len(), "command", "commands"),
-        (
-            contributions.tool_windows.len(),
-            "tool window",
-            "tool windows",
-        ),
-        (contributions.editors.len(), "editor view", "editor views"),
-        (
-            contributions.settings_pages.len(),
-            "settings page",
-            "settings pages",
-        ),
-        (
-            contributions.status_widgets.len(),
-            "status bar widget",
-            "status bar widgets",
-        ),
-        (contributions.keybindings.len(), "keybinding", "keybindings"),
-    ];
-    let summary: Vec<String> = counts
-        .into_iter()
-        .filter(|(count, ..)| *count > 0)
-        .map(|(count, one, many)| widgets::pluralize(count, one, many))
-        .collect();
-    ui.label(if summary.is_empty() {
-        "Nothing yet".to_owned()
-    } else {
-        summary.join(", ")
-    });
-    if manifest.app.is_some() {
-        ui.label(
-            RichText::new(format!("Standalone: jetthing --app {}", manifest.id))
-                .monospace()
-                .color(theme::TEXT_SECONDARY),
-        );
-    }
-    for page in &contributions.settings_pages {
-        ui.add_space(10.0);
-        ui.label(RichText::new(&page.title).font(theme::semibold(theme::UI_FONT_SIZE)));
-        for field in &page.fields {
-            let current = app
-                .state
-                .plugin_setting(&manifest.id, &field.key)
-                .unwrap_or_else(|| field.kind.default_value());
-            let mut updated = None;
-            ui.horizontal(|ui| {
-                ui.add_sized([160.0, 20.0], egui::Label::new(&field.label));
-                match &field.kind {
-                    SettingKind::Text { .. } => {
-                        let mut text = current.as_str().unwrap_or_default().to_owned();
-                        if ui.text_edit_singleline(&mut text).changed() {
-                            updated = Some(Value::from(text));
-                        }
-                    }
-                    SettingKind::Bool { .. } => {
-                        let mut flag = current.as_bool().unwrap_or_default();
-                        if ui.checkbox(&mut flag, "").changed() {
-                            updated = Some(Value::from(flag));
-                        }
-                    }
-                    SettingKind::Number { min, max, .. } => {
-                        let mut number = current.as_f64().unwrap_or_default();
-                        let mut drag = egui::DragValue::new(&mut number);
-                        if let (Some(min), Some(max)) = (min, max) {
-                            drag = drag.range(*min..=*max);
-                        }
-                        if ui.add(drag).changed() {
-                            updated = Some(Value::from(number));
-                        }
-                    }
-                    SettingKind::Choice { options, .. } => {
-                        let selected = current.as_str().unwrap_or_default().to_owned();
-                        egui::ComboBox::from_id_salt(("plugin_setting", &field.key))
-                            .selected_text(&selected)
-                            .show_ui(ui, |ui| {
-                                for option in options {
-                                    if ui.selectable_label(*option == selected, option).clicked() {
-                                        updated = Some(Value::from(option.clone()));
-                                    }
-                                }
-                            });
-                    }
-                }
-            });
-            if let Some(description) = &field.description {
-                ui.label(RichText::new(description).small().color(theme::TEXT_INFO));
-            }
-            if let Some(value) = updated {
-                app.dispatch(
-                    "plugin.setSetting",
-                    json!({"plugin": manifest.id, "key": field.key, "value": value}),
-                );
-            }
-        }
     }
 }
 
@@ -822,23 +584,69 @@ pub fn app_window(app: &mut IdeApp, ctx: &egui::Context, plugin: &str) {
                         .color(theme::TEXT_INFO),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    status_widgets(app, ui, &font);
+                    status_widgets(app, ui, &font, Some(plugin));
                 });
             });
         });
     egui::CentralPanel::default()
-        .frame(island_frame().inner_margin(egui::Margin::same(12)))
+        .frame(island_frame())
         .show(ctx, |ui| {
-            render_view(
-                app,
-                ui,
-                plugin,
-                ViewContext {
-                    view,
-                    placement: ViewPlacement::App,
-                },
-            );
+            // Editor tabs opened by the app share the window with its main view.
+            if !app.state.plugin_host.tabs.is_empty() {
+                app_tab_bar(app, ui, &title);
+            }
+            if app.state.plugin_host.active_tab.is_some() {
+                active_tab_body(app, ui);
+                return;
+            }
+            egui::Frame::new()
+                .inner_margin(egui::Margin::same(12))
+                .show(ui, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    render_view(
+                        app,
+                        ui,
+                        plugin,
+                        ViewContext {
+                            view,
+                            placement: ViewPlacement::App,
+                        },
+                    );
+                });
         });
+}
+
+/// Tab bar of standalone mode: the app's main view, then its editor tabs.
+fn app_tab_bar(app: &mut IdeApp, ui: &mut egui::Ui, title: &str) {
+    let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::hover());
+    let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
+    let active = app.state.plugin_host.active_tab.is_none();
+    let color = if active {
+        theme::TEXT_BRIGHT
+    } else {
+        theme::TEXT_SECONDARY
+    };
+    let galley = ui.painter().layout_no_wrap(title.to_owned(), font, *color);
+    let rect = Rect::from_min_size(
+        egui::pos2(bar.left() + 6.0, bar.top() + 5.0),
+        vec2(galley.size().x + 20.0, 28.0),
+    );
+    let response = ui.interact(rect, egui::Id::new("app_main_tab"), Sense::click());
+    if active {
+        ui.painter()
+            .rect_filled(rect, 6.0, Color32::from_rgb(0x23, 0x35, 0x58));
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 6.0, theme::HOVER);
+    }
+    ui.painter().galley(
+        rect.left_center() + vec2(10.0, -galley.size().y / 2.0),
+        galley,
+        *color,
+    );
+    if response.clicked() {
+        app.dispatch("plugin.tab.activate", json!({}));
+    }
+    editor_tabs(app, ui, bar, rect.right() + 2.0);
 }
 
 #[cfg(test)]

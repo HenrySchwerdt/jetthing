@@ -3,16 +3,18 @@
 Plugins add commands, menu items, keybindings, settings pages, tool windows,
 editor tabs and status bar widgets to the workbench. A plugin can also run on its
 own as a standalone app (`jetthing --app <plugin-id>`). Plugin API 1 covers
-**compiled-in Rust plugins**. Lua and WASM plugins will implement the same
-contract (see [Roadmap](#roadmap)).
+**compiled-in Rust plugins**, **Lua plugins** ([lua.md](lua.md)) and **WebAssembly component
+plugins** ([wasm.md](wasm.md)).
 
 | Crate | Layer | Purpose |
 |---|---|---|
 | `jetthing-plugin-api` | engine (no UI toolkit) | `Plugin` trait, `Contributions`, `PluginHost`, `PluginManifest`, `ViewFrame`, `testing::RecordingHost` |
 | `jetthing-plugin-ui` | UI | `ui(frame) -> Option<&mut egui::Ui>`, `EguiView`, and theme-aware widgets (`header`, `section`, `property`, `empty_state`) |
-| `jetthing-plugins` | engine | registry: discovery, enable/disable, settings store (`<config>/plugins.json`), activation order |
+| `jetthing-plugins` | engine | registry: discovery, enable/disable, settings store (`<config>/plugins.json`), activation order, `PluginLoader` for script runtimes, `.jtplugin` archives |
+| `jetthing-plugin-wasm` | UI (runtime) | `WasmLoader`: wasmtime component plugins (`wit/plugin.wit`), WASI sandbox with permission-gated project files and network, fuel and memory limits |
+| `jetthing-plugin-lua` | UI (runtime) | `LuaLoader`: sandboxed Lua 5.4 plugins with the same contributions, `ctx` services, immediate and declarative views |
 | `jetthing-core` (`plugin_host`) | engine | `PluginHost` implementation, command routing, plugin tool window/tab state, `plugin.*` commands |
-| `jetthing-ui` (`plugin_ui`) | UI | renders contributions in the workbench, Plugins dialog, standalone window |
+| `jetthing-ui` (`plugin_ui`, `plugin_manager`) | UI | renders contributions in the workbench, the Settings › Plugins page, standalone window |
 
 Engine crates never see egui. A view is rendered into an opaque `ViewFrame`, and
 the egui host puts its `&mut egui::Ui` inside. `jetthing_plugin_ui::ui(frame)`
@@ -136,11 +138,15 @@ All plugin methods run on the UI thread. Never block in them: spawn a thread
 | Command | `CommandContribution::new(id, label).category(..).params(..)` | Search Everywhere, Find Action, CLI; ids must be namespaced (`plugin.action`) and must not clash with built-ins (built-ins win) |
 | Menu item | `.menu(MenuLocation::Tools, command)` | main menu (File, Edit, View, Navigate, Code, Build, Run, Git, Tools, Help) |
 | Keybinding | `.keybinding(command, "Mod+Alt+H")` or `"⌥⌘H"` | global, after built-in shortcuts; also shown as the command's shortcut |
-| Settings page | `SettingsPage::new(id, title).field(SettingField::new(key, label, SettingKind::…))` | File ▸ Plugins… details pane (moves to Settings ▸ Plugins once the Settings dialog lands); values via `host.setting(key)`; `Text`, `Bool`, `Number{min,max}` (clamped), `Choice` |
+| Settings page | `SettingsPage::new(id, title).field(SettingField::new(key, label, SettingKind::…))` | Settings tab of the plugin's details on the Plugins page; values via `host.setting(key)`; `Text`, `Bool`, `Number{min,max}` (clamped), `Choice` |
 | Tool window | `ToolWindowContribution::new(id, title, view).icon_text("H")` | right tool window stripe and panel |
 | Editor view | `EditorContribution::new(view, title)`; open with `host.open_editor_tab(EditorTabRequest::new(view, title).key(..))` | editor tab bar; the same key focuses the existing tab |
 | Status widget | `StatusWidgetContribution::new(id).command(..)` | status bar; text from `Plugin::status_widget(id)` |
 | App view | `[app] view = …` in the manifest | `jetthing --app <id>` window |
+
+Views can also return a declarative `ViewNode` tree (columns, rows, labels, buttons, inputs,
+lists, tables, trees) instead of drawing with egui. `jetthing_plugin_ui::render_node` renders it
+and returns `ViewEvent`s. Lua and WASM plugins use this model.
 
 `ViewContext::placement` tells a view where it is rendered:
 `ToolWindow { id }`, `EditorTab { key, path }`, `App` or `SettingsPage { id }`.
@@ -169,12 +175,39 @@ with `egui::Context::default().run(...)`. See the tests in `plugins/hello`.
 
 | Command | Params |
 |---|---|
+| `plugin.manager.open` | — open the Plugins page (File ▸ Plugins…) |
+| `plugin.install` | `{"path"}` — install a `.jtplugin` archive |
+| `plugin.uninstall` | `{"id"}` — remove an installed plugin |
 | `plugin.refresh` | — rediscover manifests |
 | `plugin.list` | — JSON list with status and failure reason |
 | `plugin.enable`, `plugin.disable` | `{"id"}` |
 | `plugin.setSetting` | `{"plugin","key","value"}`, validated against the settings page |
 | `plugin.toolwindow.toggle` | `{"plugin","id"}` |
 | `plugin.tab.activate`, `plugin.tab.close` | `{"index"}` (close defaults to the active tab) |
+
+## Packaging and installing (`.jtplugin`)
+
+A `.jtplugin` file is a zip archive. `jetthing-plugin.toml` sits at its root, or inside one
+top-level directory, next to the plugin's files.
+
+```bash
+cargo run -p xtask -- pack-plugin path/to/plugin [out.jtplugin]   # default: dist/plugins/<id>-<version>.jtplugin
+```
+
+Hidden files and `target/` are skipped. Install from **File ▸ Plugins… ▸ ⚙ ▸ Install Plugin from
+Disk…** or with `plugin.install {"path"}`. The archive is validated before anything is written.
+Installation rejects archives that:
+
+- have an invalid manifest, more than one plugin, or a missing `entry`;
+- contain entries outside the plugin directory, or symbolic links;
+- have more than 10 000 entries or unpack to more than 512 MiB;
+- contain a Rust plugin (Rust plugins are compiled in).
+
+Files are extracted to a staging directory first, then swapped into
+`<config>/plugins/<id>/`. Reinstalling replaces the previous version without a restart.
+`plugin.uninstall {"id"}` (or **Uninstall** on the Plugins page) deactivates the plugin and removes
+its directory. Bundled and project plugins cannot be uninstalled, and an archive cannot replace a
+bundled plugin's id.
 
 ## Standalone app mode
 
@@ -192,10 +225,7 @@ implementations) do not.
 
 ## Roadmap
 
-- `.jtplugin` archives: install/uninstall into the per-user plugin directory, and the
-  Settings ▸ Plugins page with Marketplace and Installed tabs.
-- Lua plugins (mlua) with the same contributions, declarative views and an immediate-mode panel API.
-- WASM component plugins (wasmtime + WIT) with enforced permissions.
+- Move the Plugins page into the Settings dialog, and add an update check for installed plugins.
 - Left/bottom tool window anchors for plugins (API 1 docks every plugin tool window on the right),
   editor/project context menus, and opening custom editors by file extension.
 - JetBrains Marketplace browsing, and conversion of themes, color schemes, keymaps,

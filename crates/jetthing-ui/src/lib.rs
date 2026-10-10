@@ -38,13 +38,14 @@ mod merged_manifest_ui;
 mod navigation_ui;
 mod notifications;
 mod palette;
+mod plugin_manager;
 mod plugin_ui;
 mod popups;
 mod problems_ui;
 mod push_dialog;
 mod settings_dialog;
 mod settings_keymap;
-mod settings_plugins;
+
 mod syntax;
 mod terminal_ui;
 mod theme;
@@ -64,7 +65,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub use jetthing_core::{build_info, diagnostics};
-pub use jetthing_plugins::PluginFactory;
+pub use jetthing_plugins::{PluginFactory, PluginLoader, PluginSet};
 pub use theme::install as install_theme;
 
 pub struct IdeApp {
@@ -110,7 +111,6 @@ pub struct IdeApp {
     plugin_commands: Vec<String>,
     /// Registry generation the contributed commands were synced at.
     plugin_generation: u64,
-    plugins_window: Option<plugin_ui::PluginsWindow>,
     /// Amend toggle of the Commit tool window.
     commit_amend: bool,
     /// Open push dialog.
@@ -137,8 +137,24 @@ impl IdeApp {
         files: Vec<PathBuf>,
         bundled: Vec<PluginFactory>,
     ) -> Self {
+        Self::with_plugin_set(
+            project,
+            files,
+            PluginSet {
+                bundled,
+                ..PluginSet::default()
+            },
+        )
+    }
+
+    /// Like [`Self::with_plugins`], also registering script plugin runtimes.
+    pub fn with_plugin_set(
+        project: Option<PathBuf>,
+        files: Vec<PathBuf>,
+        plugins: PluginSet,
+    ) -> Self {
         let check_updates = std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none();
-        let mut app = Self::build(project, files, bundled, check_updates);
+        let mut app = Self::build(project, files, plugins, check_updates);
         if let Some(dir) = diagnostics::active_log_dir() {
             app.state.check_crash_reports(&dir);
         }
@@ -151,13 +167,13 @@ impl IdeApp {
         files: Vec<PathBuf>,
         check_updates: bool,
     ) -> Self {
-        Self::build(project, files, Vec::new(), check_updates)
+        Self::build(project, files, PluginSet::default(), check_updates)
     }
 
     fn build(
         project: Option<PathBuf>,
         files: Vec<PathBuf>,
-        bundled: Vec<PluginFactory>,
+        plugins: PluginSet,
         check_updates: bool,
     ) -> Self {
         let commands = built_in_commands();
@@ -165,7 +181,7 @@ impl IdeApp {
         if let Some(dir) = jetthing_settings::default_config_dir() {
             state.load_user_settings(&dir);
         }
-        state.init_plugins(jetthing_plugins::PluginStore::user(), bundled);
+        state.init_plugins(jetthing_plugins::PluginStore::user(), plugins);
         // Tests use in-memory statistics; the app keeps the user's.
         state.completion_stats = jetthing_core::CompletionStats::user();
         if let Some(path) = project {
@@ -228,7 +244,6 @@ impl IdeApp {
             repaint_hook_installed: false,
             plugin_commands: Vec::new(),
             plugin_generation: u64::MAX,
-            plugins_window: None,
             change_popup: None,
             git_dialog: None,
             push_dialog: None,
@@ -240,8 +255,8 @@ impl IdeApp {
 
     /// Standalone app mode (`jetthing --app <plugin-id>`): a window showing
     /// only the plugin's app view.
-    pub fn standalone(plugin: &str, bundled: Vec<PluginFactory>) -> Result<Self, String> {
-        let mut app = Self::with_plugins(None, Vec::new(), bundled);
+    pub fn standalone(plugin: &str, plugins: PluginSet) -> Result<Self, String> {
+        let mut app = Self::with_plugin_set(None, Vec::new(), plugins);
         plugin_ui::app_mode_error(&app.state.plugin_host.registry, plugin)?;
         app.state.plugin_host.app_mode = Some(plugin.to_owned());
         Ok(app)
@@ -717,7 +732,6 @@ impl IdeApp {
         about::show(self, ctx);
         android_run_ui::show(self, ctx);
         lsp_status::notices(self, ctx);
-        plugin_ui::plugins_window(self, ctx);
         plugin_ui::notifications(self, ctx);
         // Include operations started by controls in this frame, and keep
         // polling even when their notification balloon is hidden.
