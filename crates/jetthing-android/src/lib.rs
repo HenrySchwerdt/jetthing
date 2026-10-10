@@ -11,6 +11,7 @@ pub mod deploy;
 pub mod logcat;
 pub mod project;
 mod properties;
+pub mod resources;
 pub mod sdk;
 pub mod variants;
 pub mod view;

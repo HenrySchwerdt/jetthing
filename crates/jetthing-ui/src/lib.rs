@@ -341,6 +341,10 @@ impl IdeApp {
                     input: String::new(),
                 });
             }
+            // Go to Declaration (⌘B / Ctrl+B): Android resource references for now.
+            if self.state.android.project.is_some() && consume(Modifiers::COMMAND, Key::B) {
+                self.dispatch("android.resources.gotoDeclaration", Value::Null);
+            }
             if consume(Modifiers::COMMAND, Key::F) {
                 let selection = self.primary_selection_text();
                 self.find.show(false, selection);
