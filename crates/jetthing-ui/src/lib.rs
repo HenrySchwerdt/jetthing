@@ -27,6 +27,7 @@ mod editor;
 mod editor_keys;
 mod findbar;
 mod first_run;
+mod folding;
 mod git_log_ui;
 mod gradle_window;
 mod gutter_popup;
@@ -47,6 +48,7 @@ mod run_config_dialog;
 mod settings_dialog;
 mod settings_keymap;
 mod settings_plugins;
+mod structure_view;
 mod syntax;
 mod terminal_ui;
 mod test_view;
@@ -624,6 +626,8 @@ impl IdeApp {
                 .set(std::sync::Arc::new(move || ctx.request_repaint()));
             self.repaint_hook_installed = true;
         }
+        // Ctrl+-/= are Collapse/Expand in the editor (IntelliJ keymap), not UI zoom.
+        ctx.options_mut(|options| options.zoom_with_keyboard = false);
         self.state.poll_search();
         self.state.poll_runner();
         self.state.poll_lsp();

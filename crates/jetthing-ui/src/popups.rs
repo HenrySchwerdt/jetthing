@@ -38,6 +38,11 @@ pub enum Dialog {
         query: String,
         selected: usize,
     },
+    /// File Structure popup; `selected` starts at the declaration under the caret.
+    FileStructure {
+        query: String,
+        selected: Option<usize>,
+    },
 }
 
 impl Dialog {
@@ -51,6 +56,7 @@ impl Dialog {
             Dialog::Delete { .. } => "delete",
             Dialog::GotoLine { .. } => "gotoLine",
             Dialog::Recent { .. } => "recentFiles",
+            Dialog::FileStructure { .. } => "fileStructure",
         }
     }
 }
@@ -508,6 +514,9 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 keep = false;
             }
         }
+        Dialog::FileStructure { query, selected } => {
+            keep = file_structure(app, ctx, query, selected);
+        }
     }
     if let Some(error) = error {
         app.state.status = error;
@@ -515,6 +524,95 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     if keep {
         app.dialog = Some(dialog);
     }
+}
+
+/// File Structure popup (⌘F12): filterable outline of the active file.
+/// Returns whether the popup stays open.
+fn file_structure(
+    app: &mut IdeApp,
+    ctx: &egui::Context,
+    query: &mut String,
+    selected: &mut Option<usize>,
+) -> bool {
+    let Some(document) = app
+        .state
+        .active_document
+        .and_then(|i| app.state.documents.get(i))
+    else {
+        return false;
+    };
+    let items = crate::structure_view::items(ctx, document);
+    let mut rows = Vec::new();
+    crate::structure_view::flatten(&items, 0, &mut rows);
+    let rows: Vec<_> = rows
+        .into_iter()
+        .filter(|(_, item)| {
+            query.is_empty() || crate::palette::fuzzy_score(&item.name, query).is_some()
+        })
+        .collect();
+    if selected.is_none() {
+        let current = crate::structure_view::item_at_caret(document, &items)
+            .map(|item| item.name_range.clone());
+        *selected = Some(
+            rows.iter()
+                .position(|(_, item)| Some(&item.name_range) == current.as_ref())
+                .unwrap_or(0),
+        );
+    }
+    let mut index = selected.unwrap_or(0);
+    if !rows.is_empty() {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)) {
+            index = (index + 1) % rows.len();
+        }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)) {
+            index = (index + rows.len() - 1) % rows.len();
+        }
+    }
+    index = index.min(rows.len().saturating_sub(1));
+    let mut open = ctx
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+        .then_some(index);
+    let file = IdeApp::file_name(&document.path);
+    popup_frame(ctx, "dialog_file_structure", 560.0, |ui| {
+        // Centered file name, as in IntelliJ; typing filters (speed search).
+        ui.vertical_centered(|ui| title(ui, &file));
+        ui.add(
+            egui::TextEdit::singleline(query)
+                .id(input_id())
+                .desired_width(f32::INFINITY)
+                .margin(egui::Margin::symmetric(6, 4))
+                .hint_text("Type to filter"),
+        )
+        .request_focus();
+        ui.add_space(4.0);
+        if rows.is_empty() {
+            ui.label(RichText::new("Nothing to show").color(theme::TEXT_SECONDARY));
+        }
+        egui::ScrollArea::vertical()
+            .max_height(420.0)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (row_index, (depth, item)) in rows.iter().enumerate() {
+                    let depth = if query.is_empty() { *depth } else { 0 };
+                    let response = crate::structure_view::row(ui, depth, item, row_index == index);
+                    if row_index == index {
+                        response.scroll_to_me(None);
+                    }
+                    if response.clicked() {
+                        open = Some(row_index);
+                    }
+                }
+            });
+    });
+    *selected = Some(index);
+    if let Some(item) = open
+        .and_then(|index| rows.get(index))
+        .map(|(_, item)| (*item).clone())
+    {
+        crate::structure_view::navigate(app, ctx, &item);
+        return false;
+    }
+    true
 }
 
 #[cfg(test)]

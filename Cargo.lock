@@ -1117,6 +1117,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
+name = "dekobon-tree-sitter-groovy"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad65fc9637f84f0baf90c88ac337ab068dd7a9260390e473d9496e380685e2d9"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2574,6 +2584,9 @@ dependencies = [
 name = "jetthing-language"
 version = "0.0.3"
 dependencies = [
+ "dekobon-tree-sitter-groovy",
+ "jetthing-text",
+ "proptest",
  "serde_json",
  "tree-sitter",
  "tree-sitter-bash",

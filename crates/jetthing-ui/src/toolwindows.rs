@@ -52,6 +52,7 @@ pub fn left(app: &mut IdeApp, ctx: &egui::Context) {
                 ToolWindow::Project => project_tree(app, ui),
                 ToolWindow::Commit => commit(app, ui),
                 ToolWindow::BuildVariants => crate::build_variants_ui::show(app, ui),
+                ToolWindow::Structure => crate::structure_view::tool_window(app, ui),
                 _ => {}
             }
         });

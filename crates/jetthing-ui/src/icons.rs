@@ -30,6 +30,7 @@ pub enum Icon {
     FileScript,
     Project,
     Commit,
+    Structure,
     Branch,
     Terminal,
     Problems,
@@ -213,6 +214,19 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
             painter.circle_stroke(g.p(8.0, 8.0), g.len(3.0), stroke);
             line(&[(1.0, 8.0), (5.0, 8.0)]);
             line(&[(11.0, 8.0), (15.0, 8.0)]);
+        }
+        Icon::Structure => {
+            // Outline tree: a parent node with two indented children.
+            painter.rect_stroke(
+                g.rect(1.5, 1.5, 6.5, 5.5),
+                g.len(1.0),
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+            line(&[(4.0, 5.5), (4.0, 12.5), (8.5, 12.5)]);
+            line(&[(4.0, 8.5), (8.5, 8.5)]);
+            line(&[(10.0, 8.5), (14.5, 8.5)]);
+            line(&[(10.0, 12.5), (14.5, 12.5)]);
         }
         Icon::Branch => {
             painter.circle_stroke(g.p(4.5, 3.5), g.len(1.8), stroke);

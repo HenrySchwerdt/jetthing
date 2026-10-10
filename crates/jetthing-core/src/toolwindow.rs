@@ -16,6 +16,7 @@ pub enum Anchor {
 pub enum ToolWindow {
     Project,
     Commit,
+    Structure,
     Find,
     Build,
     Problems,
@@ -29,9 +30,10 @@ pub enum ToolWindow {
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 12] = [
+    pub const ALL: [ToolWindow; 13] = [
         ToolWindow::Project,
         ToolWindow::Commit,
+        ToolWindow::Structure,
         ToolWindow::Find,
         ToolWindow::Build,
         ToolWindow::Problems,
@@ -48,6 +50,7 @@ impl ToolWindow {
         match self {
             ToolWindow::Project => "project",
             ToolWindow::Commit => "commit",
+            ToolWindow::Structure => "structure",
             ToolWindow::Find => "find",
             ToolWindow::Build => "build",
             ToolWindow::Problems => "problems",
@@ -65,6 +68,7 @@ impl ToolWindow {
         match self {
             ToolWindow::Project => "Project",
             ToolWindow::Commit => "Commit",
+            ToolWindow::Structure => "Structure",
             ToolWindow::Find => "Find",
             ToolWindow::Build => "Build",
             ToolWindow::Problems => "Problems",
@@ -84,6 +88,7 @@ impl ToolWindow {
         match self {
             ToolWindow::Project => "⌘1",
             ToolWindow::Commit => "⌘0",
+            ToolWindow::Structure => "⌘7",
             ToolWindow::Find => "⌘3",
             ToolWindow::Build => "⌘4",
             ToolWindow::Problems => "⌘6",
@@ -100,7 +105,10 @@ impl ToolWindow {
 
     pub fn anchor(self) -> Anchor {
         match self {
-            ToolWindow::Project | ToolWindow::Commit | ToolWindow::BuildVariants => Anchor::Left,
+            ToolWindow::Project
+            | ToolWindow::Commit
+            | ToolWindow::Structure
+            | ToolWindow::BuildVariants => Anchor::Left,
             ToolWindow::Find
             | ToolWindow::Build
             | ToolWindow::Problems

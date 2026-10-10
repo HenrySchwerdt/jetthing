@@ -1,6 +1,7 @@
 //! Editor island: tabs and the viewport-native text surface.
 
 use crate::editor_keys;
+use crate::folding::{CollapsedRow, FoldView};
 use crate::icons::{self, Icon};
 use crate::problems_ui;
 use crate::widgets::island_frame;
@@ -155,7 +156,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     typed = typed_text;
                     if changed {
                         let snapshot = doc.text.text();
-                        doc.analysis = jetthing_language::analyze(&doc.path, &snapshot);
+                        doc.refresh_analysis(&snapshot);
                         changed_document = Some((
                             doc.path.clone(),
                             snapshot,
@@ -544,6 +545,55 @@ pub(crate) fn highlighted_line_job(
     job
 }
 
+/// Paints a collapsed region's placeholder box and the text after the region
+/// on its last line, starting at `origin` (top-left of the placeholder).
+fn paint_collapsed_tail(
+    painter: &egui::Painter,
+    document: &Document,
+    row: &CollapsedRow,
+    origin: egui::Pos2,
+    char_width: f32,
+    font: &egui::FontId,
+    row_height: f32,
+) {
+    let folded = crate::syntax::attributes("FOLDED_TEXT_ATTRIBUTES");
+    let width = row.placeholder.chars().count() as f32 * char_width;
+    let to_color = |rgba: jetthing_language::Rgba| Color32::from_rgb(rgba.r, rgba.g, rgba.b);
+    painter.rect_filled(
+        Rect::from_min_size(origin + vec2(0.0, 3.0), vec2(width, row_height - 6.0)),
+        3.0,
+        folded
+            .background
+            .map_or(*theme::editor::MATCHED_BRACE, to_color),
+    );
+    painter.text(
+        origin + vec2(0.0, row_height / 2.0),
+        egui::Align2::LEFT_CENTER,
+        &row.placeholder,
+        font.clone(),
+        folded
+            .foreground
+            .map_or(*theme::editor::LINE_NUMBER_CARET, to_color),
+    );
+    let end_line_start = document.text.line_to_char(row.end_line).unwrap_or(0);
+    let end_text = document.text.line(row.end_line).unwrap_or_default();
+    let end_content = end_text.trim_end_matches(['\r', '\n']);
+    let skip = row.end_char.saturating_sub(end_line_start);
+    let start = end_content
+        .char_indices()
+        .nth(skip)
+        .map_or(end_content.len(), |(index, _)| index);
+    let tail = &end_content[start..];
+    if tail.is_empty() {
+        return;
+    }
+    let tail_byte = document.text.line_to_byte(row.end_line).unwrap_or(0) + start;
+    let job = highlighted_line_job(tail, tail_byte, &document.analysis, font);
+    let galley = painter.layout_job(job);
+    let text_y = origin.y + (row_height - galley.size().y) / 2.0;
+    painter.galley(egui::pos2(origin.x + width, text_y), galley, Color32::WHITE);
+}
+
 /// Moves the primary caret to a zero-based line/column and focuses the editor.
 pub fn move_caret_to(app: &mut IdeApp, line: usize, column: usize) {
     let Some(index) = app.state.active_document else {
@@ -568,13 +618,15 @@ fn line_length(document: &Document, line: usize) -> usize {
         .count()
 }
 
-/// Character offset for moving `head` vertically by `delta` lines, keeping the column.
-fn vertical_target(document: &Document, head: usize, delta: isize) -> usize {
+/// Character offset for moving `head` vertically by `delta` visual rows
+/// (collapsed regions count as one row), keeping the column.
+fn vertical_target(document: &Document, folds: &FoldView, head: usize, delta: isize) -> usize {
     let Ok((line, column)) = document.text.char_to_line_column(head) else {
         return head;
     };
-    let last = document.text.len_lines().saturating_sub(1) as isize;
-    let target = (line as isize + delta).clamp(0, last) as usize;
+    let last_row = folds.row_count(document.text.len_lines()).saturating_sub(1) as isize;
+    let row = (folds.line_to_row(line) as isize + delta).clamp(0, last_row) as usize;
+    let target = folds.row_to_line(row);
     if target == line {
         return if delta < 0 {
             document.text.line_to_char(line).unwrap_or(0)
@@ -589,6 +641,51 @@ fn move_primary(document: &mut Document, head: usize, extend: bool) {
     let current = document.selections.primary();
     let anchor = if extend { current.anchor } else { head };
     document.selections.set_single(Selection { anchor, head });
+}
+
+/// Horizontal layout of the editor gutter. Left to right: blame annotations,
+/// line numbers, run icons (when the file has any), folding markers, the
+/// change bar, then the text.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct GutterLayout {
+    /// Right edge of the right-aligned line numbers.
+    numbers_right: f32,
+    /// Center of the run-icon column (equal to `numbers_right` without icons).
+    run_center: f32,
+    run_width: f32,
+    /// Center of the folding-marker column.
+    fold_center: f32,
+    /// Total gutter width; the change bar sits just inside it.
+    width: f32,
+}
+
+impl GutterLayout {
+    const FOLD_COLUMN: f32 = 14.0;
+    const RUN_COLUMN: f32 = 16.0;
+    /// Space for the change bar (`change_popup` paints it 7 px inside the edge).
+    const CHANGE_COLUMN: f32 = 14.0;
+
+    fn new(blame_width: f32, numbers_width: f32, run_icons: bool) -> Self {
+        let numbers_right = blame_width + 20.0 + numbers_width;
+        let run_width = if run_icons { Self::RUN_COLUMN } else { 0.0 };
+        let run_left = numbers_right + 4.0;
+        let fold_left = run_left + run_width;
+        Self {
+            numbers_right,
+            run_center: run_left + run_width / 2.0,
+            run_width,
+            fold_center: fold_left + Self::FOLD_COLUMN / 2.0,
+            width: fold_left + Self::FOLD_COLUMN + Self::CHANGE_COLUMN,
+        }
+    }
+
+    fn in_run_column(&self, x: f32) -> bool {
+        self.run_width > 0.0 && (x - self.run_center).abs() <= self.run_width / 2.0
+    }
+
+    fn in_fold_column(&self, x: f32) -> bool {
+        (x - self.fold_center).abs() <= Self::FOLD_COLUMN / 2.0
+    }
 }
 
 /// What the gutter shows next to the line numbers.
@@ -630,15 +727,18 @@ fn editor_surface(
     );
     let char_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'm'));
     let line_count = document.text.len_lines();
+    // Carets never stay inside collapsed text (Go to Line, Find, arrows).
+    document.reveal_carets();
+    let folds = FoldView::new(document);
+    let row_count = folds.row_count(line_count);
     let digits = line_count.max(1).to_string().len().max(2);
     let blame_width = if blame.is_some() {
         crate::blame_gutter::WIDTH
     } else {
         0.0
     };
-    // Gutter, left to right: blame, line numbers, run icons, change bar, text.
-    let run_column = if gutter.is_empty() { 0.0 } else { 16.0 };
-    let gutter_width = blame_width + 20.0 + digits as f32 * char_width + run_column + 18.0;
+    let layout = GutterLayout::new(blame_width, digits as f32 * char_width, !gutter.is_empty());
+    let gutter_width = layout.width;
     let text_left = gutter_width + TEXT_LEFT_PADDING;
     let caret_line = document
         .text
@@ -648,11 +748,21 @@ fn editor_surface(
     let mut caret_pos = None;
     let brace_pair: Vec<usize> = {
         let head = document.selections.primary().head;
-        ops::matching_bracket(&document.text, head)
-            .or_else(|| {
-                head.checked_sub(1)
-                    .and_then(|h| ops::matching_bracket(&document.text, h))
-            })
+        // Structural matching from the syntax tree when the language has a
+        // grammar (brackets in strings/comments never match); text otherwise.
+        let find = |offset: usize| {
+            if document.analysis.syntax.is_some() {
+                let byte = document.text.char_to_byte(offset);
+                document
+                    .analysis
+                    .matching_bracket(byte)
+                    .map(|(a, b)| (document.text.byte_to_char(a), document.text.byte_to_char(b)))
+            } else {
+                ops::matching_bracket(&document.text, offset)
+            }
+        };
+        find(head)
+            .or_else(|| head.checked_sub(1).and_then(find))
             .into_iter()
             .flat_map(|(a, b)| [a, b])
             .collect()
@@ -663,7 +773,7 @@ fn editor_surface(
             let longest = 400.0_f32;
             let content_size = egui::vec2(
                 ui.available_width().max(text_left + longest * char_width),
-                line_count as f32 * row_height + ui.available_height() * 0.5,
+                row_count as f32 * row_height + ui.available_height() * 0.5,
             );
             let (rect, response) = ui.allocate_exact_size(content_size, Sense::click_and_drag());
             let response = ui
@@ -673,9 +783,12 @@ fn editor_surface(
             if response.clicked() || response.drag_started() {
                 response.request_focus();
             }
+            let row_at = |position: egui::Pos2| {
+                (((position.y - rect.top()) / row_height).floor().max(0.0) as usize)
+                    .min(row_count.saturating_sub(1))
+            };
             let position_to_offset = |position: egui::Pos2| {
-                let line = (((position.y - rect.top()) / row_height).floor().max(0.0) as usize)
-                    .min(line_count.saturating_sub(1));
+                let line = folds.row_to_line(row_at(position));
                 let line_text = document.text.line(line).unwrap_or_default();
                 let content = line_text.trim_end_matches(['\r', '\n']);
                 let column = (((position.x - rect.left() - text_left) / char_width)
@@ -686,8 +799,7 @@ fn editor_surface(
             };
             // Line/column under the pointer; the column may lie past the line end.
             let position_to_point = |position: egui::Pos2| jetthing_text::multicaret::BlockPoint {
-                line: (((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize)
-                    .min(line_count.saturating_sub(1)),
+                line: folds.row_to_line(row_at(position)),
                 column: ((position.x - rect.left() - text_left) / char_width)
                     .round()
                     .max(0.0) as usize,
@@ -698,17 +810,17 @@ fn editor_surface(
             let marker_hit = response
                 .interact_pointer_pos()
                 .filter(|position| {
-                    crate::change_popup::in_marker_column(position.x - rect.left(), gutter_width)
+                    crate::change_popup::in_marker_column(position.x - rect.left(), layout.width)
                 })
                 .and_then(|position| {
-                    let line = ((position.y - rect.top()) / row_height).floor().max(0.0) as usize;
+                    let line = folds.row_to_line(row_at(position));
                     jetthing_core::hunk_at_line(changes, line).map(|hunk| (hunk, position))
                 });
             let blame_line = response
                 .hover_pos()
                 .or(response.interact_pointer_pos())
                 .filter(|position| position.x - rect.left() < blame_width)
-                .map(|position| ((position.y - rect.top()) / row_height).floor().max(0.0) as usize);
+                .map(|position| folds.row_to_line(row_at(position)));
             if let (Some(lines), Some(line)) = (blame, blame_line) {
                 if let Some(text) = crate::blame_gutter::tooltip(lines, line) {
                     response.clone().on_hover_text_at_pointer(text);
@@ -722,20 +834,39 @@ fn editor_surface(
             // Run icons sit between the line numbers and the text.
             let gutter_hit = response
                 .interact_pointer_pos()
-                .filter(|position| {
-                    let x = position.x - rect.left();
-                    let right = gutter_width - 18.0;
-                    run_column > 0.0 && x >= right - run_column && x < right
-                })
+                .filter(|position| layout.in_run_column(position.x - rect.left()))
                 .and_then(|position| {
-                    let line = ((position.y - rect.top()) / row_height).floor().max(0.0) as usize;
+                    let line = folds.row_to_line(row_at(position));
                     gutter
                         .iter()
                         .any(|mark| mark.line == line)
                         .then_some((line, position))
                 });
+            // Fold markers sit in the gutter just left of the text; placeholders
+            // expand their region when clicked.
+            let fold_click = response
+                .clicked()
+                .then(|| response.interact_pointer_pos())
+                .flatten()
+                .and_then(|position| {
+                    let line = folds.row_to_line(row_at(position));
+                    let x = position.x - rect.left();
+                    let in_marker_column = layout.in_fold_column(x);
+                    let on_placeholder = folds.collapsed_on(line).is_some_and(|row| {
+                        let line_start = document.text.line_to_char(line).unwrap_or(0);
+                        let column = (x - text_left) / char_width;
+                        let start = (row.start_char - line_start) as f32;
+                        column >= start && column <= start + row.placeholder.chars().count() as f32
+                    });
+                    (in_marker_column || on_placeholder).then_some(line)
+                });
             if response.clicked() && blame_line.is_some() {
                 // Handled above: annotation clicks never move the caret.
+            } else if let Some(line) = fold_click {
+                requests.push(EditorRequest::Command(
+                    "editor.toggleFold",
+                    serde_json::json!({ "line": line }),
+                ));
             } else if response.clicked()
                 && let Some((hunk, position)) = marker_hit
             {
@@ -854,16 +985,37 @@ fn editor_surface(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |duration| duration.as_secs() as i64);
             // Gutter background matches the editor in Islands; draw caret row first.
-            let first_line =
-                ((viewport.top() / row_height).floor().max(0.0) as usize).min(line_count);
-            let last_line = ((viewport.bottom() / row_height).ceil() as usize + 1).min(line_count);
+            let first_row =
+                ((viewport.top() / row_height).floor().max(0.0) as usize).min(row_count);
+            let last_row = ((viewport.bottom() / row_height).ceil() as usize + 1).min(row_count);
+            // Gutter fold markers for regions starting in the viewport.
+            let gutter_hovered = ui
+                .input(|input| input.pointer.hover_pos())
+                .is_some_and(|pos| rect.contains(pos) && pos.x - rect.left() < layout.width + 4.0);
+            let markers: Vec<(usize, bool)> = if first_row < last_row {
+                let first_line = folds.row_to_line(first_row);
+                let last_line = folds.row_to_line(last_row - 1);
+                let start = document.text.line_to_char(first_line).unwrap_or(0);
+                let end = document
+                    .text
+                    .line_to_char(last_line + 1)
+                    .unwrap_or(document.text.len_chars());
+                document
+                    .folds_in_chars(start, end)
+                    .iter()
+                    .map(|fold| (fold.start_line, document.folds.is_collapsed(fold)))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let focused = response.has_focus();
             let blink_on = {
                 let time = ui.input(|input| input.time);
                 (time * 2.0) as i64 % 2 == 0
             };
-            for line in first_line..last_line {
-                let y = rect.top() + line as f32 * row_height;
+            for row_index in first_row..last_row {
+                let line = folds.row_to_line(row_index);
+                let y = rect.top() + row_index as f32 * row_height;
                 let line_start = document.text.line_to_char(line).unwrap_or(0);
                 let line_text = document.text.line(line).unwrap_or_default();
                 let content = line_text.trim_end_matches(['\r', '\n']);
@@ -874,10 +1026,7 @@ fn editor_surface(
                     painter.rect_filled(row, 0.0, theme::editor::CARET_ROW);
                 }
                 painter.text(
-                    egui::pos2(
-                        rect.left() + gutter_width - 18.0 - run_column,
-                        y + row_height / 2.0,
-                    ),
+                    egui::pos2(rect.left() + layout.numbers_right, y + row_height / 2.0),
                     egui::Align2::RIGHT_CENTER,
                     format!("{}", line + 1),
                     font.clone(),
@@ -907,11 +1056,18 @@ fn editor_surface(
                 if let Some(mark) = gutter.iter().find(|mark| mark.line == line) {
                     crate::gutter_popup::paint_icon(
                         &painter,
-                        egui::pos2(
-                            rect.left() + gutter_width - 18.0 - run_column / 2.0,
-                            y + row_height / 2.0,
-                        ),
+                        egui::pos2(rect.left() + layout.run_center, y + row_height / 2.0),
                         mark.kind,
+                    );
+                }
+                if let Some(&(_, collapsed)) = markers.iter().find(|(start, _)| *start == line)
+                    && (collapsed || gutter_hovered)
+                {
+                    crate::folding::paint_marker(
+                        &painter,
+                        egui::pos2(rect.left() + layout.fold_center, y + row_height / 2.0),
+                        collapsed,
+                        *theme::editor::LINE_NUMBER_CARET,
                     );
                 }
                 // Indent guides every four columns of leading whitespace.
@@ -971,7 +1127,21 @@ fn editor_surface(
                     }
                 }
                 let line_start_byte = document.text.line_to_byte(line).unwrap_or(0);
-                let job = highlighted_line_job(content, line_start_byte, &document.analysis, &font);
+                let collapsed = folds.collapsed_on(line);
+                // A collapsed region shows the text before it, its placeholder,
+                // then the rest of its last line.
+                let visible = match collapsed {
+                    Some(row) => {
+                        let prefix_chars = row.start_char.saturating_sub(line_start);
+                        let end = content
+                            .char_indices()
+                            .nth(prefix_chars)
+                            .map_or(content.len(), |(index, _)| index);
+                        &content[..end]
+                    }
+                    None => content,
+                };
+                let job = highlighted_line_job(visible, line_start_byte, &document.analysis, &font);
                 let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
                 let text_y = y + (row_height - galley.size().y) / 2.0;
                 painter.galley(
@@ -979,6 +1149,20 @@ fn editor_surface(
                     galley,
                     Color32::WHITE,
                 );
+                if let Some(row) = collapsed {
+                    paint_collapsed_tail(
+                        &painter,
+                        document,
+                        row,
+                        egui::pos2(
+                            rect.left() + text_left + visible.chars().count() as f32 * char_width,
+                            y,
+                        ),
+                        char_width,
+                        &font,
+                        row_height,
+                    );
+                }
 
                 let column_x = |column: usize| rect.left() + text_left + column as f32 * char_width;
                 problems_ui::paint_line(
@@ -1005,7 +1189,7 @@ fn editor_surface(
                 }
             }
             if let Some(pointer) = response.hover_pos() {
-                let line = ((pointer.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize;
+                let line = folds.row_to_line(row_at(pointer));
                 let column = (pointer.x - rect.left() - text_left) / char_width;
                 if line < line_count && column >= 0.0 {
                     let line_len = document
@@ -1221,18 +1405,22 @@ fn editor_surface(
                     (s.head + 1).min(len)
                 }
             }),
-            egui::Key::ArrowUp => {
-                editor_keys::move_carets(document, extend, |d, s| vertical_target(d, s.head, -1))
-            }
-            egui::Key::ArrowDown => {
-                editor_keys::move_carets(document, extend, |d, s| vertical_target(d, s.head, 1))
-            }
-            egui::Key::PageUp => {
-                move_primary(document, vertical_target(document, head, -page), extend)
-            }
-            egui::Key::PageDown => {
-                move_primary(document, vertical_target(document, head, page), extend)
-            }
+            egui::Key::ArrowUp => editor_keys::move_carets(document, extend, |d, s| {
+                vertical_target(d, &folds, s.head, -1)
+            }),
+            egui::Key::ArrowDown => editor_keys::move_carets(document, extend, |d, s| {
+                vertical_target(d, &folds, s.head, 1)
+            }),
+            egui::Key::PageUp => move_primary(
+                document,
+                vertical_target(document, &folds, head, -page),
+                extend,
+            ),
+            egui::Key::PageDown => move_primary(
+                document,
+                vertical_target(document, &folds, head, page),
+                extend,
+            ),
             egui::Key::Home if modifiers.command => move_primary(document, 0, extend),
             egui::Key::Home => editor_keys::move_carets(document, extend, |d, s| {
                 let line = d.text.char_to_line(s.head);
@@ -1275,6 +1463,30 @@ fn editor_surface(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gutter_columns_follow_the_reference_order() {
+        let plain = super::GutterLayout::new(0.0, 20.0, false);
+        assert!(!plain.in_run_column(plain.numbers_right + 2.0));
+        assert!(plain.numbers_right < plain.fold_center);
+        assert!(
+            plain.fold_center + super::GutterLayout::FOLD_COLUMN / 2.0 <= plain.width - 7.0 - 4.0
+        );
+        let full = super::GutterLayout::new(70.0, 20.0, true);
+        // blame | line numbers | run icons | folding | change bar | text
+        assert!(70.0 < full.numbers_right);
+        assert!(full.numbers_right < full.run_center);
+        assert!(full.run_center < full.fold_center);
+        assert!(full.in_run_column(full.run_center));
+        assert!(!full.in_fold_column(full.run_center));
+        assert!(full.in_fold_column(full.fold_center));
+        // The change bar (4 px wide, 7 px inside the edge) is right of the fold column.
+        assert!(full.fold_center + super::GutterLayout::FOLD_COLUMN / 2.0 <= full.width - 11.0);
+        assert!(!crate::change_popup::in_marker_column(
+            full.fold_center,
+            full.width
+        ));
+    }
+
     use super::*;
 
     #[test]
@@ -1305,7 +1517,7 @@ mod tests {
                     key: "DEFAULT_KEYWORD",
                 },
             ]),
-            diagnostics: Vec::new(),
+            ..Default::default()
         };
         let job = highlighted_line_job("ä", 0, &analysis, &egui::FontId::monospace(13.0));
         assert_eq!(job.text, "ä");
