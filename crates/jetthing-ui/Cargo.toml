@@ -17,3 +17,7 @@ jetthing-runner = { path = "../jetthing-runner" }
 jetthing-text = { path = "../jetthing-text" }
 jetthing-terminal = { path = "../jetthing-terminal" }
 serde_json.workspace = true
+
+[[bench]]
+name = "typing"
+harness = false

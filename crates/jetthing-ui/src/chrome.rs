@@ -568,18 +568,6 @@ fn first_line_truncated(text: &str, max: usize) -> String {
     }
 }
 
-fn line_ending(text: &str) -> &'static str {
-    if text.contains("\r\n") { "CRLF" } else { "LF" }
-}
-
-fn indentation(text: &str) -> &'static str {
-    if text.lines().any(|line| line.starts_with('\t')) {
-        "Tab"
-    } else {
-        "4 spaces"
-    }
-}
-
 pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
     egui::TopBottomPanel::bottom("status_bar")
         .exact_height(STATUS_BAR_HEIGHT)
@@ -632,7 +620,11 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                         .active_document
                         .and_then(|index| app.state.documents.get(index));
                     if let Some(document) = active {
-                        let text = document.text.text();
+                        // Bounded detection: never copy the whole buffer per frame.
+                        let indent = jetthing_text::format::detect_indent(&document.text)
+                            .unwrap_or(jetthing_text::format::Indent::Spaces(4));
+                        let separator =
+                            jetthing_text::format::detect_line_separator(&document.text);
                         let caret = document.selections.primary().head;
                         let (line, column) =
                             document.text.char_to_line_column(caret).unwrap_or((0, 0));
@@ -650,7 +642,7 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                         widgets::flat_widget(
                             ui,
                             None,
-                            indentation(&text),
+                            &indent.label(),
                             font.clone(),
                             secondary,
                             false,
@@ -668,7 +660,7 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                         widgets::flat_widget(
                             ui,
                             None,
-                            line_ending(&text),
+                            separator.label(),
                             font.clone(),
                             secondary,
                             false,
@@ -760,14 +752,6 @@ mod tests {
         assert_eq!(first_line_truncated("short", 10), "short");
         assert_eq!(first_line_truncated("abcdefghijkl", 5), "abcd…");
         assert_eq!(first_line_truncated("one\ntwo", 10), "one");
-    }
-
-    #[test]
-    fn detects_line_endings_and_indentation() {
-        assert_eq!(line_ending("a\r\nb"), "CRLF");
-        assert_eq!(line_ending("a\nb"), "LF");
-        assert_eq!(indentation("fn a() {\n\tb\n}"), "Tab");
-        assert_eq!(indentation("fn a() {\n    b\n}"), "4 spaces");
     }
 
     #[test]

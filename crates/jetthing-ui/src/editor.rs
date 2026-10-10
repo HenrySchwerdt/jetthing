@@ -55,7 +55,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             };
             let diagnostics = app.state.active_lsp_diagnostics();
             let highlights = if app.find.open {
-                app.find.matches(&app.state.documents[index].text.text())
+                app.find.matches(&app.state.documents[index])
             } else {
                 Vec::new()
             };
@@ -596,7 +596,12 @@ fn editor_surface(
                         Stroke::new(1.0_f32, theme::editor::INDENT_GUIDE),
                     );
                 }
-                for &(match_start, match_end) in highlights {
+                // Matches are sorted and disjoint: only visit those on this line.
+                let first_match = highlights.partition_point(|&(_, end)| end <= line_start);
+                let visible_matches = highlights[first_match..]
+                    .iter()
+                    .take_while(|&&(start, _)| start <= line_end);
+                for &(match_start, match_end) in visible_matches {
                     let start = match_start.max(line_start).min(line_end);
                     let end = match_end.max(line_start).min(line_end);
                     if start < end {

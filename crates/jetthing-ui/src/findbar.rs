@@ -15,6 +15,17 @@ pub struct FindBar {
     pub match_case: bool,
     pub whole_words: bool,
     focus_requested: bool,
+    /// Matches for (path, revision, query, options); searching a large file
+    /// every frame would dominate the frame time.
+    cache: Option<(MatchKey, Vec<(usize, usize)>)>,
+}
+
+#[derive(PartialEq)]
+struct MatchKey {
+    path: std::path::PathBuf,
+    revision: u64,
+    query: String,
+    options: FindOptions,
 }
 
 pub fn query_id() -> egui::Id {
@@ -39,8 +50,23 @@ impl FindBar {
         }
     }
 
-    pub fn matches(&self, text: &str) -> Vec<(usize, usize)> {
-        ops::find_all(text, &self.query, self.options())
+    /// Matches of the query in `document`, recomputed only when the document,
+    /// its revision, the query or the options change.
+    pub fn matches(&mut self, document: &jetthing_core::Document) -> Vec<(usize, usize)> {
+        let key = MatchKey {
+            path: document.path.clone(),
+            revision: document.text.revision(),
+            query: self.query.clone(),
+            options: self.options(),
+        };
+        if let Some((cached, matches)) = &self.cache
+            && *cached == key
+        {
+            return matches.clone();
+        }
+        let matches = ops::find_all(&document.text.text(), &self.query, self.options());
+        self.cache = Some((key, matches.clone()));
+        matches
     }
 
     pub fn params(&self) -> Value {
@@ -85,8 +111,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     let Some(index) = app.state.active_document else {
         return;
     };
-    let text = app.state.documents[index].text.text();
-    let matches = app.find.matches(&text);
+    let matches = app.find.matches(&app.state.documents[index]);
     let primary = app.state.documents[index].selections.primary();
     let current = matches
         .iter()
@@ -205,8 +230,25 @@ mod tests {
         bar.show(true, Some("two\nlines".into()));
         assert_eq!(bar.query, "needle");
         assert!(bar.replace);
-        assert_eq!(bar.matches("a needle, Needle").len(), 2);
+        let path = std::path::PathBuf::from("n.txt");
+        let mut document = jetthing_core::Document {
+            analysis: jetthing_language::analyze(&path, "a needle, Needle"),
+            text: jetthing_text::TextDocument::new("a needle, Needle"),
+            path,
+            selections: Default::default(),
+        };
+        assert_eq!(bar.matches(&document).len(), 2);
         bar.match_case = true;
-        assert_eq!(bar.matches("a needle, Needle").len(), 1);
+        assert_eq!(
+            bar.matches(&document).len(),
+            1,
+            "options invalidate the cache"
+        );
+        document.text.edit(0, 0, "needle ").unwrap();
+        assert_eq!(
+            bar.matches(&document).len(),
+            2,
+            "edits invalidate the cache"
+        );
     }
 }
