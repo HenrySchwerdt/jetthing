@@ -53,10 +53,6 @@ pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
             );
             let ui = &mut content;
             ui.spacing_mut().item_spacing.x = 4.0;
-            if cfg!(target_os = "macos") {
-                // Room for the native traffic-light buttons.
-                ui.add_space(72.0);
-            }
             main_menu(app, ui);
             ui.add_space(4.0);
             project_widget(app, ui);
