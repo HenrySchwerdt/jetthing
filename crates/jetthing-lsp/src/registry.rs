@@ -72,7 +72,7 @@ impl ServerSpec {
 }
 
 /// Context for building a launch configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LaunchContext<'a> {
     /// Workspace root the server will serve.
     pub root: &'a Path,
@@ -80,6 +80,30 @@ pub struct LaunchContext<'a> {
     pub cache_dir: PathBuf,
     /// User settings for this server, if any.
     pub settings: Option<&'a ServerSettings>,
+    /// Finds servers installed outside `PATH` (managed toolchains).
+    pub resolver: Option<&'a dyn ProgramResolver>,
+}
+
+/// A server program found by a [`ProgramResolver`]: the full command line
+/// (without the per-workspace arguments a provider adds) and its environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedProgram {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+/// Hook through which the toolchain service supplies server executables.
+///
+/// `lsp.toml` commands still win; otherwise a resolved program is used before
+/// the spec's `PATH` candidates.
+pub trait ProgramResolver: Send + Sync {
+    /// How to start `spec`'s server, if the resolver knows it.
+    fn resolve(&self, spec: &ServerSpec) -> Option<ResolvedProgram>;
+
+    /// Toolchain component that provides `spec`'s server, for "Set up" actions
+    /// on missing-server notices.
+    fn setup_component(&self, spec: &ServerSpec) -> Option<String>;
 }
 
 /// A language integration that can provide a language server.
@@ -122,6 +146,10 @@ pub fn default_launch(
             .and_then(|s| s.args.clone())
             .unwrap_or_default();
         LaunchConfig::new(spec.id, program).args(args)
+    } else if let Some(resolved) = context.resolver.and_then(|resolver| resolver.resolve(spec)) {
+        let mut config = LaunchConfig::new(spec.id, resolved.program).args(resolved.args);
+        config.env = resolved.env;
+        config
     } else {
         spec.candidates
             .iter()
@@ -615,6 +643,7 @@ mod tests {
             root,
             cache_dir: PathBuf::from("/cache/jetthing"),
             settings,
+            resolver: None,
         }
     }
 
@@ -759,5 +788,51 @@ mod tests {
         assert_eq!(stable_hash(""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(stable_hash("a"), stable_hash("a"));
         assert_ne!(stable_hash("a"), stable_hash("b"));
+    }
+
+    struct FixedResolver;
+
+    impl ProgramResolver for FixedResolver {
+        fn resolve(&self, spec: &ServerSpec) -> Option<ResolvedProgram> {
+            (spec.id == "jdtls").then(|| ResolvedProgram {
+                program: PathBuf::from("/managed/jdk/bin/java"),
+                args: vec!["-jar".into(), "launcher.jar".into()],
+                env: vec![("JAVA_HOME".into(), "/managed/jdk".into())],
+            })
+        }
+
+        fn setup_component(&self, spec: &ServerSpec) -> Option<String> {
+            Some(spec.id.to_owned())
+        }
+    }
+
+    #[test]
+    fn resolved_programs_come_after_configured_commands_and_before_path() {
+        let registry = ServerRegistry::default();
+        let jdtls = registry.get("jdtls").unwrap();
+        let root = Path::new("/work/demo");
+        let mut context = context(root, None);
+        context.resolver = Some(&FixedResolver);
+        let config = jdtls.launch(&context).unwrap();
+        assert_eq!(config.program, PathBuf::from("/managed/jdk/bin/java"));
+        assert_eq!(&config.args[..2], ["-jar", "launcher.jar"]);
+        // The jdtls provider still adds its per-workspace data directory.
+        assert!(config.args.contains(&"-data".to_string()));
+        assert_eq!(
+            config.env,
+            vec![("JAVA_HOME".into(), "/managed/jdk".into())]
+        );
+
+        // An lsp.toml command wins over the resolver.
+        let settings = ServerSettings {
+            command: Some("/definitely/missing/jdtls".into()),
+            ..ServerSettings::default()
+        };
+        let mut context = super::tests::context(root, Some(&settings));
+        context.resolver = Some(&FixedResolver);
+        assert!(matches!(
+            jdtls.launch(&context),
+            Err(LspError::ServerNotFound { .. })
+        ));
     }
 }

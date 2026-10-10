@@ -44,6 +44,7 @@ pub mod ids {
     pub const CUSTOM_FONT_SIZE: &str = "appearance.customFontSize";
     pub const SMOOTH_SCROLLING: &str = "appearance.smoothScrolling";
     pub const COMPACT_MODE: &str = "appearance.compactMode";
+    pub const PROJECT_COLORS: &str = "appearance.projectColors";
     pub const KEYMAP: &str = "keymap.active";
     /// User shortcut changes, one `keymap<TAB>action<TAB>shortcut…` line per action.
     pub const KEYMAP_OVERRIDES: &str = "keymap.overrides";
@@ -331,7 +332,7 @@ fn add_definitions(registry: &mut SettingsRegistry) {
         )
         .group(ui_options),
         SettingDef::new(
-            "appearance.projectColors",
+            ids::PROJECT_COLORS,
             look,
             "Use project colors in main toolbar",
             Bool,

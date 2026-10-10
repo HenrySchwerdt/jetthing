@@ -46,6 +46,7 @@ mod syntax;
 mod terminal_ui;
 mod theme;
 mod theme_engine;
+mod toolbar_gradient;
 mod toolchain_status;
 mod toolwindows;
 mod welcome;

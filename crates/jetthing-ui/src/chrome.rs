@@ -23,6 +23,12 @@ pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
         .frame(chrome_frame())
         .show(ctx, |ui| {
             let bar = ui.max_rect();
+            let glow = app
+                .state
+                .settings
+                .bool(jetthing_settings::ids::PROJECT_COLORS)
+                .unwrap_or(true)
+                .then(|| crate::toolbar_gradient::reserve(ctx));
             // Empty toolbar space drags the window, like a native title bar.
             let drag = ui.interact(bar, egui::Id::new("toolbar_drag"), Sense::click_and_drag());
             if drag.drag_started() {
@@ -41,7 +47,16 @@ pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
             ui.spacing_mut().item_spacing.x = 4.0;
             if !crate::main_menu::show(app, ui) {
                 ui.add_space(4.0);
-                project_widget(app, ui);
+                let badge = project_widget(app, ui);
+                if let Some(slot) = glow {
+                    let anchor = crate::toolbar_gradient::Anchor {
+                        bar,
+                        badge_left: badge.left(),
+                        badge_right: badge.right(),
+                    };
+                    let color = theme::avatar_color(&app.project_name());
+                    crate::toolbar_gradient::paint(ctx, slot, anchor, color);
+                }
                 vcs_widget(app, ui);
             }
 
@@ -70,7 +85,8 @@ pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
         });
 }
 
-fn project_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
+/// Returns the project badge's rectangle.
+fn project_widget(app: &mut IdeApp, ui: &mut egui::Ui) -> Rect {
     let name = app.project_name();
     let galley = ui.painter().layout_no_wrap(
         name.clone(),
@@ -146,6 +162,7 @@ fn project_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
             .color(theme::TEXT_INFO),
         );
     });
+    badge
 }
 
 fn vcs_widget(app: &mut IdeApp, ui: &mut egui::Ui) {

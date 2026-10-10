@@ -94,7 +94,8 @@ Use installed SDK, ADB, emulator, and Gradle; do not depend on Android Studio.
 - [ ] Catalog: JDK (foojay Disco) + jdtls, rust-analyzer/rustup, Android cmdline-tools/sdkmanager,
       kotlin-lsp, bazelisk/starpls, Node/typescript-language-server, pyright/ruff, gopls/delve,
       clangd, lemminx, taplo, yaml-language-server
-- [ ] LSP "server not found" → Set up through the resolver; build/run, Android, Bazel use it
+- [x] LSP "server not found" → Set up through the resolver (jdtls on a managed JDK, rust-analyzer, taplo)
+- [ ] Build/run, Android, Bazel and debuggers resolve their tools through `Toolchains`
 
 ## Next task
 

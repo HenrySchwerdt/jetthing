@@ -25,7 +25,8 @@ pub use manager::{
     ServerStatus, describe_progress,
 };
 pub use registry::{
-    LanguageServerProvider, LaunchContext, LspSettings, ServerRegistry, ServerSettings, ServerSpec,
+    LanguageServerProvider, LaunchContext, LspSettings, ProgramResolver, ResolvedProgram,
+    ServerRegistry, ServerSettings, ServerSpec,
 };
 
 use std::path::PathBuf;
