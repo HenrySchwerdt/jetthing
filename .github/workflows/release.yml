@@ -1,13 +1,18 @@
 name: Release
 
-# Every push to main builds all platforms. When the workspace version in
-# Cargo.toml has no `v<version>` tag yet, the builds are published as a GitHub
-# release, which the IDE's "Check for Updates" reads.
+# Every push to main runs the checks. The platform builds run only when the
+# workspace version in Cargo.toml has no `v<version>` tag yet (they are then
+# published as a GitHub release, which the IDE's "Check for Updates" reads), on
+# a tag push, or when started manually.
 on:
   push:
     branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -52,6 +57,7 @@ jobs:
   build:
     name: build ${{ matrix.os }}
     needs: version
+    if: needs.version.outputs.publish == 'true' || github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
