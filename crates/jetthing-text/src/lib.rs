@@ -654,7 +654,8 @@ mod tests {
             let mut doc = TextDocument::new(&original);
             let len = original.chars().count();
             doc.edit(0, len, &replacement).unwrap();
-            prop_assert!(doc.undo());
+            // Identical replacements do not add an undo transaction.
+            prop_assert_eq!(doc.undo(), original != replacement);
             prop_assert_eq!(doc.text(), original);
         }
     }
