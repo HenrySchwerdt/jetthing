@@ -7,9 +7,8 @@ members = [
     "plugins/mongo-raabit/core",
     "xtask",
 ]
-# Manifest-only plugins (no Rust crate) and plugin folders whose crates live in
-# subdirectories.
-exclude = ["plugins/rust", "plugins/mongo-raabit"]
+# Manifest-only plugins (no Rust crate).
+exclude = ["plugins/rust"]
 
 [workspace.package]
 version = "0.0.2"
