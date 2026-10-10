@@ -16,8 +16,10 @@
 - [x] Save and Save All commands
 - [x] Command palette
 - [x] Manifest plugin discovery
-- [ ] Rope-backed editor with multi-cursor/undo model
-- [ ] Syntax highlighting and incremental Tree-sitter parsing
+- [x] Revisioned rope-backed text engine with Unicode-safe undo/redo
+- [ ] Multi-cursor editor view and coalesced typing transactions
+- [x] Tree-sitter Rust parsing, syntax highlighting, and parse diagnostics
+- [ ] Incremental Tree-sitter edit notifications and multi-language grammars
 - [ ] Integrated PTY terminal
 - [ ] UI automation/control socket and screenshot tests
 
@@ -39,7 +41,6 @@ Use installed SDK, ADB, emulator, and Gradle; do not depend on Android Studio.
 
 ## Next task
 
-Replace the per-tab `String` with a rope document model containing revisions,
-transactional edits, undo/redo, dirty tracking, and property tests. Keep the existing
-command and UI APIs operational while doing so.
-
+Build the viewport-native editor surface on the rope engine so only visible lines are
+shaped and painted. Add cursor/selection primitives, typing coalescence, multi-cursor
+transactions, and incremental Tree-sitter edit notifications.

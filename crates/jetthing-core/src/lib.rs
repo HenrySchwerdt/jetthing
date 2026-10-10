@@ -1,15 +1,16 @@
 use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
+use jetthing_language::{LanguageAnalysis, analyze};
 use jetthing_plugins::PluginManifest;
 use jetthing_project::{FileEntry, Project};
-use serde::{Deserialize, Serialize};
+use jetthing_text::TextDocument;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Document {
     pub path: PathBuf,
-    pub text: String,
-    pub dirty: bool,
+    pub text: TextDocument,
+    pub analysis: LanguageAnalysis,
 }
 
 #[derive(Default)]
@@ -41,8 +42,8 @@ impl IdeState {
         let text = project.read_text(path).map_err(|e| e.to_string())?;
         self.documents.push(Document {
             path: path.to_owned(),
-            text,
-            dirty: false,
+            text: TextDocument::new(&text),
+            analysis: analyze(path, &text),
         });
         self.active_document = Some(self.documents.len() - 1);
         self.status = format!("Opened {}", path.display());
@@ -55,11 +56,32 @@ impl IdeState {
             .get_mut(index)
             .ok_or("document does not exist")?;
         project
-            .write_text(&document.path, &document.text)
+            .write_text(&document.path, &document.text.text())
             .map_err(|e| e.to_string())?;
-        document.dirty = false;
+        document.text.mark_saved();
         self.status = format!("Saved {}", document.path.display());
         Ok(())
+    }
+
+    pub fn undo_active(&mut self) -> bool {
+        self.active_document
+            .and_then(|index| self.documents.get_mut(index))
+            .is_some_and(|document| document.text.undo())
+    }
+
+    pub fn redo_active(&mut self) -> bool {
+        self.active_document
+            .and_then(|index| self.documents.get_mut(index))
+            .is_some_and(|document| document.text.redo())
+    }
+
+    pub fn refresh_active_analysis(&mut self) {
+        if let Some(document) = self
+            .active_document
+            .and_then(|index| self.documents.get_mut(index))
+        {
+            document.analysis = analyze(&document.path, &document.text.text());
+        }
     }
 }
 
@@ -143,12 +165,44 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     registry
         .register(Command::new(
             spec("editor.saveAll", "Save All", "Editor", Some("⌥⌘S"), "{}"),
-            |s: &IdeState| s.documents.iter().any(|d| d.dirty),
+            |s: &IdeState| s.documents.iter().any(|d| d.text.is_dirty()),
             |state: &mut IdeState, _| {
                 for index in 0..state.documents.len() {
-                    if state.documents[index].dirty {
+                    if state.documents[index].text.is_dirty() {
                         state.save(index).map_err(CommandError::Failed)?;
                     }
+                }
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("editor.undo", "Undo", "Editor", Some("⌘Z"), "{}"),
+            |s: &IdeState| {
+                s.active_document
+                    .and_then(|i| s.documents.get(i))
+                    .is_some_and(|d| d.text.can_undo())
+            },
+            |state: &mut IdeState, _| {
+                if state.undo_active() {
+                    state.refresh_active_analysis();
+                }
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("editor.redo", "Redo", "Editor", Some("⇧⌘Z"), "{}"),
+            |s: &IdeState| {
+                s.active_document
+                    .and_then(|i| s.documents.get(i))
+                    .is_some_and(|d| d.text.can_redo())
+            },
+            |state: &mut IdeState, _| {
+                if state.redo_active() {
+                    state.refresh_active_analysis();
                 }
                 Ok(Value::Null)
             },

@@ -1,6 +1,7 @@
 use eframe::egui::{self, Color32, RichText};
 use jetthing_command::CommandRegistry;
 use jetthing_core::{IdeState, built_in_commands};
+use jetthing_language::{LanguageAnalysis, SyntaxKind};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -37,6 +38,51 @@ impl IdeApp {
             .unwrap_or("untitled")
             .to_owned()
     }
+
+    fn highlighted_job(
+        text: &str,
+        analysis: &LanguageAnalysis,
+        wrap_width: f32,
+    ) -> egui::text::LayoutJob {
+        let mut job = egui::text::LayoutJob::default();
+        job.wrap.max_width = wrap_width;
+        let base = egui::TextFormat {
+            font_id: egui::FontId::monospace(14.0),
+            color: Color32::from_rgb(205, 210, 220),
+            ..Default::default()
+        };
+        let mut cursor = 0;
+        for span in &analysis.spans {
+            if span.start_byte < cursor
+                || span.end_byte > text.len()
+                || !text.is_char_boundary(span.start_byte)
+                || !text.is_char_boundary(span.end_byte)
+            {
+                continue;
+            }
+            job.append(&text[cursor..span.start_byte], 0.0, base.clone());
+            let color = match span.kind {
+                SyntaxKind::Keyword => Color32::from_rgb(207, 142, 255),
+                SyntaxKind::String => Color32::from_rgb(167, 212, 142),
+                SyntaxKind::Comment => Color32::from_rgb(106, 153, 85),
+                SyntaxKind::Number => Color32::from_rgb(104, 151, 187),
+                SyntaxKind::Type => Color32::from_rgb(86, 182, 194),
+                SyntaxKind::Function => Color32::from_rgb(220, 220, 170),
+                SyntaxKind::Macro => Color32::from_rgb(255, 198, 109),
+            };
+            job.append(
+                &text[span.start_byte..span.end_byte],
+                0.0,
+                egui::TextFormat {
+                    color,
+                    ..base.clone()
+                },
+            );
+            cursor = span.end_byte;
+        }
+        job.append(&text[cursor..], 0.0, base);
+        job
+    }
 }
 
 impl eframe::App for IdeApp {
@@ -46,6 +92,17 @@ impl eframe::App for IdeApp {
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
             self.dispatch("editor.save", Value::Null);
+        }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z)) {
+            self.dispatch("editor.undo", Value::Null);
+        }
+        if ctx.input_mut(|i| {
+            i.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::Z,
+            )
+        }) {
+            self.dispatch("editor.redo", Value::Null);
         }
         egui::TopBottomPanel::top("toolbar")
             .exact_height(42.0)
@@ -73,6 +130,21 @@ impl eframe::App for IdeApp {
                     ui.label(&self.state.status);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(format!("{} plugins", self.state.plugins.len()));
+                        if let Some(document) = self
+                            .state
+                            .active_document
+                            .and_then(|index| self.state.documents.get(index))
+                        {
+                            if let Some(language) = document.analysis.language {
+                                ui.label(language);
+                            }
+                            let count = document.analysis.diagnostics.len();
+                            ui.label(format!(
+                                "{} problem{}",
+                                count,
+                                if count == 1 { "" } else { "s" }
+                            ));
+                        }
                     });
                 });
             });
@@ -110,7 +182,7 @@ impl eframe::App for IdeApp {
                     let title = format!(
                         "{}{}",
                         Self::file_name(&doc.path),
-                        if doc.dirty { " •" } else { "" }
+                        if doc.text.is_dirty() { " •" } else { "" }
                     );
                     if ui
                         .selectable_label(self.state.active_document == Some(index), title)
@@ -123,11 +195,24 @@ impl eframe::App for IdeApp {
             ui.separator();
             if let Some(index) = self.state.active_document {
                 let doc = &mut self.state.documents[index];
+                let mut snapshot = doc.text.text();
+                let analysis = doc.analysis.clone();
+                let mut layouter =
+                    |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
+                        ui.fonts_mut(|fonts| {
+                            fonts.layout_job(Self::highlighted_job(
+                                buffer.as_str(),
+                                &analysis,
+                                wrap_width,
+                            ))
+                        })
+                    };
                 let response = egui::ScrollArea::both()
                     .show(ui, |ui| {
                         ui.add(
-                            egui::TextEdit::multiline(&mut doc.text)
+                            egui::TextEdit::multiline(&mut snapshot)
                                 .font(egui::TextStyle::Monospace)
+                                .layouter(&mut layouter)
                                 .desired_width(f32::INFINITY)
                                 .desired_rows(40)
                                 .lock_focus(true),
@@ -135,7 +220,11 @@ impl eframe::App for IdeApp {
                     })
                     .inner;
                 if response.changed() {
-                    doc.dirty = true;
+                    if let Err(error) = doc.text.replace_from_snapshot(&snapshot) {
+                        self.state.status = error.to_string();
+                    } else {
+                        doc.analysis = jetthing_language::analyze(&doc.path, &snapshot);
+                    }
                 }
             } else {
                 ui.centered_and_justified(|ui| {
