@@ -1,0 +1,13 @@
+[package]
+name = "jetthing-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+jetthing-command = { path = "../jetthing-command" }
+jetthing-core = { path = "../jetthing-core" }
+serde_json.workspace = true
+

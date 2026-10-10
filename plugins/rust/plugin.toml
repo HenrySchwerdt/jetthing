@@ -1,0 +1,6 @@
+id = "dev.jetthing.rust"
+name = "Rust Language Support"
+version = "0.1.0"
+api_version = 1
+capabilities = ["language", "lsp", "build", "test"]
+

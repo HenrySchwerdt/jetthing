@@ -1,0 +1,13 @@
+[package]
+name = "jetthing-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+jetthing-command = { path = "../jetthing-command" }
+jetthing-plugins = { path = "../jetthing-plugins" }
+jetthing-project = { path = "../jetthing-project" }
+serde.workspace = true
+serde_json.workspace = true
+

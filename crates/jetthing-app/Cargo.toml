@@ -1,0 +1,10 @@
+[package]
+name = "jetthing-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+eframe.workspace = true
+jetthing-ui = { path = "../jetthing-ui" }
+
