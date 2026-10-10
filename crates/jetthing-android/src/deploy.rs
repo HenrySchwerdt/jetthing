@@ -15,22 +15,34 @@ pub struct DeployPlan {
     pub gradle_task: String,
     /// Module directory relative to the project root.
     pub module_dir: PathBuf,
+    /// Variant name, e.g. `freeDebug`.
     pub variant: String,
+    /// APK output directory relative to the module, e.g. `build/outputs/apk/free/debug`.
+    pub apk_dir: PathBuf,
     pub package: String,
     /// Fully qualified launcher activity, if the manifest declares one.
     pub activity: Option<String>,
 }
 
 impl DeployPlan {
-    /// Plans a debug deploy of the project's application module to `serial`.
-    pub fn debug(project: &AndroidProject, serial: &str) -> Result<Self, String> {
+    /// Plans a deploy of the project's application module to `serial`, using
+    /// `variant` or the module's default (first debug) variant.
+    pub fn for_project(
+        project: &AndroidProject,
+        serial: &str,
+        variant: Option<&str>,
+    ) -> Result<Self, String> {
         let module = project
             .app_module()
             .ok_or("No application module: no Gradle module applies com.android.application.")?;
-        Self::for_module(module, serial, "debug")
+        Self::for_module(module, serial, variant)
     }
 
-    pub fn for_module(module: &AndroidModule, serial: &str, variant: &str) -> Result<Self, String> {
+    pub fn for_module(
+        module: &AndroidModule,
+        serial: &str,
+        variant: Option<&str>,
+    ) -> Result<Self, String> {
         let package = module.package_name().ok_or_else(|| {
             format!(
                 "Cannot determine the application ID of {}: set applicationId or namespace in {}.",
@@ -38,10 +50,16 @@ impl DeployPlan {
                 module.build_file.display()
             )
         })?;
-        let mut capitalized = variant.to_owned();
-        if let Some(first) = capitalized.get_mut(..1) {
-            first.make_ascii_uppercase();
-        }
+        let variant = match variant {
+            Some(name) => module
+                .variants
+                .find(name)
+                .ok_or_else(|| format!("{} has no build variant `{name}`", module.gradle_path))?,
+            None => module
+                .variants
+                .default_variant()
+                .ok_or_else(|| format!("{} has no build variants", module.gradle_path))?,
+        };
         let prefix = if module.gradle_path == ":" {
             String::new()
         } else {
@@ -49,9 +67,10 @@ impl DeployPlan {
         };
         Ok(Self {
             serial: serial.to_owned(),
-            gradle_task: format!("{prefix}:assemble{capitalized}"),
+            gradle_task: format!("{prefix}:assemble{}", variant.capitalized()),
             module_dir: module.dir.clone(),
-            variant: variant.to_owned(),
+            variant: variant.name.clone(),
+            apk_dir: PathBuf::from(variant.apk_dir()),
             package: package.to_owned(),
             activity: module.launcher.as_ref().map(|l| l.class_name.clone()),
         })
@@ -67,10 +86,9 @@ impl DeployPlan {
     }
 }
 
-/// APKs of `variant` under `<module>/build/outputs/apk/<variant>/`, read from
-/// AGP's `output-metadata.json` and falling back to any `*.apk` there.
-pub fn find_apks(module_dir: &Path, variant: &str) -> Vec<PathBuf> {
-    let dir = module_dir.join("build/outputs/apk").join(variant);
+/// APKs in `dir` (a variant's output directory), read from AGP's
+/// `output-metadata.json` and falling back to any `*.apk` there.
+pub fn find_apks(dir: &Path) -> Vec<PathBuf> {
     let from_metadata = std::fs::read_to_string(dir.join("output-metadata.json"))
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
@@ -88,7 +106,7 @@ pub fn find_apks(module_dir: &Path, variant: &str) -> Vec<PathBuf> {
     if !from_metadata.is_empty() {
         return from_metadata;
     }
-    let mut apks: Vec<PathBuf> = std::fs::read_dir(&dir)
+    let mut apks: Vec<PathBuf> = std::fs::read_dir(dir)
         .map(|entries| {
             entries
                 .flatten()
@@ -233,6 +251,9 @@ mod tests {
             min_sdk: None,
             target_sdk: None,
             manifest: None,
+            variants: crate::variants::VariantModel::parse(
+                "android { productFlavors { create(\"free\") {} } }",
+            ),
             launcher: Some(LauncherActivity {
                 class_name: "com.example.app.MainActivity".into(),
                 declared_name: ".MainActivity".into(),
@@ -242,8 +263,10 @@ mod tests {
 
     #[test]
     fn plans_debug_deploys() {
-        let plan = DeployPlan::for_module(&module(), "emulator-5554", "debug").unwrap();
-        assert_eq!(plan.gradle_task, ":app:assembleDebug");
+        let plan = DeployPlan::for_module(&module(), "emulator-5554", None).unwrap();
+        assert_eq!(plan.gradle_task, ":app:assembleFreeDebug");
+        assert_eq!(plan.variant, "freeDebug");
+        assert_eq!(plan.apk_dir, PathBuf::from("build/outputs/apk/free/debug"));
         assert_eq!(plan.package, "com.example.app.dev");
         // applicationId differs from the namespace: the class keeps its full name.
         assert_eq!(
@@ -252,15 +275,20 @@ mod tests {
         );
         let mut same = module();
         same.application_id = None;
-        let plan = DeployPlan::for_module(&same, "s", "release").unwrap();
-        assert_eq!(plan.gradle_task, ":app:assembleRelease");
+        let plan = DeployPlan::for_module(&same, "s", Some("freeRelease")).unwrap();
+        assert_eq!(plan.gradle_task, ":app:assembleFreeRelease");
+        assert!(
+            DeployPlan::for_module(&same, "s", Some("paidDebug"))
+                .unwrap_err()
+                .contains("no build variant")
+        );
         assert_eq!(
             plan.component().as_deref(),
             Some("com.example.app/.MainActivity")
         );
         same.namespace = None;
         assert!(
-            DeployPlan::for_module(&same, "s", "debug")
+            DeployPlan::for_module(&same, "s", None)
                 .unwrap_err()
                 .contains("applicationId")
         );
@@ -298,22 +326,16 @@ mod tests {
         let dir = crate::adb::tests::temp("apks");
         let out = dir.join("app/build/outputs/apk/debug");
         std::fs::create_dir_all(&out).unwrap();
-        assert!(find_apks(&dir.join("app"), "debug").is_empty());
+        assert!(find_apks(&out).is_empty());
         std::fs::write(out.join("other.apk"), "").unwrap();
-        assert_eq!(
-            find_apks(&dir.join("app"), "debug"),
-            [out.join("other.apk")]
-        );
+        assert_eq!(find_apks(&out), [out.join("other.apk")]);
         std::fs::write(out.join("app-debug.apk"), "").unwrap();
         std::fs::write(
             out.join("output-metadata.json"),
             r#"{"version":3,"artifactType":{"type":"APK","kind":"Directory"},"applicationId":"com.example.app","variantName":"debug","elements":[{"type":"SINGLE","filters":[],"outputFile":"app-debug.apk"}]}"#,
         )
         .unwrap();
-        assert_eq!(
-            find_apks(&dir.join("app"), "debug"),
-            [out.join("app-debug.apk")]
-        );
+        assert_eq!(find_apks(&out), [out.join("app-debug.apk")]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

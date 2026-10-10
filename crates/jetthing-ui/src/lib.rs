@@ -8,6 +8,7 @@
 mod android_run_ui;
 mod android_sdk;
 mod android_view;
+mod build_variants_ui;
 mod chrome;
 mod device_manager;
 mod editor;

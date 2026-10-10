@@ -99,7 +99,14 @@ impl IdeState {
             .project
             .as_ref()
             .ok_or("The open project is not an Android project.")?;
-        Ok((DeployPlan::debug(project, serial)?, project.root.clone()))
+        let variant = project
+            .app_module()
+            .and_then(|m| self.android.active_variants.get(&m.gradle_path))
+            .map(String::as_str);
+        Ok((
+            DeployPlan::for_project(project, serial, variant)?,
+            project.root.clone(),
+        ))
     }
 
     /// Run 'app': builds the debug APK with Gradle, then installs and launches it.
@@ -153,7 +160,7 @@ impl IdeState {
             (Steps::Launch, _) => None,
             (_, Some(apk)) => Some(apk),
             (_, None) => Some(
-                find_apks(&root.join(&plan.module_dir), &plan.variant)
+                find_apks(&root.join(&plan.module_dir).join(&plan.apk_dir))
                     .into_iter()
                     .next()
                     .ok_or_else(|| {
@@ -374,6 +381,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                     gradle_task: String::new(),
                     module_dir: PathBuf::new(),
                     variant: String::new(),
+                    apk_dir: PathBuf::new(),
                     package: String::new(),
                     activity: None,
                 };

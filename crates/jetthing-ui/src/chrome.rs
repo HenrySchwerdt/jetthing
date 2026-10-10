@@ -492,6 +492,9 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
             ui.vertical(|ui| {
                 stripe_button(app, ui, ToolWindow::Project, Icon::Project);
                 stripe_button(app, ui, ToolWindow::Commit, Icon::Commit);
+                if app.state.android.project.is_some() {
+                    stripe_button(app, ui, ToolWindow::BuildVariants, Icon::Variants);
+                }
                 let (rect, _) = ui.allocate_exact_size(vec2(32.0, 1.0), Sense::hover());
                 ui.painter().line_segment(
                     [

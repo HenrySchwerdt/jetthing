@@ -22,10 +22,11 @@ pub enum ToolWindow {
     Terminal,
     DeviceManager,
     Logcat,
+    BuildVariants,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 8] = [
+    pub const ALL: [ToolWindow; 9] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Find,
@@ -34,6 +35,7 @@ impl ToolWindow {
         ToolWindow::Terminal,
         ToolWindow::DeviceManager,
         ToolWindow::Logcat,
+        ToolWindow::BuildVariants,
     ];
 
     pub fn id(self) -> &'static str {
@@ -46,6 +48,7 @@ impl ToolWindow {
             ToolWindow::Terminal => "terminal",
             ToolWindow::DeviceManager => "deviceManager",
             ToolWindow::Logcat => "logcat",
+            ToolWindow::BuildVariants => "buildVariants",
         }
     }
 
@@ -59,6 +62,7 @@ impl ToolWindow {
             ToolWindow::Terminal => "Terminal",
             ToolWindow::DeviceManager => "Device Manager",
             ToolWindow::Logcat => "Logcat",
+            ToolWindow::BuildVariants => "Build Variants",
         }
     }
 
@@ -72,13 +76,13 @@ impl ToolWindow {
             ToolWindow::Problems => "⌘6",
             ToolWindow::Terminal => "⌥F12",
             // Unbound by default, like the reference IDE.
-            ToolWindow::DeviceManager | ToolWindow::Logcat => "",
+            ToolWindow::DeviceManager | ToolWindow::Logcat | ToolWindow::BuildVariants => "",
         }
     }
 
     pub fn anchor(self) -> Anchor {
         match self {
-            ToolWindow::Project | ToolWindow::Commit => Anchor::Left,
+            ToolWindow::Project | ToolWindow::Commit | ToolWindow::BuildVariants => Anchor::Left,
             ToolWindow::Find
             | ToolWindow::Build
             | ToolWindow::Problems

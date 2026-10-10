@@ -12,6 +12,7 @@ pub mod logcat;
 pub mod project;
 mod properties;
 pub mod sdk;
+pub mod variants;
 pub mod view;
 
 pub use adb::{

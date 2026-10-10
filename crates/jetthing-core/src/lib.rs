@@ -16,6 +16,7 @@ mod android_commands;
 mod android_deploy;
 mod android_devices;
 mod android_logcat;
+mod android_variants;
 mod editor_commands;
 mod lsp_commands;
 mod project_commands;
@@ -591,6 +592,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_commands::register(&mut registry);
     android_devices::register(&mut registry);
     android_deploy::register(&mut registry);
+    android_variants::register(&mut registry);
     android_logcat::register(&mut registry);
     editor_commands::register(&mut registry);
     project_commands::register(&mut registry);
@@ -917,7 +919,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Toggle Tool Window",
                 "Window",
                 None,
-                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat"}"#,
+                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat|buildVariants"}"#,
             ),
             |_| true,
             |state: &mut IdeState, params| {

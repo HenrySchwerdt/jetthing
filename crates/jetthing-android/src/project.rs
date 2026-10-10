@@ -75,6 +75,8 @@ pub struct AndroidModule {
     /// `src/main/AndroidManifest.xml` relative to the project root, if present.
     pub manifest: Option<PathBuf>,
     pub launcher: Option<LauncherActivity>,
+    /// Build types × product flavors declared in the build script.
+    pub variants: crate::variants::VariantModel,
 }
 
 impl AndroidModule {
@@ -134,6 +136,7 @@ impl AndroidProject {
                 target_sdk: dsl_value(&script, &["targetSdk", "targetSdkVersion"]),
                 manifest: manifest_abs.is_file().then(|| manifest_rel.clone()),
                 launcher: None,
+                variants: crate::variants::VariantModel::parse(&script),
                 gradle_path,
                 dir,
                 kind,
