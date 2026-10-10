@@ -2590,6 +2590,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexus-http"
+version = "0.0.2"
+dependencies = [
+ "eframe",
+ "egui",
+ "nexus-http-core",
+ "serde_json",
+ "tempfile",
+ "tiny_http",
+ "url",
+]
+
+[[package]]
 name = "nexus-http-core"
 version = "0.0.2"
 dependencies = [
