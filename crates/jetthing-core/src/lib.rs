@@ -14,9 +14,11 @@ use std::path::{Path, PathBuf};
 
 mod editor_commands;
 mod project_commands;
+mod settings_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
+pub use settings_commands::Settings;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -59,6 +61,9 @@ pub struct IdeState {
     update_silent: bool,
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
+    pub settings: Settings,
+    /// Settings page the UI should open (set by `settings.open`, taken by the UI).
+    pub settings_request: Option<String>,
     pub status: String,
 }
 
@@ -106,6 +111,7 @@ impl IdeState {
         self.tool_windows = ToolWindowLayout::default();
         self.tool_windows.show(ToolWindow::Project);
         self.status = format!("Opened {}", project.root().display());
+        self.load_project_settings(project.root());
         self.project = Some(project);
         self.restore_workspace();
         Ok(())
@@ -271,7 +277,18 @@ impl IdeState {
                 .as_ref()
                 .map(Project::root)
                 .unwrap_or_else(|| Path::new("."));
-            self.terminal = Some(TerminalSession::spawn_shell(cwd).map_err(|e| e.to_string())?);
+            let shell = self
+                .settings
+                .text(jetthing_settings::ids::TERMINAL_SHELL)
+                .unwrap_or_default();
+            let session = if shell.trim().is_empty() {
+                TerminalSession::spawn_shell(cwd).map_err(|e| e.to_string())
+            } else {
+                TerminalSession::spawn(shell.trim(), &[], cwd).map_err(|e| {
+                    format!("{e}. Check the shell path in Settings | Tools | Terminal.")
+                })
+            };
+            self.terminal = Some(session?);
         }
         self.tool_windows.show(ToolWindow::Terminal);
         self.status = "Terminal ready".into();
@@ -590,6 +607,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
+    settings_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(

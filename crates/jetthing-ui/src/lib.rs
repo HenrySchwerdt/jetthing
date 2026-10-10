@@ -13,6 +13,7 @@ mod keys;
 mod notifications;
 mod palette;
 mod popups;
+mod settings_dialog;
 mod terminal_ui;
 mod theme;
 mod toolwindows;
@@ -22,6 +23,7 @@ mod widgets;
 use eframe::egui;
 use jetthing_command::{CommandRegistry, CommandSpec};
 use jetthing_core::{Anchor, IdeState, ToolWindow, built_in_commands};
+use jetthing_settings::ids;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -45,6 +47,7 @@ pub struct IdeApp {
     /// Text of the last whole-line copy, so pasting it inserts a line.
     clipboard_line: Option<String>,
     dialog: Option<popups::Dialog>,
+    settings_dialog: Option<settings_dialog::SettingsDialog>,
     dialog_focus: bool,
     commit_message: String,
     /// Commit checkbox overrides; by default tracked changes are included and
@@ -59,6 +62,9 @@ impl IdeApp {
     pub fn new(project: Option<PathBuf>, files: Vec<PathBuf>) -> Self {
         let commands = built_in_commands();
         let mut state = IdeState::default();
+        if let Some(dir) = jetthing_settings::default_config_dir() {
+            state.load_user_settings(&dir);
+        }
         if let Some(path) = project {
             if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
             {
@@ -84,7 +90,9 @@ impl IdeApp {
                 state.status = error.to_string();
             }
         }
-        if std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none() {
+        if std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none()
+            && state.settings.bool(ids::CHECK_UPDATES).unwrap_or(true)
+        {
             let _ = commands.execute("app.checkForUpdates", &mut state, json!({"silent": true}));
         }
         let run_label = state.project.as_ref().and_then(|project| {
@@ -109,6 +117,7 @@ impl IdeApp {
             find: findbar::FindBar::default(),
             clipboard_line: None,
             dialog: None,
+            settings_dialog: None,
             dialog_focus: false,
             commit_message: String::new(),
             commit_overrides: std::collections::HashMap::new(),
@@ -279,6 +288,16 @@ impl IdeApp {
             }
         }
         let mac = cfg!(target_os = "macos");
+        // Settings: ⌘, on macOS, Ctrl+Alt+S elsewhere.
+        if (mac && consume(Modifiers::COMMAND, Key::Comma))
+            || (!mac && consume(Modifiers::CTRL | Modifiers::ALT, Key::S))
+        {
+            self.dispatch("settings.open", Value::Null);
+        }
+        if self.settings_dialog.is_some() || self.state.settings_request.is_some() {
+            // The dialog is modal and handles its own keys (Escape closes it).
+            return;
+        }
         if ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
             && self.dialog.is_none()
             && !self.palette.open
@@ -537,12 +556,20 @@ impl eframe::App for IdeApp {
         }
         // Like the reference IDE, save all files when the window loses focus.
         let focused = ctx.input(|input| input.focused);
-        if self.window_focused && !focused {
+        if self.window_focused
+            && !focused
+            && self
+                .state
+                .settings
+                .bool(ids::AUTOSAVE_FOCUS)
+                .unwrap_or(true)
+        {
             self.autosave();
         }
         self.window_focused = focused;
         self.handle_shortcuts(ctx);
         self.follow_tool_window_focus(ctx);
+        theme::apply_settings(ctx, &self.state.settings);
 
         chrome::window_resize_handles(ctx);
         chrome::main_toolbar(self, ctx);
@@ -559,6 +586,7 @@ impl eframe::App for IdeApp {
         editor::completion_popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
+        settings_dialog::show(self, ctx);
         notifications::show(self, ctx);
         // Include operations started by controls in this frame, and keep
         // polling even when their notification balloon is hidden.

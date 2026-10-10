@@ -22,6 +22,7 @@ pub fn for_windows_linux(mac: &str) -> String {
         "⌘W" => return "Ctrl+F4".into(),
         "⌥⌘S" => return "Ctrl+S".into(),
         "⌥F12" => return "Alt+F12".into(),
+        "⌘," => return "Ctrl+Alt+S".into(),
         _ => {}
     }
     let mut chars = mac.chars().peekable();

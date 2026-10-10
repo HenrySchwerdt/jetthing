@@ -25,6 +25,10 @@ no crate below `jetthing-ui` imports UI types.
   diagnostics, and completion transport; providers remain behind platform abstractions.
 - `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,
   and validation. Executable/Wasm loading is deliberately not claimed yet.
+- `jetthing-settings`: typed settings registry (bool/int/float/text/path/enum/list with
+  defaults and validation), the Settings tree keyed by the reference configurable ids in
+  `docs/spec/data/settings.json`, application/project layering, TOML persistence,
+  search, and the dialog's draft/Apply/Reset model. No UI types.
 - `jetthing-core`: application state, tool window layout model (one visible tool window
   per anchor), and built-in command handlers.
 - `jetthing-ui`: native workbench shell split into `chrome` (main toolbar, stripe, status
@@ -42,6 +46,39 @@ Commands have stable IDs, human labels, JSON schemas expressed as documentation,
 capability requirements, an enabled predicate, and an execution handler. GUI and CLI
 use the same registry. Cancellation/progress and MCP/control transports are next-step
 extensions of this contract.
+
+## Settings extension point
+
+Settings pages are data, not UI code. A subsystem that needs a page registers it with
+the registry held in `IdeState::settings` (normally from its `jetthing-core` command
+module, before the UI starts):
+
+```rust
+use jetthing_settings::{PageDef, Scope, SettingDef, SettingKind, SettingValue};
+
+let registry = &mut state.settings.registry;
+// Reuse the reference page id when the page exists in docs/spec/data/settings.json
+// (e.g. `reference.settingsdialog.project.gradle`); register a new page only otherwise.
+registry.register_page(PageDef::new("jetthing.rust", Some("language"), "Rust"))?;
+registry.register_setting(
+    SettingDef::new("rust.analyzerPath", "jetthing.rust", "rust-analyzer executable",
+        SettingKind::Path, SettingValue::Text(String::new()))
+        .group("Language Server")
+        .scope(Scope::Project)
+        .description("Empty searches PATH"),
+)?;
+// Read the effective value wherever it is used:
+let path = state.settings.text("rust.analyzerPath");
+```
+
+The Settings dialog renders registered settings generically (checkbox, combo box,
+number and text fields, grouped under headings), includes them in search, marks
+modified pages and applies edits through `settings.apply`. Values are stored in
+`<config dir>/settings.toml` (application) or `<project>/.jetthing/settings.toml`
+(project); the config dir is `JETTHING_CONFIG_DIR` or the platform default. Pages that
+need bespoke UI (Keymap, Plugins) get a page renderer in `jetthing-ui::settings_dialog`.
+Commands: `settings.open {page?}`, `settings.get/set/reset {id}`,
+`settings.apply {changes}`, `settings.search {query}`.
 
 ## Long-term direction
 
