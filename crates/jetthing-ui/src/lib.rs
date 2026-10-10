@@ -7,6 +7,7 @@
 
 mod about;
 mod ai_chat;
+mod ai_inline;
 mod chrome;
 mod control;
 mod crash_notice;
@@ -581,6 +582,8 @@ impl eframe::App for IdeApp {
             self.autosave();
         }
         self.window_focused = focused;
+        ai_inline::tick(self, ctx);
+        ai_inline::handle_keys(self, ctx);
         self.handle_shortcuts(ctx);
         self.follow_tool_window_focus(ctx);
 

@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 pub const COMPLETION_LIMIT: usize = 30;
 const TAB_BAR_HEIGHT: f32 = 38.0;
-const ROW_HEIGHT: f32 = 20.0;
+pub(crate) const ROW_HEIGHT: f32 = 20.0;
 const TEXT_LEFT_PADDING: f32 = 14.0;
 
 /// Work the editor surface hands back to the app: named actions go through the
@@ -80,6 +80,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 }
                 Err(error) => app.state.status = error,
             }
+            crate::ai_inline::paint(app, ui);
         });
     if let Some((path, text, version)) = changed_document {
         app.state.sync_document_lsp(&path, &text, version);

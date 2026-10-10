@@ -49,6 +49,9 @@ pub struct AiState {
     pub pending_apply: Option<ApplyPreview>,
     /// Last configuration or request error, shown in the chat window.
     pub error: Option<String>,
+    /// Inline completion ghost text, and the request producing the next one.
+    pub inline: Option<crate::ai_inline::InlineSuggestion>,
+    pub(crate) inline_request: Option<crate::ai_inline::InlineRequest>,
 }
 
 impl Default for AiState {
@@ -65,6 +68,8 @@ impl Default for AiState {
             attach_selection: true,
             pending_apply: None,
             error: None,
+            inline: None,
+            inline_request: None,
         }
     }
 }
@@ -139,7 +144,7 @@ impl AiState {
     }
 }
 
-fn language_of(path: &Path) -> String {
+pub(crate) fn language_of(path: &Path) -> String {
     let extension = path
         .extension()
         .and_then(|e| e.to_str())
@@ -185,6 +190,8 @@ impl IdeState {
     pub(crate) fn load_ai_project(&mut self) {
         self.ai.service.cancel_all();
         self.ai.pending_apply = None;
+        self.ai.inline = None;
+        self.ai.inline_request = None;
         self.ai.chat = ChatSession::default();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
@@ -297,6 +304,12 @@ impl IdeState {
 
     pub fn poll_ai(&mut self) {
         for (id, update) in self.ai.service.poll() {
+            if self.ai.inline_request.as_ref().is_some_and(|r| r.id == id) {
+                if let AiUpdate::Finished(result) = update {
+                    self.ai_inline_finished(result);
+                }
+                continue;
+            }
             if self.ai.chat.request != Some(id) {
                 continue;
             }
@@ -458,7 +471,15 @@ impl IdeState {
         Ok(())
     }
 
+    pub(crate) fn save_ai_settings(&self) -> Result<(), String> {
+        match &self.ai.config_dir {
+            Some(dir) => self.ai.settings.save(dir),
+            None => Ok(()),
+        }
+    }
+
     pub fn ai_disable(&mut self) -> Result<(), String> {
+        self.ai_inline_dismiss();
         self.ai.service.cancel_all();
         self.poll_ai();
         self.ai.settings.enabled = false;
@@ -479,6 +500,18 @@ fn demo_reply(request: &ChatRequest) -> MockReply {
         .last()
         .map(|m| m.text())
         .unwrap_or_default();
+    if request.role == jetthing_ai::ModelRole::Completion {
+        // Generic placeholder code; demo mode never analyses the file.
+        let before = question.split("<cursor/>").next().unwrap_or_default();
+        let line = before.rsplit('\n').next().unwrap_or_default();
+        let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+        let text = if line.trim_end().ends_with('{') {
+            format!("\n{indent}    // demo completion\n{indent}    todo!()")
+        } else {
+            "todo!() // demo completion".to_owned()
+        };
+        return MockReply::text(&text);
+    }
     let attached = ["<selection", "<file"].iter().find_map(|tag| {
         let start = question.find(tag)?;
         let body = &question[start..];
@@ -728,6 +761,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     for command in commands {
         registry.register(command).expect("unique built-in id");
     }
+    crate::ai_inline::register(registry);
 }
 
 #[cfg(test)]
@@ -1041,5 +1075,14 @@ mod tests {
         );
         let text = demo_reply(&request).chunks.concat();
         assert!(text.contains("```python\n# Reviewed by the AI assistant (demo).\nx = 1\n```"));
+        let mut completion = ChatRequest::chat(
+            "",
+            vec![jetthing_ai::ChatMessage::user("  fn a() {<cursor/>\n")],
+        );
+        completion.role = jetthing_ai::ModelRole::Completion;
+        assert_eq!(
+            demo_reply(&completion).chunks.concat(),
+            "\n      // demo completion\n      todo!()"
+        );
     }
 }

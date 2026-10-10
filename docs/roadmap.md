@@ -51,7 +51,7 @@
 
 - [x] `jetthing-ai` engine: provider trait, Anthropic/OpenAI-compatible/Ollama streaming, mock provider, settings and key storage
 - [x] AI Chat tool window with streaming Markdown, context chips, slash commands, Apply with diff preview
-- [ ] Inline ghost-text completion
+- [x] Inline ghost-text completion with debounce, type-through, Tab / word accept
 - [ ] AI actions (Explain, Rewrite, Generate tests/docs, Fix with AI)
 - [ ] Commit message generation, terminal NL→command
 - [ ] Agent mode with per-edit approval

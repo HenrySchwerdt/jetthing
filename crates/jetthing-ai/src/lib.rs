@@ -6,6 +6,7 @@
 
 pub mod anthropic;
 pub mod chat;
+pub mod completion;
 pub mod diff;
 pub mod markdown;
 pub mod mock;

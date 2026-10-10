@@ -43,6 +43,7 @@ impl Default for SetupForm {
 
 #[derive(Default)]
 pub struct AiChatUi {
+    pub(crate) inline: crate::ai_inline::InlineUi,
     input: String,
     setup: SetupForm,
     last_visible: bool,

@@ -108,6 +108,10 @@ local Ollama server. Keys are read from the Jetthing config directory (`secrets.
 owner-only) or from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. A project can opt out or
 stop file sharing in `.jetthing/ai.toml` (`allow_ai`, `share_file_contents`).
 
+Inline completion shows ghost text at the end of a line after a short typing pause:
+Tab accepts, Ctrl+→ (⌥→ on macOS) accepts a word, Esc dismisses. Turn it off with
+`ai.inline.setEnabled`.
+
 | Variable | Effect |
 |---|---|
 | `JETTHING_CONFIG_DIR` | config directory for `ai.toml` and `secrets.toml` |

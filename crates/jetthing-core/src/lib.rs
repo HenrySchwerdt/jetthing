@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod ai_commands;
+mod ai_inline;
 pub mod build_info;
 mod diagnostic_commands;
 pub mod diagnostics;
@@ -24,6 +25,7 @@ mod toolchain_commands;
 mod toolwindow;
 mod update_commands;
 pub use ai_commands::{AiState, ApplyPreview, CHAT_FILE as AI_CHAT_FILE, MOCK_ENV as AI_MOCK_ENV};
+pub use ai_inline::InlineSuggestion;
 pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{

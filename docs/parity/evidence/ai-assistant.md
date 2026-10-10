@@ -44,6 +44,30 @@ JETTHING_AI_MOCK=1 cargo run -p jetthing-app -- <project>   # offline demo provi
 - **Status bar widget**: provider/model, "generating…", "off" or "disabled";
   click opens AI Chat.
 
+## Inline completion (slice 2)
+
+```sh
+cargo test -p jetthing-ai completion
+cargo test -p jetthing-core ai_inline
+```
+
+- After a 350 ms typing pause (edits only, not caret moves or file switches) a request
+  goes to the completion model with up to 6000/2000 characters before/after the caret
+  and a `<cursor/>` marker; a newer edit cancels it and late answers for an outdated
+  revision or caret are dropped.
+- Offered only at the end of a line, optionally before up to three closing
+  delimiters; never while the LSP completion popup is open (the popup keeps Tab/Enter/Esc).
+- Output cleanup strips fences, echoed current-line text, closers that already follow
+  the caret and trailing lines duplicating the following code; block bodies completed
+  inside auto-closed brackets end on a new line so the closer keeps its own line.
+- Ghost text: muted first line at the caret, following lines drawn as an overlay
+  block, the displaced rest of the caret line redrawn after the suggestion, and a
+  key hint (`06-…`, `08-…`). Typing matching characters consumes the suggestion,
+  anything else dismisses it. Tab accepts (one undo step, `07-…`), Ctrl+→ (⌥→ on
+  macOS) accepts the next word, Esc dismisses. Accepting does not trigger a new request.
+- Limitation: following lines overlay the code below instead of pushing it down
+  (the editor has no block inlays yet).
+
 ## Evidence
 
 Linux, Xvfb 1600×1000, `JETTHING_RENDERER=glow`, 2026-10-10. Answers come from the
@@ -57,9 +81,12 @@ offline demo provider (`JETTHING_AI_MOCK=1`, labelled "mock-chat (demo)"); no
 | `ai/03-chat-answer.png` | completed Markdown answer, highlighted code block actions |
 | `ai/04-apply-diff-preview.png` | Apply… diff preview (+1 −0) |
 | `ai/05-applied-in-editor.png` | applied edit in the editor |
+| `ai/06-inline-ghost-multiline.png` | multi-line ghost text after `fn helper() {`, closer redrawn below |
+| `ai/07-inline-accepted.png` | Tab accepted: inserted body, closer on its own line, no new request |
+| `ai/08-inline-ghost-inside-brackets.png` | single-line ghost inside `vec![…]`, `]` redrawn after it |
 
 ## Gaps
 
-Inline ghost-text completion, AI actions (Explain/Rewrite/Generate/Fix with AI),
+AI actions (Explain/Rewrite/Generate/Fix with AI),
 commit message generation, terminal NL→command, agent mode, `@file`/`@symbol`,
 open-tabs/VCS/build-output context and OS keychain storage are follow-up slices.
