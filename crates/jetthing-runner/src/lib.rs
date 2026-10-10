@@ -65,12 +65,32 @@ impl TaskPlan {
         } else {
             return Err(RunnerError::NoBuildSystem(root.to_owned()));
         };
-        Ok(Self {
-            name: plan.0.into(),
-            program: plan.1.into(),
-            args: plan.2.into_iter().map(Into::into).collect(),
+        Ok(Self::from_parts(plan, root))
+    }
+
+    /// Detects the default "run application" task for a project root.
+    pub fn detect_run(root: &Path) -> Result<Self, RunnerError> {
+        let plan = if root.join("Cargo.toml").is_file() {
+            ("Cargo Run", "cargo", vec!["run"])
+        } else if root.join("gradlew").is_file() {
+            ("Gradle Run", "./gradlew", vec!["run"])
+        } else if root.join("package.json").is_file() {
+            ("npm Start", "npm", vec!["start"])
+        } else if root.join("go.mod").is_file() {
+            ("Go Run", "go", vec!["run", "."])
+        } else {
+            return Err(RunnerError::NoBuildSystem(root.to_owned()));
+        };
+        Ok(Self::from_parts(plan, root))
+    }
+
+    fn from_parts((name, program, args): (&str, &str, Vec<&str>), root: &Path) -> Self {
+        Self {
+            name: name.into(),
+            program: program.into(),
+            args: args.into_iter().map(Into::into).collect(),
             cwd: root.to_owned(),
-        })
+        }
     }
 }
 
@@ -272,6 +292,11 @@ mod tests {
         let plan = TaskPlan::detect_build(&root).unwrap();
         assert_eq!(plan.program, "cargo");
         assert_eq!(plan.args, ["build"]);
+        let run = TaskPlan::detect_run(&root).unwrap();
+        assert_eq!(
+            (run.name.as_str(), run.args.as_slice()),
+            ("Cargo Run", &["run".to_owned()][..])
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -9,7 +9,11 @@ use jetthing_search::{SearchEvent, SearchService, TextMatch};
 use jetthing_terminal::TerminalSession;
 use jetthing_text::{Selection, SelectionSet, TextDocument};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+mod toolwindow;
+pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -27,20 +31,18 @@ pub struct IdeState {
     pub active_document: Option<usize>,
     pub plugins: Vec<PluginManifest>,
     pub terminal: Option<TerminalSession>,
-    pub terminal_visible: bool,
     pub search: SearchService,
     pub search_results: Vec<TextMatch>,
     pub search_query: String,
-    pub search_visible: bool,
     pub search_files_scanned: usize,
     pub search_truncated: bool,
     pub git: Option<RepositoryStatus>,
-    pub git_visible: bool,
     pub runner: TaskService,
-    pub build_visible: bool,
     pub lsp: Option<LspService>,
     pub lsp_error: Option<String>,
-    pub problems_visible: bool,
+    pub tool_windows: ToolWindowLayout,
+    /// Project-relative directories expanded in the Project tool window.
+    pub expanded_dirs: BTreeSet<PathBuf>,
     pub status: String,
 }
 
@@ -61,6 +63,8 @@ impl IdeState {
                 Err(error) => self.lsp_error = Some(error.to_string()),
             }
         }
+        self.expanded_dirs.clear();
+        self.tool_windows.show(ToolWindow::Project);
         self.status = format!("Opened {}", project.root().display());
         self.project = Some(project);
         Ok(())
@@ -100,6 +104,71 @@ impl IdeState {
         document.text.mark_saved();
         self.status = format!("Saved {}", document.path.display());
         Ok(())
+    }
+
+    /// Closes a tab. Like the reference IDE, modified content is saved first
+    /// rather than discarded.
+    pub fn close_document(&mut self, index: usize) -> Result<(), String> {
+        let document = self.documents.get(index).ok_or("document does not exist")?;
+        if document.text.is_dirty() {
+            self.save(index)?;
+        }
+        let document = self.documents.remove(index);
+        self.active_document = match self.active_document {
+            _ if self.documents.is_empty() => None,
+            Some(active) if active > index => Some(active - 1),
+            Some(active) if active == index => Some(index.min(self.documents.len() - 1)),
+            other => other,
+        };
+        if let Some(lsp) = self.lsp.as_mut() {
+            lsp.clear_completions();
+        }
+        self.status = format!("Closed {}", document.path.display());
+        Ok(())
+    }
+
+    pub fn activate_document(&mut self, index: usize) -> Result<(), String> {
+        if index >= self.documents.len() {
+            return Err("document does not exist".into());
+        }
+        self.active_document = Some(index);
+        if let Some(lsp) = self.lsp.as_mut() {
+            lsp.clear_completions();
+        }
+        Ok(())
+    }
+
+    /// Expands or collapses a directory in the Project tool window.
+    /// Returns whether the directory is expanded afterwards.
+    pub fn toggle_directory(&mut self, path: &Path) -> Result<bool, String> {
+        if !self
+            .files
+            .iter()
+            .any(|e| e.is_dir && e.relative_path == path)
+        {
+            return Err(format!("{} is not a project directory", path.display()));
+        }
+        if self.expanded_dirs.remove(path) {
+            Ok(false)
+        } else {
+            self.expanded_dirs.insert(path.to_owned());
+            Ok(true)
+        }
+    }
+
+    /// Entries visible in the Project tree: every ancestor directory is expanded.
+    pub fn visible_files(&self) -> Vec<&FileEntry> {
+        self.files
+            .iter()
+            .filter(|entry| {
+                entry
+                    .relative_path
+                    .ancestors()
+                    .skip(1)
+                    .filter(|ancestor| !ancestor.as_os_str().is_empty())
+                    .all(|ancestor| self.expanded_dirs.contains(ancestor))
+            })
+            .collect()
     }
 
     pub fn undo_active(&mut self) -> bool {
@@ -148,7 +217,7 @@ impl IdeState {
                 .unwrap_or_else(|| Path::new("."));
             self.terminal = Some(TerminalSession::spawn_shell(cwd).map_err(|e| e.to_string())?);
         }
-        self.terminal_visible = true;
+        self.tool_windows.show(ToolWindow::Terminal);
         self.status = "Terminal ready".into();
         Ok(())
     }
@@ -168,7 +237,7 @@ impl IdeState {
         self.search_files_scanned = 0;
         self.search_truncated = false;
         self.search_query = query.clone();
-        self.search_visible = true;
+        self.tool_windows.show(ToolWindow::Find);
         let job = self
             .search
             .start(project.root().to_owned(), files, query)
@@ -236,7 +305,17 @@ impl IdeState {
         let plan = TaskPlan::detect_build(root).map_err(|error| error.to_string())?;
         let name = plan.name.clone();
         self.runner.start(plan).map_err(|error| error.to_string())?;
-        self.build_visible = true;
+        self.tool_windows.show(ToolWindow::Build);
+        self.status = format!("Running {name}");
+        Ok(())
+    }
+
+    pub fn start_run(&mut self) -> Result<(), String> {
+        let root = self.project.as_ref().ok_or("no project is open")?.root();
+        let plan = TaskPlan::detect_run(root).map_err(|error| error.to_string())?;
+        let name = plan.name.clone();
+        self.runner.start(plan).map_err(|error| error.to_string())?;
+        self.tool_windows.show(ToolWindow::Build);
         self.status = format!("Running {name}");
         Ok(())
     }
@@ -248,10 +327,15 @@ impl IdeState {
             return;
         }
         if was_running && !self.runner.is_running() {
+            let name = self
+                .runner
+                .plan()
+                .map(|plan| plan.name.clone())
+                .unwrap_or_else(|| "Task".into());
             self.status = match self.runner.state() {
-                TaskState::Exited(0) => "Build finished successfully".into(),
-                TaskState::Exited(code) => format!("Build failed with exit code {code}"),
-                TaskState::Cancelled => "Build cancelled".into(),
+                TaskState::Exited(0) => format!("{name} finished successfully"),
+                TaskState::Exited(code) => format!("{name} failed with exit code {code}"),
+                TaskState::Cancelled => format!("{name} cancelled"),
                 _ => self.status.clone(),
             };
         }
@@ -406,6 +490,12 @@ fn string_array_param(params: &Value, name: &str) -> Result<Vec<String>, Command
         .map(|value| value.unwrap_or_default())
 }
 
+fn tool_window_param(params: &Value) -> Result<ToolWindow, CommandError> {
+    let id = string_param(params, "id")?;
+    ToolWindow::parse(&id)
+        .ok_or_else(|| CommandError::InvalidParams(format!("unknown tool window `{id}`")))
+}
+
 fn usize_param(params: &Value, name: &str) -> Result<usize, CommandError> {
     params
         .get(name)
@@ -526,6 +616,16 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
         .expect("unique built-in id");
     registry
         .register(Command::new(
+            spec("run.project", "Run", "Run", Some("⌃R"), "{}"),
+            |state: &IdeState| state.project.is_some() && !state.runner.is_running(),
+            |state: &mut IdeState, _| {
+                state.start_run().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
             spec(
                 "run.task",
                 "Run Task",
@@ -552,7 +652,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                         cwd,
                     })
                     .map_err(|error| CommandError::Failed(error.to_string()))?;
-                state.build_visible = true;
+                state.tool_windows.show(ToolWindow::Build);
                 Ok(Value::Null)
             },
         ))
@@ -669,9 +769,9 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 if state.terminal.is_none() {
                     state.open_terminal().map_err(CommandError::Failed)?;
                 } else {
-                    state.terminal_visible = !state.terminal_visible;
+                    state.tool_windows.toggle(ToolWindow::Terminal);
                 }
-                Ok(json!({"visible": state.terminal_visible}))
+                Ok(json!({"visible": state.tool_windows.is_visible(ToolWindow::Terminal)}))
             },
         ))
         .expect("unique built-in id");
@@ -781,6 +881,128 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
         .expect("unique built-in id");
     registry
         .register(Command::new(
+            spec(
+                "toolwindow.toggle",
+                "Toggle Tool Window",
+                "Window",
+                None,
+                r#"{"id":"project|commit|find|build|problems|terminal"}"#,
+            ),
+            |_| true,
+            |state: &mut IdeState, params| {
+                let window = tool_window_param(&params)?;
+                if window == ToolWindow::Terminal && state.terminal.is_none() {
+                    state.open_terminal().map_err(CommandError::Failed)?;
+                    return Ok(json!({"visible": true}));
+                }
+                if window == ToolWindow::Commit && !state.tool_windows.is_visible(window) {
+                    let _ = state.refresh_git();
+                }
+                Ok(json!({"visible": state.tool_windows.toggle(window)}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "toolwindow.hideAll",
+                "Hide All Tool Windows",
+                "Window",
+                Some("⇧⌘F12"),
+                "{}",
+            ),
+            |_| true,
+            |state: &mut IdeState, _| {
+                state.tool_windows.hide_all();
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    for window in ToolWindow::ALL {
+        let id = format!("toolwindow.activate.{}", window.id());
+        registry
+            .register(Command::new(
+                spec(
+                    &id,
+                    &format!("{} Tool Window", window.title()),
+                    "Window",
+                    Some(window.shortcut()),
+                    "{}",
+                ),
+                |_| true,
+                move |state: &mut IdeState, _| {
+                    if window == ToolWindow::Terminal {
+                        state.open_terminal().map_err(CommandError::Failed)?;
+                    }
+                    if window == ToolWindow::Commit {
+                        let _ = state.refresh_git();
+                    }
+                    state.tool_windows.show(window);
+                    Ok(Value::Null)
+                },
+            ))
+            .expect("unique built-in id");
+    }
+    registry
+        .register(Command::new(
+            spec(
+                "editor.close",
+                "Close Tab",
+                "Editor",
+                Some("⌘W"),
+                r#"{"index":"number?"}"#,
+            ),
+            |s: &IdeState| s.active_document.is_some(),
+            |state: &mut IdeState, params| {
+                let index = match params.get("index") {
+                    Some(_) => usize_param(&params, "index")?,
+                    None => state
+                        .active_document
+                        .ok_or_else(|| CommandError::Disabled("editor.close".into()))?,
+                };
+                state.close_document(index).map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "editor.activate",
+                "Select Tab",
+                "Editor",
+                None,
+                r#"{"index":"number"}"#,
+            ),
+            |s: &IdeState| !s.documents.is_empty(),
+            |state: &mut IdeState, params| {
+                state
+                    .activate_document(usize_param(&params, "index")?)
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "project.toggleDirectory",
+                "Expand/Collapse Directory",
+                "Project",
+                None,
+                r#"{"path":"string"}"#,
+            ),
+            |s: &IdeState| s.project.is_some(),
+            |state: &mut IdeState, params| {
+                let expanded = state
+                    .toggle_directory(Path::new(&string_param(&params, "path")?))
+                    .map_err(CommandError::Failed)?;
+                Ok(json!({"expanded": expanded}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
             spec("plugin.refresh", "Refresh Plugins", "Plugins", None, "{}"),
             |_| true,
             |state: &mut IdeState, _| {
@@ -873,5 +1095,106 @@ mod tests {
         assert_eq!(state.documents[0].selections.primary().head, 9);
         assert!(state.documents[0].text.can_undo());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_tree_starts_collapsed_and_expands_by_command() {
+        let root = std::env::temp_dir().join(format!("jetthing-core-tree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src/nested")).unwrap();
+        std::fs::write(root.join("src/nested/deep.rs"), "").unwrap();
+        std::fs::write(root.join("README.md"), "").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        let visible = |state: &IdeState| {
+            state
+                .visible_files()
+                .into_iter()
+                .map(|entry| entry.relative_path.to_string_lossy().replace('\\', "/"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(visible(&state), ["src", "README.md"]);
+        commands
+            .execute(
+                "project.toggleDirectory",
+                &mut state,
+                json!({"path": "src"}),
+            )
+            .unwrap();
+        assert_eq!(visible(&state), ["src", "src/nested", "README.md"]);
+        assert!(
+            commands
+                .execute(
+                    "project.toggleDirectory",
+                    &mut state,
+                    json!({"path": "README.md"})
+                )
+                .is_err()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn closing_a_tab_saves_and_keeps_a_sensible_active_tab() {
+        let root = std::env::temp_dir().join(format!("jetthing-core-close-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "a").unwrap();
+        std::fs::write(root.join("b.txt"), "b").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        for path in ["a.txt", "b.txt"] {
+            commands
+                .execute("editor.openFile", &mut state, json!({"path": path}))
+                .unwrap();
+        }
+        commands
+            .execute(
+                "editor.insertText",
+                &mut state,
+                json!({"position": 1, "text": "!"}),
+            )
+            .unwrap();
+        commands
+            .execute("editor.close", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("b.txt")).unwrap(), "b!");
+        assert_eq!(state.documents.len(), 1);
+        assert_eq!(state.active_document, Some(0));
+        commands
+            .execute("editor.close", &mut state, json!({"index": 0}))
+            .unwrap();
+        assert_eq!(state.active_document, None);
+        assert!(
+            commands
+                .execute("editor.close", &mut state, Value::Null)
+                .is_err()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tool_window_commands_keep_one_window_per_anchor() {
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("toolwindow.toggle", &mut state, json!({"id": "problems"}))
+            .unwrap();
+        commands
+            .execute("toolwindow.activate.find", &mut state, Value::Null)
+            .unwrap();
+        assert!(state.tool_windows.is_visible(ToolWindow::Find));
+        assert!(!state.tool_windows.is_visible(ToolWindow::Problems));
+        assert!(
+            commands
+                .execute("toolwindow.toggle", &mut state, json!({"id": "bogus"}))
+                .is_err()
+        );
     }
 }

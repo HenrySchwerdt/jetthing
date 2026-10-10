@@ -2,13 +2,13 @@
 
 | ID | Reference | Feature | Status | Commands | Tests | Limitations / evidence |
 |---|---|---|---|---|---|---|
-| PLAT-001 | IntelliJ Platform | Native application window | Implemented | `app.quit` | manual launch | macOS tested; packaging pending |
+| PLAT-001 | IntelliJ Platform | Native application window | Implemented | `toolwindow.hideAll` | manual launch, Xvfb screenshot | merged toolbar/title bar with own window controls on Windows/Linux, native traffic lights on macOS; wgpu with automatic OpenGL fallback; Linux evidence in `docs/parity/evidence/` |
 | PLAT-002 | IntelliJ Platform | Project opening | Implemented | `project.open` | command unit test | startup path/CLI; picker pending |
-| PLAT-003 | IntelliJ Platform | Project tree | Partial | `project.open`, `editor.openFile` | project tree unit test | lazy refresh/watchers pending |
-| PLAT-004 | IntelliJ Platform | Editable tabs | Partial | `editor.openFile`, `editor.save`, `editor.saveAll`, `editor.undo`, `editor.redo` | rope unit/property tests | viewport-native multi-cursor editing; IME, clipboard, and advanced movement pending |
-| PLAT-005 | IntelliJ Platform | Command search | Implemented | `command.palette` | registry unit tests | fuzzy ranking pending |
+| PLAT-003 | IntelliJ Platform | Project tree | Partial | `project.open`, `project.toggleDirectory`, `editor.openFile` | project tree + expansion unit tests | directories-first sorting, collapsible nodes, VCS file colors; lazy refresh/watchers pending |
+| PLAT-004 | IntelliJ Platform | Editable tabs | Partial | `editor.openFile`, `editor.activate`, `editor.close`, `editor.save`, `editor.saveAll`, `editor.undo`, `editor.redo` | rope unit/property tests, tab close test | viewport-native multi-cursor editing, arrow/Home/End/Page navigation, auto-indent on Enter, save-on-close; IME, clipboard copy/cut and find/replace pending |
+| PLAT-005 | IntelliJ Platform | Command search | Implemented | Search Everywhere (Double Shift), Find Action | registry + fuzzy ranking unit tests | actions and file names with substring/subsequence ranking; symbols/classes tabs pending |
 | PLAT-006 | IntelliJ Platform | Plugin discovery | Partial | `plugin.refresh` | manifest tests | manifests only; no execution |
-| PLAT-007 | IntelliJ Platform | Dockable tool windows | Missing | — | — | planned M3 |
+| PLAT-007 | IntelliJ Platform | Dockable tool windows | Partial | `toolwindow.toggle`, `toolwindow.activate.*`, `toolwindow.hideAll` | one-window-per-anchor unit tests | left stripe with left/bottom anchors, resizable islands, focus follows activation; drag/float/split and right anchor pending |
 | PLAT-008 | IntelliJ Platform | Integrated terminal | Partial | `terminal.open`, `terminal.toggle`, `terminal.sendText` | real PTY process test | transcript UI; ANSI grid and multiple sessions pending |
 | PLAT-009 | IntelliJ Platform | Persistent indexing | Missing | — | — | planned M2 |
 | PLAT-010 | IntelliJ Platform | CLI command surface | Implemented | registry | CLI smoke invocation | JSON execution available |
@@ -16,8 +16,10 @@
 | PLAT-012 | IntelliJ Platform | Parse diagnostics | Partial | editor edit pipeline | malformed Rust test | syntax errors only; no semantic diagnostics |
 | PLAT-013 | IntelliJ Platform | Find in Files | Partial | `search.project`, `search.cancel`, `editor.openFile` | async search tests | opens matching file; exact caret navigation pending |
 | PLAT-014 | IntelliJ Platform | Git changes | Partial | `git.refresh`, `git.stage`, `git.unstage` | real repository integration test | status/staging only; diff/history/remotes pending |
-| PLAT-015 | IntelliJ Platform | Build execution | Partial | `build.project`, `run.task`, `run.cancel` | real process/output/cancellation tests | detected single build plan; configurations/test tree pending |
+| PLAT-015 | IntelliJ Platform | Build execution | Partial | `build.project`, `run.project`, `run.task`, `run.cancel` | real process/output/cancellation tests, build/run plan detection tests | toolbar run widget with Run/Build/Stop; detected plans only; configurations/test tree pending |
 | PLAT-016 | IntelliJ Platform | Language server integration | Partial | `language.complete`, `language.completion` | framed fake-server integration test | Rust diagnostics and completion popup work; filtering, snippets, resolve, and navigation remain |
+| PLAT-017 | IntelliJ Platform | New UI "Islands Dark" workbench look | Partial | — | theme/icon/shortcut-label unit tests, Xvfb screenshots | colors from `docs/spec/data/` (Apache-2.0 facts), Inter + JetBrains Mono fonts (OFL); icons are original drawings in a similar outline style, not JetBrains artwork; light theme and settings pending |
+| PLAT-018 | IntelliJ Platform | Main toolbar widgets and status bar | Partial | main menu, project/VCS/run widgets | manual Xvfb walkthrough | breadcrumbs, caret position, line separator, encoding, indent and language widgets; widget popups are minimal |
 
 Statuses are intentionally conservative. “Implemented” means the listed scope works;
 only “Verified” will count as independently parity-validated.
