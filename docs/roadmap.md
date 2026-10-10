@@ -36,6 +36,8 @@
 - [x] Collapsible, sorted project tree with VCS file colors
 - [x] Run widget (`run.project`) next to Build, with OpenGL fallback renderer
 - [x] Release packaging (`cargo xtask dist`) and CI/release workflows
+- [x] Native installers: MSI, DMG (`Jetthing.app`) and `.deb`, smoke-tested in CI
+- [ ] Code signing and notarization with project certificates (pipeline supports it)
 - [ ] Light theme, settings dialog, and bundled icon set beyond the core actions
 - [x] Editor actions: duplicate/delete/comment/move lines, pairing, smart Enter, word moves
 - [x] Find/Replace in file, Go to Line, Recent Files, Go to File

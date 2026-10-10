@@ -1,68 +1,17 @@
+mod dist;
+
 use anyhow::{Context, Result, bail};
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("parity") => parity(args.any(|a| a == "--check")),
-        Some("dist") => dist(),
-        _ => bail!("usage: cargo xtask parity [--check] | cargo xtask dist"),
+        Some("dist") => dist::dist(dist::Options::parse(args)?),
+        _ => bail!(
+            "usage: cargo xtask parity [--check] | cargo xtask dist [--installer] [--target <triple>]"
+        ),
     }
-}
-
-/// Builds release binaries and stages a distributable directory under `dist/`.
-fn dist() -> Result<()> {
-    let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-        .args([
-            "build",
-            "--release",
-            "-p",
-            "jetthing-app",
-            "-p",
-            "jetthing-cli",
-        ])
-        .status()
-        .context("run cargo build")?;
-    if !status.success() {
-        bail!("release build failed");
-    }
-    let version = env!("CARGO_PKG_VERSION");
-    let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
-    let name = format!("jetthing-{version}-{target}");
-    let out = Path::new("dist").join(&name);
-    if out.exists() {
-        fs::remove_dir_all(&out)?;
-    }
-    fs::create_dir_all(&out)?;
-    let exe = std::env::consts::EXE_SUFFIX;
-    for (built, shipped) in [
-        ("jetthing-app", "jetthing"),
-        ("jetthing-cli", "jetthing-cli"),
-    ] {
-        let from = Path::new("target/release").join(format!("{built}{exe}"));
-        let to = out.join(format!("{shipped}{exe}"));
-        fs::copy(&from, &to).with_context(|| format!("copy {}", from.display()))?;
-    }
-    for file in ["README.md", "docs/spec/data/NOTICE.md"] {
-        let target_name = if file.ends_with("NOTICE.md") {
-            "NOTICE-intellij-data.md"
-        } else {
-            "README.md"
-        };
-        fs::copy(file, out.join(target_name)).with_context(|| format!("copy {file}"))?;
-    }
-    let fonts = out.join("licenses");
-    fs::create_dir_all(&fonts)?;
-    for license in ["Inter-OFL.txt", "JetBrainsMono-OFL.txt"] {
-        fs::copy(
-            Path::new("crates/jetthing-ui/assets/fonts").join(license),
-            fonts.join(license),
-        )
-        .with_context(|| format!("copy {license}"))?;
-    }
-    // Forward slashes on every platform so CI scripts can parse the path.
-    println!("dist/{name}");
-    Ok(())
 }
 
 const PARITY_DOCS: [&str; 2] = ["docs/parity/platform.md", "docs/parity/android-studio.md"];

@@ -34,6 +34,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     let mut action: Option<&'static str> = None;
     let mut open_url = None;
     let mut do_restart = false;
+    let mut do_install = false;
     egui::Area::new(egui::Id::new("notification_balloon"))
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(
@@ -57,10 +58,18 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                             format!("Updating to {version}…"),
                             "Downloading and verifying the release.".into(),
                         ),
-                        UpdateState::Installed(version) => (
-                            format!("Jetthing {version} installed"),
-                            "Restart the IDE to finish the update.".into(),
-                        ),
+                        UpdateState::Installed(version) => {
+                            match app.state.update_installer_kind() {
+                                Some(kind) => (
+                                    format!("Jetthing {version} downloaded"),
+                                    kind.installer_hint().into(),
+                                ),
+                                None => (
+                                    format!("Jetthing {version} installed"),
+                                    "Restart the IDE to finish the update.".into(),
+                                ),
+                            }
+                        }
                         UpdateState::UpToDate(_) => (
                             "You have the latest version".into(),
                             format!("Jetthing {CURRENT_VERSION} is up to date."),
@@ -114,6 +123,13 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                             UpdateState::Installing(_) | UpdateState::Checking => {
                                 ui.add(egui::Spinner::new().size(14.0).color(theme::ACCENT));
                             }
+                            UpdateState::Installed(_)
+                                if app.state.update_installer_kind().is_some() =>
+                            {
+                                if link(ui, "Quit and Install") {
+                                    do_install = true;
+                                }
+                            }
                             UpdateState::Installed(_) if link(ui, "Restart") => {
                                 do_restart = true;
                             }
@@ -127,6 +143,16 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     }
     if do_restart && let Err(error) = restart(app, ctx) {
         app.state.status = format!("Could not restart Jetthing: {error}");
+    }
+    if do_install {
+        // The installer replaces the IDE's files, so quit once it has started.
+        match app
+            .commands
+            .execute("app.runUpdateInstaller", &mut app.state, Value::Null)
+        {
+            Ok(_) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Err(error) => app.state.status = format!("Could not start the installer: {error}"),
+        }
     }
     if let Some(id) = action {
         app.dispatch(id, Value::Null);

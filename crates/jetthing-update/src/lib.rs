@@ -4,6 +4,12 @@
 //! `jetthing-<version>-<os>-<arch>.tar.gz` (`.zip` on Windows) with a
 //! `<archive>.sha256` checksum next to it. Updates are verified against that
 //! checksum before the running executable is replaced.
+//!
+//! Copies installed by a native installer (`.msi`, `Jetthing.app` from a `.dmg`,
+//! `.deb`) are owned by that installer, often in a location the user cannot
+//! write to. For those, the matching installer is downloaded and verified
+//! instead, and handed to the operating system after the IDE quits; see
+//! [`InstallKind`] and `docs/release.md`.
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -128,6 +134,19 @@ impl Release {
             .find(|asset| asset.name.starts_with("jetthing-") && asset.name.ends_with(&suffix))
     }
 
+    /// The download that updates an installation of `kind` on `os`/`arch`.
+    pub fn installer_for(&self, kind: InstallKind, os: &str, arch: &str) -> Option<&Asset> {
+        let (prefix, suffix) = match kind {
+            InstallKind::Archive => return self.asset_for(os, arch),
+            InstallKind::Msi => ("jetthing-", format!("-windows-{arch}.msi")),
+            InstallKind::AppBundle => ("jetthing-", format!("-macos-{arch}.dmg")),
+            InstallKind::Deb => ("jetthing_", format!("_{}.deb", deb_arch(arch))),
+        };
+        self.assets
+            .iter()
+            .find(|asset| asset.name.starts_with(prefix) && asset.name.ends_with(&suffix))
+    }
+
     pub fn checksum_for(&self, asset: &Asset) -> Option<&Asset> {
         let name = format!("{}.sha256", asset.name);
         self.assets.iter().find(|candidate| candidate.name == name)
@@ -136,6 +155,83 @@ impl Release {
 
 pub fn archive_extension(os: &str) -> &'static str {
     if os == "windows" { "zip" } else { "tar.gz" }
+}
+
+/// Debian architecture name for a `std::env::consts::ARCH` value.
+pub fn deb_arch(arch: &str) -> &str {
+    match arch {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        "x86" => "i386",
+        "arm" => "armhf",
+        other => other,
+    }
+}
+
+/// File installers place next to the executable to say who owns the copy.
+/// Contains `msi` or `deb`. Archives ship without it.
+pub const INSTALL_MARKER: &str = "jetthing.install";
+
+/// How this copy of Jetthing was installed, which decides how it updates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallKind {
+    /// Extracted release archive: the executables are replaced in place.
+    Archive,
+    /// Windows Installer package: the new `.msi` upgrades it (MajorUpgrade).
+    Msi,
+    /// macOS `Jetthing.app`: the new `.dmg` is opened for drag-and-drop.
+    AppBundle,
+    /// Debian package: the new `.deb` is opened with the package installer.
+    Deb,
+}
+
+impl InstallKind {
+    /// Inspects the running executable's location.
+    pub fn detect(exe: &Path) -> InstallKind {
+        let mut ancestors = exe.ancestors().skip(1);
+        let mut name = || {
+            ancestors
+                .next()
+                .and_then(Path::file_name)
+                .and_then(|n| n.to_str())
+                .map(str::to_owned)
+        };
+        let in_bundle = name().as_deref() == Some("MacOS")
+            && name().as_deref() == Some("Contents")
+            && name().is_some_and(|bundle| bundle.ends_with(".app"));
+        if in_bundle {
+            return InstallKind::AppBundle;
+        }
+        let marker = exe
+            .parent()
+            .and_then(|dir| fs::read_to_string(dir.join(INSTALL_MARKER)).ok());
+        match marker.as_deref().map(str::trim) {
+            Some("msi") => InstallKind::Msi,
+            Some("deb") => InstallKind::Deb,
+            _ => InstallKind::Archive,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            InstallKind::Archive => "archive",
+            InstallKind::Msi => "MSI",
+            InstallKind::AppBundle => "DMG",
+            InstallKind::Deb => "Debian package",
+        }
+    }
+
+    /// What happens after the IDE quits, for the update notification.
+    pub fn installer_hint(self) -> &'static str {
+        match self {
+            InstallKind::Archive => "Restart the IDE to finish the update.",
+            InstallKind::Msi => "Quit Jetthing to run the installer; it replaces this version.",
+            InstallKind::AppBundle => {
+                "Quit Jetthing; the disk image opens. Drag Jetthing into Applications."
+            }
+            InstallKind::Deb => "Quit Jetthing; the package opens in your software installer.",
+        }
+    }
 }
 
 /// Where to look for releases and how to authenticate (private repositories).
@@ -338,39 +434,84 @@ pub fn evaluate(current: &Version, release: Release) -> Result<CheckOutcome, Upd
     })
 }
 
-/// Downloads, verifies and installs the release next to `current_exe`.
+/// What [`install`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Installed {
+    /// The executables next to `current_exe` were replaced.
+    InPlace,
+    /// A verified installer was downloaded; run it with [`launch_installer`]
+    /// after the IDE quits.
+    Installer { path: PathBuf, kind: InstallKind },
+}
+
+/// Downloads `asset` and checks it against its `.sha256` release asset.
+fn download_verified(
+    source: &UpdateSource,
+    release: &Release,
+    asset: &Asset,
+) -> Result<Vec<u8>, UpdateError> {
+    let checksum_asset = release.checksum_for(asset).ok_or_else(|| {
+        UpdateError::Format(format!(
+            "{} has no .sha256 checksum; refusing to install",
+            asset.name
+        ))
+    })?;
+    let mut bytes = Vec::with_capacity(asset.size.min(512 * 1024 * 1024) as usize);
+    source.download(asset, &mut bytes)?;
+    let mut text = Vec::new();
+    source.download(checksum_asset, &mut text)?;
+    let expected = parse_checksum(&String::from_utf8_lossy(&text))
+        .ok_or_else(|| UpdateError::Format("unreadable checksum file".into()))?;
+    if sha256_hex(&bytes) != expected {
+        return Err(UpdateError::Checksum(asset.name.clone()));
+    }
+    Ok(bytes)
+}
+
+/// Downloads and verifies the release. Archive installations are updated in
+/// place next to `current_exe`; installer-managed ones get the installer
+/// saved to `downloads` (see [`InstallKind`]).
 pub fn install(
     source: &UpdateSource,
     release: &Release,
     current_exe: &Path,
+    downloads: &Path,
     os: &str,
     arch: &str,
-) -> Result<(), UpdateError> {
+) -> Result<Installed, UpdateError> {
+    let kind = InstallKind::detect(current_exe);
     let asset = release
-        .asset_for(os, arch)
-        .ok_or_else(|| UpdateError::NoAsset(format!("{os}-{arch}")))?;
-    let mut archive = Vec::with_capacity(asset.size as usize);
-    source.download(asset, &mut archive)?;
-    if let Some(checksum_asset) = release.checksum_for(asset) {
-        let mut text = Vec::new();
-        source.download(checksum_asset, &mut text)?;
-        let expected = parse_checksum(&String::from_utf8_lossy(&text))
-            .ok_or_else(|| UpdateError::Format("unreadable checksum file".into()))?;
-        if sha256_hex(&archive) != expected {
-            return Err(UpdateError::Checksum(asset.name.clone()));
-        }
-    } else {
-        return Err(UpdateError::Format(format!(
-            "{} has no .sha256 checksum; refusing to install",
-            asset.name
-        )));
+        .installer_for(kind, os, arch)
+        .ok_or_else(|| UpdateError::NoAsset(format!("{} for {os}-{arch}", kind.label())))?;
+    let bytes = download_verified(source, release, asset)?;
+    if kind != InstallKind::Archive {
+        let path = save_installer(&bytes, &asset.name, downloads)?;
+        return Ok(Installed::Installer { path, kind });
     }
+    install_archive(&bytes, current_exe, os)?;
+    Ok(Installed::InPlace)
+}
+
+/// Writes a downloaded installer to `downloads/<file name>`. The name comes
+/// from release data, so only its final component is used.
+pub fn save_installer(bytes: &[u8], name: &str, downloads: &Path) -> Result<PathBuf, UpdateError> {
+    let file_name = Path::new(name)
+        .file_name()
+        .filter(|file| !file.is_empty())
+        .ok_or_else(|| UpdateError::Format(format!("invalid installer name `{name}`")))?;
+    fs::create_dir_all(downloads)?;
+    let path = downloads.join(file_name);
+    fs::write(&path, bytes)?;
+    Ok(path)
+}
+
+fn install_archive(archive: &[u8], current_exe: &Path, os: &str) -> Result<(), UpdateError> {
     let directory = current_exe
         .parent()
         .ok_or_else(|| UpdateError::Format("executable has no directory".into()))?;
     let staging = directory.join(".jetthing-update");
     let _ = fs::remove_dir_all(&staging);
-    let binaries = extract_binaries(&archive, os, &staging)?;
+    let binaries = extract_binaries(archive, os, &staging)?;
     for binary in binaries {
         let name = binary.file_name().unwrap_or_default();
         let target = if Path::new(name).file_stem() == current_exe.file_stem() {
@@ -384,9 +525,39 @@ pub fn install(
     Ok(())
 }
 
+/// The command that opens a downloaded installer on `os`.
+pub fn installer_command(installer: &Path, os: &str) -> std::process::Command {
+    let mut command = match os {
+        "windows" => {
+            let mut command = std::process::Command::new("msiexec");
+            command.arg("/i");
+            command
+        }
+        "macos" => std::process::Command::new("open"),
+        _ => std::process::Command::new("xdg-open"),
+    };
+    command.arg(installer);
+    command
+}
+
+/// Starts the installer detached; the IDE should quit right after so the
+/// installer can replace its files.
+pub fn launch_installer(installer: &Path) -> Result<(), UpdateError> {
+    installer_command(installer, std::env::consts::OS).spawn()?;
+    Ok(())
+}
+
+/// A finished install: the new version and, for installer-managed copies,
+/// the installer to run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledUpdate {
+    pub version: Version,
+    pub installed: Installed,
+}
+
 pub enum UpdateEvent {
     Checked(Result<CheckOutcome, String>),
-    Installed(Result<Version, String>),
+    Installed(Result<InstalledUpdate, String>),
 }
 
 /// Runs checks and installs on background threads; poll from the UI loop.
@@ -396,6 +567,13 @@ pub struct UpdateService {
 }
 
 impl UpdateService {
+    /// A service whose next event comes from `receiver` (tests, embedders).
+    pub fn with_receiver(receiver: Receiver<UpdateEvent>) -> Self {
+        Self {
+            pending: Some(receiver),
+        }
+    }
+
     pub fn is_busy(&self) -> bool {
         self.pending.is_some()
     }
@@ -417,9 +595,13 @@ impl UpdateService {
         thread::spawn(move || {
             let os = std::env::consts::OS;
             let arch = std::env::consts::ARCH;
-            let result = install(&source, &release, &current_exe, os, arch)
+            let downloads = std::env::temp_dir().join("jetthing-update");
+            let result = install(&source, &release, &current_exe, &downloads, os, arch)
                 .map_err(|error| error.to_string())
-                .and_then(|_| release.version().ok_or_else(|| "invalid version".into()));
+                .and_then(|installed| {
+                    let version = release.version().ok_or("invalid version")?;
+                    Ok(InstalledUpdate { version, installed })
+                });
             let _ = sender.send(UpdateEvent::Installed(result));
         });
         self.pending = Some(receiver);
@@ -455,7 +637,10 @@ mod tests {
         "assets": [
             {"name": "jetthing-0.0.2-linux-x86_64.tar.gz", "url": "https://api/1", "browser_download_url": "https://dl/1", "size": 10},
             {"name": "jetthing-0.0.2-linux-x86_64.tar.gz.sha256", "url": "https://api/2", "browser_download_url": "https://dl/2", "size": 1},
-            {"name": "jetthing-0.0.2-windows-x86_64.zip", "url": "https://api/3", "browser_download_url": "https://dl/3", "size": 10}
+            {"name": "jetthing-0.0.2-windows-x86_64.zip", "url": "https://api/3", "browser_download_url": "https://dl/3", "size": 10},
+            {"name": "jetthing-0.0.2-windows-x86_64.msi", "url": "https://api/4", "browser_download_url": "https://dl/4", "size": 10},
+            {"name": "jetthing-0.0.2-macos-aarch64.dmg", "url": "https://api/5", "browser_download_url": "https://dl/5", "size": 10},
+            {"name": "jetthing_0.0.2_amd64.deb", "url": "https://api/6", "browser_download_url": "https://dl/6", "size": 10}
         ]
     }"#;
 
@@ -490,6 +675,87 @@ mod tests {
         );
         assert!(release.asset_for("windows", "x86_64").is_some());
         assert!(release.asset_for("macos", "aarch64").is_none());
+    }
+
+    #[test]
+    fn finds_installers_by_install_kind() {
+        let release = parse_release(RELEASE).unwrap();
+        let name = |kind, os, arch| {
+            release
+                .installer_for(kind, os, arch)
+                .map(|asset| asset.name.as_str())
+        };
+        assert_eq!(
+            name(InstallKind::Archive, "linux", "x86_64"),
+            Some("jetthing-0.0.2-linux-x86_64.tar.gz")
+        );
+        assert_eq!(
+            name(InstallKind::Msi, "windows", "x86_64"),
+            Some("jetthing-0.0.2-windows-x86_64.msi")
+        );
+        assert_eq!(
+            name(InstallKind::AppBundle, "macos", "aarch64"),
+            Some("jetthing-0.0.2-macos-aarch64.dmg")
+        );
+        assert_eq!(
+            name(InstallKind::Deb, "linux", "x86_64"),
+            Some("jetthing_0.0.2_amd64.deb")
+        );
+        assert_eq!(name(InstallKind::AppBundle, "macos", "x86_64"), None);
+        assert_eq!(name(InstallKind::Deb, "linux", "aarch64"), None);
+    }
+
+    #[test]
+    fn detects_install_kind_from_the_executable_location() {
+        let dir = temp("kind");
+        let exe = dir.join("jetthing");
+        assert_eq!(InstallKind::detect(&exe), InstallKind::Archive);
+        fs::write(dir.join(INSTALL_MARKER), "msi\r\n").unwrap();
+        assert_eq!(InstallKind::detect(&exe), InstallKind::Msi);
+        fs::write(dir.join(INSTALL_MARKER), "deb\n").unwrap();
+        assert_eq!(InstallKind::detect(&exe), InstallKind::Deb);
+        fs::write(dir.join(INSTALL_MARKER), "something else").unwrap();
+        assert_eq!(InstallKind::detect(&exe), InstallKind::Archive);
+        let bundle = Path::new("/Applications/Jetthing.app/Contents/MacOS/jetthing");
+        assert_eq!(InstallKind::detect(bundle), InstallKind::AppBundle);
+        let not_bundle = Path::new("/opt/Jetthing/Contents/MacOS/jetthing");
+        assert_eq!(InstallKind::detect(not_bundle), InstallKind::Archive);
+        assert_eq!(
+            InstallKind::detect(Path::new("jetthing")),
+            InstallKind::Archive
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saves_installers_without_path_traversal() {
+        let dir = temp("save");
+        let path = save_installer(b"msi", "../../evil/jetthing.msi", &dir).unwrap();
+        assert_eq!(path, dir.join("jetthing.msi"));
+        assert_eq!(fs::read(&path).unwrap(), b"msi");
+        assert!(save_installer(b"x", "..", &dir).is_err());
+        assert!(save_installer(b"x", "", &dir).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn installers_open_with_the_platform_handler() {
+        let program = |os| {
+            installer_command(Path::new("setup"), os)
+                .get_program()
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(program("windows"), "msiexec");
+        assert_eq!(program("macos"), "open");
+        assert_eq!(program("linux"), "xdg-open");
+        let args: Vec<_> = installer_command(Path::new("setup.msi"), "windows")
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, ["/i", "setup.msi"]);
+        assert_eq!(deb_arch("x86_64"), "amd64");
+        assert_eq!(deb_arch("aarch64"), "arm64");
     }
 
     #[test]

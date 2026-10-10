@@ -60,6 +60,8 @@ pub struct IdeState {
     update_silent: bool,
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
+    /// Verified installer to run on quit (MSI/DMG/.deb installations).
+    update_installer: Option<(PathBuf, jetthing_update::InstallKind)>,
     pub status: String,
 }
 
