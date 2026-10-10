@@ -113,6 +113,11 @@ pub fn log(root: &Path, query: &LogQuery) -> Result<Vec<CommitInfo>, GitError> {
             command.args(["--branches", "--remotes", "--tags", "HEAD"]);
         }
     }
+    if query.path.is_some() {
+        // Rewrite parents to the previous commit touching the path, so the
+        // graph of a file history stays connected.
+        command.arg("--parents");
+    }
     // `--` keeps a revision that is also a file name from being read as a path.
     command.arg("--");
     if let Some(path) = &query.path {
@@ -487,6 +492,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(main_only.len(), 1);
+        // File history of b.txt: only the commit that added it, with no
+        // parent that touches b.txt.
+        let history = log(
+            &root,
+            &LogQuery {
+                path: Some(PathBuf::from("b.txt")),
+                limit: 100,
+                ..LogQuery::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(history.len(), 1);
+        assert!(history[0].parents.is_empty(), "{:?}", history[0].parents);
         assert!(
             log(
                 &root,

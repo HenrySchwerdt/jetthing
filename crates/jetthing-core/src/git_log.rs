@@ -20,6 +20,8 @@ pub struct GitLogState {
     pub branches: Branches,
     /// Branch filter; `None` shows all branches.
     pub branch: Option<String>,
+    /// Only commits touching this repository-relative path (file history).
+    pub path: Option<PathBuf>,
     /// Text or hash filter.
     pub filter: String,
     pub selected: Option<String>,
@@ -57,7 +59,7 @@ impl IdeState {
                 &root,
                 &LogQuery {
                     revision: state.branch.clone(),
-                    path: None,
+                    path: state.path.clone(),
                     limit: LOG_LIMIT,
                 },
             )?;

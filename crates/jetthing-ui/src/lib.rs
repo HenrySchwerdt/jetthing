@@ -8,6 +8,7 @@
 mod about;
 mod android_sdk;
 mod android_view;
+mod blame_gutter;
 mod branches_popup;
 mod change_popup;
 mod chrome;

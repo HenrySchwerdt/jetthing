@@ -207,6 +207,22 @@ fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
             actions.push(("git.log.filterText", json!({ "text": filter })));
         }
         ui.add_space(8.0);
+        if let Some(path) = &log.path {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if ui
+                .button(format!("Path: {name}  ×"))
+                .on_hover_text(format!(
+                    "History of {}; click to show all files",
+                    path.display()
+                ))
+                .clicked()
+            {
+                actions.push(("git.log.clearPath", Value::Null));
+            }
+        }
         let label = match &log.branch {
             Some(branch) => format!("Branch: {branch}"),
             None => "Branch".to_owned(),
