@@ -27,8 +27,8 @@ pub const ISLAND_RADIUS: u8 = 10;
 pub const ISLAND_GAP: f32 = 2.0;
 
 pub mod editor {
-    //! Editor color scheme attributes of the active theme. Syntax colors are
-    //! resolved from the same scheme by text-attribute key (see `crate::syntax`).
+    //! Editor colors of the active theme's color scheme. Syntax colors are resolved
+    //! by text-attribute key in `crate::syntax`, from the same scheme.
     use crate::theme_engine::Token;
     use crate::theme_engine::tokens as t;
 

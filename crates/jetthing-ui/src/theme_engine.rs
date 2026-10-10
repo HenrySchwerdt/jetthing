@@ -172,9 +172,8 @@ pub mod tokens {
 #[derive(Debug, Clone)]
 pub struct Palette {
     pub dark: bool,
-    /// Editor color scheme the editor tokens come from; syntax highlighting resolves
-    /// its text attributes from the same scheme (`crate::syntax`).
-    pub scheme: Option<String>,
+    /// Editor color scheme the editor tokens (and `crate::syntax`) use.
+    pub scheme: String,
     pub colors: Vec<Color32>,
     /// Token names that fell back to the built-in value (empty for complete data;
     /// asserted by the tests).
@@ -257,7 +256,7 @@ impl Palette {
     pub fn builtin_dark() -> Self {
         Self {
             dark: true,
-            scheme: Some("Islands Dark".into()),
+            scheme: "Islands Dark".into(),
             colors: tokens::SPECS
                 .iter()
                 .map(|spec| fallback_color(spec.fallback))
@@ -349,7 +348,7 @@ impl Palette {
             .collect();
         Ok(Self {
             dark: data.dark,
-            scheme: scheme_name.map(str::to_owned),
+            scheme: scheme_name.unwrap_or("Islands Dark").to_owned(),
             colors,
             missing,
         })
@@ -446,8 +445,7 @@ mod tests {
         );
         assert_eq!(palette.get(tokens::ISLAND), Color32::WHITE);
         assert_eq!(palette.get(tokens::TEXT), Color32::BLACK);
-        // Editor scheme "Light": TEXT foreground 080808 (syntax keys: `crate::syntax`).
-        assert_eq!(palette.scheme.as_deref(), Some("Light"));
+        // Editor scheme "Light": TEXT foreground 080808.
         assert_eq!(palette.get(tokens::EDITOR_TEXT), Color32::from_rgb(8, 8, 8));
         assert_eq!(
             palette.get(tokens::HOVER),

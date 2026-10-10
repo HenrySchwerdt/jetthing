@@ -91,7 +91,8 @@ impl Grid {
     }
 }
 
-pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
+pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<Color32>) {
+    let color = color.into();
     let g = Grid::new(rect);
     let stroke = Stroke::new(g.len(1.0).max(1.0), color);
     let line = |points: &[(f32, f32)]| {
@@ -331,7 +332,7 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
 }
 
 /// Allocates a square icon of `size` points and paints it.
-pub fn show(ui: &mut egui::Ui, icon: Icon, size: f32, color: Color32) -> egui::Response {
+pub fn show(ui: &mut egui::Ui, icon: Icon, size: f32, color: impl Into<Color32>) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), egui::Sense::hover());
     paint(ui.painter(), rect, icon, color);
     response
@@ -345,10 +346,11 @@ pub fn button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
 pub fn button_colored(
     ui: &mut egui::Ui,
     icon: Icon,
-    color: Color32,
+    color: impl Into<Color32>,
     tooltip: &str,
     selected: bool,
 ) -> egui::Response {
+    let color = color.into();
     let size = vec2(26.0, 26.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let fill = if selected {

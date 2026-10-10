@@ -77,9 +77,9 @@ pub fn row_text(
     x: f32,
     text: &str,
     font: egui::FontId,
-    color: Color32,
+    color: impl Into<Color32>,
 ) -> f32 {
-    row_text_elided(ui, rect, x, text, font, color).0
+    row_text_elided(ui, rect, x, text, font, color.into()).0
 }
 
 /// Single-line layout that ends in "…" when wider than `max_width`.
@@ -127,10 +127,11 @@ pub fn flat_widget(
     icon: Option<(Icon, Color32)>,
     text: &str,
     font: egui::FontId,
-    color: Color32,
+    color: impl Into<Color32>,
     chevron: bool,
     height: f32,
 ) -> egui::Response {
+    let color = color.into();
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
     let icon_width = if icon.is_some() { 22.0 } else { 0.0 };
     let chevron_width = if chevron { 18.0 } else { 0.0 };
