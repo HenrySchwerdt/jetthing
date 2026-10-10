@@ -744,6 +744,7 @@ fn build(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.add(egui::Spinner::new().size(12.0).color(theme::ACCENT));
         }
         ui.label(RichText::new(state_text).color(state_color));
+        crate::ai_actions::build_link(app, ui);
         if let Some(plan) = app.state.runner.plan() {
             ui.label(
                 RichText::new(format!("{} {}", plan.program, plan.args.join(" ")))
@@ -785,8 +786,15 @@ fn console_stderr_color(text: &str) -> Color32 {
 }
 
 fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
-    if tool_window_header(ui, "Problems", |_| {}) {
+    let can_fix = app.commands.is_enabled("ai.action.fixProblems", &app.state);
+    let mut fix = false;
+    if tool_window_header(ui, "Problems", |ui| {
+        fix = crate::ai_actions::problems_button(ui, can_fix);
+    }) {
         app.toggle_tool_window(ToolWindow::Problems);
+    }
+    if fix {
+        app.dispatch("ai.action.fixProblems", Value::Null);
     }
     let Some(index) = app.state.active_document else {
         ui.add_space(12.0);

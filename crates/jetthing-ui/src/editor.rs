@@ -532,6 +532,11 @@ fn editor_surface(
                     requests.push(EditorRequest::Command("editor.selectAll", Value::Null));
                     ui.close();
                 }
+                ui.separator();
+                if let Some((id, params)) = crate::ai_actions::editor_menu(ui) {
+                    requests.push(EditorRequest::Command(id, params));
+                    ui.close();
+                }
             });
             let block_anchor: Option<jetthing_text::multicaret::BlockPoint> =
                 ui.data(|data| data.get_temp(block_drag_id)).flatten();

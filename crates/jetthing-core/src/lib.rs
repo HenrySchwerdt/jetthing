@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod ai_actions;
 mod ai_commands;
 mod ai_inline;
 pub mod build_info;

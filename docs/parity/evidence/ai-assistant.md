@@ -68,6 +68,28 @@ cargo test -p jetthing-core ai_inline
 - Limitation: following lines overlay the code below instead of pushing it down
   (the editor has no block inlays yet).
 
+## AI actions and Fix with AI (slice 3)
+
+```sh
+cargo test -p jetthing-ai actions
+cargo test -p jetthing-core ai_actions
+```
+
+- Editor context menu → **AI Actions**: Explain Code, Suggest Refactoring, Find
+  Problems, Generate Unit Tests, Generate Documentation, and Fix with AI when the file
+  has problems (`10-…`). With AI off the submenu offers "Set Up AI Assistant…".
+- Actions run in AI Chat with the selection (or the whole file) attached. Refactor,
+  documentation and fix answers open the Apply diff preview as soon as they complete
+  (`11-…`); Explain/Find Problems/Tests only answer.
+- **Fix with AI** on problems: syntax errors and language-server diagnostics of the
+  caret line (or of the whole file) are listed in the prompt; also a header button of
+  the Problems tool window.
+- **Fix Build with AI**: a "Fix with AI" link next to a failed build/run status, as in
+  the Android Studio Build/Sync output (reference scene a06). The last 200 output lines
+  are attached as a "Build output" chip; the first error location (rustc, javac,
+  kotlinc, gcc/clang formats) is resolved to a project file, opened and attached so the
+  fix can be applied (`09-…`).
+
 ## Evidence
 
 Linux, Xvfb 1600×1000, `JETTHING_RENDERER=glow`, 2026-10-10. Answers come from the
@@ -84,9 +106,12 @@ offline demo provider (`JETTHING_AI_MOCK=1`, labelled "mock-chat (demo)"); no
 | `ai/06-inline-ghost-multiline.png` | multi-line ghost text after `fn helper() {`, closer redrawn below |
 | `ai/07-inline-accepted.png` | Tab accepted: inserted body, closer on its own line, no new request |
 | `ai/08-inline-ghost-inside-brackets.png` | single-line ghost inside `vec![…]`, `]` redrawn after it |
+| `ai/09-fix-build-with-ai.png` | failed `cargo build` with "Fix with AI" link; chat with Build output + main.rs chips |
+| `ai/10-editor-ai-actions-menu.png` | editor context menu → AI Actions submenu |
+| `ai/11-refactor-auto-diff.png` | Suggest Refactoring answer opened the diff preview automatically |
 
 ## Gaps
 
-AI actions (Explain/Rewrite/Generate/Fix with AI),
+Alt+Enter intention integration, fixing failed tests,
 commit message generation, terminal NL→command, agent mode, `@file`/`@symbol`,
-open-tabs/VCS/build-output context and OS keychain storage are follow-up slices.
+open-tabs/VCS context and OS keychain storage are follow-up slices.

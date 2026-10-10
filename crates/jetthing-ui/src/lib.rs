@@ -6,6 +6,7 @@
 //! dispatched through the typed command registry.
 
 mod about;
+mod ai_actions;
 mod ai_chat;
 mod ai_inline;
 mod chrome;
@@ -582,6 +583,7 @@ impl eframe::App for IdeApp {
             self.autosave();
         }
         self.window_focused = focused;
+        ai_actions::tick(self, ctx);
         ai_inline::tick(self, ctx);
         ai_inline::handle_keys(self, ctx);
         self.handle_shortcuts(ctx);

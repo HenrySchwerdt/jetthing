@@ -4,6 +4,7 @@
 //! The crate is UI-independent. Nothing here performs network I/O unless a caller
 //! builds a provider from settings the user explicitly enabled.
 
+pub mod actions;
 pub mod anthropic;
 pub mod chat;
 pub mod completion;

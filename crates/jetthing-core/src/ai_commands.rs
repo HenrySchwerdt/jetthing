@@ -52,6 +52,8 @@ pub struct AiState {
     /// Inline completion ghost text, and the request producing the next one.
     pub inline: Option<crate::ai_inline::InlineSuggestion>,
     pub(crate) inline_request: Option<crate::ai_inline::InlineRequest>,
+    /// Assistant turn of an editing AI action whose diff preview opens when done.
+    pub(crate) auto_preview: Option<usize>,
 }
 
 impl Default for AiState {
@@ -70,6 +72,7 @@ impl Default for AiState {
             error: None,
             inline: None,
             inline_request: None,
+            auto_preview: None,
         }
     }
 }
@@ -192,6 +195,7 @@ impl IdeState {
         self.ai.pending_apply = None;
         self.ai.inline = None;
         self.ai.inline_request = None;
+        self.ai.auto_preview = None;
         self.ai.chat = ChatSession::default();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
@@ -320,6 +324,7 @@ impl IdeState {
                         self.status = format!("AI: {error}");
                     }
                     self.ai.chat.finish(result);
+                    self.ai_action_finished();
                 }
             }
         }
@@ -762,6 +767,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
         registry.register(command).expect("unique built-in id");
     }
     crate::ai_inline::register(registry);
+    crate::ai_actions::register(registry);
 }
 
 #[cfg(test)]

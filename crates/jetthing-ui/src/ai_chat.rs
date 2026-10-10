@@ -419,6 +419,7 @@ fn chip(
     let icon = match kind {
         ContextKind::File => Icon::for_file(label.split(':').next().unwrap_or(label)),
         ContextKind::Selection => Icon::File,
+        ContextKind::Output => Icon::Build,
     };
     let text_color = if on {
         theme::TEXT
