@@ -6,6 +6,7 @@
 //! dispatched through the typed command registry.
 
 mod about;
+mod blame_gutter;
 mod branches_popup;
 mod change_popup;
 mod chrome;
