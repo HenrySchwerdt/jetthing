@@ -12,6 +12,7 @@ pub mod icons;
 mod index_view;
 pub mod jobs;
 pub mod manager;
+pub mod plugin;
 pub mod query_builder;
 mod results;
 mod schema_view;
@@ -27,6 +28,7 @@ pub mod widgets;
 
 pub use app::MongoRaabit;
 pub use mongo_raabit_core as core;
+pub use plugin::MongoRaabitPlugin;
 
 use app::TabKind;
 use egui::{CornerRadius, FontId, RichText, Sense, Stroke, Ui, vec2};

@@ -1,5 +1,0 @@
-id = "dev.jetthing.mongo-raabit"
-name = "mongo-raabit"
-version = "0.1.0"
-api_version = 1
-capabilities = ["view", "database"]

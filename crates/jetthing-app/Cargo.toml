@@ -12,3 +12,4 @@ example-plugins = ["dep:jetthing-plugin-hello"]
 eframe.workspace = true
 jetthing-plugin-hello = { path = "../../plugins/hello", optional = true }
 jetthing-ui = { path = "../jetthing-ui" }
+mongo-raabit = { path = "../../plugins/mongo-raabit" }
