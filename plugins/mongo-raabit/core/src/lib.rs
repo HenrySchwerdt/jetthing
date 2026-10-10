@@ -4,12 +4,15 @@
 //! All network operations are `async` on Tokio; synchronous
 //! hosts spawn them on their own Tokio runtime.
 
+pub mod aggregate;
 pub mod connection;
 pub mod error;
 pub mod profile;
 pub mod query;
+pub mod schema;
 pub mod secrets;
 pub mod shell;
+pub mod sql;
 pub mod tunnel;
 
 pub use connection::Connection;

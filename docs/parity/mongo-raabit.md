@@ -25,12 +25,12 @@ evidence runs used MongoDB Community 8.0.32 on Ubuntu 24.04.
 | MR-011 | Studio 3T | Index Manager (list, create, drop, hide, usage) | Partial | — | live index test | unique/sparse/TTL/partial/hidden, sizes and `$indexStats` ops; UI pending |
 | MR-012 | Studio 3T | User and role manager | Partial | — | live users/roles test | list/create/drop users, list roles with privileges; UI pending |
 | MR-013 | Studio 3T | Server status and current operations | Partial | — | live status test | `serverStatus`, `$currentOp`, `killOp`; UI pending |
-| MR-014 | Studio 3T | Aggregation Editor with per-stage preview | Missing | — | — | planned |
+| MR-014 | Studio 3T | Aggregation Editor with per-stage preview | Partial | — | pipeline model tests, live preview/`$out`/sampling test | stages with enable/disable/reorder, per-stage input/output preview, writing stages never run in previews, input sampling, stage templates and operator autocomplete list, shell code export; editor UI pending |
 | MR-015 | Studio 3T | Visual Query Builder | Missing | — | — | planned |
 | MR-016 | Studio 3T | IntelliShell (mongosh) | Missing | — | — | planned |
-| MR-017 | Studio 3T | SQL Query (SQL → MQL) | Missing | — | — | planned |
+| MR-017 | Studio 3T | SQL Query (SQL → MQL) | Partial | — | translation unit tests, live execution test | `sqlparser`-based SELECT/DISTINCT/WHERE (comparison, IN, BETWEEN, LIKE/ILIKE, IS NULL, NOT)/GROUP BY/HAVING/ORDER BY/LIMIT/OFFSET, COUNT/SUM/AVG/MIN/MAX incl. COUNT(DISTINCT), INNER/LEFT JOIN → `$lookup`+`$unwind`, scalar functions and arithmetic; simple queries become `find`; subqueries/UNION unsupported; UI pending |
 | MR-018 | Studio 3T | Query Code generation (JS, Python, Java, C#, Go, Rust, PHP, Ruby) | Missing | — | — | planned |
-| MR-019 | Studio 3T | Schema Explorer | Missing | — | — | planned |
+| MR-019 | Studio 3T | Schema Explorer | Partial | — | analyzer unit test, live sampling test | random/first/last sampling with filter; per-field probability, type distribution, nulls, min/max/mean, histogram, string/array lengths, date range, top values, nested and array element paths; charts UI pending |
 | MR-020 | Studio 3T | Import / Export (JSON, CSV, BSON, SQL) | Missing | — | — | planned |
 | MR-021 | Studio 3T | Table / Tree / JSON result views | Missing | — | — | planned |
 | MR-022 | Studio 3T | Standalone app (`jetthing --app mongo-raabit`) | Missing | — | — | waits for the plugin API (#48) |
