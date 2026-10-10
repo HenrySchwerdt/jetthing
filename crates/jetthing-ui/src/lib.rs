@@ -24,6 +24,7 @@ mod diff_ui;
 mod disk_banner;
 mod editor;
 mod editor_keys;
+mod file_icon;
 mod findbar;
 mod git_log_ui;
 mod icons;
@@ -115,6 +116,8 @@ pub struct IdeApp {
     file_dialogs: std::sync::Arc<dyn native_dialog::FileDialogs>,
     /// A native dialog that is open right now.
     pending_dialog: Option<native_dialog::PendingDialog>,
+    /// Java type kinds peeked from disk for file icons.
+    kind_cache: std::cell::RefCell<file_icon::KindCache>,
     /// Open push dialog.
     push_dialog: Option<push_dialog::PushDialog>,
     /// Open branch name/confirmation dialog.
@@ -235,6 +238,7 @@ impl IdeApp {
             commit_amend: false,
             file_dialogs: std::sync::Arc::new(native_dialog::SystemDialogs),
             pending_dialog: None,
+            kind_cache: Default::default(),
         }
     }
 
