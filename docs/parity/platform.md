@@ -9,7 +9,7 @@
 | PLAT-005 | IntelliJ Platform | Command search | Implemented | `command.palette` | registry unit tests | fuzzy ranking pending |
 | PLAT-006 | IntelliJ Platform | Plugin discovery | Partial | `plugin.refresh` | manifest tests | manifests only; no execution |
 | PLAT-007 | IntelliJ Platform | Dockable tool windows | Missing | — | — | planned M3 |
-| PLAT-008 | IntelliJ Platform | Integrated terminal | Missing | — | — | planned M1 |
+| PLAT-008 | IntelliJ Platform | Integrated terminal | Partial | `terminal.open`, `terminal.toggle`, `terminal.sendText` | real PTY process test | transcript UI; ANSI grid and multiple sessions pending |
 | PLAT-009 | IntelliJ Platform | Persistent indexing | Missing | — | — | planned M2 |
 | PLAT-010 | IntelliJ Platform | CLI command surface | Implemented | registry | CLI smoke invocation | JSON execution available |
 | PLAT-011 | IntelliJ Platform | Syntax parsing/highlighting | Partial | editor edit pipeline | Rust parser tests | Rust only; full reparse pending incremental edits |

@@ -11,10 +11,14 @@ no crate below `jetthing-ui` imports UI types.
 - `jetthing-command`: typed command metadata, JSON parameters/results, discovery,
   validation, execution, and structured errors.
 - `jetthing-project`: safe project-root model, bounded file tree, UTF-8 document IO.
+- `jetthing-text`: revisioned rope storage, Unicode-safe transactional edits, and history.
+- `jetthing-language`: language-neutral analysis output with the first Tree-sitter Rust provider.
+- `jetthing-terminal`: native PTY process lifecycle, asynchronous output, input, and resizing.
 - `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,
   and validation. Executable/Wasm loading is deliberately not claimed yet.
 - `jetthing-core`: application state and built-in command handlers.
-- `jetthing-ui`: native shell, project tree, tabs/editor, palette, status surface.
+- `jetthing-ui`: native shell, project tree, highlighted editor, command palette,
+  resizable terminal tool window, and status surface.
 - `jetthing-app`: process startup and native window.
 - `jetthing-cli`: headless command discovery and execution.
 
@@ -40,4 +44,3 @@ reports. IntelliJ's VFS/PSI/stub indexes motivate stable virtual identities and 
 externally-visible symbol indexes. Zed demonstrates GPU-first native UI; Lapce validates
 rope-based text storage and language-service isolation. Jetthing reimplements behavior
 cleanly and does not reuse protected assets or branding.
-

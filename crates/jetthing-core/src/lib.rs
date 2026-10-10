@@ -2,6 +2,7 @@ use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
 use jetthing_language::{LanguageAnalysis, analyze};
 use jetthing_plugins::PluginManifest;
 use jetthing_project::{FileEntry, Project};
+use jetthing_terminal::TerminalSession;
 use jetthing_text::TextDocument;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -20,6 +21,8 @@ pub struct IdeState {
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
     pub plugins: Vec<PluginManifest>,
+    pub terminal: Option<TerminalSession>,
+    pub terminal_visible: bool,
     pub status: String,
 }
 
@@ -83,6 +86,20 @@ impl IdeState {
             document.analysis = analyze(&document.path, &document.text.text());
         }
     }
+
+    pub fn open_terminal(&mut self) -> Result<(), String> {
+        if self.terminal.is_none() {
+            let cwd = self
+                .project
+                .as_ref()
+                .map(Project::root)
+                .unwrap_or_else(|| Path::new("."));
+            self.terminal = Some(TerminalSession::spawn_shell(cwd).map_err(|e| e.to_string())?);
+        }
+        self.terminal_visible = true;
+        self.status = "Terminal ready".into();
+        Ok(())
+    }
 }
 
 fn spec(
@@ -125,6 +142,58 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .open_project(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"root": state.project.as_ref().unwrap().root()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "terminal.open",
+                "Open Terminal",
+                "Terminal",
+                Some("⌥F12"),
+                "{}",
+            ),
+            |_| true,
+            |state: &mut IdeState, _| {
+                state.open_terminal().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("terminal.toggle", "Toggle Terminal", "Terminal", None, "{}"),
+            |_| true,
+            |state: &mut IdeState, _| {
+                if state.terminal.is_none() {
+                    state.open_terminal().map_err(CommandError::Failed)?;
+                } else {
+                    state.terminal_visible = !state.terminal_visible;
+                }
+                Ok(json!({"visible": state.terminal_visible}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "terminal.sendText",
+                "Send Text to Terminal",
+                "Terminal",
+                None,
+                r#"{"text":"string"}"#,
+            ),
+            |state: &IdeState| state.terminal.is_some(),
+            |state: &mut IdeState, params| {
+                let text = string_param(&params, "text")?;
+                state
+                    .terminal
+                    .as_mut()
+                    .ok_or_else(|| CommandError::Disabled("terminal.sendText".into()))?
+                    .send(&text)
+                    .map_err(|e| CommandError::Failed(e.to_string()))?;
+                Ok(Value::Null)
             },
         ))
         .expect("unique built-in id");

@@ -10,6 +10,7 @@ pub struct IdeApp {
     commands: CommandRegistry<IdeState>,
     palette_open: bool,
     palette_query: String,
+    terminal_input: String,
 }
 
 impl IdeApp {
@@ -25,6 +26,7 @@ impl IdeApp {
             commands,
             palette_open: false,
             palette_query: String::new(),
+            terminal_input: String::new(),
         }
     }
     fn dispatch(&mut self, id: &str, params: Value) {
@@ -104,6 +106,9 @@ impl eframe::App for IdeApp {
         }) {
             self.dispatch("editor.redo", Value::Null);
         }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Backtick)) {
+            self.dispatch("terminal.toggle", Value::Null);
+        }
         egui::TopBottomPanel::top("toolbar")
             .exact_height(42.0)
             .show(ctx, |ui| {
@@ -112,6 +117,9 @@ impl eframe::App for IdeApp {
                     ui.separator();
                     if ui.button("⌘P  Search commands").clicked() {
                         self.palette_open = true;
+                    }
+                    if ui.button("Terminal").clicked() {
+                        self.dispatch("terminal.toggle", Value::Null);
                     }
                     ui.add_space(12.0);
                     let root = self
@@ -148,6 +156,55 @@ impl eframe::App for IdeApp {
                     });
                 });
             });
+        if self.state.terminal_visible {
+            egui::TopBottomPanel::bottom("terminal")
+                .default_height(240.0)
+                .min_height(100.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong("Terminal");
+                        if ui.small_button("×").clicked() {
+                            self.state.terminal_visible = false;
+                        }
+                        if self.state.terminal.as_ref().is_some_and(|t| t.is_exited()) {
+                            ui.colored_label(Color32::from_rgb(220, 110, 110), "process exited");
+                        }
+                    });
+                    ui.separator();
+                    let mut transcript = self
+                        .state
+                        .terminal
+                        .as_mut()
+                        .map(|terminal| terminal.poll().to_owned())
+                        .unwrap_or_default();
+                    egui::ScrollArea::vertical()
+                        .stick_to_bottom(true)
+                        .max_height(ui.available_height() - 30.0)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut transcript)
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_width(f32::INFINITY)
+                                    .interactive(false),
+                            );
+                        });
+                    let input = ui.add(
+                        egui::TextEdit::singleline(&mut self.terminal_input)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("Type a command and press Enter"),
+                    );
+                    if input.lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        && !self.terminal_input.is_empty()
+                    {
+                        let command = std::mem::take(&mut self.terminal_input) + "\r";
+                        self.dispatch("terminal.sendText", json!({"text": command}));
+                        input.request_focus();
+                    }
+                });
+        }
         egui::SidePanel::left("project")
             .default_width(250.0)
             .resizable(true)

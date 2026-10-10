@@ -20,7 +20,8 @@
 - [ ] Multi-cursor editor view and coalesced typing transactions
 - [x] Tree-sitter Rust parsing, syntax highlighting, and parse diagnostics
 - [ ] Incremental Tree-sitter edit notifications and multi-language grammars
-- [ ] Integrated PTY terminal
+- [x] Integrated native PTY terminal with shell input and command dispatch
+- [ ] ANSI terminal grid, hyperlinks, selection, and multiple sessions
 - [ ] UI automation/control socket and screenshot tests
 
 ## M2 — language intelligence
