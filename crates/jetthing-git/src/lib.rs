@@ -420,7 +420,8 @@ mod tests {
 
     #[test]
     fn diffs_selected_paths_including_untracked_files() {
-        let root = std::env::temp_dir().join(format!("jetthing-git-diff-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("jetthing-git-ai-diff-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         git(&root, &["init", "-q"]);
