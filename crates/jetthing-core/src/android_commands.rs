@@ -7,8 +7,10 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// Android tooling state for the open project.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct AndroidState {
+    /// Root of the open project (for `local.properties`).
+    pub(crate) root: Option<PathBuf>,
     /// SDK location chosen in the Android SDK page, if any.
     pub sdk_setting: Option<PathBuf>,
     /// Last SDK discovery result.
@@ -17,14 +19,18 @@ pub struct AndroidState {
     pub project: Option<AndroidProject>,
     /// Whether the Android SDK settings page is showing.
     pub sdk_manager_open: bool,
+    pub devices: crate::android_devices::DeviceHub,
 }
 
 impl AndroidState {
     pub(crate) fn project_opened(&mut self, root: &Path) {
+        self.root = Some(root.to_owned());
         self.project = AndroidProject::detect(root);
         self.sdk = None;
         if self.project.is_some() {
             self.detect_sdk(Some(root));
+            // Like the reference IDE, start the adb server for Android projects.
+            let _ = self.ensure_device_tracking();
         }
     }
 

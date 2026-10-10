@@ -44,6 +44,8 @@ pub enum Icon {
     Refresh,
     Error,
     Warning,
+    /// Phone outline (devices, Device Manager).
+    Device,
 }
 
 impl Icon {
@@ -256,6 +258,15 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             line(&[(12.0, 4.0), (4.0, 12.0)]);
         }
         Icon::Minimize => line(&[(3.5, 8.0), (12.5, 8.0)]),
+        Icon::Device => {
+            painter.rect_stroke(
+                g.rect(4.0, 1.5, 12.0, 14.5),
+                g.len(1.5),
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+            line(&[(7.0, 12.5), (9.0, 12.5)]);
+        }
         Icon::Refresh => {
             let center = g.p(8.0, 8.0);
             let points = (0..=20)

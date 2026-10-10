@@ -13,12 +13,14 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod android_commands;
+mod android_devices;
 mod editor_commands;
 mod project_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
 pub use android_commands::AndroidState;
+pub use android_devices::DeviceHub;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -591,6 +593,7 @@ pub(crate) fn usize_param(params: &Value, name: &str) -> Result<usize, CommandEr
 pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
     android_commands::register(&mut registry);
+    android_devices::register(&mut registry);
     editor_commands::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
@@ -973,7 +976,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Toggle Tool Window",
                 "Window",
                 None,
-                r#"{"id":"project|commit|find|build|problems|terminal"}"#,
+                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager"}"#,
             ),
             |_| true,
             |state: &mut IdeState, params| {
@@ -984,6 +987,9 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 }
                 if window == ToolWindow::Commit && !state.tool_windows.is_visible(window) {
                     let _ = state.refresh_git();
+                }
+                if window == ToolWindow::DeviceManager && !state.tool_windows.is_visible(window) {
+                    state.device_manager_opened();
                 }
                 Ok(json!({"visible": state.tool_windows.toggle(window)}))
             },
@@ -1013,11 +1019,14 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     &id,
                     &format!("{} Tool Window", window.title()),
                     "Window",
-                    Some(window.shortcut()),
+                    Some(window.shortcut()).filter(|shortcut| !shortcut.is_empty()),
                     "{}",
                 ),
                 |_| true,
                 move |state: &mut IdeState, _| {
+                    if window == ToolWindow::DeviceManager {
+                        state.device_manager_opened();
+                    }
                     if window == ToolWindow::Terminal {
                         state.open_terminal().map_err(CommandError::Failed)?;
                     }

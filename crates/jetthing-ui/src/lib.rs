@@ -7,6 +7,7 @@
 
 mod android_sdk;
 mod chrome;
+mod device_manager;
 mod editor;
 mod findbar;
 mod icons;
@@ -531,6 +532,12 @@ impl eframe::App for IdeApp {
         self.state.poll_runner();
         self.state.poll_lsp();
         self.state.poll_updates();
+        if self.state.poll_android() {
+            ctx.request_repaint();
+        }
+        if self.state.android.devices.is_tracking() {
+            ctx.request_repaint_after(Duration::from_millis(500));
+        }
         if self.state.search.is_running() || self.state.runner.is_running() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
@@ -554,8 +561,9 @@ impl eframe::App for IdeApp {
             welcome::show(self, ctx);
         } else {
             chrome::left_stripe(self, ctx);
-            chrome::right_stripe(ctx);
+            chrome::right_stripe(self, ctx);
             toolwindows::left(self, ctx);
+            device_manager::right(self, ctx);
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }
