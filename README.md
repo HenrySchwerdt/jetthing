@@ -14,6 +14,7 @@ cargo run -p jetthing-app                           # welcome screen, Open Proje
 cargo run -p jetthing-app -- .                      # open a project
 cargo run -p jetthing-app -- . src/main.rs          # open a project and files
 cargo run -p jetthing-cli -- commands               # headless command discovery
+cargo run -p jetthing-app -- --version              # version, commit, date, target
 cargo run -p xtask -- parity                        # regenerate the parity dashboard
 ```
 
