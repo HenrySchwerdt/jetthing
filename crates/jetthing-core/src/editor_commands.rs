@@ -512,12 +512,12 @@ mod tests {
 
     #[test]
     fn open_file_lands_on_and_selects_a_search_match() {
-        let (mut state, commands, root) = state_with("a\n  val greeting = 1\n", "m.kt");
+        let (mut state, commands, root) = state_with("a\n  val greeting = 1\n", "found.kt");
         commands
             .execute(
                 "editor.openFile",
                 &mut state,
-                json!({"path": "m.kt", "line": 2, "column": 7, "length": 5}),
+                json!({"path": "found.kt", "line": 2, "column": 7, "length": 5}),
             )
             .unwrap();
         let primary = state.documents[0].selections.primary();
@@ -528,7 +528,7 @@ mod tests {
             .execute(
                 "editor.openFile",
                 &mut state,
-                json!({"path": "m.kt", "line": 99, "column": 99, "length": 3}),
+                json!({"path": "found.kt", "line": 99, "column": 99, "length": 3}),
             )
             .unwrap();
         let _ = std::fs::remove_dir_all(root);
