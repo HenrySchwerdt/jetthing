@@ -857,27 +857,29 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.y = 0.0;
             for result in &results[range] {
                 let (rect, response) = list_row(ui, false);
-                let job = highlighted_preview(&result.preview, &result.highlights);
-                let galley = ui.painter().layout_job(job);
-                let x = rect.left() + 16.0 + galley.size().x;
-                ui.painter().with_clip_rect(rect).galley(
-                    egui::pos2(rect.left() + 16.0, rect.center().y - galley.size().y / 2.0),
-                    galley,
-                    *theme::editor::TEXT,
-                );
+                // The location stays visible at the right; the preview (already
+                // elided around the match by the search engine) is clipped before it.
                 let location = format!("{} {}", IdeApp::file_name(&result.path), result.line);
-                let galley = ui.painter().layout_no_wrap(
+                let location = ui.painter().layout_no_wrap(
                     location,
                     egui::FontId::proportional(theme::UI_FONT_SIZE),
                     *theme::TEXT_INFO,
                 );
-                let pos = egui::pos2(
-                    (rect.right() - galley.size().x - 16.0).max(x + 16.0),
-                    rect.center().y - galley.size().y / 2.0,
-                );
+                let location_x =
+                    (rect.right() - location.size().x - 16.0).max(rect.left() + rect.width() * 0.5);
+                let job = highlighted_preview(&result.preview, &result.highlights);
+                let galley = ui.painter().layout_job(job);
+                ui.painter()
+                    .with_clip_rect(rect.with_max_x(location_x - 12.0))
+                    .galley(
+                        egui::pos2(rect.left() + 16.0, rect.center().y - galley.size().y / 2.0),
+                        galley,
+                        *theme::editor::TEXT,
+                    );
+                let pos = egui::pos2(location_x, rect.center().y - location.size().y / 2.0);
                 ui.painter()
                     .with_clip_rect(rect)
-                    .galley(pos, galley, *theme::TEXT_INFO);
+                    .galley(pos, location, *theme::TEXT_INFO);
                 if response
                     .on_hover_text(result.path.display().to_string())
                     .clicked()
