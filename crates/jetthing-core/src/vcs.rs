@@ -142,6 +142,7 @@ impl IdeState {
         // untracked/added/deleted paths; rescan so the project tree shows them.
         let rescan = self.git.as_ref().map(structural_changes) != Some(structural_changes(&status));
         self.git = Some(status);
+        self.invalidate_line_changes();
         if rescan && let Some(project) = &self.project {
             self.files = project.entries(20_000);
         }
