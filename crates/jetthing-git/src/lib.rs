@@ -4,9 +4,14 @@ use std::{
 };
 use thiserror::Error;
 
+mod branch;
 mod diff;
 mod log;
 mod watcher;
+pub use branch::{
+    PendingOperation, abort_operation, checkout, create_branch, delete_branch, merge,
+    pending_operation, rebase, rename_branch, validate_branch_name,
+};
 pub use diff::{FileDiff, Hunk, HunkKind, LineRange, split_lines};
 pub use log::{
     Branches, CommitDetails, CommitFile, CommitInfo, GraphEdge, GraphRow, LocalBranch, LogQuery,

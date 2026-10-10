@@ -8,6 +8,7 @@
 mod about;
 mod android_sdk;
 mod android_view;
+mod branches_popup;
 mod change_popup;
 mod chrome;
 mod completion_ui;
@@ -103,6 +104,8 @@ pub struct IdeApp {
     plugins_window: Option<plugin_ui::PluginsWindow>,
     /// Build/Run output converted to display lines.
     console: console::ConsoleView,
+    /// Open branch name/confirmation dialog.
+    branch_dialog: Option<branches_popup::BranchDialog>,
     /// Open gutter change-marker popup.
     change_popup: Option<change_popup::ChangePopup>,
 }
@@ -220,6 +223,7 @@ impl IdeApp {
             plugins_window: None,
             console: console::ConsoleView::default(),
             change_popup: None,
+            branch_dialog: None,
         }
     }
 
@@ -441,6 +445,8 @@ impl IdeApp {
                 self.state.about_open = false;
             } else if self.dialog.is_some() {
                 self.dialog = None;
+            } else if self.branch_dialog.is_some() {
+                self.branch_dialog = None;
             } else if self.change_popup.is_some() {
                 self.change_popup = None;
             } else if self.palette.open {
@@ -658,6 +664,7 @@ impl eframe::App for IdeApp {
             editor::central(self, ctx);
         }
         change_popup::show(self, ctx);
+        branches_popup::show_dialog(self, ctx);
         completion_ui::show(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);

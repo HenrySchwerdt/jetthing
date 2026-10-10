@@ -163,27 +163,9 @@ fn vcs_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         28.0,
     )
     .on_hover_text("Git Branch");
-    egui::Popup::menu(&response).show(|ui| {
-        ui.set_min_width(220.0);
-        ui.label(
-            egui::RichText::new(format!("Current branch: {branch}")).color(theme::TEXT_SECONDARY),
-        );
-        ui.separator();
-        if ui
-            .add(
-                egui::Button::new("Commit…")
-                    .shortcut_text(app.action_shortcut("CheckinProject").unwrap_or_default()),
-            )
-            .clicked()
-        {
-            app.dispatch("toolwindow.activate.commit", Value::Null);
-            ui.close();
-        }
-        if ui.button("Refresh Status").clicked() {
-            app.dispatch("git.refresh", Value::Null);
-            ui.close();
-        }
-    });
+    egui::Popup::menu(&response)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| crate::branches_popup::menu(app, ui));
 }
 
 fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
