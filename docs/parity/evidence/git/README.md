@@ -21,6 +21,9 @@ Captured on Linux under Xvfb (1600×1000, `JETTHING_RENDERER=glow`,
 | `update-project-commit-and-push.png` | Push, then push a change from another clone; Ctrl+T updates the project and the open `App.java` shows the pulled change (`"Hey, "`); an outside edit of `settings.gradle`, Alt+0 shows the Commit window with “Commit and Push…” | Update Project / Commit and Push |
 | `editor-git-context-menu.png` | Right-click in the editor, hover Git | editor context menu Git submenu |
 | `blame-and-file-history.png` | Git ▸ Annotate with Git Blame, then Git ▸ Show History, hover the annotation of line 7 | Annotate / Show History |
+| `12d-commit-toolbar-amend.png` | Outside edit of `settings.gradle` plus an unversioned `TODO.txt`; Alt+0 | 12 Commit (toolbar row, Amend, “1 modified”) |
+| `commit-rollback-dialog.png` | Tick Amend (last message loaded, button becomes “Amend Commit”), then the Rollback toolbar button | 12 Commit |
+| `unstash-dialog.png` | Branches popup ▸ Stash Changes… “WIP build tweak”, then Unstash Changes… | Stash |
 | `gutter-change-markers.png` | Open `App.java` with a modified line (6), an inserted comment (11) and a deleted `import` (wedge above 3) | editor gutter (no numbered scene) |
 | `gutter-change-popup.png` | Click the blue marker on line 6 | gutter change popup |
 | `gutter-rollback.png` | Click “Rollback” in the popup: line 6 is back to the HEAD text and its marker is gone | — |

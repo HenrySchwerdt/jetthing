@@ -10,6 +10,7 @@ mod diff;
 mod log;
 mod remote;
 mod watcher;
+mod worktree;
 pub use blame::{BlameLine, blame};
 pub use branch::{
     PendingOperation, abort_operation, checkout, create_branch, delete_branch, merge,
@@ -22,6 +23,9 @@ pub use log::{
 };
 pub use remote::{PushPlan, RemoteEvent, RemoteJob, RemoteOperation, push_plan, remotes};
 pub use watcher::{Notify, StatusWatcher};
+pub use worktree::{
+    StashEntry, last_commit_message, stash_apply, stash_drop, stash_list, stash_push,
+};
 
 #[derive(Debug, Error)]
 pub enum GitError {

@@ -41,6 +41,10 @@ pub enum Icon {
     Close,
     Minimize,
     Refresh,
+    /// Curved arrow back (rollback / revert).
+    Rollback,
+    /// Two-pane compare (show diff).
+    Diff,
     Error,
     Warning,
     /// Phone outline (devices, Device Manager).
@@ -344,6 +348,36 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
             painter.add(Shape::Path(PathShape::line(points, stroke)));
             painter.line_segment([tip, tip + vec2(g.len(3.0), g.len(0.3))], stroke);
             painter.line_segment([tip, tip + vec2(g.len(0.3), g.len(3.0))], stroke);
+        }
+        Icon::Rollback => {
+            // Arrow pointing left that curves down to the right.
+            line(&[(3.0, 6.0), (10.0, 6.0)]);
+            let center = g.p(10.0, 9.5);
+            let points = (0..=12)
+                .map(|step| {
+                    let angle =
+                        -std::f32::consts::FRAC_PI_2 + step as f32 / 12.0 * std::f32::consts::PI;
+                    center + vec2(angle.cos(), angle.sin()) * g.len(3.5)
+                })
+                .collect::<Vec<_>>();
+            painter.add(Shape::Path(PathShape::line(points, stroke)));
+            line(&[(10.0, 13.0), (6.5, 13.0)]);
+            line(&[(5.5, 3.5), (3.0, 6.0), (5.5, 8.5)]);
+        }
+        Icon::Diff => {
+            closed(
+                &[(2.0, 3.0), (7.0, 3.0), (7.0, 13.0), (2.0, 13.0)],
+                Color32::TRANSPARENT,
+                stroke,
+            );
+            closed(
+                &[(9.0, 3.0), (14.0, 3.0), (14.0, 13.0), (9.0, 13.0)],
+                Color32::TRANSPARENT,
+                stroke,
+            );
+            line(&[(3.5, 6.5), (5.5, 6.5)]);
+            line(&[(10.5, 6.5), (12.5, 6.5)]);
+            line(&[(10.5, 9.5), (12.5, 9.5)]);
         }
         Icon::Error => {
             painter.circle_filled(g.p(8.0, 8.0), g.len(6.5), theme::ERROR);
