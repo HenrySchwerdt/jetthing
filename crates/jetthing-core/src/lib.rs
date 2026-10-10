@@ -19,11 +19,13 @@ pub mod diagnostics;
 mod editor_commands;
 mod lsp_commands;
 mod project_commands;
+mod snippet_session;
 mod terminal_commands;
 mod toolchain_commands;
 mod toolwindow;
 mod update_commands;
 pub use completion::CompletionSession;
+pub use snippet_session::SnippetSession;
 pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
@@ -59,6 +61,8 @@ pub struct IdeState {
     pub toolchains: ToolchainState,
     /// The code completion popup, while open.
     pub completion: Option<CompletionSession>,
+    /// Tab stops of an inserted snippet, while the user fills them in.
+    pub snippet: Option<SnippetSession>,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,

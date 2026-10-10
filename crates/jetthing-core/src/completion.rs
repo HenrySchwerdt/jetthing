@@ -8,7 +8,8 @@ use crate::IdeState;
 use jetthing_lsp::{
     CompletionResult, CompletionTrigger,
     completion::{self as ranking, RankedItem, is_identifier_char},
-    lsp_types::{CompletionItem, CompletionTextEdit, TextEdit},
+    lsp_types::{CompletionItem, CompletionTextEdit, InsertTextFormat, TextEdit},
+    snippet::{self, Snippet},
 };
 use jetthing_text::{Selection, TextChange, TextDocument};
 use std::path::PathBuf;
@@ -261,7 +262,10 @@ impl IdeState {
         else {
             return;
         };
-        let starts_word = is_identifier_char(last)
+        // Inside a template variable the popup only opens on request or on
+        // trigger characters, so Tab keeps moving between variables.
+        let starts_word = self.snippet.is_none()
+            && is_identifier_char(last)
             && !last.is_ascii_digit()
             && identifier_start(&document.text, caret) + 1 == caret;
         if starts_word {
@@ -357,6 +361,7 @@ impl IdeState {
             return Err("the completed document is no longer active".into());
         }
         let caret = document.selections.primary().head;
+        let snippet_format = item.insert_text_format == Some(InsertTextFormat::SNIPPET);
         let (start, new_text) = match &item.text_edit {
             Some(CompletionTextEdit::Edit(edit)) => (
                 document.text.char_from_lsp_position(
@@ -375,6 +380,34 @@ impl IdeState {
             None => (session.anchor, ranking::insert_text(&item).to_owned()),
         };
         let start = start.min(caret);
+        let file_name = document
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        // Multi-line insertions follow the indentation of the current line.
+        let new_text = if new_text.contains('\n') {
+            let line = document.text.char_to_line(start);
+            let indent: String = document
+                .text
+                .line(line)
+                .unwrap_or_default()
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            adjust_indentation(&new_text, &indent)
+        } else {
+            new_text
+        };
+        let snippet = snippet_format.then(|| {
+            let variables = |name: &str| match name {
+                "TM_FILENAME" => file_name.clone(),
+                _ => None,
+            };
+            snippet::parse(&new_text, &variables)
+        });
+        let new_text = snippet
+            .as_ref()
+            .map_or(new_text, |snippet| snippet.text.clone());
         let end = if replace {
             identifier_end(&document.text, caret)
         } else {
@@ -404,12 +437,39 @@ impl IdeState {
                 .edit(start, end, &new_text)
                 .map_err(|error| error.to_string())?;
         }
-        let caret = start.saturating_add_signed(shift) + new_text.chars().count();
+        let inserted_at = start.saturating_add_signed(shift);
+        let caret = inserted_at
+            + snippet
+                .as_ref()
+                .map_or(new_text.chars().count(), Snippet::final_caret);
         document.selections.set_single(Selection::caret(caret));
         document.analysis = jetthing_language::analyze(&document.path, &document.text.text());
+        match snippet.filter(Snippet::is_interactive) {
+            Some(snippet) => self.start_snippet(&snippet, inserted_at),
+            // Completing inside a template variable keeps the template.
+            None => self.snippet_after_change(),
+        }
         self.sync_active_lsp();
         Ok(())
     }
+}
+
+/// Indents every line after the first with `indent`, and expands tabs to the
+/// indentation unit of the line (a tab if it is tab-indented, else 4 spaces).
+fn adjust_indentation(text: &str, indent: &str) -> String {
+    let unit = if indent.starts_with('\t') {
+        "\t"
+    } else {
+        "    "
+    };
+    let mut lines = text.split('\n');
+    let mut out = lines.next().unwrap_or_default().replace('\t', unit);
+    for line in lines {
+        out.push('\n');
+        out.push_str(indent);
+        out.push_str(&line.replace('\t', unit));
+    }
+    out
 }
 
 fn lsp_change(text: &TextDocument, edit: &TextEdit) -> TextChange {
@@ -435,7 +495,8 @@ mod tests {
     use super::*;
     use crate::built_in_commands;
     use jetthing_lsp::lsp_types::{
-        CompletionItem, CompletionTextEdit, InsertReplaceEdit, Position, Range, TextEdit,
+        CompletionItem, CompletionTextEdit, InsertReplaceEdit, InsertTextFormat, Position, Range,
+        TextEdit,
     };
     use serde_json::json;
 
@@ -452,10 +513,11 @@ mod tests {
 
     /// A project with one open document and the caret at `caret`.
     fn state_with(text: &str, caret: usize) -> (IdeState, PathBuf) {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "jetthing-completion-{}-{}",
             std::process::id(),
-            text.len() * 1000 + caret
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
@@ -627,6 +689,78 @@ mod tests {
         assert_eq!(state.completion.as_ref().unwrap().selected, 0);
         state.accept_completion(false).unwrap();
         assert_eq!(state.documents[0].text.text(), "x = hashCode");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn snippet_items_expand_and_start_a_tab_stop_session() {
+        let (mut state, root) = state_with("app.gr;", 6);
+        open_session(&mut state, 4, false);
+        let mut greeting = item("greeting");
+        greeting.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        greeting.text_edit = Some(CompletionTextEdit::Edit(TextEdit::new(
+            range(0, 4, 6),
+            "greeting(${1:name})$0".into(),
+        )));
+        let mut plain_call = item("toString");
+        plain_call.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        plain_call.insert_text = Some("toString()$0".into());
+        state.receive_completion(CompletionResult {
+            items: vec![greeting, plain_call],
+            incomplete: false,
+        });
+        state.accept_completion(false).unwrap();
+        assert_eq!(state.documents[0].text.text(), "app.greeting(name);");
+        let selection = state.documents[0].selections.primary();
+        assert_eq!((selection.start(), selection.end()), (13, 17));
+        assert!(state.snippet.is_some());
+        state.snippet_next();
+        assert!(state.snippet.is_none());
+        assert_eq!(state.documents[0].selections.primary().head, 18);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn multi_line_snippets_follow_the_line_indentation() {
+        assert_eq!(
+            adjust_indentation("for (;;) {\n\t$0\n}", "        "),
+            "for (;;) {\n            $0\n        }"
+        );
+        assert_eq!(adjust_indentation("a\n\tb", "\t"), "a\n\t\tb");
+        let (mut state, root) = state_with("    fo", 6);
+        open_session(&mut state, 4, false);
+        let mut fori = item("fori");
+        fori.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        fori.insert_text = Some("for (${1:i}) {\n\t$0\n}".into());
+        state.receive_completion(CompletionResult {
+            items: vec![fori],
+            incomplete: false,
+        });
+        state.accept_completion(false).unwrap();
+        assert_eq!(
+            state.documents[0].text.text(),
+            "    for (i) {\n        \n    }"
+        );
+        state.snippet_next();
+        assert_eq!(state.documents[0].selections.primary().head, 22);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn snippets_without_placeholders_just_place_the_caret() {
+        let (mut state, root) = state_with("s.to", 4);
+        open_session(&mut state, 2, false);
+        let mut call = item("toString");
+        call.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        call.insert_text = Some("toString($0)".into());
+        state.receive_completion(CompletionResult {
+            items: vec![call],
+            incomplete: false,
+        });
+        state.accept_completion(false).unwrap();
+        assert_eq!(state.documents[0].text.text(), "s.toString()");
+        assert_eq!(state.documents[0].selections.primary().head, 11);
+        assert!(state.snippet.is_none());
         std::fs::remove_dir_all(root).unwrap();
     }
 

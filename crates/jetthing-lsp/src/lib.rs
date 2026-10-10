@@ -12,6 +12,7 @@ pub mod client;
 pub mod completion;
 pub mod manager;
 pub mod registry;
+pub mod snippet;
 pub mod transport;
 
 pub use client::{

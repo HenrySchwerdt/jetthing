@@ -57,11 +57,15 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 return;
             };
             let diagnostics = app.state.active_lsp_diagnostics();
-            let highlights = if app.find.open {
+            let mut highlights = if app.find.open {
                 app.find.matches(&app.state.documents[index].text.text())
             } else {
                 Vec::new()
             };
+            // Snippet tab stops are boxed like search results while active.
+            if let Some(snippet) = &app.state.snippet {
+                highlights.extend(snippet.ranges().filter(|(start, end)| start < end));
+            }
             let doc = &mut app.state.documents[index];
             match editor_surface(ui, doc, &diagnostics, &highlights) {
                 Ok(EditorOutput {
@@ -88,9 +92,13 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
         });
     if let Some((path, text, version)) = changed_document {
         app.state.sync_document_lsp(&path, &text, version);
+        app.state.snippet_after_change();
         app.state.completion_after_typing(&typed);
-    } else if app.state.completion.is_some() && app.state.active_caret() != caret_before {
-        app.state.refresh_completion();
+    } else if app.state.active_caret() != caret_before {
+        app.state.snippet_after_caret_move();
+        if app.state.completion.is_some() {
+            app.state.refresh_completion();
+        }
     }
     for request in requests {
         handle_request(app, ctx, request);

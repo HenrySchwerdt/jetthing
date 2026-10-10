@@ -302,6 +302,17 @@ impl IdeApp {
             if consume(Modifiers::NONE, Key::Tab) {
                 self.dispatch("completion.accept", json!({"replace": true}));
             }
+        } else if self.state.snippet.is_some()
+            && !self.palette.open
+            && self.dialog.is_none()
+            && self.editor_focused(ctx)
+        {
+            if consume(Modifiers::NONE, Key::Tab) || consume(Modifiers::NONE, Key::Enter) {
+                self.dispatch("snippet.next", Value::Null);
+            }
+            if consume(Modifiers::SHIFT, Key::Tab) {
+                self.dispatch("snippet.previous", Value::Null);
+            }
         }
         let mac = cfg!(target_os = "macos");
         if ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
@@ -388,6 +399,8 @@ impl IdeApp {
                 self.palette.open = false;
             } else if self.state.completion.is_some() {
                 self.dispatch("completion.close", Value::Null);
+            } else if self.state.snippet.is_some() {
+                self.dispatch("snippet.exit", Value::Null);
             } else if self.find.open
                 && (self.editor_focused(ctx) || ctx.memory(|m| m.has_focus(findbar::query_id())))
             {
