@@ -213,6 +213,7 @@ pub fn right_side(app: &mut IdeApp, ctx: &egui::Context) {
                         Icon::Device,
                     );
                 }
+                chrome::stripe_button(app, ui, jetthing_core::ToolWindow::AiChat, Icon::Ai);
                 for (plugin, id, title, icon) in &windows {
                     let selected = app.state.plugin_host.tool_window.as_ref()
                         == Some(&(plugin.clone(), id.clone()));

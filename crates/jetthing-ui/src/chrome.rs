@@ -504,19 +504,9 @@ pub(crate) fn shows_device_manager(app: &IdeApp) -> bool {
         || app.state.tool_windows.is_visible(ToolWindow::DeviceManager)
 }
 
-/// Right tool window stripe. Without right-anchored tool windows (non-Android
-/// projects) it is a narrow gutter so the editor island keeps its rounded edge.
-/// Plugin tool windows join this stripe (`plugin_ui::right_side`).
+/// Right tool window stripe: AI Chat, plus the Device Manager in Android
+/// projects. Plugin tool windows join this stripe (`plugin_ui::right_side`).
 pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
-    if !shows_device_manager(app) {
-        egui::SidePanel::right("right_stripe")
-            .exact_width(6.0)
-            .resizable(false)
-            .show_separator_line(false)
-            .frame(chrome_frame())
-            .show(ctx, |_| {});
-        return;
-    }
     egui::SidePanel::right("right_stripe")
         .exact_width(STRIPE_WIDTH)
         .resizable(false)
@@ -524,7 +514,10 @@ pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
         .frame(chrome_frame().inner_margin(egui::Margin::symmetric(4, 6)))
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            stripe_button(app, ui, ToolWindow::DeviceManager, Icon::Device);
+            if shows_device_manager(app) {
+                stripe_button(app, ui, ToolWindow::DeviceManager, Icon::Device);
+            }
+            stripe_button(app, ui, ToolWindow::AiChat, Icon::Ai);
         });
 }
 
@@ -585,6 +578,9 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     crate::plugin_ui::status_widgets(app, ui, &font, None);
+                    if app.state.project.is_some() {
+                        crate::ai_chat::status_widget(app, ui, font.clone());
+                    }
                     let secondary = theme::TEXT_SECONDARY;
                     crate::lsp_status::status_widget(app, ui, font.clone());
                     crate::toolchain_status::status_widget(app, ui, font.clone());

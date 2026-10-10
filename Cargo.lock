@@ -2772,6 +2772,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "jetthing-ai"
+version = "0.0.3"
+dependencies = [
+ "pulldown-cmark",
+ "serde",
+ "serde_json",
+ "similar",
+ "thiserror 2.0.21",
+ "toml",
+ "ureq",
+]
+
+[[package]]
 name = "jetthing-android"
 version = "0.0.3"
 dependencies = [
@@ -2831,6 +2844,7 @@ version = "0.0.3"
 dependencies = [
  "flate2",
  "jetthing-actions",
+ "jetthing-ai",
  "jetthing-android",
  "jetthing-command",
  "jetthing-git",
@@ -3067,6 +3081,7 @@ dependencies = [
  "eframe",
  "egui",
  "jetthing-actions",
+ "jetthing-ai",
  "jetthing-android",
  "jetthing-command",
  "jetthing-control",

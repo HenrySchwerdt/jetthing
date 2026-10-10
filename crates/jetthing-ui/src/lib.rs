@@ -6,6 +6,12 @@
 //! dispatched through the typed command registry.
 
 mod about;
+mod ai_actions;
+mod ai_agent;
+mod ai_chat;
+mod ai_inline;
+mod ai_terminal;
+mod ai_vcs;
 mod android_run_ui;
 mod android_sdk;
 mod android_view;
@@ -121,6 +127,7 @@ pub struct IdeApp {
     change_popup: Option<change_popup::ChangePopup>,
     deploy_balloon: android_run_ui::DeployBalloon,
     doc_view: doc_ui::DocView,
+    ai_ui: ai_chat::AiChatUi,
 }
 
 impl IdeApp {
@@ -184,6 +191,7 @@ impl IdeApp {
         state.init_plugins(jetthing_plugins::PluginStore::user(), plugins);
         // Tests use in-memory statistics; the app keeps the user's.
         state.completion_stats = jetthing_core::CompletionStats::user();
+        state.init_ai(None);
         if let Some(path) = project {
             if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
             {
@@ -250,6 +258,7 @@ impl IdeApp {
             deploy_balloon: android_run_ui::DeployBalloon::default(),
             commit_amend: false,
             doc_view: doc_ui::DocView::default(),
+            ai_ui: ai_chat::AiChatUi::default(),
         }
     }
 
@@ -471,6 +480,8 @@ impl IdeApp {
                 self.push_dialog = None;
             } else if self.change_popup.is_some() {
                 self.change_popup = None;
+            } else if self.state.ai.pending_apply.is_some() {
+                self.dispatch("ai.chat.applyCancel", Value::Null);
             } else if self.palette.open {
                 self.palette.open = false;
             } else if self.state.docs.popup.is_some() {
@@ -654,6 +665,16 @@ impl IdeApp {
             // Diagnostics, server messages and device changes arrive without user input.
             ctx.request_repaint_after(Duration::from_millis(500));
         }
+        self.state.poll_ai();
+        let agent_running = self
+            .state
+            .ai
+            .agent
+            .as_ref()
+            .is_some_and(|a| a.phase == jetthing_core::AgentPhase::RunningCommand);
+        if self.state.ai.service.is_busy() || agent_running {
+            ctx.request_repaint_after(Duration::from_millis(30));
+        }
         plugin_ui::sync(self, ctx);
         if let Some(plugin) = self.state.plugin_host.app_mode.clone() {
             plugin_ui::handle_keybindings(self, ctx);
@@ -688,6 +709,9 @@ impl IdeApp {
             self.state.request_git_refresh();
         }
         self.window_focused = focused;
+        ai_actions::tick(self, ctx);
+        ai_inline::tick(self, ctx);
+        ai_inline::handle_keys(self, ctx);
         if self.dialog.is_none()
             && !self.palette.open
             && !ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
@@ -710,6 +734,7 @@ impl IdeApp {
             plugin_ui::right_side(self, ctx);
             toolwindows::left(self, ctx);
             device_manager::right(self, ctx);
+            ai_chat::right(self, ctx);
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }
@@ -727,6 +752,7 @@ impl IdeApp {
         settings_dialog::show(self, ctx);
         android_sdk::show(self, ctx);
         merged_manifest_ui::show(self, ctx);
+        ai_chat::diff_preview(self, ctx);
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
         about::show(self, ctx);

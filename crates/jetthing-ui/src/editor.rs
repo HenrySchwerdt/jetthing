@@ -13,7 +13,7 @@ use jetthing_text::ops;
 use serde_json::{Value, json};
 
 const TAB_BAR_HEIGHT: f32 = 38.0;
-const ROW_HEIGHT: f32 = 20.0;
+pub(crate) const ROW_HEIGHT: f32 = 20.0;
 const TEXT_LEFT_PADDING: f32 = 14.0;
 
 /// Work the editor surface hands back to the app: named actions go through the
@@ -169,6 +169,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 Err(error) => app.state.status = error,
             }
             crate::intentions_ui::lightbulb(app, ui, bulb);
+            crate::ai_inline::paint(app, ui);
         });
     if let Some((path, text, version)) = changed_document {
         app.state.sync_document_lsp(&path, &text, version);
@@ -830,6 +831,11 @@ fn editor_surface(
                         }
                     }
                 });
+                ui.separator();
+                if let Some((id, params)) = crate::ai_actions::editor_menu(ui) {
+                    requests.push(EditorRequest::Command(id, params));
+                    ui.close();
+                }
             });
             let block_anchor: Option<jetthing_text::multicaret::BlockPoint> =
                 ui.data(|data| data.get_temp(block_drag_id)).flatten();

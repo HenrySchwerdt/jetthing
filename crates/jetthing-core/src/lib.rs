@@ -11,6 +11,12 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod ai_actions;
+mod ai_agent;
+mod ai_commands;
+mod ai_inline;
+mod ai_terminal;
+mod ai_vcs;
 mod android_commands;
 mod android_deploy;
 mod android_devices;
@@ -63,6 +69,12 @@ pub use plugin_host::{
     user_plugin_dir,
 };
 mod workspace_edit;
+pub use ai_agent::{
+    AgentPhase, AgentRun, AgentStep, StepKind as AgentStepKind, StepStatus as AgentStepStatus,
+};
+pub use ai_commands::{AiState, ApplyPreview, CHAT_FILE as AI_CHAT_FILE, MOCK_ENV as AI_MOCK_ENV};
+pub use ai_inline::InlineSuggestion;
+pub use ai_terminal::{ShellSuggestion, ShellSuggestionState};
 pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
 pub use completion_stats::CompletionStats;
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
@@ -181,6 +193,7 @@ pub struct IdeState {
     pub android: AndroidState,
     /// Verified installer to run on quit (MSI/DMG/.deb installations).
     update_installer: Option<(PathBuf, jetthing_update::InstallKind)>,
+    pub ai: AiState,
     pub status: String,
     watcher: Option<jetthing_project::ProjectWatcher>,
     /// Lets background services (file watcher) wake the UI.
@@ -252,6 +265,7 @@ impl IdeState {
         self.vcs_stale = false;
         self.detect_build();
         self.restore_workspace();
+        self.load_ai_project();
         Ok(())
     }
     pub fn open_file(&mut self, path: &Path) -> Result<(), String> {
@@ -797,6 +811,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     worktree_commands::register(&mut registry);
     navigation::register(&mut registry);
     code_actions::register(&mut registry);
+    ai_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(

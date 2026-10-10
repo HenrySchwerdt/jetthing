@@ -64,6 +64,8 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     };
     let running = app.state.runner.is_running();
     let hide = tool_window_header(ui, title, |ui| {
+        // "Fix with AI" next to a failed build/run (AI Assistant).
+        crate::ai_actions::build_link(app, ui);
         if let Some(plan) = &plan {
             ui.label(
                 RichText::new(&plan.name)

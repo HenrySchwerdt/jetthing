@@ -24,10 +24,11 @@ pub enum ToolWindow {
     Logcat,
     Git,
     BuildVariants,
+    AiChat,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 10] = [
+    pub const ALL: [ToolWindow; 11] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Find,
@@ -38,6 +39,7 @@ impl ToolWindow {
         ToolWindow::Logcat,
         ToolWindow::Git,
         ToolWindow::BuildVariants,
+        ToolWindow::AiChat,
     ];
 
     pub fn id(self) -> &'static str {
@@ -52,6 +54,7 @@ impl ToolWindow {
             ToolWindow::Logcat => "logcat",
             ToolWindow::Git => "git",
             ToolWindow::BuildVariants => "buildVariants",
+            ToolWindow::AiChat => "aiChat",
         }
     }
 
@@ -67,6 +70,7 @@ impl ToolWindow {
             ToolWindow::Logcat => "Logcat",
             ToolWindow::Git => "Git",
             ToolWindow::BuildVariants => "Build Variants",
+            ToolWindow::AiChat => "AI Chat",
         }
     }
 
@@ -79,8 +83,12 @@ impl ToolWindow {
             ToolWindow::Build => "⌘4",
             ToolWindow::Problems => "⌘6",
             ToolWindow::Terminal => "⌥F12",
-            // Unbound by default, like the reference IDE.
-            ToolWindow::DeviceManager | ToolWindow::Logcat | ToolWindow::BuildVariants => "",
+            // Unbound by default, like the reference IDE (which also assigns no
+            // default shortcut to its AI chat window).
+            ToolWindow::DeviceManager
+            | ToolWindow::Logcat
+            | ToolWindow::BuildVariants
+            | ToolWindow::AiChat => "",
             ToolWindow::Git => "⌘9",
         }
     }
@@ -94,7 +102,7 @@ impl ToolWindow {
             | ToolWindow::Terminal
             | ToolWindow::Logcat
             | ToolWindow::Git => Anchor::Bottom,
-            ToolWindow::DeviceManager => Anchor::Right,
+            ToolWindow::DeviceManager | ToolWindow::AiChat => Anchor::Right,
         }
     }
 
@@ -184,6 +192,9 @@ mod tests {
         assert_eq!(layout.visible(Anchor::Bottom), None);
         assert!(layout.toggle(ToolWindow::Commit));
         assert!(!layout.is_visible(ToolWindow::Project));
+        layout.show(ToolWindow::AiChat);
+        assert_eq!(layout.visible(Anchor::Right), Some(ToolWindow::AiChat));
+        assert!(layout.is_visible(ToolWindow::Commit));
         layout.show(ToolWindow::DeviceManager);
         assert_eq!(
             layout.visible(Anchor::Right),

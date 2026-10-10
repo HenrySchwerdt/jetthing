@@ -239,6 +239,88 @@ fn decode_text(path: &Path, bytes: Vec<u8>) -> Result<String, GitError> {
         .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
 }
 
+impl RepositoryStatus {
+    /// Unified diff of `paths` (repository-relative) as they would be committed:
+    /// working-tree state against `HEAD`, with untracked files shown as additions.
+    /// Read-only; binary and non-UTF-8 untracked files are summarized.
+    pub fn diff(&self, paths: &[PathBuf]) -> Result<String, GitError> {
+        let untracked: Vec<&PathBuf> = paths
+            .iter()
+            .filter(|path| {
+                self.changes
+                    .iter()
+                    .any(|c| &c.path == *path && c.kind == ChangeKind::Untracked)
+            })
+            .collect();
+        let tracked: Vec<&PathBuf> = paths.iter().filter(|p| !untracked.contains(p)).collect();
+        let mut diff = String::new();
+        if !tracked.is_empty() {
+            let has_head = run(&self.root, &["rev-parse", "--verify", "-q", "HEAD"])?
+                .status
+                .success();
+            // Without commits, everything staged is new.
+            let base: &[&str] = if has_head {
+                &["diff", "HEAD", "--no-color", "--no-ext-diff", "--"]
+            } else {
+                &["diff", "--cached", "--no-color", "--no-ext-diff", "--"]
+            };
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&self.root)
+                .args(base)
+                .args(&tracked)
+                .output()?;
+            if !output.status.success() {
+                return Err(GitError::Command(
+                    String::from_utf8_lossy(&output.stderr).trim().into(),
+                ));
+            }
+            diff.push_str(&String::from_utf8_lossy(&output.stdout));
+        }
+        for path in untracked {
+            let shown = path.display();
+            diff.push_str(&format!(
+                "diff --git a/{shown} b/{shown}\nnew file\n--- /dev/null\n+++ b/{shown}\n"
+            ));
+            match std::fs::read(self.root.join(path)) {
+                Ok(bytes) if !bytes.contains(&0) => match String::from_utf8(bytes) {
+                    Ok(text) => {
+                        for line in text.lines() {
+                            diff.push('+');
+                            diff.push_str(line);
+                            diff.push('\n');
+                        }
+                    }
+                    Err(_) => diff.push_str("(non-UTF-8 file)\n"),
+                },
+                Ok(_) => diff.push_str("(binary file)\n"),
+                Err(error) => diff.push_str(&format!("(unreadable: {error})\n")),
+            }
+        }
+        Ok(diff)
+    }
+
+    /// Subjects of the last `count` commits, newest first (empty without commits).
+    pub fn recent_subjects(&self, count: usize) -> Result<Vec<String>, GitError> {
+        let output = run(
+            &self.root,
+            &[
+                "log",
+                &format!("-n{count}"),
+                "--no-color",
+                "--pretty=format:%s",
+            ],
+        )?;
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect())
+    }
+}
+
 fn current_branch(root: &Path) -> Result<String, GitError> {
     let symbolic = run(root, &["symbolic-ref", "--short", "-q", "HEAD"])?;
     if symbolic.status.success() {
@@ -334,6 +416,38 @@ mod tests {
 
     fn git(root: &Path, args: &[&str]) {
         assert!(run(root, args).unwrap().status.success());
+    }
+
+    #[test]
+    fn diffs_selected_paths_including_untracked_files() {
+        let root = std::env::temp_dir().join(format!("jetthing-git-diff-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q"]);
+        git(&root, &["config", "user.email", "test@example.invalid"]);
+        git(&root, &["config", "user.name", "Jetthing Test"]);
+        fs::write(root.join("a.txt"), "one\n").unwrap();
+        fs::write(root.join("b.txt"), "keep\n").unwrap();
+        git(&root, &["add", "."]);
+        let status = RepositoryStatus::load(&root).unwrap();
+        // No commits yet: staged files diff against the empty tree.
+        assert!(status.diff(&["a.txt".into()]).unwrap().contains("+one"));
+        assert!(status.recent_subjects(5).unwrap().is_empty());
+        git(&root, &["commit", "-qm", "feat: initial"]);
+        fs::write(root.join("a.txt"), "two\n").unwrap();
+        fs::write(root.join("b.txt"), "changed\n").unwrap();
+        fs::write(root.join("new.txt"), "fresh\n").unwrap();
+        fs::write(root.join("blob.bin"), [0u8, 1, 2]).unwrap();
+        let status = RepositoryStatus::load(&root).unwrap();
+        let diff = status
+            .diff(&["a.txt".into(), "new.txt".into(), "blob.bin".into()])
+            .unwrap();
+        assert!(diff.contains("-one\n+two"));
+        assert!(!diff.contains("changed"), "unselected files are excluded");
+        assert!(diff.contains("+++ b/new.txt\n+fresh"));
+        assert!(diff.contains("(binary file)"));
+        assert_eq!(status.recent_subjects(5).unwrap(), vec!["feat: initial"]);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

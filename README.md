@@ -133,6 +133,24 @@ change shortcuts in **Settings › Keymap**. Common defaults (macOS / Windows & 
 | Commit | ⌘K | Ctrl+K |
 | Rename / Delete in Project tree | ⇧F6 / ⌦ | Shift+F6 / Delete |
 
+## AI Assistant
+
+AI features are off until you enable a provider in the **AI Chat** tool window (right
+stripe) or with `ai.configure`. Supported: Anthropic (default models `claude-opus-5-5`
+for chat and `claude-haiku-5-5` for completion), any OpenAI-compatible endpoint, and a
+local Ollama server. Keys are read from the Jetthing config directory (`secrets.toml`,
+owner-only) or from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. A project can opt out or
+stop file sharing in `.jetthing/ai.toml` (`allow_ai`, `share_file_contents`).
+
+Inline completion shows ghost text at the end of a line after a short typing pause:
+Tab accepts, Ctrl+→ (⌥→ on macOS) accepts a word, Esc dismisses. Turn it off with
+`ai.inline.setEnabled`.
+
+| Variable | Effect |
+|---|---|
+| `JETTHING_CONFIG_DIR` | config directory for `ai.toml` and `secrets.toml` |
+| `JETTHING_AI_MOCK` | offline demo provider with canned answers (nothing is sent) |
+
 ## Assets and trademarks
 
 UI colors are facts extracted from IntelliJ Community theme files (Apache-2.0, see

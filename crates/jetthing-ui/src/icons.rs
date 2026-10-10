@@ -59,6 +59,11 @@ pub enum Icon {
     Rerun,
     /// Stacked squares (Build Variants).
     Variants,
+    /// AI Assistant: a four-point sparkle with a small companion star.
+    Ai,
+    Plus,
+    Copy,
+    Send,
 }
 
 impl Icon {
@@ -421,6 +426,49 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
                 *theme::RUN_GREEN,
                 Stroke::new(stroke.width * 0.5, theme::RUN_GREEN),
             );
+        }
+
+        Icon::Ai => {
+            let star = |cx: f32, cy: f32, r: f32, w: f32| {
+                closed(
+                    &[
+                        (cx, cy - r),
+                        (cx + w, cy - w),
+                        (cx + r, cy),
+                        (cx + w, cy + w),
+                        (cx, cy + r),
+                        (cx - w, cy + w),
+                        (cx - r, cy),
+                        (cx - w, cy - w),
+                    ],
+                    Color32::TRANSPARENT,
+                    stroke,
+                );
+            };
+            star(7.0, 9.0, 6.0, 1.5);
+            star(12.8, 3.2, 2.2, 0.6);
+        }
+        Icon::Plus => {
+            line(&[(8.0, 3.0), (8.0, 13.0)]);
+            line(&[(3.0, 8.0), (13.0, 8.0)]);
+        }
+        Icon::Copy => {
+            closed(
+                &[(5.5, 5.5), (13.5, 5.5), (13.5, 14.5), (5.5, 14.5)],
+                Color32::TRANSPARENT,
+                stroke,
+            );
+            line(&[
+                (3.0, 11.5),
+                (2.5, 11.5),
+                (2.5, 2.5),
+                (10.5, 2.5),
+                (10.5, 3.0),
+            ]);
+        }
+        Icon::Send => {
+            line(&[(8.0, 13.5), (8.0, 2.5)]);
+            line(&[(3.5, 7.0), (8.0, 2.5), (12.5, 7.0)]);
         }
     }
 }

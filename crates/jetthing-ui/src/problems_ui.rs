@@ -459,6 +459,13 @@ pub fn tool_window(app: &mut IdeApp, ui: &mut egui::Ui) {
     if hide.on_hover_text("Hide").clicked() {
         app.toggle_tool_window(ToolWindow::Problems);
     }
+    // "Fix with AI" (AI Assistant), left of Hide.
+    let can_fix = app.commands.is_enabled("ai.action.fixProblems", &app.state);
+    let fix_rect = hide_rect.translate(vec2(-26.0, 0.0));
+    let mut fix_ui = ui.new_child(egui::UiBuilder::new().max_rect(fix_rect));
+    if crate::ai_actions::problems_button(&mut fix_ui, can_fix) {
+        app.dispatch("ai.action.fixProblems", serde_json::Value::Null);
+    }
     ui.data_mut(|data| data.insert_temp(tab_id, tab));
 
     let root = app

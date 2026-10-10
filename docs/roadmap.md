@@ -58,6 +58,16 @@
 - [x] Release notes from conventional commits (`cargo xtask changelog`)
 - [x] Versioned release pipeline (0.0.2) publishing on every version bump
 
+## AI Assistant (#52)
+
+- [x] `jetthing-ai` engine: provider trait, Anthropic/OpenAI-compatible/Ollama streaming, mock provider, settings and key storage
+- [x] AI Chat tool window with streaming Markdown, context chips, slash commands, Apply with diff preview
+- [x] Inline ghost-text completion with debounce, type-through, Tab / word accept
+- [x] AI actions (Explain, Refactor, Generate tests/docs, Find problems, Fix with AI on problems and failed builds)
+- [x] Commit message generation from the selected changes
+- [x] Terminal natural language → command with confirmation
+- [x] Agent mode with a visible plan, per-edit/command approval and Stop
+
 ## M2 — language intelligence
 
 VFS snapshots, background indexing, LSP transport, diagnostics, completion, symbol
