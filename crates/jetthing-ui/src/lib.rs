@@ -13,6 +13,7 @@ mod keys;
 mod lsp_status;
 mod notifications;
 mod palette;
+mod plugin_ui;
 mod popups;
 mod syntax;
 mod terminal_ui;
@@ -28,6 +29,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+pub use jetthing_plugins::PluginFactory;
 pub use theme::install as install_theme;
 
 pub struct IdeApp {
@@ -53,14 +55,30 @@ pub struct IdeApp {
     /// unversioned files are not.
     commit_overrides: std::collections::HashMap<PathBuf, bool>,
     window_focused: bool,
+    /// Contributed command ids currently registered in `commands`.
+    plugin_commands: Vec<String>,
+    /// Registry generation the contributed commands were synced at.
+    plugin_generation: u64,
+    plugins_window: Option<plugin_ui::PluginsWindow>,
 }
 
 impl IdeApp {
     /// Opens `project` (if any) and then each of `files`, relative to the project root
     /// or absolute inside it.
     pub fn new(project: Option<PathBuf>, files: Vec<PathBuf>) -> Self {
+        Self::with_plugins(project, files, Vec::new())
+    }
+
+    /// Like [`Self::new`], with compiled-in plugins. Plugin state is read from
+    /// the per-user configuration directory.
+    pub fn with_plugins(
+        project: Option<PathBuf>,
+        files: Vec<PathBuf>,
+        bundled: Vec<PluginFactory>,
+    ) -> Self {
         let commands = built_in_commands();
         let mut state = IdeState::default();
+        state.init_plugins(jetthing_plugins::PluginStore::user(), bundled);
         if let Some(path) = project {
             if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
             {
@@ -115,7 +133,26 @@ impl IdeApp {
             commit_message: String::new(),
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
+            plugin_commands: Vec::new(),
+            plugin_generation: u64::MAX,
+            plugins_window: None,
         }
+    }
+
+    /// Standalone app mode (`jetthing --app <plugin-id>`): a window showing
+    /// only the plugin's app view.
+    pub fn standalone(plugin: &str, bundled: Vec<PluginFactory>) -> Result<Self, String> {
+        let mut app = Self::with_plugins(None, Vec::new(), bundled);
+        plugin_ui::app_mode_error(&app.state.plugin_host.registry, plugin)?;
+        app.state.plugin_host.app_mode = Some(plugin.to_owned());
+        Ok(app)
+    }
+
+    /// Window title for standalone app mode.
+    pub fn app_title(&self) -> Option<String> {
+        let plugin = self.state.plugin_host.app_mode.as_deref()?;
+        let entry = self.state.plugin_host.registry.get(plugin)?;
+        Some(entry.manifest.app_title())
     }
 
     fn dispatch(&mut self, id: &str, params: Value) {
@@ -523,6 +560,15 @@ impl eframe::App for IdeApp {
             // Diagnostics and server messages arrive without user input.
             ctx.request_repaint_after(Duration::from_millis(500));
         }
+        plugin_ui::sync(self, ctx);
+        if let Some(plugin) = self.state.plugin_host.app_mode.clone() {
+            plugin_ui::handle_keybindings(self, ctx);
+            chrome::window_resize_handles(ctx);
+            plugin_ui::app_window(self, ctx, &plugin);
+            palette::show(self, ctx);
+            plugin_ui::notifications(self, ctx);
+            return;
+        }
         if self.state.search.is_running() || self.state.runner.is_running() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
@@ -537,6 +583,7 @@ impl eframe::App for IdeApp {
         }
         self.window_focused = focused;
         self.handle_shortcuts(ctx);
+        plugin_ui::handle_keybindings(self, ctx);
         self.follow_tool_window_focus(ctx);
 
         chrome::window_resize_handles(ctx);
@@ -546,7 +593,7 @@ impl eframe::App for IdeApp {
             welcome::show(self, ctx);
         } else {
             chrome::left_stripe(self, ctx);
-            chrome::right_stripe(ctx);
+            plugin_ui::right_side(self, ctx);
             toolwindows::left(self, ctx);
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
@@ -556,6 +603,8 @@ impl eframe::App for IdeApp {
         popups::show(self, ctx);
         notifications::show(self, ctx);
         lsp_status::notices(self, ctx);
+        plugin_ui::plugins_window(self, ctx);
+        plugin_ui::notifications(self, ctx);
         // Include operations started by controls in this frame, and keep
         // polling even when their notification balloon is hidden.
         if self.state.updates.is_busy() {
@@ -564,6 +613,7 @@ impl eframe::App for IdeApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.state.shutdown_plugins();
         if self.state.project.is_some() {
             self.autosave();
             self.dispatch("workspace.save", Value::Null);

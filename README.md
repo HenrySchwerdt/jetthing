@@ -13,6 +13,8 @@ window islands, Search Everywhere, and a status bar with navigation breadcrumbs.
 cargo run -p jetthing-app                           # welcome screen, Open Project
 cargo run -p jetthing-app -- .                      # open a project
 cargo run -p jetthing-app -- . src/main.rs          # open a project and files
+cargo run -p jetthing-app --features example-plugins -- --app dev.jetthing.hello
+                                                    # a plugin as a standalone app
 cargo run -p jetthing-cli -- commands               # headless command discovery
 cargo run -p xtask -- parity                        # regenerate the parity dashboard
 ```
@@ -23,6 +25,14 @@ automatically; `JETTHING_RENDERER=glow` forces it.
 Use **New Project** on the welcome screen or in File to generate an Empty, Rust,
 or Java/Gradle project. Choose an existing parent folder and a new project name.
 Java templates require JDK 21 and Gradle on PATH; Rust templates require Cargo.
+
+## Plugins
+
+Plugins add commands, menu items, keybindings, settings, tool windows, editor
+tabs and status bar widgets. Manage them in **File → Plugins…**. Run a plugin
+that declares an `[app]` view on its own with `jetthing --app <plugin-id>`. See
+`docs/plugins/api.md`; `plugins/hello` is the example plugin (bundled with
+`--features example-plugins`).
 
 ## Builds, releases and updates
 

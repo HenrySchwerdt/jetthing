@@ -17,7 +17,7 @@ pub fn custom_title_bar() -> bool {
 }
 
 /// Menu groups of the main menu, mapping command categories to menus.
-const MENUS: [(&str, &[&str]); 9] = [
+const MENUS: [(&str, &[&str]); 10] = [
     ("File", &["Project", "Plugins"]),
     ("Edit", &["Editor"]),
     ("View", &["Window"]),
@@ -26,6 +26,8 @@ const MENUS: [(&str, &[&str]); 9] = [
     ("Build", &["Build"]),
     ("Run", &["Run"]),
     ("Git", &["Git"]),
+    // Populated by plugin menu contributions.
+    ("Tools", &[]),
     ("Help", &["Help"]),
 ];
 
@@ -98,6 +100,10 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
                     app.open_project_dialog();
                     ui.close();
                 }
+                if menu == "File" && ui.button("Plugins…").clicked() {
+                    app.plugins_window = Some(Default::default());
+                    ui.close();
+                }
                 for spec in specs.iter().filter(|spec| {
                     categories.contains(&spec.category.as_str()) && IdeApp::parameterless(spec)
                 }) {
@@ -109,6 +115,7 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
                         ui.close();
                     }
                 }
+                crate::plugin_ui::menu_items(app, ui, menu);
             });
         }
         ui.separator();
@@ -188,9 +195,15 @@ fn project_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         ui.label(
             egui::RichText::new(widgets::pluralize(
-                app.state.plugins.len(),
-                "plugin loaded",
-                "plugins loaded",
+                app.state
+                    .plugin_host
+                    .registry
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.is_active())
+                    .count(),
+                "plugin active",
+                "plugins active",
             ))
             .color(theme::TEXT_INFO),
         );
@@ -298,7 +311,7 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
     }
 }
 
-fn window_controls(ui: &mut egui::Ui) {
+pub(crate) fn window_controls(ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let control = |ui: &mut egui::Ui, kind: u8, hover: Color32| {
         let (rect, response) = ui.allocate_exact_size(vec2(40.0, TOOLBAR_HEIGHT), Sense::click());
@@ -583,6 +596,7 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::plugin_ui::status_widgets(app, ui, &font);
                     let secondary = theme::TEXT_SECONDARY;
                     crate::lsp_status::status_widget(app, ui, font.clone());
                     let active = app

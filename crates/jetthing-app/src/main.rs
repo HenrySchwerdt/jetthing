@@ -1,7 +1,18 @@
 // Release builds are GUI apps on Windows (no console window).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod plugins;
+
 use std::path::PathBuf;
+
+enum Mode {
+    Ide {
+        project: Option<PathBuf>,
+        files: Vec<PathBuf>,
+    },
+    /// `--app <plugin-id>`: only the plugin's app view.
+    App(String),
+}
 
 fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOptions {
     let mut viewport = eframe::egui::ViewportBuilder::default()
@@ -24,29 +35,96 @@ fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOpti
     }
 }
 
-fn run(
-    renderer: eframe::Renderer,
-    title: &str,
-    project: Option<PathBuf>,
-    files: Vec<PathBuf>,
-) -> eframe::Result<()> {
+fn run(renderer: eframe::Renderer, title: &str, app: jetthing_ui::IdeApp) -> eframe::Result<()> {
     eframe::run_native(
         "Jetthing",
         native_options(renderer, title),
         Box::new(move |cc| {
             cc.egui_ctx.set_theme(eframe::egui::Theme::Dark);
             jetthing_ui::install_theme(&cc.egui_ctx);
-            Ok(Box::new(jetthing_ui::IdeApp::new(project, files)))
+            Ok(Box::new(app))
         }),
     )
 }
 
+fn parse_args() -> Result<Mode, String> {
+    let mut args = std::env::args_os().skip(1);
+    let mut positional = Vec::new();
+    while let Some(arg) = args.next() {
+        if arg == "--app" {
+            let id = args
+                .next()
+                .and_then(|id| id.into_string().ok())
+                .ok_or("--app needs a plugin id, e.g. --app dev.jetthing.hello")?;
+            return Ok(Mode::App(id));
+        }
+        if let Some(id) = arg.to_str().and_then(|arg| arg.strip_prefix("--app=")) {
+            return Ok(Mode::App(id.to_owned()));
+        }
+        positional.push(PathBuf::from(arg));
+    }
+    let mut positional = positional.into_iter();
+    Ok(Mode::Ide {
+        project: positional.next(),
+        files: positional.collect(),
+    })
+}
+
+fn build_app(mode: &Mode) -> Result<jetthing_ui::IdeApp, String> {
+    match mode {
+        Mode::Ide { project, files } => Ok(jetthing_ui::IdeApp::with_plugins(
+            project.clone(),
+            files.clone(),
+            plugins::bundled(),
+        )),
+        Mode::App(id) => jetthing_ui::IdeApp::standalone(id, plugins::bundled()),
+    }
+}
+
 fn main() -> eframe::Result<()> {
-    // Usage: jetthing-app [PROJECT_DIR] [FILE...]
-    let mut args = std::env::args_os().skip(1).map(PathBuf::from);
-    let project = args.next();
-    let files: Vec<PathBuf> = args.collect();
-    let title = project
+    // Usage: jetthing [PROJECT_DIR] [FILE...]  |  jetthing --app <PLUGIN_ID>
+    let mode = match parse_args() {
+        Ok(mode) => mode,
+        Err(error) => {
+            eprintln!("jetthing: {error}");
+            std::process::exit(2);
+        }
+    };
+    let app = match build_app(&mode) {
+        Ok(app) => app,
+        Err(error) => {
+            eprintln!("jetthing: {error}");
+            std::process::exit(2);
+        }
+    };
+    let project = match &mode {
+        Mode::Ide { project, .. } => project.clone(),
+        Mode::App(_) => None,
+    };
+    let title = app.app_title().unwrap_or_else(|| title_for(project));
+    let forced_gl = std::env::var("JETTHING_RENDERER").is_ok_and(|value| value == "glow");
+    if forced_gl {
+        return run(eframe::Renderer::Glow, &title, app);
+    }
+    match run(eframe::Renderer::Wgpu, &title, app) {
+        // No usable wgpu adapter/surface (VMs, old drivers): fall back to OpenGL.
+        // The first app was consumed by the failed attempt; build a fresh one.
+        Err(eframe::Error::Wgpu(error)) => {
+            eprintln!("jetthing: wgpu unavailable ({error}); falling back to OpenGL");
+            match build_app(&mode) {
+                Ok(app) => run(eframe::Renderer::Glow, &title, app),
+                Err(error) => {
+                    eprintln!("jetthing: {error}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        other => other,
+    }
+}
+
+fn title_for(project: Option<PathBuf>) -> String {
+    project
         .as_deref()
         .and_then(|path| path.canonicalize().ok())
         .and_then(|path| {
@@ -54,22 +132,5 @@ fn main() -> eframe::Result<()> {
                 .map(|name| name.to_string_lossy().into_owned())
         })
         .map(|name| format!("{name} – Jetthing"))
-        .unwrap_or_else(|| "Jetthing".into());
-    let forced_gl = std::env::var("JETTHING_RENDERER").is_ok_and(|value| value == "glow");
-    if forced_gl {
-        return run(eframe::Renderer::Glow, &title, project, files);
-    }
-    match run(
-        eframe::Renderer::Wgpu,
-        &title,
-        project.clone(),
-        files.clone(),
-    ) {
-        // No usable wgpu adapter/surface (VMs, old drivers): fall back to OpenGL.
-        Err(eframe::Error::Wgpu(error)) => {
-            eprintln!("jetthing: wgpu unavailable ({error}); falling back to OpenGL");
-            run(eframe::Renderer::Glow, &title, project, files)
-        }
-        other => other,
-    }
+        .unwrap_or_else(|| "Jetthing".into())
 }

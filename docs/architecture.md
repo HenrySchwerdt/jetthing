@@ -29,9 +29,13 @@ no crate below `jetthing-ui` imports UI types.
   (`registry`), and `LspManager`, which starts servers lazily per workspace root and
   restarts crashed ones (`manager`). Uses `lsp-types`; no UI code. Popups live in
   `jetthing-ui`. `jetthing-fake-lsp` is a scriptable test server.
-- `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,
-  and validation. Executable/Wasm loading is deliberately not claimed yet.
-- `jetthing-core`: application state, tool window layout model (one visible tool window
+- `jetthing-plugin-api`: the toolkit-free plugin contract (`Plugin`, contributions,
+  `PluginHost`, `jetthing-plugin.toml` manifest, opaque `ViewFrame`); see `docs/plugins/api.md`.
+- `jetthing-plugins`: plugin registry: discovery, activation order, enable/disable and
+  settings persistence. Lua/Wasm loading is deliberately not claimed yet.
+- `jetthing-plugin-ui`: egui helpers for plugin views (UI layer, used by plugin crates).
+- `jetthing-core`: application state, the plugin host (scoped `PluginHost`, command
+  routing, plugin tool window/tab state), tool window layout model (one visible tool window
   per anchor), and built-in command handlers.
 - `jetthing-ui`: native workbench shell split into `chrome` (main toolbar, stripe, status
   bar, window controls), `toolwindows` (Project, Commit, Find, Build/Run, Problems,

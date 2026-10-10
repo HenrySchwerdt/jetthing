@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Bundle the example plugin under plugins/hello (development and docs).
+example-plugins = ["dep:jetthing-plugin-hello"]
+
 [dependencies]
 eframe.workspace = true
+jetthing-plugin-hello = { path = "../../plugins/hello", optional = true }
 jetthing-ui = { path = "../jetthing-ui" }
-
