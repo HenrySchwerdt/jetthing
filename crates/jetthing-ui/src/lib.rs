@@ -17,6 +17,7 @@ mod icons;
 mod keys;
 mod logcat_ui;
 mod lsp_status;
+mod merged_manifest_ui;
 mod notifications;
 mod palette;
 mod popups;
@@ -577,6 +578,7 @@ impl eframe::App for IdeApp {
         palette::show(self, ctx);
         popups::show(self, ctx);
         android_sdk::show(self, ctx);
+        merged_manifest_ui::show(self, ctx);
         notifications::show(self, ctx);
         android_run_ui::show(self, ctx);
         lsp_status::notices(self, ctx);

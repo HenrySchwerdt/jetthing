@@ -9,6 +9,7 @@ pub mod adb;
 pub mod avd;
 pub mod deploy;
 pub mod logcat;
+pub mod merged_manifest;
 pub mod project;
 mod properties;
 pub mod resources;
