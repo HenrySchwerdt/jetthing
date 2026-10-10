@@ -129,6 +129,13 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
         ui.set_min_width(180.0);
         let specs = app.commands.specs();
         for menu in &MENUS {
+            // Tools only holds plugin contributions; hide it when there are none.
+            if menu.categories.is_empty()
+                && menu.include.is_empty()
+                && !crate::plugin_ui::has_menu_items(app, menu.title)
+            {
+                continue;
+            }
             ui.menu_button(menu.title, |ui| {
                 ui.set_min_width(240.0);
                 if menu.title == "File" && ui.button("New Project…").clicked() {
@@ -774,7 +781,8 @@ mod tests {
         for menu in &MENUS {
             let items = menu_commands(menu, &specs);
             assert!(
-                !items.is_empty() || menu.title == "File",
+                // Tools is hidden unless plugins contribute items.
+                !items.is_empty() || menu.title == "File" || menu.title == "Tools",
                 "{} menu is empty",
                 menu.title
             );
