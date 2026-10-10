@@ -444,7 +444,37 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
         .collect();
     let mut open = None;
     let mut toggles: Vec<(PathBuf, bool)> = Vec::new();
-    let form_height = 132.0;
+    let selection_id = egui::Id::new("commit_selected_row");
+    let mut selected_row: Option<PathBuf> = ui.data(|data| data.get_temp(selection_id));
+    // Toolbar: rollback checked files, diff of the selected row.
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let rollback = icons::button(
+            ui,
+            Icon::Rollback,
+            &format!("Rollback… ({})", crate::keys::display("⌥⌘Z")),
+        );
+        if rollback.clicked() && !selected.is_empty() {
+            app.git_dialog = Some(crate::branches_popup::GitDialog::Rollback {
+                paths: selected
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect(),
+            });
+        }
+        let diff = icons::button(
+            ui,
+            Icon::Diff,
+            &format!("Show Diff ({})", crate::keys::display("⌘D")),
+        );
+        if diff.clicked()
+            && let Some(path) = selected_row.clone().or_else(|| selected.first().cloned())
+        {
+            open = Some(path);
+        }
+    });
+    let form_height = 160.0;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .max_height((ui.available_height() - form_height).max(60.0))
@@ -498,7 +528,10 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     toggles.extend(files.iter().map(|(p, _)| (p.clone(), value)));
                 }
                 for (path, kind) in files {
-                    let (rect, response) = list_row(ui, false);
+                    let (rect, response) = list_row(ui, selected_row.as_ref() == Some(path));
+                    if response.clicked() {
+                        selected_row = Some(path.clone());
+                    }
                     let check = Rect::from_min_size(
                         egui::pos2(rect.left() + 46.0, rect.center().y - 7.0),
                         vec2(14.0, 14.0),
@@ -554,6 +587,19 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
     for (path, value) in toggles {
         app.commit_overrides.insert(path, value);
     }
+    ui.data_mut(|data| match &selected_row {
+        Some(path) => data.insert_temp(selection_id, path.clone()),
+        None => data.remove::<PathBuf>(selection_id),
+    });
+    // Ctrl+D (⌘D) shows the diff of the selected row.
+    if selected_row.is_some()
+        // Only while no text field or the editor has keyboard focus, so the
+        // editor's own ⌘D (duplicate line) keeps working.
+        && ui.memory(|memory| memory.focused().is_none())
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::D))
+    {
+        open = selected_row.clone();
+    }
     // Commit message and actions.
     let mut commit_now = false;
     let mut push_after = false;
@@ -565,6 +611,32 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                 ui.max_rect().top(),
                 egui::Stroke::new(1.0_f32, theme::POPUP_BORDER),
             );
+            ui.horizontal(|ui| {
+                let mut amend = app.commit_amend;
+                if ui
+                    .checkbox(&mut amend, "Amend")
+                    .on_hover_text("Amend the last commit instead of creating a new one")
+                    .changed()
+                {
+                    app.commit_amend = amend;
+                    if amend && app.commit_message.trim().is_empty() {
+                        app.commit_message = app.state.last_commit_message().unwrap_or_default();
+                    }
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let modified = git
+                        .changes
+                        .iter()
+                        .filter(|change| change.kind != ChangeKind::Untracked)
+                        .count();
+                    if modified > 0 {
+                        ui.label(
+                            RichText::new(widgets::pluralize(modified, "modified", "modified"))
+                                .color(theme::ACCENT),
+                        );
+                    }
+                });
+            });
             let response = ui.add(
                 egui::TextEdit::multiline(&mut app.commit_message)
                     .id(commit_message_id())
@@ -579,8 +651,14 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
             }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                let enabled = !app.commit_message.trim().is_empty() && !selected.is_empty();
-                let button = egui::Button::new(RichText::new("Commit").color(Color32::WHITE))
+                let enabled = !app.commit_message.trim().is_empty()
+                    && (!selected.is_empty() || app.commit_amend);
+                let label = if app.commit_amend {
+                    "Amend Commit"
+                } else {
+                    "Commit"
+                };
+                let button = egui::Button::new(RichText::new(label).color(Color32::WHITE))
                     .fill(if enabled {
                         theme::ACCENT
                     } else {
@@ -615,16 +693,24 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                 );
             });
         });
-    if commit_now && !app.commit_message.trim().is_empty() && !selected.is_empty() {
+    if commit_now
+        && !app.commit_message.trim().is_empty()
+        && (!selected.is_empty() || app.commit_amend)
+    {
         let result = app.commands.execute(
             "git.commit",
             &mut app.state,
-            json!({"message": app.commit_message.trim_end(), "paths": selected}),
+            json!({
+                "message": app.commit_message.trim_end(),
+                "paths": selected,
+                "amend": app.commit_amend,
+            }),
         );
         match result {
             Ok(_) => {
                 app.commit_message.clear();
                 app.commit_overrides.clear();
+                app.commit_amend = false;
                 if push_after {
                     crate::push_dialog::open(app);
                 }
