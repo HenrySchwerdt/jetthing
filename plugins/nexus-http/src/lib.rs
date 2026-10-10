@@ -76,10 +76,25 @@ impl NexusApp {
         self.overlays.open(overlay);
     }
 
-    /// Sends the selected request.
+    /// Sends the selected request; for streaming requests connects, or sends
+    /// the composed message when already connected.
     pub fn send_selected(&mut self) {
-        if let Some(id) = self.state.selected.clone() {
-            self.state.send(&id);
+        let Some(id) = self.state.selected.clone() else {
+            return;
+        };
+        let protocol = self
+            .state
+            .selected_request()
+            .map(|r| r.protocol)
+            .unwrap_or_default();
+        match protocol {
+            nexus_http_core::model::Protocol::Http => self.state.send(&id),
+            _ if self.state.stream_connected(&id) => {
+                if protocol == nexus_http_core::model::Protocol::WebSocket {
+                    self.state.send_stream_message(&id);
+                }
+            }
+            _ => self.state.connect_stream(&id),
         }
     }
 
@@ -286,6 +301,17 @@ impl NexusApp {
         }
         if req_actions.send {
             self.send_selected();
+        }
+        if let Some(id) = self.state.selected.clone() {
+            if req_actions.connect {
+                self.state.connect_stream(&id);
+            }
+            if req_actions.disconnect {
+                self.state.disconnect_stream(&id);
+            }
+            if req_actions.send_message {
+                self.state.send_stream_message(&id);
+            }
         }
         if req_actions.cancel {
             self.state.cancel();

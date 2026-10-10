@@ -290,7 +290,7 @@ fn list_plan(ui: &mut Ui, state: &NexusState, planned: &[Id], pal: &Palette) {
         };
         ui.horizontal(|ui| {
             ui.set_min_height(28.0);
-            widgets::method_label(ui, &request.method, 40.0);
+            widgets::request_label(ui, request, 40.0);
             ui.add_space(6.0);
             ui.label(RichText::new(&request.name).color(pal.text));
             let path = folders

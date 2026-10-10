@@ -90,6 +90,22 @@ pub enum Outcome {
     Error(String),
 }
 
+/// A streaming connection (WebSocket / SSE) and the events it produced.
+#[derive(Default)]
+pub struct StreamState {
+    pub session: Option<nexus_http_core::stream::StreamSession>,
+    pub events: Vec<nexus_http_core::stream::StreamEvent>,
+}
+
+impl StreamState {
+    pub fn connected(&self) -> bool {
+        self.session.as_ref().is_some_and(|s| !s.is_finished())
+    }
+}
+
+/// Events kept per stream before the oldest are dropped.
+const MAX_STREAM_EVENTS: usize = 5_000;
+
 struct InFlight {
     id: Id,
     cancel: Arc<AtomicBool>,
@@ -115,6 +131,7 @@ pub struct NexusState {
     /// Transient message for the status line.
     pub notice: Option<(String, Instant)>,
     inflight: Option<InFlight>,
+    pub streams: std::collections::HashMap<Id, StreamState>,
     dirty_since: Option<Instant>,
     history_dirty: bool,
 }
@@ -168,6 +185,7 @@ impl NexusState {
             collapsed: Default::default(),
             notice: None,
             inflight: None,
+            streams: Default::default(),
             dirty_since: None,
             history_dirty: false,
         }
@@ -405,6 +423,94 @@ impl NexusState {
         });
     }
 
+    /// Opens a WebSocket or SSE connection for request `id`.
+    pub fn connect_stream(&mut self, id: &Id) {
+        use nexus_http_core::exec::{PrepareOptions, prepare};
+        use nexus_http_core::model::Protocol;
+        self.flush();
+        let Some((_, request)) = self.workspace.find_request(id) else {
+            return;
+        };
+        let protocol = request.protocol;
+        let mut prepared = match prepare(
+            &self.workspace,
+            id,
+            &PrepareOptions {
+                base_dir: &self.base_dir,
+                responses: &self.history,
+            },
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                let entry = self.streams.entry(id.clone()).or_default();
+                entry.session = None;
+                entry.events.push(nexus_http_core::stream::StreamEvent {
+                    at_ms: 0.0,
+                    direction: nexus_http_core::stream::Direction::Error,
+                    label: "error".into(),
+                    data: e.to_string(),
+                    id: None,
+                });
+                return;
+            }
+        };
+        let session = match protocol {
+            Protocol::WebSocket => {
+                // The body is the message composer, not part of the handshake.
+                prepared.body.clear();
+                prepared
+                    .headers
+                    .retain(|(n, _)| !n.eq_ignore_ascii_case("content-type"));
+                nexus_http_core::stream::connect_websocket(prepared, Some(self.jar.clone()))
+            }
+            _ => nexus_http_core::stream::connect_sse(
+                prepared,
+                self.workspace.settings.clone(),
+                Some(self.jar.clone()),
+            ),
+        };
+        let entry = self.streams.entry(id.clone()).or_default();
+        entry.events.clear();
+        entry.session = Some(session);
+    }
+
+    pub fn disconnect_stream(&mut self, id: &Id) {
+        if let Some(stream) = self.streams.get(id)
+            && let Some(session) = &stream.session
+        {
+            session.close();
+        }
+    }
+
+    /// Sends the request's composed message over its WebSocket.
+    pub fn send_stream_message(&mut self, id: &Id) -> bool {
+        use nexus_http_core::model::Body;
+        let Some((folders, request)) = self.workspace.find_request(id) else {
+            return false;
+        };
+        let text = match &request.body {
+            Body::Json { text } | Body::Xml { text } | Body::Text { text, .. } => text.clone(),
+            _ => String::new(),
+        };
+        let ctx = nexus_http_core::template::Context::for_request(&self.workspace, &folders)
+            .with_responses(&self.history);
+        let rendered = match ctx.render(&text) {
+            Ok(t) => t,
+            Err(e) => {
+                self.notify(format!("Message: {e}"));
+                return false;
+            }
+        };
+        self.streams
+            .get(id)
+            .and_then(|s| s.session.as_ref())
+            .is_some_and(|s| s.send_text(rendered))
+    }
+
+    pub fn stream_connected(&self, id: &Id) -> bool {
+        self.streams.get(id).is_some_and(StreamState::connected)
+    }
+
     pub fn cancel(&mut self) {
         if let Some(inflight) = self.inflight.take() {
             inflight.cancel.store(true, Ordering::Relaxed);
@@ -448,6 +554,21 @@ impl NexusState {
                 }
             }
         }
+        let mut streaming = false;
+        for stream in self.streams.values_mut() {
+            if let Some(session) = &mut stream.session {
+                stream.events.extend(session.poll());
+                if stream.events.len() > MAX_STREAM_EVENTS {
+                    let excess = stream.events.len() - MAX_STREAM_EVENTS;
+                    stream.events.drain(..excess);
+                }
+                if session.is_finished() {
+                    stream.session = None;
+                } else {
+                    streaming = true;
+                }
+            }
+        }
         if self
             .dirty_since
             .is_some_and(|t| t.elapsed() >= SAVE_DEBOUNCE)
@@ -457,7 +578,7 @@ impl NexusState {
         if self.history_dirty && self.inflight.is_none() {
             self.save_local();
         }
-        self.inflight.is_some() || self.dirty_since.is_some()
+        self.inflight.is_some() || self.dirty_since.is_some() || streaming
     }
 
     /// The outcome to show for `id`: the latest send, else the latest stored response.

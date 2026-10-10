@@ -449,15 +449,30 @@ pub fn pill(ui: &mut Ui, text: &str, color: Color32, strong: bool) -> Response {
 /// Bold method label in its color.
 pub fn method_label(ui: &mut Ui, method: &nexus_http_core::model::Method, width: f32) {
     let pal = Palette::of(ui);
-    let font = crate::theme::semibold(ui, 10.5);
     let text = crate::theme::method_short(method);
+    right_label(ui, &text, pal.method(method), width);
+}
+
+/// Method label, or `WS`/`SSE` for streaming requests.
+pub fn request_label(ui: &mut Ui, request: &nexus_http_core::model::Request, width: f32) {
+    use nexus_http_core::model::Protocol;
+    let pal = Palette::of(ui);
+    match request.protocol {
+        Protocol::Http => method_label(ui, &request.method, width),
+        Protocol::WebSocket => right_label(ui, "WS", pal.syntax_number, width),
+        Protocol::Sse => right_label(ui, "SSE", pal.info, width),
+    }
+}
+
+fn right_label(ui: &mut Ui, text: &str, color: Color32, width: f32) {
+    let font = crate::theme::semibold(ui, 10.5);
     let (rect, _) = ui.allocate_exact_size(vec2(width, 16.0), Sense::hover());
     ui.painter().text(
         pos2(rect.right(), rect.center().y),
         egui::Align2::RIGHT_CENTER,
         text,
         font,
-        pal.method(method),
+        color,
     );
 }
 

@@ -3,7 +3,7 @@
 
 use crate::state::NexusState;
 use crate::theme::{Palette, semibold};
-use crate::widgets::{self, Icon, icon_button, method_label, paint_icon};
+use crate::widgets::{self, Icon, icon_button, paint_icon};
 use egui::{Align2, CornerRadius, FontId, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use nexus_http_core::model::{Id, Item};
 
@@ -308,7 +308,7 @@ fn tree_item(
                 pos2(x - 6.0, cy - 8.0),
                 vec2(40.0, 16.0),
             )));
-            method_label(&mut child, &r.method, 36.0);
+            widgets::request_label(&mut child, r, 36.0);
             if !renaming {
                 let max_w = row.right() - (x + 40.0) - 6.0;
                 let name = elide(ui, &r.name, max_w);

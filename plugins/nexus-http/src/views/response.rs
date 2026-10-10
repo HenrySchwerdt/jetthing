@@ -8,7 +8,7 @@ use crate::widgets::{
 };
 use egui::{Align, CornerRadius, Layout, RichText, Sense, Ui, vec2};
 use nexus_http_core::assertions::AssertionResult;
-use nexus_http_core::model::Id;
+use nexus_http_core::model::{Id, Protocol};
 use nexus_http_core::response::{BodyKind, Response, TimelineKind, format_duration, format_size};
 
 #[derive(Default)]
@@ -21,6 +21,15 @@ pub struct ResponseUi {
 
 pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, local: &mut ResponseUi) {
     let pal = Palette::of(ui);
+    let protocol = state
+        .workspace
+        .find_request(id)
+        .map(|(_, r)| r.protocol)
+        .unwrap_or_default();
+    if !protocol.is_http() {
+        stream_view(ui, state, id, local, protocol, &pal);
+        return;
+    }
     if local.last_request.as_ref() != Some(id) {
         local.history_index = None;
         local.last_request = Some(id.clone());
@@ -469,4 +478,197 @@ fn tests(ui: &mut Ui, checks: &[AssertionResult], pal: &Palette) {
             }
         });
     }
+}
+
+fn stream_view(
+    ui: &mut Ui,
+    state: &mut NexusState,
+    id: &Id,
+    local: &mut ResponseUi,
+    protocol: Protocol,
+    pal: &Palette,
+) {
+    use nexus_http_core::stream::Direction;
+    let connected = state.stream_connected(id);
+    let events = state
+        .streams
+        .get(id)
+        .map(|s| s.events.as_slice())
+        .unwrap_or(&[]);
+    ui.add_space(10.0);
+    let mut clear = false;
+    ui.horizontal(|ui| {
+        ui.set_min_height(36.0);
+        ui.add_space(12.0);
+        if connected {
+            pill(ui, "Connected", pal.success, true);
+        } else if events.is_empty() {
+            pill(ui, "Not connected", pal.weak, true);
+        } else if events.iter().any(|e| e.direction == Direction::Error) {
+            pill(ui, "Failed", pal.error, true);
+        } else {
+            pill(ui, "Closed", pal.weak, true);
+        }
+        let received = events
+            .iter()
+            .filter(|e| e.direction == Direction::Incoming)
+            .count();
+        let sent = events
+            .iter()
+            .filter(|e| e.direction == Direction::Outgoing)
+            .count();
+        pill(ui, &format!("{received} received"), pal.weak, false);
+        if protocol == Protocol::WebSocket {
+            pill(ui, &format!("{sent} sent"), pal.weak, false);
+        }
+        if let Some(last) = events.last() {
+            pill(ui, &format_duration(last.at_ms), pal.weak, false);
+        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.add_space(10.0);
+            if !events.is_empty() && widgets::secondary_button(ui, "Clear").clicked() {
+                clear = true;
+            }
+        });
+    });
+    if connected {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(100));
+    }
+    ui.add_space(4.0);
+    ui.painter()
+        .hline(ui.max_rect().x_range(), ui.cursor().top(), pal.hairline());
+    ui.add_space(8.0);
+
+    if events.is_empty() {
+        let hint = match protocol {
+            Protocol::WebSocket => "Connect, then send messages from the Message tab (Ctrl+Enter).",
+            _ => "Connect to stream events as they arrive.",
+        };
+        widgets::empty_state(ui, &format!("{} stream", protocol.label()), hint);
+        return;
+    }
+    let filter = local.filter.to_lowercase();
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(12, 0))
+        .show(ui, |ui| {
+            let list_h = ui.available_height() - 42.0;
+            egui::ScrollArea::vertical()
+                .id_salt("stream-events")
+                .auto_shrink([false, false])
+                .max_height(list_h)
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    for event in events.iter().filter(|e| {
+                        filter.is_empty()
+                            || e.data.to_lowercase().contains(&filter)
+                            || e.label.to_lowercase().contains(&filter)
+                    }) {
+                        let (icon_color, tint) = match event.direction {
+                            Direction::Incoming => (pal.success, pal.success.gamma_multiply(0.06)),
+                            Direction::Outgoing => (pal.info, pal.info.gamma_multiply(0.06)),
+                            Direction::Info => (pal.weak, egui::Color32::TRANSPARENT),
+                            Direction::Error => (pal.error, pal.error.gamma_multiply(0.08)),
+                        };
+                        egui::Frame::new()
+                            .fill(tint)
+                            .corner_radius(CornerRadius::same(6))
+                            .inner_margin(egui::Margin::symmetric(8, 5))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal_top(|ui| {
+                                    let (r, _) =
+                                        ui.allocate_exact_size(vec2(14.0, 16.0), Sense::hover());
+                                    let c = r.center();
+                                    match event.direction {
+                                        Direction::Incoming => arrow(ui, c, false, icon_color),
+                                        Direction::Outgoing => arrow(ui, c, true, icon_color),
+                                        _ => {
+                                            ui.painter().circle_filled(c, 3.0, icon_color);
+                                        }
+                                    }
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{:>7}",
+                                            format_duration(event.at_ms)
+                                        ))
+                                        .font(mono(11.5))
+                                        .color(pal.faint),
+                                    );
+                                    if event.label != "message" {
+                                        pill(ui, &event.label, icon_color, false);
+                                    }
+                                    if let Some(eid) = &event.id {
+                                        ui.label(
+                                            RichText::new(format!("id {eid}"))
+                                                .size(11.5)
+                                                .color(pal.faint),
+                                        );
+                                    }
+                                    let pretty =
+                                        serde_json::from_str::<serde_json::Value>(&event.data)
+                                            .ok()
+                                            .filter(|v| v.is_object() || v.is_array())
+                                            .and_then(|v| serde_json::to_string(&v).ok());
+                                    let text = pretty.unwrap_or_else(|| event.data.clone());
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(text).font(mono(12.0)).color(
+                                                if event.direction == Direction::Info {
+                                                    pal.weak
+                                                } else {
+                                                    pal.text
+                                                },
+                                            ),
+                                        )
+                                        .wrap()
+                                        .selectable(true),
+                                    );
+                                });
+                            });
+                        ui.add_space(3.0);
+                    }
+                });
+            ui.add_space(6.0);
+            field_frame(pal).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                    widgets::paint_icon(ui.painter(), r, Icon::Search, pal.weak);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut local.filter)
+                            .frame(false)
+                            .hint_text("Filter events")
+                            .desired_width(ui.available_width()),
+                    );
+                });
+            });
+        });
+    if clear && let Some(s) = state.streams.get_mut(id) {
+        s.events.clear();
+    }
+}
+
+fn arrow(ui: &Ui, c: egui::Pos2, up: bool, color: egui::Color32) {
+    let s = egui::Stroke::new(1.6_f32, color);
+    let (tip, tail, wing) = if up {
+        (-5.0, 5.0, -1.5)
+    } else {
+        (5.0, -5.0, 1.5)
+    };
+    ui.painter()
+        .line_segment([egui::pos2(c.x, c.y + tail), egui::pos2(c.x, c.y + tip)], s);
+    ui.painter().line_segment(
+        [
+            egui::pos2(c.x - 3.5, c.y + wing),
+            egui::pos2(c.x, c.y + tip),
+        ],
+        s,
+    );
+    ui.painter().line_segment(
+        [
+            egui::pos2(c.x + 3.5, c.y + wing),
+            egui::pos2(c.x, c.y + tip),
+        ],
+        s,
+    );
 }

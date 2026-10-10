@@ -503,3 +503,127 @@ fn runs_collections_with_chaining_assertions_and_bail() {
     );
     assert!(cancelled.cancelled && cancelled.steps.is_empty());
 }
+
+#[test]
+fn streams_server_sent_events() {
+    use nexus_http_core::stream::{Direction, connect_sse};
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let port = server.server_addr().to_ip().unwrap().port();
+    thread::spawn(move || {
+        if let Ok(request) = server.recv() {
+            let accept = request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("accept"))
+                .map(|h| h.value.to_string())
+                .unwrap_or_default();
+            let body = format!(
+                "event: hello\ndata: {accept}\nid: 1\n\n: keep-alive\n\ndata: line 1\ndata: line 2\n\n"
+            );
+            let response = tiny_http::Response::from_string(body)
+                .with_header(header("Content-Type", "text/event-stream"));
+            let _ = request.respond(response);
+        }
+    });
+    let mut req = Request::new(
+        "sse",
+        Method::Get,
+        format!("http://127.0.0.1:{port}/events"),
+    );
+    req.protocol = nexus_http_core::model::Protocol::Sse;
+    let prepared = nexus_http_core::exec::prepare_request(
+        &req,
+        &[],
+        &WorkspaceSettings::default(),
+        &nexus_http_core::template::Context::new(Default::default()),
+        Path::new("."),
+    )
+    .unwrap();
+    let mut session = connect_sse(prepared, WorkspaceSettings::default(), None);
+    let mut events = Vec::new();
+    while let Some(e) = session.recv_timeout(Duration::from_secs(5)) {
+        events.push(e);
+    }
+    let incoming: Vec<_> = events
+        .iter()
+        .filter(|e| e.direction == Direction::Incoming)
+        .collect();
+    assert_eq!(incoming.len(), 2, "{events:?}");
+    assert_eq!(incoming[0].label, "hello");
+    assert_eq!(incoming[0].data, "text/event-stream");
+    assert_eq!(incoming[0].id.as_deref(), Some("1"));
+    assert_eq!(incoming[1].data, "line 1\nline 2");
+    assert!(
+        events
+            .iter()
+            .any(|e| e.label == "open" && e.data.starts_with("200"))
+    );
+    assert_eq!(events.last().unwrap().label, "close");
+    assert!(session.is_finished());
+}
+
+#[test]
+// tungstenite's handshake callback signature fixes the large error type.
+#[allow(clippy::result_large_err)]
+fn talks_websocket() {
+    use nexus_http_core::stream::{Direction, connect_websocket};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let callback = |req: &tungstenite::handshake::server::Request,
+                        response: tungstenite::handshake::server::Response| {
+            assert_eq!(req.headers().get("x-token").unwrap(), "abc");
+            Ok(response)
+        };
+        let mut ws = tungstenite::accept_hdr(stream, callback).unwrap();
+        loop {
+            match ws.read() {
+                Ok(tungstenite::Message::Text(t)) => {
+                    ws.send(tungstenite::Message::text(format!("echo: {t}")))
+                        .unwrap();
+                }
+                Ok(tungstenite::Message::Close(_)) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    let mut req = Request::new("ws", Method::Get, format!("http://127.0.0.1:{port}/socket"))
+        .header("X-Token", "abc");
+    req.protocol = nexus_http_core::model::Protocol::WebSocket;
+    let prepared = nexus_http_core::exec::prepare_request(
+        &req,
+        &[],
+        &WorkspaceSettings::default(),
+        &nexus_http_core::template::Context::new(Default::default()),
+        Path::new("."),
+    )
+    .unwrap();
+    assert_eq!(prepared.url.scheme(), "ws");
+    let mut session = connect_websocket(prepared, None);
+    let wait_for =
+        |session: &mut nexus_http_core::stream::StreamSession, label: &str, dir: Direction| {
+            for _ in 0..100 {
+                if let Some(e) = session.recv_timeout(Duration::from_millis(100))
+                    && e.label == label
+                    && e.direction == dir
+                {
+                    return e;
+                }
+            }
+            panic!("no {label} event");
+        };
+    wait_for(&mut session, "open", Direction::Info);
+    assert!(session.can_send());
+    assert!(session.send_text("hi"));
+    assert_eq!(
+        wait_for(&mut session, "message", Direction::Outgoing).data,
+        "hi"
+    );
+    assert_eq!(
+        wait_for(&mut session, "message", Direction::Incoming).data,
+        "echo: hi"
+    );
+    session.close();
+    wait_for(&mut session, "close", Direction::Info);
+}

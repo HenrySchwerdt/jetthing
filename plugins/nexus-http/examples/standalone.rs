@@ -26,10 +26,12 @@ fn main() -> eframe::Result {
     let demo = args.iter().any(|a| a == "--demo");
     let mut app = if demo {
         let port = demo_server();
+        let ws_port = demo_websocket_server();
+        let sse_port = demo_sse_server();
         let dir = std::env::temp_dir().join(format!("nexus-demo-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let mut state = NexusState::open(&dir);
-        state.replace_workspace(demo_workspace(port));
+        state.replace_workspace(demo_workspace(port, ws_port, sse_port));
         NexusApp::with_state(state)
     } else {
         let dir = args
@@ -58,7 +60,12 @@ fn main() -> eframe::Result {
             install_fonts(&cc.egui_ctx);
             cc.egui_ctx
                 .style_mut(if light { islands_light } else { islands_dark });
-            Ok(Box::new(Host { app, sent: false }))
+            Ok(Box::new(Host {
+                app,
+                sent: false,
+                messages: 0,
+                last_message: 0.0,
+            }))
         }),
     )
 }
@@ -66,6 +73,9 @@ fn main() -> eframe::Result {
 struct Host {
     app: NexusApp,
     sent: bool,
+    /// Demo: WebSocket messages still to send once connected.
+    messages: u32,
+    last_message: f64,
 }
 
 impl eframe::App for Host {
@@ -74,6 +84,9 @@ impl eframe::App for Host {
             self.sent = true;
             if std::env::var_os("NEXUS_SEND").is_some() {
                 self.app.send_selected();
+            }
+            if let Ok(n) = std::env::var("NEXUS_MESSAGES") {
+                self.messages = n.parse().unwrap_or(0);
             }
             if let Ok(scope) = std::env::var("NEXUS_RUN") {
                 let folder = self
@@ -87,6 +100,17 @@ impl eframe::App for Host {
                 self.app.open_runner(folder);
                 self.app.start_run();
             }
+        }
+        let now = ctx.input(|i| i.time);
+        if self.messages > 0
+            && now - self.last_message > 0.6
+            && let Some(id) = self.app.state.selected.clone()
+            && self.app.state.stream_connected(&id)
+        {
+            self.messages -= 1;
+            self.last_message = now;
+            self.app.state.send_stream_message(&id);
+            ctx.request_repaint();
         }
         egui::CentralPanel::default()
             .frame(egui::Frame::new())
@@ -226,13 +250,15 @@ fn islands_light(style: &mut egui::Style) {
     v.window_stroke = egui::Stroke::new(1.0_f32, c(0xDFE1E5));
 }
 
-fn demo_workspace(port: u16) -> Workspace {
+fn demo_workspace(port: u16, ws_port: u16, sse_port: u16) -> Workspace {
     let mut ws = Workspace::new("Acme Store API");
     ws.base_environment = ws
         .base_environment
         .clone()
         .with("base_url", format!("http://127.0.0.1:{port}"))
-        .with("api_version", "v1");
+        .with("api_version", "v1")
+        .with("ws_url", format!("ws://127.0.0.1:{ws_port}"))
+        .with("events_url", format!("http://127.0.0.1:{sse_port}"));
     let mut local = Environment::new("Local")
         .with("user", "ada@acme.test")
         .with("password", "demo");
@@ -378,10 +404,25 @@ fn demo_workspace(port: u16) -> Workspace {
         operation_name: None,
     });
     let health = Request::new("Health check", Method::Get, "{{ base_url }}/health");
+    let mut live = Folder::new("Live");
+    let mut prices = Request::new(
+        "Price ticker",
+        Method::Get,
+        "{{ events_url }}/v1/prices/stream",
+    );
+    prices.protocol = Protocol::Sse;
+    let mut orders_ws = Request::new("Order updates", Method::Get, "{{ ws_url }}/orders")
+        .header("Authorization", "Bearer demo-token")
+        .with_body(Body::Json {
+            text: "{\n  \"type\": \"subscribe\",\n  \"channel\": \"orders\",\n  \"at\": \"{% now 'iso' %}\"\n}".into(),
+        });
+    orders_ws.protocol = Protocol::WebSocket;
+    live.children = vec![Item::Request(prices), Item::Request(orders_ws)];
     ws.items = vec![
         Item::Folder(auth),
         Item::Folder(products),
         Item::Folder(orders),
+        Item::Folder(live),
         Item::Request(graphql),
         Item::Request(health),
     ];
@@ -457,6 +498,131 @@ fn demo_server() -> u16 {
                         .expect("static header"),
                 );
             let _ = request.respond(response);
+        }
+    });
+    port
+}
+
+/// Server-Sent Events over a raw socket so every event is flushed at once.
+fn demo_sse_server() -> u16 {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind demo sse");
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            std::thread::spawn(move || {
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n")
+                    && stream.read(&mut byte).map(|n| n == 1).unwrap_or(false)
+                {
+                    head.push(byte[0]);
+                }
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n: price feed\n\n");
+                let mut ticker = Ticker {
+                    n: 0,
+                    pending: Vec::new(),
+                };
+                let mut buf = [0u8; 512];
+                loop {
+                    let n = ticker.read(&mut buf).unwrap_or(0);
+                    if n == 0 || stream.write_all(&buf[..n]).is_err() || stream.flush().is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    port
+}
+
+/// Endless SSE body: a price tick every 400 ms.
+struct Ticker {
+    n: u32,
+    pending: Vec<u8>,
+}
+
+impl std::io::Read for Ticker {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.pending.is_empty() {
+            if self.n > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+            self.n += 1;
+            let skus = ["KB-001", "KB-007", "KB-013"];
+            let sku = skus[(self.n as usize) % 3];
+            let price = 99.0 + (self.n * 7 % 40) as f64 + 0.5;
+            let event = if self.n.is_multiple_of(5) {
+                format!(
+                    "event: stock\nid: {}\ndata: {{\"sku\":\"{sku}\",\"stock\":{}}}\n\n",
+                    self.n,
+                    self.n % 13
+                )
+            } else {
+                format!(
+                    "event: price\nid: {}\ndata: {{\"sku\":\"{sku}\",\"price\":{price:.1},\"currency\":\"EUR\"}}\n\n",
+                    self.n
+                )
+            };
+            self.pending = event.into_bytes();
+        }
+        let n = buf.len().min(self.pending.len());
+        buf[..n].copy_from_slice(&self.pending[..n]);
+        self.pending.drain(..n);
+        Ok(n)
+    }
+}
+
+/// WebSocket server that acknowledges messages and pushes order updates.
+fn demo_websocket_server() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind demo websocket");
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            std::thread::spawn(move || {
+                let Ok(mut ws) = tungstenite::accept(stream) else {
+                    return;
+                };
+                let _ = ws
+                    .get_ref()
+                    .set_read_timeout(Some(std::time::Duration::from_millis(700)));
+                let mut order = 1000;
+                loop {
+                    match ws.read() {
+                        Ok(tungstenite::Message::Text(t)) => {
+                            let reply = format!(
+                                "{{\"type\":\"ack\",\"received\":{}}}",
+                                if t.trim_start().starts_with('{') {
+                                    t.to_string()
+                                } else {
+                                    format!("{:?}", t.as_str())
+                                }
+                            );
+                            if ws.send(tungstenite::Message::text(reply)).is_err() {
+                                return;
+                            }
+                        }
+                        Ok(tungstenite::Message::Close(_)) => return,
+                        Ok(_) => {}
+                        Err(tungstenite::Error::Io(e))
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) =>
+                        {
+                            order += 1;
+                            let status = ["paid", "packed", "shipped"][order % 3];
+                            let msg = format!(
+                                "{{\"type\":\"order.updated\",\"order\":{order},\"status\":\"{status}\"}}"
+                            );
+                            if ws.send(tungstenite::Message::text(msg)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(_) => return,
+                    }
+                }
+            });
         }
     });
     port

@@ -20,6 +20,7 @@ pub mod model;
 pub mod response;
 pub mod runner;
 pub mod storage;
+pub mod stream;
 pub mod template;
 
 use std::path::Path;
