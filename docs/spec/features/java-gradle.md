@@ -1178,8 +1178,9 @@ JAVA-REF-002/006/013/018/024, JAVA-GEN-001–009, JAVA-RUN-001–013, JAVA-DBG-0
 6. **Auto-sync default.** The Build Tools page default appears to be "External changes"; verify on a clean
    profile.
 7. **macOS shortcuts for actions without explicit macOS bindings.** We derived them via Ctrl→Cmd inheritance
-   (e.g. Change Signature `Cmd+F6`, Type Migration `Cmd+Shift+F6`, Recompile `Cmd+Shift+F9`); verify against the
-   published macOS keymap reference.
+   (e.g. Change Signature `Cmd+F6`, Type Migration `Cmd+Shift+F6`, Recompile `Cmd+Shift+F9`). Resolved: the
+   macOS keymap does swap Ctrl and Cmd on inherited shortcuts, and these values match the generated
+   [../keymaps.md](../keymaps.md), which is authoritative.
 8. **Debug context configuration on Windows/Linux (JAVA-RUN-003).** The `$default` keymap has no binding for
    `DebugClass`; confirm there is no default and that the gutter is the main entry point.
 9. **Postfix template list (JAVA-PFX).** The help pages fetched did not enumerate keys; our list is from public
