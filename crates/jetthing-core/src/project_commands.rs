@@ -16,6 +16,7 @@ pub struct Workspace {
     pub left_tool_window: Option<String>,
     pub bottom_tool_window: Option<String>,
     pub recent_files: Vec<PathBuf>,
+    pub pinned_files: Vec<PathBuf>,
 }
 
 pub const WORKSPACE_FILE: &str = ".jetthing/workspace.json";
@@ -165,6 +166,7 @@ impl IdeState {
                 .visible(Anchor::Bottom)
                 .map(|window| window.id().to_owned()),
             recent_files: self.recent_files.clone(),
+            pinned_files: self.tabs.pinned.iter().cloned().collect(),
         }
     }
 
@@ -207,6 +209,11 @@ impl IdeState {
         for path in keep(&workspace.open_files) {
             let _ = self.open_file(&path);
         }
+        self.tabs.pinned = keep(&workspace.pinned_files)
+            .into_iter()
+            .filter(|path| self.documents.iter().any(|d| &d.path == path))
+            .collect();
+        self.sort_pinned_first();
         if let Some(active) = &workspace.active_file
             && let Some(index) = self.documents.iter().position(|d| &d.path == active)
         {

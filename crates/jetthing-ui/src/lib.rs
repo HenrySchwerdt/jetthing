@@ -411,6 +411,27 @@ impl IdeApp {
         if close_tab && self.state.active_document.is_some() {
             self.dispatch("editor.close", Value::Null);
         }
+        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::T) {
+            self.dispatch("editor.reopenClosed", Value::Null);
+        }
+        // Select Next/Previous Tab: Alt+→/← on Windows/Linux, ⇧⌘]/[ on macOS.
+        let (next_tab, previous_tab) = if mac {
+            (
+                consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::CloseBracket),
+                consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::OpenBracket),
+            )
+        } else {
+            (
+                consume(Modifiers::ALT, Key::ArrowRight),
+                consume(Modifiers::ALT, Key::ArrowLeft),
+            )
+        };
+        if next_tab {
+            self.dispatch("editor.nextTab", Value::Null);
+        }
+        if previous_tab {
+            self.dispatch("editor.previousTab", Value::Null);
+        }
         if consume(Modifiers::COMMAND, Key::F9) {
             self.dispatch("build.project", Value::Null);
         }

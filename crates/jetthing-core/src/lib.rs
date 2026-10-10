@@ -18,6 +18,7 @@ pub mod diagnostics;
 mod editor_commands;
 mod lsp_commands;
 mod project_commands;
+pub mod tabs;
 mod terminal_commands;
 mod toolchain_commands;
 mod toolwindow;
@@ -42,6 +43,8 @@ pub struct IdeState {
     pub files: Vec<FileEntry>,
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
+    /// Pinned tabs, closed-tab history and the tab limit.
+    pub tabs: tabs::EditorTabs,
     pub plugins: Vec<PluginManifest>,
     pub terminal: Option<TerminalSession>,
     pub search: SearchService,
@@ -102,6 +105,10 @@ impl IdeState {
         self.files = project.entries(20_000);
         self.documents.clear();
         self.active_document = None;
+        self.tabs = tabs::EditorTabs {
+            limit: self.tabs.limit,
+            ..Default::default()
+        };
         self.search.cancel();
         self.search_results.clear();
         self.search_query.clear();
@@ -140,7 +147,7 @@ impl IdeState {
         self.touch_recent(path);
         self.status = format!("Opened {}", path.display());
         self.sync_document_lsp(path, &text, 0);
-        Ok(())
+        self.enforce_tab_limit()
     }
     pub fn save(&mut self, index: usize) -> Result<(), String> {
         let project = self.project.as_ref().ok_or("no project is open")?;
@@ -163,6 +170,7 @@ impl IdeState {
         if document.text.is_dirty() {
             self.save(index)?;
         }
+        self.remember_closed(index);
         let document = self.documents.remove(index);
         self.active_document = match self.active_document {
             _ if self.documents.is_empty() => None,
@@ -597,6 +605,7 @@ pub(crate) fn usize_param(params: &Value, name: &str) -> Result<usize, CommandEr
 pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
     editor_commands::register(&mut registry);
+    tabs::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
     diagnostic_commands::register(&mut registry);

@@ -154,6 +154,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     let mut x = bar.left() + 6.0;
     let mut activate = None;
     let mut close = None;
+    let mut menu_command: Option<(&'static str, Value)> = None;
     let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
     for index in 0..app.state.documents.len() {
         let doc = &app.state.documents[index];
@@ -200,10 +201,23 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
         ui.painter().galley(layout.text.min, galley, color);
         let close_rect = layout.close;
         let dirty = doc.text.is_dirty();
+        let pinned = app.state.is_pinned(index);
         let pointer_on_close = response
             .hover_pos()
             .is_some_and(|pos| close_rect.expand(2.0).contains(pos));
-        if response.hovered() || active {
+        if pinned {
+            // Pinned tabs show a pin in place of the close button; clicking it unpins.
+            if pointer_on_close {
+                ui.painter()
+                    .rect_filled(close_rect.expand(2.0), 4.0, theme::HOVER);
+            }
+            icons::paint(
+                ui.painter(),
+                close_rect.shrink(1.0),
+                Icon::Pin,
+                theme::TEXT_SECONDARY,
+            );
+        } else if response.hovered() || active {
             if pointer_on_close {
                 ui.painter()
                     .rect_filled(close_rect.expand(2.0), 4.0, theme::HOVER);
@@ -223,8 +237,71 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
                 .circle_filled(layout.modified_dot, 2.5, theme::MODIFIED);
         }
         let response = response.on_hover_text(doc.path.display().to_string());
+        let tab_count = app.state.documents.len();
+        let can_reopen = !app.state.tabs.closed.is_empty();
+        response.context_menu(|ui| {
+            ui.set_min_width(220.0);
+            let entries: [(&str, &'static str, Option<&str>, bool); 8] = [
+                ("Close", "editor.close", Some("⌘W"), true),
+                (
+                    "Close Other Tabs",
+                    "editor.closeOthers",
+                    None,
+                    tab_count > 1,
+                ),
+                ("Close All Tabs", "editor.closeAll", None, true),
+                (
+                    "Close Unmodified Tabs",
+                    "editor.closeUnmodified",
+                    None,
+                    true,
+                ),
+                (
+                    "Close Tabs to the Left",
+                    "editor.closeLeft",
+                    None,
+                    index > 0,
+                ),
+                (
+                    "Close Tabs to the Right",
+                    "editor.closeRight",
+                    None,
+                    index + 1 < tab_count,
+                ),
+                (
+                    if pinned { "Unpin Tab" } else { "Pin Tab" },
+                    "editor.togglePin",
+                    None,
+                    true,
+                ),
+                (
+                    "Reopen Closed Tab",
+                    "editor.reopenClosed",
+                    Some("⇧⌘T"),
+                    can_reopen,
+                ),
+            ];
+            for (position, (label, id, shortcut, enabled)) in entries.into_iter().enumerate() {
+                if position == 6 || position == 7 {
+                    ui.separator();
+                }
+                let button = egui::Button::new(label)
+                    .shortcut_text(shortcut.map(crate::keys::display).unwrap_or_default());
+                if ui.add_enabled(enabled, button).clicked() {
+                    let params = if id == "editor.reopenClosed" {
+                        Value::Null
+                    } else {
+                        json!({"index": index})
+                    };
+                    menu_command = Some((id, params));
+                    ui.close();
+                }
+            }
+        });
         if response.clicked() {
-            if pointer_on_close {
+            if pointer_on_close && pinned {
+                menu_command = Some(("editor.togglePin", json!({"index": index})));
+            } else if pointer_on_close {
                 close = Some(index);
             } else {
                 activate = Some(index);
@@ -234,7 +311,9 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             close = Some(index);
         }
     }
-    if let Some(index) = close {
+    if let Some((id, params)) = menu_command {
+        app.dispatch(id, params);
+    } else if let Some(index) = close {
         app.dispatch("editor.close", json!({"index": index}));
     } else if let Some(index) = activate {
         app.dispatch("editor.activate", json!({"index": index}));

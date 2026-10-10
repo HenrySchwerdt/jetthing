@@ -44,6 +44,7 @@ pub enum Icon {
     Refresh,
     Error,
     Warning,
+    Pin,
 }
 
 impl Icon {
@@ -256,6 +257,18 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             line(&[(12.0, 4.0), (4.0, 12.0)]);
         }
         Icon::Minimize => line(&[(3.5, 8.0), (12.5, 8.0)]),
+        Icon::Pin => {
+            line(&[(5.0, 2.5), (11.0, 2.5)]);
+            line(&[
+                (6.5, 2.5),
+                (6.5, 7.0),
+                (4.0, 9.5),
+                (12.0, 9.5),
+                (9.5, 7.0),
+                (9.5, 2.5),
+            ]);
+            line(&[(8.0, 9.5), (8.0, 14.0)]);
+        }
         Icon::Refresh => {
             let center = g.p(8.0, 8.0);
             let points = (0..=20)
