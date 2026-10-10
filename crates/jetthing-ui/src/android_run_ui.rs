@@ -31,7 +31,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     let width = 460.0;
     let mut dismiss = false;
     egui::Area::new(egui::Id::new("android_deploy_balloon"))
-        .order(egui::Order::Foreground)
+        .order(crate::notifications::BALLOON_ORDER)
         .pivot(egui::Align2::RIGHT_BOTTOM)
         .fixed_pos(egui::pos2(
             screen.right() - 16.0,

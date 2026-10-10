@@ -723,6 +723,9 @@ impl IdeApp {
         lsp_status::notices(self, ctx);
         plugin_ui::plugins_window(self, ctx);
         plugin_ui::notifications(self, ctx);
+        if self.settings_dialog.is_some() {
+            settings_dialog::backdrop_to_top(ctx);
+        }
         // Include operations started by controls in this frame, and keep
         // polling even when their notification balloon is hidden.
         if self.state.updates.is_busy() {
@@ -829,6 +832,34 @@ mod tests {
         let typed = egui::Event::Text("x".into());
         let _ = ctx.run(frame_input(vec![typed]), |ctx| app.frame(ctx));
         assert_eq!(app.state.documents[0].text.text(), "xhello\n");
+    }
+
+    #[test]
+    fn modal_dialogs_render_above_notification_balloons() {
+        let (mut app, ctx) = headless_app("balloon-order", "a.txt", "hello\n");
+        app.state.update_notification = true;
+        let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        app.dispatch("settings.open", Value::Null);
+        for _ in 0..3 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        assert!(app.settings_dialog.is_some());
+        let balloon = ctx
+            .memory(|m| m.area_rect(egui::Id::new("notification_balloon")))
+            .expect("the update balloon is shown");
+        let dialog = ctx
+            .memory(|m| m.area_rect(egui::Id::new("settings_dialog")))
+            .expect("the settings dialog is shown");
+        let overlap = balloon.intersect(dialog);
+        assert!(overlap.is_positive(), "{balloon:?} vs {dialog:?}");
+        let top = ctx.layer_id_at(overlap.center()).unwrap();
+        assert_eq!(top.id, egui::Id::new("settings_dialog"));
+        // Outside the dialog the dimming backdrop still covers the balloon.
+        let outside = egui::pos2(balloon.right() - 2.0, balloon.bottom() - 2.0);
+        if !dialog.contains(outside) {
+            let top = ctx.layer_id_at(outside).unwrap();
+            assert_eq!(top.id, egui::Id::new("settings_backdrop"));
+        }
     }
 
     #[test]

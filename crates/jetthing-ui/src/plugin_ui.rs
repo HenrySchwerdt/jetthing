@@ -418,7 +418,7 @@ pub fn notifications(app: &mut IdeApp, ctx: &egui::Context) {
     let width: f32 = 340.0;
     let mut dismiss = None;
     egui::Area::new(egui::Id::new("plugin_notifications"))
-        .order(egui::Order::Foreground)
+        .order(crate::notifications::BALLOON_ORDER)
         .anchor(
             egui::Align2::RIGHT_BOTTOM,
             vec2(-16.0, -(STATUS_BAR_HEIGHT + 12.0)),
