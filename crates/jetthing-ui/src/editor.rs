@@ -34,6 +34,8 @@ pub enum EditorRequest {
 pub struct EditorOutput {
     pub changed: bool,
     pub caret_pos: Option<egui::Pos2>,
+    /// Where the lightbulb goes: left of the caret line's text, if visible.
+    pub bulb_anchor: Option<egui::Pos2>,
     pub requests: Vec<EditorRequest>,
     /// Text typed this frame (drives completion auto-popup and filtering).
     pub typed: String,
@@ -103,6 +105,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 move_caret_to(app, line, column);
                 ui.memory_mut(|memory| memory.request_focus(editor_id()));
             }
+            let navigable = app.state.active_has_language_server();
             let mut text_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
             let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
             let changes = app.state.document_changes(index).to_vec();
@@ -116,6 +119,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 &context_model,
                 &changes,
                 blame.as_deref(),
+                navigable,
             );
             let counts = jetthing_core::ProblemCounts::of(&problems);
             match problems_ui::inspection_widget(ui, text_rect.right_top(), counts) {
@@ -133,15 +137,18 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 ),
                 None => {}
             }
+            let mut bulb = None;
             let doc = &mut app.state.documents[index];
             match surface {
                 Ok(EditorOutput {
                     changed,
                     caret_pos,
+                    bulb_anchor,
                     requests: editor_requests,
                     typed: typed_text,
                 }) => {
                     app.caret_screen_pos = caret_pos;
+                    bulb = bulb_anchor;
                     requests.extend(editor_requests);
                     typed = typed_text;
                     if changed {
@@ -156,6 +163,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 }
                 Err(error) => app.state.status = error,
             }
+            crate::intentions_ui::lightbulb(app, ui, bulb);
         });
     if let Some((path, text, version)) = changed_document {
         app.state.sync_document_lsp(&path, &text, version);
@@ -581,6 +589,7 @@ fn move_primary(document: &mut Document, head: usize, extend: bool) {
     document.selections.set_single(Selection { anchor, head });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn editor_surface(
     ui: &mut egui::Ui,
     document: &mut Document,
@@ -589,6 +598,7 @@ fn editor_surface(
     context_model: &crate::context_menus::Model,
     changes: &[jetthing_git::Hunk],
     blame: Option<&[jetthing_git::BlameLine]>,
+    navigable: bool,
 ) -> Result<EditorOutput, String> {
     let mut requests = Vec::new();
     let font = theme::editor_font(ui.style());
@@ -620,6 +630,7 @@ fn editor_surface(
         .map(|(line, _)| line)
         .unwrap_or(0);
     let mut caret_pos = None;
+    let mut bulb_anchor = None;
     let brace_pair: Vec<usize> = {
         let head = document.selections.primary().head;
         ops::matching_bracket(&document.text, head)
@@ -704,7 +715,19 @@ fn editor_surface(
             {
                 let offset = position_to_offset(position);
                 let modifiers = ui.input(|input| input.modifiers);
-                if modifiers.alt && modifiers.shift {
+                if modifiers.command && navigable {
+                    // Ctrl/⌘+click: Go to Declaration; with Shift the type
+                    // declaration, with Alt the implementations.
+                    document.selections.set_single(Selection::caret(offset));
+                    let id = if modifiers.shift {
+                        "navigate.typeDeclaration"
+                    } else if modifiers.alt {
+                        "navigate.implementation"
+                    } else {
+                        "navigate.declaration"
+                    };
+                    requests.push(EditorRequest::Command(id, Value::Null));
+                } else if modifiers.alt && modifiers.shift {
                     editor_keys::toggle_caret(&mut document.selections, offset);
                 } else if modifiers.shift {
                     let anchor = document.selections.primary().anchor;
@@ -936,6 +959,10 @@ fn editor_surface(
                         let x = column_x(selection.head - line_start);
                         if *selection == document.selections.primary() {
                             caret_pos = Some(egui::pos2(x, y + row_height));
+                            bulb_anchor = Some(egui::pos2(
+                                rect.left() + gutter_width + 2.0,
+                                y + row_height / 2.0,
+                            ));
                         }
                         if focused && blink_on {
                             painter.line_segment(
@@ -964,6 +991,23 @@ fn editor_surface(
                         column.floor() as usize,
                         line_len,
                     );
+                    // Ctrl/⌘+hover turns the identifier into a link.
+                    let column = column.floor() as usize;
+                    if navigable && ui.input(|input| input.modifiers.command) && column < line_len {
+                        let line_start = document.text.line_to_char(line).unwrap_or(0);
+                        let (start, end) = ops::word_at(&document.text, line_start + column);
+                        if start < end && (start..end).contains(&(line_start + column)) {
+                            let y = rect.top() + (line + 1) as f32 * ROW_HEIGHT - 3.0;
+                            let x = |offset: usize| {
+                                rect.left() + text_left + (offset - line_start) as f32 * char_width
+                            };
+                            painter.line_segment(
+                                [egui::pos2(x(start), y), egui::pos2(x(end), y)],
+                                Stroke::new(1.0_f32, crate::navigation_ui::LINK),
+                            );
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                    }
                 }
             }
             if focused {
@@ -992,6 +1036,7 @@ fn editor_surface(
         return Ok(EditorOutput {
             changed: false,
             caret_pos,
+            bulb_anchor,
             requests,
             typed: String::new(),
         });
@@ -1210,6 +1255,7 @@ fn editor_surface(
     Ok(EditorOutput {
         changed: document.text.revision() != initial_revision,
         caret_pos,
+        bulb_anchor,
         requests,
         typed,
     })

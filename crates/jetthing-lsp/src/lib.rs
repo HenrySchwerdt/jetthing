@@ -10,19 +10,21 @@
 
 pub mod client;
 pub mod completion;
+pub mod locations;
 pub mod manager;
 pub mod registry;
 pub mod snippet;
 pub mod transport;
 
 pub use client::{
-    LaunchConfig, LspDiagnostic, LspResponse, LspService, ResponseError, ServerMessage,
-    ServerState, WorkProgress,
+    ApplyEditRequest, LaunchConfig, LspDiagnostic, LspResponse, LspService, ResponseError,
+    ServerMessage, ServerState, WorkProgress,
 };
+pub use locations::{LspLocation, parse_locations};
 pub use lsp_types;
 pub use manager::{
-    CompletionResult, CompletionTrigger, LspManager, LspNotice, ServerInfo, ServerKey,
-    ServerStatus, describe_progress,
+    CompletionResult, CompletionTrigger, Feature, LspManager, LspNotice, RequestHandle, ServerInfo,
+    ServerKey, ServerStatus, describe_progress,
 };
 pub use registry::{
     LanguageServerProvider, LaunchContext, LspSettings, ProgramResolver, ResolvedProgram,

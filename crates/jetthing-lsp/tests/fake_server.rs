@@ -318,3 +318,118 @@ fn diagnostics_carry_severity_tags_and_project_files() {
     manager.shutdown();
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn navigation_requests_return_locations() {
+    use jetthing_lsp::{Feature, parse_locations};
+    let root = workspace("navigation");
+    let app = root.join("src/App.fake");
+    let other = root.join("src/Other.fake");
+    let mut manager = LspManager::new(registry(&[]));
+    manager.set_project(Some(&root));
+    manager
+        .sync_document(&app, "fn greet() {}\ngreet();\n", 0)
+        .unwrap();
+    std::fs::write(&other, "greet();\n").unwrap();
+    manager.sync_document(&other, "greet();\n", 0).unwrap();
+    let wait = |manager: &mut LspManager, feature, line, character| {
+        let handle = loop {
+            manager.poll();
+            match manager.request(&app, feature, line, character, serde_json::json!({})) {
+                Ok(handle) => break handle,
+                Err(LspError::Starting { .. }) => thread::sleep(Duration::from_millis(10)),
+                Err(error) => panic!("{error}"),
+            }
+        };
+        let mut result = None;
+        assert!(wait_until(|| {
+            manager.poll();
+            result = manager.take_response(&handle);
+            result.is_some()
+        }));
+        parse_locations(&result.unwrap().unwrap())
+    };
+    let definition = wait(&mut manager, Feature::Definition, 1, 2);
+    assert_eq!(definition.len(), 1);
+    assert_eq!(
+        (definition[0].path.clone(), definition[0].start_line),
+        (app.clone(), 0)
+    );
+    assert_eq!(definition[0].start_character, 3);
+    let type_definition = wait(&mut manager, Feature::TypeDefinition, 1, 0);
+    assert_eq!(
+        type_definition, definition,
+        "LocationLink resolves to the same place"
+    );
+    let implementations = wait(&mut manager, Feature::Implementation, 1, 0);
+    assert_eq!(implementations.len(), 2);
+    let references = wait(&mut manager, Feature::References, 0, 4);
+    assert_eq!(references.len(), 3);
+    assert!(references.iter().any(|location| location.path == other));
+    // Nothing under the caret.
+    assert!(wait(&mut manager, Feature::Definition, 0, 12).is_empty());
+    manager.shutdown();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn code_actions_resolve_and_server_applied_edits() {
+    use jetthing_lsp::Feature;
+    use serde_json::json;
+    let root = workspace("actions");
+    let file = root.join("src/App.fake");
+    let mut manager = LspManager::new(registry(&[]));
+    manager.set_project(Some(&root));
+    manager.sync_document(&file, "x = @error\n", 0).unwrap();
+    assert!(wait_until(|| {
+        manager.poll();
+        manager.diagnostics_for(&file).len() == 1
+    }));
+    assert!(manager.supports(&file, Feature::CodeAction));
+    assert!(manager.supports(&file, Feature::CodeActionResolve));
+    let raw = manager.diagnostics_for(&file)[0].raw.clone();
+    assert_eq!(raw["message"], "marker @error");
+    let uri = format!("file://{}", file.display());
+    let call = |manager: &mut LspManager, feature, params| {
+        let handle = manager.request_with_params(&file, feature, params).unwrap();
+        let mut result = None;
+        assert!(wait_until(|| {
+            manager.poll();
+            result = manager.take_response(&handle);
+            result.is_some()
+        }));
+        result.unwrap().unwrap()
+    };
+    let actions = call(
+        &mut manager,
+        Feature::CodeAction,
+        json!({"textDocument": {"uri": uri}, "range": raw["range"],
+            "context": {"diagnostics": [raw], "triggerKind": 1}}),
+    );
+    let actions = actions.as_array().unwrap().clone();
+    assert_eq!(actions.len(), 3);
+    assert_eq!(actions[0]["kind"], "quickfix");
+    assert_eq!(actions[0]["edit"]["changes"][&uri][0]["newText"], "fixed");
+    let resolved = call(&mut manager, Feature::CodeActionResolve, actions[1].clone());
+    assert_eq!(
+        resolved["edit"]["documentChanges"][0]["edits"][0]["newText"],
+        "// resolved\n"
+    );
+    call(
+        &mut manager,
+        Feature::ExecuteCommand,
+        json!({"command": "fake.apply", "arguments": [uri]}),
+    );
+    let mut requests = Vec::new();
+    assert!(wait_until(|| {
+        manager.poll();
+        requests.extend(manager.take_apply_edits());
+        !requests.is_empty()
+    }));
+    let (server, request) = requests.remove(0);
+    assert_eq!(request.label.as_deref(), Some("Fake command"));
+    assert_eq!(request.edit["changes"][&uri][0]["newText"], "// applied\n");
+    manager.respond_apply_edit(&server, request.id, Ok(()));
+    manager.shutdown();
+    std::fs::remove_dir_all(root).unwrap();
+}

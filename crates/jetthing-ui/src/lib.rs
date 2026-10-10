@@ -27,12 +27,14 @@ mod editor_keys;
 mod findbar;
 mod git_log_ui;
 mod icons;
+mod intentions_ui;
 mod keybindings;
 mod keys;
 mod logcat_ui;
 mod lsp_status;
 mod main_menu;
 mod merged_manifest_ui;
+mod navigation_ui;
 mod notifications;
 mod palette;
 mod plugin_ui;
@@ -662,6 +664,13 @@ impl IdeApp {
             self.state.request_git_refresh();
         }
         self.window_focused = focused;
+        if self.dialog.is_none()
+            && !self.palette.open
+            && !ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
+        {
+            navigation_ui::handle_shortcuts(self, ctx);
+            intentions_ui::handle(self, ctx);
+        }
         self.handle_shortcuts(ctx);
         plugin_ui::handle_keybindings(self, ctx);
         self.follow_tool_window_focus(ctx);
@@ -684,6 +693,8 @@ impl IdeApp {
         branches_popup::show_dialog(self, ctx);
         push_dialog::show(self, ctx);
         completion_ui::show(self, ctx);
+        navigation_ui::choices_popup(self, ctx);
+        intentions_ui::popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
         settings_dialog::show(self, ctx);

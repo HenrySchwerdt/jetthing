@@ -22,6 +22,7 @@ mod annotations;
 mod branch_commands;
 mod build_commands;
 pub mod build_info;
+mod code_actions;
 mod completion;
 mod diagnostic_commands;
 pub mod diagnostics;
@@ -31,6 +32,7 @@ mod git_log;
 pub mod keymap_commands;
 mod line_changes;
 mod lsp_commands;
+mod navigation;
 mod plugin_host;
 mod problems;
 mod project_commands;
@@ -57,6 +59,9 @@ pub use plugin_host::{
     PluginHostState, PluginStatusWidget, PluginTab, plugin_dirs, sync_plugin_commands,
     user_plugin_dir,
 };
+mod workspace_edit;
+pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
+pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
 pub use snippet_session::SnippetSession;
 pub use toolchain_commands::ToolchainState;
@@ -69,6 +74,7 @@ pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
 };
 pub use vcs::{DiffTab, DiffViewer, RepaintHook};
+pub use workspace_edit::EditSummary;
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -136,6 +142,10 @@ pub struct IdeState {
     pub build_systems: BuildSystems,
     /// Build system of the open project, detected on open (`build.detect` refreshes it).
     pub detected_build: Option<DetectedBuild>,
+    /// Navigation history and pending/finished navigation requests.
+    pub navigation: NavigationState,
+    /// Quick fixes and intentions at the caret (Alt+Enter).
+    pub code_actions: CodeActionState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -216,6 +226,8 @@ impl IdeState {
         self.invalidate_line_changes();
         self.git_log = GitLogState::default();
         self.refresh_toolchain_resolver();
+        self.navigation = NavigationState::default();
+        self.code_actions = CodeActionState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -573,6 +585,8 @@ impl IdeState {
         let restarted = self.lsp.poll();
         self.poll_completion();
         self.refresh_problems();
+        self.poll_navigation();
+        self.poll_code_actions();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };
@@ -767,6 +781,8 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     remote_commands::register(&mut registry);
     annotations::register(&mut registry);
     worktree_commands::register(&mut registry);
+    navigation::register(&mut registry);
+    code_actions::register(&mut registry);
     registry
         .register(Command::new(
             spec(
