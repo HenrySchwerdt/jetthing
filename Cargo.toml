@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "plugins/*", "xtask"]
-# Manifest-only plugins (no Rust crate).
-exclude = ["plugins/rust", "plugins/hello-lua"]
+# Plugins that are not host crates (manifest-only, Lua, wasm32 guests).
+exclude = ["plugins/rust", "plugins/hello-lua", "plugins/hello-wasm"]
 
 [workspace.package]
 version = "0.0.2"

@@ -8,7 +8,7 @@ use std::{
     process::Command,
 };
 
-const USAGE: &str = "usage: cargo xtask parity [--check] | dist | scenes [--only 01,05] [--out DIR] [--release] | pack-plugin <dir> [output]";
+const USAGE: &str = "usage: cargo xtask parity [--check] | dist | scenes [--only 01,05] [--out DIR] [--release] | pack-plugin <dir> [output] | build-wasm-example";
 
 fn workspace_root() -> PathBuf {
     // Prefer the current directory when it holds the inventory (normal `cargo run`
@@ -36,6 +36,7 @@ fn main() -> Result<()> {
         }
         Some("dist") => dist(),
         Some("scenes") => scenes::run(args.into_iter().skip(1)),
+        Some("build-wasm-example") => build_wasm_example(),
         Some("pack-plugin") => {
             let dir = args
                 .get(1)
@@ -111,6 +112,27 @@ fn dist() -> Result<()> {
     }
     // Forward slashes on every platform so CI scripts can parse the path.
     println!("dist/{name}");
+    Ok(())
+}
+
+/// Rebuilds `plugins/hello-wasm/hello_wasm.wasm` (needs the `wasm32-wasip2` target).
+fn build_wasm_example() -> Result<()> {
+    let dir = Path::new("plugins/hello-wasm");
+    let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+        .args(["build", "--release", "--target", "wasm32-wasip2"])
+        .current_dir(dir)
+        .status()
+        .context("run cargo for the wasm example")?;
+    if !status.success() {
+        bail!(
+            "building the wasm example failed (install the target: rustup target add wasm32-wasip2)"
+        );
+    }
+    fs::copy(
+        dir.join("target/wasm32-wasip2/release/jetthing_plugin_hello_wasm.wasm"),
+        dir.join("hello_wasm.wasm"),
+    )?;
+    println!("{}", dir.join("hello_wasm.wasm").display());
     Ok(())
 }
 

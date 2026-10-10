@@ -15,6 +15,9 @@ Captured under Xvfb 1600×1000, `JETTHING_RENDERER=glow`. The build used
 | `lua-plugin-toolwindow-and-declarative-tab.png` | `plugins/hello-lua`, discovered from the open project's `plugins/` directory: "L" tool window with the immediate-mode view (text input, buttons, properties) and the "Todos (Lua)" editor tab with a declarative view (text input + Add, list toggled by clicking, muted label). Two todos added, one toggled. The status bar shows the Lua status widget ("Lua × 1"); a Lua notification is showing. |
 | `lua-standalone-app-with-tab.png` | `--app dev.jetthing.hello-lua` (installed from `hello-lua.jtplugin`): the app view plus the Todos tab it opened; the status bar shows only this plugin's widget. |
 
+| `wasm-plugin-toolwindow-project-permission.png` | `plugins/hello-wasm` (a 146 KB `wasm32-wasip2` component) in its "W" tool window: declarative view with a name field and Say Hello, statistics, and `List /project` showing the project root read through the WASI preopen granted by `permissions = ["fs.project"]`. The status bar shows "WASM × 1". |
+| `24-plugins-wasm-additional-info.png` | Plugins page listing Rust (bundled), Lua, WASM and declarative plugins; Hello WASM's Additional Info shows kind `wasm` and the permission "Read and write files in the open project". |
+
 Also observed in the same session:
 
 - Uninstall removed `<config>/plugins/com.example.darcula-plus/` and the entry; the status bar said

@@ -19,7 +19,8 @@
 - [x] Plugin API 1: Rust plugins contribute commands, menus, keybindings, settings, tool windows, editor tabs and status widgets; live enable/disable; `--app <id>` standalone mode (`docs/plugins/api.md`)
 - [x] `.jtplugin` install/uninstall without restart and Plugins page (Marketplace/Installed tabs)
 - [x] Lua 5.4 plugins (sandboxed; immediate and declarative views)
-- [ ] WASM component plugins, JetBrains Marketplace browsing and conversion
+- [x] WASM component plugins (wasmtime, WIT world, permission-gated WASI, fuel/memory limits)
+- [ ] JetBrains Marketplace browsing and conversion
 - [x] Revisioned rope-backed text engine with Unicode-safe undo/redo
 - [x] Viewport-native editor that shapes and paints only visible lines
 - [x] Multi-cursor selections, atomic edits, and coalesced primary typing transactions

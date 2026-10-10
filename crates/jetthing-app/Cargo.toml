@@ -12,4 +12,5 @@ example-plugins = ["dep:jetthing-plugin-hello"]
 eframe.workspace = true
 jetthing-plugin-hello = { path = "../../plugins/hello", optional = true }
 jetthing-plugin-lua = { path = "../jetthing-plugin-lua" }
+jetthing-plugin-wasm = { path = "../jetthing-plugin-wasm" }
 jetthing-ui = { path = "../jetthing-ui" }

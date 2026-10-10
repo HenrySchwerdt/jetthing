@@ -16,8 +16,15 @@ pub fn bundled() -> Vec<PluginFactory> {
 }
 
 pub fn plugin_set() -> PluginSet {
+    let mut loaders: Vec<Rc<dyn jetthing_ui::PluginLoader>> =
+        vec![Rc::new(jetthing_plugin_lua::LuaLoader)];
+    match jetthing_plugin_wasm::WasmLoader::new() {
+        Ok(loader) => loaders.push(Rc::new(loader)),
+        // WASM plugins then show as unsupported with this reason in the log.
+        Err(error) => eprintln!("jetthing: WASM plugin runtime unavailable: {error}"),
+    }
     PluginSet {
         bundled: bundled(),
-        loaders: vec![Rc::new(jetthing_plugin_lua::LuaLoader)],
+        loaders,
     }
 }
