@@ -56,11 +56,37 @@ pub fn menu(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         ui.separator();
     }
+    let busy = app.state.remote_busy();
+    if ui
+        .add_enabled(
+            !busy,
+            egui::Button::new("Update Project…").shortcut_text(keys::display("⌘T")),
+        )
+        .clicked()
+    {
+        action = Some(("git.pull", Value::Null));
+    }
     if ui
         .add(egui::Button::new("Commit…").shortcut_text(keys::display("⌘K")))
         .clicked()
     {
         action = Some(("toolwindow.activate.commit", Value::Null));
+    }
+    let mut push = false;
+    if ui
+        .add_enabled(
+            !busy,
+            egui::Button::new("Push…").shortcut_text(keys::display("⇧⌘K")),
+        )
+        .clicked()
+    {
+        push = true;
+    }
+    if ui.add_enabled(!busy, egui::Button::new("Fetch")).clicked() {
+        action = Some(("git.fetch", Value::Null));
+    }
+    if let Some(progress) = &app.state.remote_progress {
+        ui.label(RichText::new(progress).color(theme::TEXT_SECONDARY));
     }
     if ui.button("New Branch…").clicked() {
         dialog = Some(BranchDialog::NewBranch {
@@ -130,8 +156,11 @@ pub fn menu(app: &mut IdeApp, ui: &mut egui::Ui) {
             });
         }
     }
-    if action.is_some() || dialog.is_some() {
+    if action.is_some() || dialog.is_some() || push {
         ui.close();
+    }
+    if push {
+        crate::push_dialog::open(app);
     }
     if let Some(dialog) = dialog {
         app.branch_dialog = Some(dialog);

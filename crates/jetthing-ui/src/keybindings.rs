@@ -30,6 +30,7 @@ pub enum UiAction {
     OpenProject,
     NewFile,
     NewDirectory,
+    Push,
     Exit,
 }
 
@@ -50,6 +51,7 @@ pub fn ui_action(action: &str) -> Option<UiAction> {
         "OpenFile" => UiAction::OpenProject,
         "NewFile" => UiAction::NewFile,
         "NewDir" => UiAction::NewDirectory,
+        "Vcs.Push" => UiAction::Push,
         "Exit" => UiAction::Exit,
         _ => return None,
     })
@@ -168,6 +170,7 @@ impl IdeApp {
             UiAction::GotoLine | UiAction::Find | UiAction::Replace => document,
             UiAction::FindNext | UiAction::FindPrevious => document && !self.find.query.is_empty(),
             UiAction::NewFile | UiAction::NewDirectory => self.state.project.is_some(),
+            UiAction::Push => self.state.git.is_some(),
             _ => true,
         }
     }
@@ -225,6 +228,7 @@ impl IdeApp {
                     });
                 }
             }
+            UiAction::Push => crate::push_dialog::open(self),
             UiAction::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
     }

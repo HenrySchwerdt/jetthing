@@ -17,6 +17,8 @@ Captured on Linux under Xvfb (1600×1000, `JETTHING_RENDERER=glow`,
 | `branches-popup.png` | Click the `master` VCS widget | branches popup (no numbered scene) |
 | `branches-popup-actions.png` | Hover `feature/greeting` | branch submenu |
 | `branches-new-branch.png` | After Checkout of `feature/greeting` (widget and tree updated), New Branch… and type `feature/login`; Enter creates and checks it out | — |
+| `push-dialog.png` | Sample with a bare `origin`; two local commits; Ctrl+Shift+K | Push dialog |
+| `update-project-commit-and-push.png` | Push, then push a change from another clone; Ctrl+T updates the project and the open `App.java` shows the pulled change (`"Hey, "`); an outside edit of `settings.gradle`, Alt+0 shows the Commit window with “Commit and Push…” | Update Project / Commit and Push |
 | `gutter-change-markers.png` | Open `App.java` with a modified line (6), an inserted comment (11) and a deleted `import` (wedge above 3) | editor gutter (no numbered scene) |
 | `gutter-change-popup.png` | Click the blue marker on line 6 | gutter change popup |
 | `gutter-rollback.png` | Click “Rollback” in the popup: line 6 is back to the HEAD text and its marker is gone | — |

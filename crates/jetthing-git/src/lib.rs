@@ -7,6 +7,7 @@ use thiserror::Error;
 mod branch;
 mod diff;
 mod log;
+mod remote;
 mod watcher;
 pub use branch::{
     PendingOperation, abort_operation, checkout, create_branch, delete_branch, merge,
@@ -17,6 +18,7 @@ pub use log::{
     Branches, CommitDetails, CommitFile, CommitInfo, GraphEdge, GraphRow, LocalBranch, LogQuery,
     branches, commit_details, graph, log,
 };
+pub use remote::{PushPlan, RemoteEvent, RemoteJob, RemoteOperation, push_plan, remotes};
 pub use watcher::{Notify, StatusWatcher};
 
 #[derive(Debug, Error)]

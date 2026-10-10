@@ -109,7 +109,7 @@ impl RepaintHook {
         }
     }
 
-    fn notifier(&self) -> Notify {
+    pub(crate) fn notifier(&self) -> Notify {
         let slot = self.0.clone();
         Arc::new(move || {
             if let Some(notify) = slot.lock().ok().and_then(|slot| slot.clone()) {
