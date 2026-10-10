@@ -4,6 +4,7 @@
 
 mod captures;
 pub mod highlight;
+mod injection;
 pub mod registry;
 pub mod scheme;
 pub mod syntax;
@@ -290,6 +291,18 @@ mod tests {
             ("a.json", "{\"k\": 1}", "1", "DEFAULT_NUMBER"),
             ("a.yaml", "k: true\n", "true", "DEFAULT_KEYWORD"),
             ("a.py", "import os\n", "import", "DEFAULT_KEYWORD"),
+            (
+                "build.gradle",
+                "plugins {\n    id 'java'\n}\ndef x = 1\n",
+                "'java'",
+                "DEFAULT_STRING",
+            ),
+            (
+                "build.gradle",
+                "plugins {\n    id 'java'\n}\ndef x = 1\n",
+                "def",
+                "DEFAULT_KEYWORD",
+            ),
             ("a.py", "x = None\n", "None", "DEFAULT_KEYWORD"),
             ("lib.rs", "fn f(x: u32) {}\n", "u32", "DEFAULT_KEYWORD"),
             ("A.java", "class A { int x; }\n", "int", "DEFAULT_KEYWORD"),
@@ -341,6 +354,57 @@ mod tests {
         for (path, source, needle, expected) in cases {
             let analysis = analyze(Path::new(path), source);
             assert!(analysis.language.is_some(), "{path} not detected");
+            assert_eq!(
+                key_of(&analysis, source, needle),
+                Some(*expected),
+                "{path}: `{needle}` in {:?}",
+                analysis.highlights
+            );
+        }
+    }
+
+    #[test]
+    fn injected_languages_are_highlighted() {
+        let cases: &[(&str, &str, &str, &str)] = &[
+            (
+                "README.md",
+                "# T\n\n```kotlin\nfun main() {}\n```\n",
+                "fun",
+                "DEFAULT_KEYWORD",
+            ),
+            (
+                "README.md",
+                "# T\n\n```java\nclass A {}\n```\n",
+                "class",
+                "DEFAULT_KEYWORD",
+            ),
+            (
+                "README.md",
+                "Use `code` and [link](http://x).\n",
+                "`code`",
+                "DEFAULT_STRING",
+            ),
+            (
+                "a.html",
+                "<script>let x = 1;</script>\n",
+                "let",
+                "DEFAULT_KEYWORD",
+            ),
+            (
+                "a.html",
+                "<style>a { color: red; }</style>\n",
+                "color",
+                "DEFAULT_INSTANCE_FIELD",
+            ),
+            (
+                "main.rs",
+                "fn main() { println!(\"hi {}\", 1); }\n",
+                "\"hi",
+                "DEFAULT_STRING",
+            ),
+        ];
+        for (path, source, needle, expected) in cases {
+            let analysis = analyze(Path::new(path), source);
             assert_eq!(
                 key_of(&analysis, source, needle),
                 Some(*expected),

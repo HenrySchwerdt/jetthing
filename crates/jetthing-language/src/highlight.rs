@@ -9,6 +9,7 @@
 //! semantic tokens) are combined with [`HighlightLayer::overlay`].
 
 use crate::captures;
+use crate::injection;
 use crate::registry::{LANGUAGES, LanguageSpec};
 use jetthing_text::ByteEdit;
 use std::ops::Range;
@@ -299,21 +300,52 @@ struct RawCapture {
     punctuation: bool,
 }
 
-/// Highlights the bytes in `range` of `source`, which `tree` was parsed from.
+/// Highlights the bytes in `range` of `source`, which `tree` was parsed from,
+/// including injected languages.
 pub fn highlight(
     spec: &'static LanguageSpec,
     tree: &Tree,
     source: &str,
     range: Range<usize>,
 ) -> Result<HighlightLayer, QueryError> {
+    highlight_at_depth(spec, tree, source, range, 0)
+}
+
+fn highlight_at_depth(
+    spec: &'static LanguageSpec,
+    tree: &Tree,
+    source: &str,
+    range: Range<usize>,
+    depth: usize,
+) -> Result<HighlightLayer, QueryError> {
     let raw = collect(spec, tree, source, range.clone())?;
-    Ok(flatten(raw, range))
+    let mut layer = flatten(raw, range.clone());
+    if depth >= injection::MAX_DEPTH {
+        return Ok(layer);
+    }
+    for injection in injection::injections(spec, tree, source, range.clone()) {
+        let extent = injection.extent();
+        let clip = range.start.max(extent.start)..range.end.min(extent.end);
+        if clip.start >= clip.end {
+            continue;
+        }
+        let Some(injected) = injection.parse(source) else {
+            continue;
+        };
+        // Injected languages without highlight queries contribute nothing.
+        if let Ok(injected) = highlight_at_depth(injection.spec, &injected, source, clip, depth + 1)
+        {
+            layer = layer.overlay(&injected);
+        }
+    }
+    Ok(layer)
 }
 
 /// Like [`highlight`], but first grows `range` until it covers every capture
-/// intersecting it, so captures whose key depends on their whole node (e.g. a
-/// comment turned into a doc comment) are recomputed entirely. Returns the
-/// grown range and its highlights; used for incremental re-highlighting.
+/// and injected region intersecting it, so captures whose key depends on
+/// their whole node (e.g. a comment turned into a doc comment) are recomputed
+/// entirely. Returns the grown range and its highlights; used for incremental
+/// re-highlighting.
 pub fn highlight_covering(
     spec: &'static LanguageSpec,
     tree: &Tree,
@@ -322,14 +354,31 @@ pub fn highlight_covering(
 ) -> Result<(Range<usize>, HighlightLayer), QueryError> {
     loop {
         let raw = collect(spec, tree, source, range.clone())?;
-        let covered = raw
+        let grow = |acc: Range<usize>, other: Range<usize>| {
+            if other.start < acc.end && other.end > acc.start {
+                acc.start.min(other.start)..acc.end.max(other.end)
+            } else {
+                acc
+            }
+        };
+        let mut covered = raw.iter().fold(range.clone(), |acc, capture| {
+            grow(acc, capture.range.clone())
+        });
+        // An injection that merely touches the range may have gained or lost
+        // text at that edge, which changes its whole injected parse.
+        let touching = range.start.saturating_sub(1)..(range.end + 1).min(source.len());
+        covered = injection::injections(spec, tree, source, touching)
             .iter()
-            .filter(|capture| capture.range.start < range.end && capture.range.end > range.start)
-            .fold(range.clone(), |acc, capture| {
-                acc.start.min(capture.range.start)..acc.end.max(capture.range.end)
+            .fold(covered, |acc, injection| {
+                let extent = injection.extent();
+                if extent.start <= acc.end && extent.end >= acc.start {
+                    acc.start.min(extent.start)..acc.end.max(extent.end)
+                } else {
+                    acc
+                }
             });
         if covered == range {
-            return Ok((range.clone(), flatten(raw, range)));
+            return Ok((range.clone(), highlight(spec, tree, source, range)?));
         }
         range = covered;
     }

@@ -113,6 +113,19 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
+        id: "groovy",
+        name: "Groovy",
+        extensions: &["groovy", "gradle", "gvy", "gy", "gsh"],
+        file_names: &["Jenkinsfile"],
+        shebangs: &["groovy"],
+        grammar: tree_sitter_groovy::LANGUAGE,
+        highlights: &[tree_sitter_groovy::HIGHLIGHTS_QUERY],
+        injections: None,
+        locals: None,
+        tags: None,
+        capture_keys: NO_OVERRIDES,
+    },
+    LanguageSpec {
         id: "xml",
         name: "XML",
         extensions: &["xml", "xsd", "xsl", "xslt", "svg", "plist", "iml"],
@@ -173,6 +186,20 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         grammar: tree_sitter_md::LANGUAGE,
         highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
         injections: Some(tree_sitter_md::INJECTION_QUERY_BLOCK),
+        locals: None,
+        tags: None,
+        capture_keys: NO_OVERRIDES,
+    },
+    LanguageSpec {
+        // Only reached through Markdown's `(inline) @injection.content`.
+        id: "markdown_inline",
+        name: "Markdown",
+        extensions: &[],
+        file_names: &[],
+        shebangs: &[],
+        grammar: tree_sitter_md::INLINE_LANGUAGE,
+        highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_INLINE],
+        injections: Some(tree_sitter_md::INJECTION_QUERY_INLINE),
         locals: None,
         tags: None,
         capture_keys: NO_OVERRIDES,
@@ -371,7 +398,7 @@ pub fn by_id(id: &str) -> Option<&'static LanguageSpec> {
     let id = id.trim().to_ascii_lowercase();
     let id = match id.as_str() {
         "rs" => "rust",
-        "kt" | "kts" => "kotlin",
+        "kt" | "kts" | "gradle.kts" => "kotlin",
         "js" | "jsx" | "node" => "javascript",
         "ts" => "typescript",
         "py" | "python3" => "python",
@@ -446,6 +473,8 @@ mod tests {
         assert_eq!(id("defs.bzl", ""), Some("starlark"));
         assert_eq!(id("Cargo.lock", ""), Some("toml"));
         assert_eq!(id("gradlew", ""), Some("bash"));
+        assert_eq!(id("app/build.gradle", ""), Some("groovy"));
+        assert_eq!(id("Jenkinsfile", ""), Some("groovy"));
         assert_eq!(
             id("tool", "#!/usr/bin/env python3\nprint(1)\n"),
             Some("python")

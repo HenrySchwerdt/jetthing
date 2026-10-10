@@ -56,9 +56,31 @@ single-colour text (`docs/parity/evidence/jetthing/*/04-editor-project-tree.png`
   character 5–7 ms, of which about 4.3 ms is the Tree-sitter incremental reparse and the rest
   highlight splicing. One keystroke re-highlights about 80 bytes.
 
+## Injections
+
+`injections.scm` from the grammar crates drives injected highlighting
+(`jetthing-language::injection`). It follows the `tree-sitter-highlight` conventions:
+`@injection.content`, `@injection.language` or the `injection.language` property,
+`injection.combined`, `injection.include-children`, and legacy captures named after the language.
+Content is parsed with `Parser::set_included_ranges` (named children are excluded unless
+`include-children` is set), highlighted recursively up to depth 4, and overlaid on the host
+highlights; gaps keep the host capture. Fence info strings resolve through `registry::by_id`
+aliases (`kt`, `sh`, `c++`, …). Languages without a grammar (regex, jsdoc, latex) are skipped.
+During incremental re-highlighting, a range grows over every injection that overlaps or touches it,
+because an injection that gains or loses text at an edge gets a different injected parse. The
+property test includes Markdown and HTML samples.
+
+- `syntax-highlighting/injections-markdown-readme.png`: heading, inline code spans, a link and
+  autolink (Markdown inline grammar injected into `inline` nodes), a fenced `kotlin` block
+  highlighted by the Kotlin grammar and a fenced `xml` block by the XML grammar. Still differs
+  from IntelliJ: `**bold**` and `*italic*` are not rendered bold or italic, because the scheme
+  data has no Markdown emphasis keys.
+- `syntax-highlighting/groovy-build-gradle.png`: Groovy `build.gradle` (`dekobon-tree-sitter-groovy`)
+  with strings, numbers, comments, `def` and GString interpolation.
+
 ## Languages
 
-Rust, Java, Kotlin (`tree-sitter-kotlin-sg`), XML, JSON, TOML, YAML, Markdown (block grammar),
+Rust, Java, Kotlin (`tree-sitter-kotlin-sg`), Groovy (`*.gradle`, `*.groovy`, `Jenkinsfile`), XML, JSON, TOML, YAML, Markdown (block grammar, with the inline grammar injected),
 Starlark (`BUILD`, `BUILD.bazel`, `WORKSPACE`, `MODULE.bazel`, `*.bzl`), Python, JavaScript/JSX,
 TypeScript, TSX, Go, C, C++, Bash (including `gradlew` and shebangs), HTML, CSS and Properties.
 

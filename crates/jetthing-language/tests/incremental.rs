@@ -24,14 +24,51 @@ const SAMPLES: &[(&str, &str)] = &[
         "load(\"@r//:defs.bzl\", \"x\")\n\n# c\njava_binary(\n    name = \"app\",\n    srcs = [\"A.java\"],\n)\n",
     ),
     (
+        "README.md",
+        "# Title\n\nSome *text* with `code`.\n\n```kotlin\nfun main() { println(\"x\") }\n```\n\n- item\n",
+    ),
+    (
+        "index.html",
+        "<html>\n<script>let x = `t`;</script>\n<style>a { color: red; }</style>\n<p class=\"c\">hi</p>\n</html>\n",
+    ),
+    (
         "layout.xml",
         "<?xml version=\"1.0\"?>\n<a b=\"c\">\n  <!-- c -->\n  <d e='f'/>text &amp;\n</a>\n",
     ),
 ];
 
 const FRAGMENTS: &[&str] = &[
-    "", "x", " ", "\n", "{", "}", "(", ")", "\"", "'", "/*", "*/", "//", "<", ">", "fun ",
-    "class ", "return ", "42", "ä", "🦀", ";", "=", "\"s\"", "/** d */", "#", "    ",
+    "",
+    "x",
+    " ",
+    "\n",
+    "{",
+    "}",
+    "(",
+    ")",
+    "\"",
+    "'",
+    "/*",
+    "*/",
+    "//",
+    "<",
+    ">",
+    "fun ",
+    "class ",
+    "return ",
+    "42",
+    "```",
+    "*",
+    "`",
+    "</script>",
+    "ä",
+    "🦀",
+    ";",
+    "=",
+    "\"s\"",
+    "/** d */",
+    "#",
+    "    ",
 ];
 
 #[derive(Debug, Clone)]
