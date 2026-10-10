@@ -125,3 +125,111 @@ pub fn taplo() -> GithubReleaseProvider {
         })
     })
 }
+
+/// What a project of one language needs, detected from marker files.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ProjectRequirement {
+    /// Display name ("Java", "Rust", "Bazel").
+    pub language: &'static str,
+    /// Component ids, in setup order.
+    pub components: &'static [&'static str],
+    /// File extensions whose editors show the "missing toolchain" bar.
+    pub extensions: &'static [&'static str],
+    /// Exact file names that also show it (`BUILD`).
+    pub file_names: &'static [&'static str],
+}
+
+impl ProjectRequirement {
+    /// Whether an editor for `path` belongs to this requirement's language.
+    pub fn applies_to(&self, path: &std::path::Path) -> bool {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        self.file_names.contains(&name)
+            || path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| self.extensions.iter().any(|e| e.eq_ignore_ascii_case(ext)))
+    }
+}
+
+const REQUIREMENTS: &[(&[&str], ProjectRequirement)] = &[
+    (
+        &[
+            "build.gradle",
+            "build.gradle.kts",
+            "settings.gradle",
+            "settings.gradle.kts",
+            "pom.xml",
+        ],
+        ProjectRequirement {
+            language: "Java",
+            components: &["jdk", "jdtls"],
+            extensions: &["java", "gradle", "kts", "kt"],
+            file_names: &["pom.xml"],
+        },
+    ),
+    (
+        &["Cargo.toml"],
+        ProjectRequirement {
+            language: "Rust",
+            components: &["rust-analyzer"],
+            extensions: &["rs"],
+            file_names: &["Cargo.toml"],
+        },
+    ),
+    (
+        &[
+            "MODULE.bazel",
+            "WORKSPACE",
+            "WORKSPACE.bazel",
+            ".bazelversion",
+        ],
+        ProjectRequirement {
+            language: "Bazel",
+            components: &["bazelisk"],
+            extensions: &["bzl", "bazel"],
+            file_names: &["BUILD", "WORKSPACE", "MODULE.bazel", ".bazelversion"],
+        },
+    ),
+];
+
+/// Requirements of the project at `root`, from marker files in the root.
+pub fn project_requirements(root: &std::path::Path) -> Vec<ProjectRequirement> {
+    REQUIREMENTS
+        .iter()
+        .filter(|(markers, _)| markers.iter().any(|marker| root.join(marker).exists()))
+        .map(|(_, requirement)| requirement.clone())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn detects_project_requirements_from_markers() {
+        let dir = std::env::temp_dir().join(format!("jetthing-reqs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(project_requirements(&dir).is_empty());
+        std::fs::write(dir.join("settings.gradle.kts"), "").unwrap();
+        std::fs::write(dir.join("MODULE.bazel"), "").unwrap();
+        let found = project_requirements(&dir);
+        let languages: Vec<&str> = found.iter().map(|r| r.language).collect();
+        assert_eq!(languages, ["Java", "Bazel"]);
+        assert!(found[0].applies_to(Path::new("src/App.java")));
+        assert!(!found[0].applies_to(Path::new("README.md")));
+        assert!(found[1].applies_to(Path::new("pkg/BUILD")));
+        // Every required component is in the built-in catalog.
+        let catalog = builtin_catalog();
+        for (_, requirement) in REQUIREMENTS {
+            for component in requirement.components {
+                assert!(catalog.get(component).is_some(), "{component}");
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
