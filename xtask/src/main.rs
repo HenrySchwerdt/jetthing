@@ -70,12 +70,6 @@ fn dist() -> Result<()> {
     Ok(())
 }
 
-const PARITY_DOCS: [&str; 4] = [
-    "docs/parity/platform.md",
-    "docs/parity/vcs.md",
-    "docs/parity/android-studio.md",
-    "docs/parity/nexus-http.md",
-];
 const STATUSES: [&str; 5] = ["Missing", "Planned", "Partial", "Implemented", "Verified"];
 
 /// Validates the parity tables and, unless `check` is set, rewrites the dashboard.
@@ -86,7 +80,18 @@ fn parity(check: bool) -> Result<()> {
     let mut totals = [0usize; STATUSES.len()];
     let mut seen = std::collections::HashMap::new();
     let mut problems = Vec::new();
-    for doc in PARITY_DOCS {
+    // Every inventory in docs/parity/ counts, so new plugins only add a file.
+    let mut docs: Vec<String> = fs::read_dir("docs/parity")
+        .context("read docs/parity")?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| {
+            path.extension().is_some_and(|ext| ext == "md")
+                && path.file_name().is_some_and(|name| name != "dashboard.md")
+        })
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect();
+    docs.sort();
+    for doc in &docs {
         let text = fs::read_to_string(doc).with_context(|| format!("read {doc}"))?;
         for (number, line) in text.lines().enumerate() {
             let cells: Vec<&str> = line.split('|').map(str::trim).collect();

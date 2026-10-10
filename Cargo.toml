@@ -1,9 +1,15 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "plugins/*", "plugins/nexus-http/core", "xtask"]
+members = [
+    "crates/*",
+    "plugins/*",
+    "plugins/nexus-http/core",
+    "plugins/mongo-raabit/core",
+    "xtask",
+]
 # Manifest-only plugins (no Rust crate) and plugin folders whose crates live in
 # subdirectories.
-exclude = ["plugins/rust", "plugins/nexus-http"]
+exclude = ["plugins/rust", "plugins/nexus-http", "plugins/mongo-raabit"]
 
 [workspace.package]
 version = "0.0.2"
