@@ -15,6 +15,7 @@ pub struct Workspace {
     pub expanded_dirs: Vec<PathBuf>,
     pub left_tool_window: Option<String>,
     pub bottom_tool_window: Option<String>,
+    pub bottom_tool_height: Option<u32>,
     pub recent_files: Vec<PathBuf>,
     pub pinned_files: Vec<PathBuf>,
 }
@@ -195,6 +196,7 @@ impl IdeState {
                 .tool_windows
                 .visible(Anchor::Bottom)
                 .map(|window| window.id().to_owned()),
+            bottom_tool_height: self.tool_windows.bottom_height().map(|h| h as u32),
             recent_files: self.recent_files.clone(),
             pinned_files: self.tabs.pinned.iter().cloned().collect(),
         }
@@ -251,6 +253,9 @@ impl IdeState {
         }
         self.recent_files = recent;
         self.tool_windows.hide_all();
+        if let Some(height) = workspace.bottom_tool_height {
+            self.tool_windows.set_bottom_height(height as f32);
+        }
         for id in [&workspace.left_tool_window, &workspace.bottom_tool_window]
             .into_iter()
             .flatten()
@@ -511,6 +516,7 @@ mod tests {
         commands
             .execute("toolwindow.activate.problems", &mut state, Value::Null)
             .unwrap();
+        state.tool_windows.set_bottom_height(420.0);
         commands
             .execute("workspace.save", &mut state, Value::Null)
             .unwrap();
@@ -524,6 +530,7 @@ mod tests {
         assert_eq!(reopened.recent_files[0], Path::new("src/a.rs"));
         assert!(reopened.expanded_dirs.contains(Path::new("src")));
         assert!(reopened.tool_windows.is_visible(ToolWindow::Problems));
+        assert_eq!(reopened.tool_windows.bottom_height(), Some(420.0));
         assert!(reopened.tool_windows.is_visible(ToolWindow::Project));
         // The workspace directory itself stays out of the Project tree.
         assert!(
