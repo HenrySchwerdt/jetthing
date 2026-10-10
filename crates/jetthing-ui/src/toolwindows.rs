@@ -229,7 +229,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
             x += 16.0;
             let name = IdeApp::file_name(path);
             let icon = if *is_dir {
-                Icon::Folder
+                Icon::for_folder(path)
             } else {
                 Icon::for_file(&name)
             };
