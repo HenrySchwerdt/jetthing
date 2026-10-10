@@ -6,6 +6,7 @@ mod captures;
 pub mod highlight;
 pub mod registry;
 pub mod scheme;
+pub mod symbols;
 
 pub use captures::capture_key;
 pub use highlight::{HighlightLayer, HighlightSpan, QueryError};

@@ -31,6 +31,7 @@ mod git_log;
 pub mod keymap_commands;
 mod line_changes;
 mod lsp_commands;
+pub mod navigation;
 mod new_class;
 mod plugin_host;
 mod problems;
@@ -158,6 +159,8 @@ pub struct IdeState {
     pub keymap: keymap_commands::KeymapState,
     /// Settings page the UI should open (set by `settings.open`, taken by the UI).
     pub settings_request: Option<String>,
+    /// Search Everywhere / Recent Locations / Switcher state.
+    pub navigation: navigation::NavigationState,
     pub android: AndroidState,
     /// Verified installer to run on quit (MSI/DMG/.deb installations).
     update_installer: Option<(PathBuf, jetthing_update::InstallKind)>,
@@ -223,6 +226,7 @@ impl IdeState {
         self.refresh_toolchain_resolver();
         self.expanded_dirs.clear();
         self.recent_files.clear();
+        self.navigation = navigation::NavigationState::default();
         self.tool_windows = ToolWindowLayout::default();
         self.tool_windows.show(ToolWindow::Project);
         self.status = format!("Opened {}", project.root().display());
@@ -761,6 +765,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     diagnostic_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     settings_commands::register(&mut registry);
+    navigation::register(&mut registry);
     keymap_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
     vcs::register(&mut registry);

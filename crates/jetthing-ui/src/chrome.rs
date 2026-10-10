@@ -76,7 +76,7 @@ pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
                 )
                 .clicked()
                 {
-                    app.palette.show();
+                    app.dispatch("navigate.searchEverywhere", serde_json::Value::Null);
                 }
                 ui.add_space(6.0);
                 run_widget(app, ui);

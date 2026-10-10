@@ -5,7 +5,7 @@
 //! run either a typed command (`jetthing_core::keymap_commands::ACTION_COMMANDS`) or one
 //! of the workbench popups below.
 
-use crate::{IdeApp, palette, popups, toolwindows};
+use crate::{IdeApp, popups, toolwindows};
 use eframe::egui;
 use jetthing_core::ToolWindow;
 use jetthing_core::keymap_commands::{BindingScope, command_for_action};
@@ -16,10 +16,6 @@ use std::path::PathBuf;
 /// Actions that open workbench popups rather than run engine commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiAction {
-    SearchEverywhere,
-    GotoAction,
-    GotoFile,
-    RecentFiles,
     GotoLine,
     Find,
     Replace,
@@ -39,10 +35,6 @@ pub enum UiAction {
 
 pub fn ui_action(action: &str) -> Option<UiAction> {
     Some(match action {
-        "SearchEverywhere" => UiAction::SearchEverywhere,
-        "GotoAction" => UiAction::GotoAction,
-        "GotoFile" => UiAction::GotoFile,
-        "RecentFiles" => UiAction::RecentFiles,
         "GotoLine" => UiAction::GotoLine,
         "Find" => UiAction::Find,
         "Replace" => UiAction::Replace,
@@ -203,13 +195,6 @@ impl IdeApp {
 
     pub(crate) fn run_ui_action(&mut self, action: UiAction, ctx: &egui::Context) {
         match action {
-            UiAction::SearchEverywhere => self.palette.show(),
-            UiAction::GotoAction => self.palette.show_tab(palette::Tab::Actions),
-            UiAction::GotoFile => self.palette.show_tab(palette::Tab::Files),
-            UiAction::RecentFiles => self.open_dialog(popups::Dialog::Recent {
-                query: String::new(),
-                selected: usize::from(self.state.recent_files.len() > 1),
-            }),
             UiAction::GotoLine => self.open_dialog(popups::Dialog::GotoLine {
                 input: String::new(),
             }),
@@ -296,7 +281,11 @@ impl IdeApp {
             {
                 continue;
             }
-            let params = serde_json::from_str(binding.params).unwrap_or(Value::Null);
+            let mut params = serde_json::from_str(binding.params).unwrap_or(Value::Null);
+            if binding.command == "navigate.switcher" {
+                // Ctrl+Shift+Tab walks the Switcher backwards.
+                params = serde_json::json!({"backward": ctx.input(|input| input.modifiers.shift)});
+            }
             if binding.command == "editor.close" && diff_tab {
                 self.dispatch("diff.close", Value::Null);
             } else if binding.command == "run.project" && self.state.android.project.is_some() {

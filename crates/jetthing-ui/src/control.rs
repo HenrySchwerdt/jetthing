@@ -568,7 +568,14 @@ mod tests {
             };
             let _ = ctx.run(input, |ctx| app.detect_double_shift(ctx));
         }
-        assert!(app.palette.open);
+        assert_eq!(
+            app.state.navigation.request,
+            Some(
+                jetthing_core::navigation::NavigationRequest::SearchEverywhere(
+                    jetthing_core::navigation::SearchTab::All
+                )
+            )
+        );
     }
 
     #[test]
@@ -588,7 +595,8 @@ mod tests {
         std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
         let mut app =
             IdeApp::with_update_check(Some(dir.clone()), vec![PathBuf::from("src/main.rs")], false);
-        app.palette.show();
+        app.palette
+            .show_tab(jetthing_core::navigation::SearchTab::All);
         let ctx = egui::Context::default();
         let response = app.control_execute(
             &ctx,
