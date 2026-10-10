@@ -5,7 +5,6 @@ use crate::widgets::{self, chrome_frame};
 use crate::{IdeApp, keys, theme};
 use eframe::egui::{self, Color32, Rect, Sense, vec2};
 use jetthing_core::{Anchor, ToolWindow};
-use jetthing_lsp::ServerState;
 use serde_json::{Value, json};
 
 pub const TOOLBAR_HEIGHT: f32 = 40.0;
@@ -586,25 +585,7 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let secondary = theme::TEXT_SECONDARY;
-                    if let Some(lsp) = &app.state.lsp {
-                        let (label, color) = match lsp.state() {
-                            ServerState::Starting => ("rust-analyzer: starting", theme::TEXT_INFO),
-                            ServerState::Ready => ("rust-analyzer", secondary),
-                            ServerState::Exited => ("rust-analyzer: exited", theme::ERROR),
-                        };
-                        widgets::flat_widget(ui, None, label, font.clone(), color, false, 22.0);
-                    } else if let Some(error) = &app.state.lsp_error {
-                        widgets::flat_widget(
-                            ui,
-                            Some((Icon::Warning, theme::WARNING)),
-                            "No language server",
-                            font.clone(),
-                            secondary,
-                            false,
-                            22.0,
-                        )
-                        .on_hover_text(error);
-                    }
+                    crate::lsp_status::status_widget(app, ui, font.clone());
                     let active = app
                         .state
                         .active_document

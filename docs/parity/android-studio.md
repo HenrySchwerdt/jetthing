@@ -8,7 +8,7 @@ The installed application was inspected read-only and is not a runtime dependenc
 |---|---|---|---|---|---|
 | AND-001 | Detect Android SDK | Implemented | `android.sdk.detect`, `android.sdk.manager`, `android.sdk.setLocation` | `jetthing-android` discovery-order/inventory/properties tests, core command tests | IDE setting › `local.properties` `sdk.dir` › `ANDROID_HOME` › `ANDROID_SDK_ROOT` › per-OS default; installed packages from `package.xml`/`source.properties`; SDK page lists installed packages only (no remote repository, install or update); `evidence/android-sdk.md` |
 | AND-002 | Detect Gradle Android project | Partial | `android.project.detect` | Studio-template (Kotlin DSL + version catalog) and legacy Groovy fixtures | modules from `settings.gradle(.kts)`, AGP plugin ids or catalog aliases, AGP version, namespace/applicationId/SDK levels when literal, manifest launcher activity; Gradle scripts are not evaluated (no sync model, flavors or variants); `evidence/android-sdk.md` |
-| AND-003 | Kotlin/Java editing | Missing | — | — | editor is currently plain text |
+| AND-003 | Kotlin/Java editing | Partial | `language.complete` | registry mapping tests, ignored real jdtls test | Java diagnostics and completion through jdtls (`evidence/lsp/09-java-completion-jdtls.png`); Kotlin through kotlin-lsp/kotlin-language-server when installed (not yet verified); Android-specific completion and highlighting pending |
 | AND-004 | Device listing | Missing | `android.devices.list` | — | ADB available, adapter pending |
 | AND-005 | Emulator launch | Missing | `android.emulator.start` | — | emulator available, adapter pending |
 | AND-006 | Gradle build | Missing | `build.run` | — | universal runner pending |
