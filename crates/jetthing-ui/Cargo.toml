@@ -21,6 +21,8 @@ jetthing-runner = { path = "../jetthing-runner" }
 jetthing-settings = { path = "../jetthing-settings" }
 jetthing-text = { path = "../jetthing-text" }
 jetthing-terminal = { path = "../jetthing-terminal" }
+pollster = "0.4"
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 serde.workspace = true
 serde_json.workspace = true
 

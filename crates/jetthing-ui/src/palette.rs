@@ -332,7 +332,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                 icons::paint(
                                     ui.painter(),
                                     icon_rect,
-                                    Icon::for_file(&name),
+                                    app.file_icon(path),
                                     *icons::ICON,
                                 );
                                 let x = crate::widgets::row_text(

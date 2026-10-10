@@ -574,11 +574,19 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                     );
                 }
                 let last = crumbs.len().saturating_sub(1);
+                let file_icon = app
+                    .state
+                    .active_document
+                    .and_then(|index| app.state.documents.get(index))
+                    .map(|document| app.file_icon(&document.path));
                 for (index, crumb) in crumbs.iter().enumerate() {
                     let icon = if index == 0 {
                         Some((Icon::Project, *theme::TEXT_SECONDARY))
                     } else if index == last {
-                        Some((Icon::for_file(crumb), *icons::ICON))
+                        Some((
+                            file_icon.unwrap_or_else(|| Icon::for_file(crumb)),
+                            *icons::ICON,
+                        ))
                     } else {
                         None
                     };
