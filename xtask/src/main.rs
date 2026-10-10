@@ -66,10 +66,19 @@ fn dist() -> Result<()> {
 }
 
 fn parity(check: bool) -> Result<()> {
-    let docs = ["docs/parity/platform.md", "docs/parity/android-studio.md"];
+    // Every inventory in docs/parity/ counts, so new plugins only add a file.
+    let mut docs: Vec<_> = fs::read_dir("docs/parity")
+        .context("read docs/parity")?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| {
+            path.extension().is_some_and(|ext| ext == "md")
+                && path.file_name().is_some_and(|name| name != "dashboard.md")
+        })
+        .collect();
+    docs.sort();
     let mut totals = [0usize; 5];
-    for doc in docs {
-        let text = fs::read_to_string(doc).with_context(|| format!("read {doc}"))?;
+    for doc in &docs {
+        let text = fs::read_to_string(doc).with_context(|| format!("read {}", doc.display()))?;
         for (i, status) in ["Missing", "Planned", "Partial", "Implemented", "Verified"]
             .iter()
             .enumerate()
