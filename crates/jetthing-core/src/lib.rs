@@ -16,8 +16,10 @@ mod editor_commands;
 mod lsp_commands;
 mod project_commands;
 mod terminal_commands;
+mod toolchain_commands;
 mod toolwindow;
 mod update_commands;
+pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -48,6 +50,8 @@ pub struct IdeState {
     pub runner: TaskService,
     /// Language servers of the open project, started lazily per language.
     pub lsp: LspManager,
+    /// Toolchain provisioning: discovery, pins and background installs.
+    pub toolchains: ToolchainState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -101,6 +105,7 @@ impl IdeState {
         self.plugins.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
         self.lsp.set_project(Some(project.root()));
+        self.toolchains.reload(Some(project.root()));
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -589,6 +594,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     update_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
+    toolchain_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(

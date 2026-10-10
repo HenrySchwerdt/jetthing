@@ -626,6 +626,7 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let secondary = theme::TEXT_SECONDARY;
                     crate::lsp_status::status_widget(app, ui, font.clone());
+                    crate::toolchain_status::status_widget(app, ui, font.clone());
                     let active = app
                         .state
                         .active_document
