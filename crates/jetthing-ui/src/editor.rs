@@ -5,7 +5,7 @@ use crate::widgets::island_frame;
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, Sense, Stroke, vec2};
 use jetthing_core::Document;
-use jetthing_language::{LanguageAnalysis, SyntaxKind};
+use jetthing_language::LanguageAnalysis;
 use jetthing_text::Selection;
 use jetthing_text::ops;
 use serde_json::{Value, json};
@@ -247,19 +247,6 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     }
 }
 
-fn syntax_color(kind: SyntaxKind) -> Color32 {
-    use theme::editor;
-    match kind {
-        SyntaxKind::Keyword => editor::KEYWORD,
-        SyntaxKind::String => editor::STRING,
-        SyntaxKind::Comment => editor::COMMENT,
-        SyntaxKind::Number => editor::NUMBER,
-        SyntaxKind::Type => editor::TEXT,
-        SyntaxKind::Function => editor::FUNCTION,
-        SyntaxKind::Macro => editor::FUNCTION,
-    }
-}
-
 fn highlighted_line_job(
     text: &str,
     line_start_byte: usize,
@@ -273,13 +260,8 @@ fn highlighted_line_job(
     };
     let line_end_byte = line_start_byte + text.len();
     let mut cursor = line_start_byte;
-    for span in analysis
-        .spans
-        .iter()
-        .filter(|span| span.start_byte < line_end_byte && span.end_byte > line_start_byte)
-    {
-        let start = span.start_byte.max(line_start_byte);
-        let end = span.end_byte.min(line_end_byte);
+    for span in analysis.highlights.in_range(line_start_byte..line_end_byte) {
+        let (start, end) = (span.start_byte, span.end_byte);
         if start < cursor
             || end < start
             || !text.is_char_boundary(start - line_start_byte)
@@ -293,32 +275,11 @@ fn highlighted_line_job(
             base.clone(),
         );
         let fragment = &text[start - line_start_byte..end - line_start_byte];
-        let doc = span.kind == SyntaxKind::Comment && is_doc_comment(fragment);
-        job.append(
-            fragment,
-            0.0,
-            egui::TextFormat {
-                color: if doc {
-                    theme::editor::DOC_COMMENT
-                } else {
-                    syntax_color(span.kind)
-                },
-                italics: doc,
-                ..base.clone()
-            },
-        );
+        job.append(fragment, 0.0, crate::syntax::text_format(span.key, &base));
         cursor = end;
     }
     job.append(&text[cursor - line_start_byte..], 0.0, base);
     job
-}
-
-fn is_doc_comment(comment: &str) -> bool {
-    let trimmed = comment.trim_start();
-    (trimmed.starts_with("///") && !trimmed.starts_with("////"))
-        || trimmed.starts_with("//!")
-        || (trimmed.starts_with("/**") && !trimmed.starts_with("/**/"))
-        || trimmed.starts_with("/*!")
 }
 
 /// Squiggle underline used for errors and warnings.
@@ -1021,24 +982,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recognizes_rust_doc_comments() {
-        assert!(is_doc_comment("/// docs"));
-        assert!(is_doc_comment("//! crate docs"));
-        assert!(is_doc_comment("/** block */"));
-        assert!(!is_doc_comment("// plain"));
-        assert!(!is_doc_comment("//// separator"));
-        assert!(!is_doc_comment("/**/"));
-    }
-
-    #[test]
     fn highlighting_skips_spans_that_split_characters() {
         let analysis = LanguageAnalysis {
             language: Some("Rust"),
-            spans: vec![jetthing_language::SyntaxSpan {
-                start_byte: 1,
-                end_byte: 2,
-                kind: SyntaxKind::Keyword,
-            }],
+            highlights: jetthing_language::HighlightLayer::from_spans([
+                jetthing_language::HighlightSpan {
+                    start_byte: 1,
+                    end_byte: 2,
+                    key: "DEFAULT_KEYWORD",
+                },
+            ]),
             diagnostics: Vec::new(),
         };
         let job = highlighted_line_job("ä", 0, &analysis);

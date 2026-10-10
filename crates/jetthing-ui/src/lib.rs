@@ -13,6 +13,7 @@ mod keys;
 mod notifications;
 mod palette;
 mod popups;
+mod syntax;
 mod terminal_ui;
 mod theme;
 mod toolwindows;
