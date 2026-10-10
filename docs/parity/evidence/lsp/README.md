@@ -33,9 +33,15 @@ Android Studio 2026.2.1) from `docs/parity/evidence/reference/`. Before this wor
 Accepting with Enter inserts the label at the caret. Tab replaces the identifier after the caret
 (covered by `jetthing-core` completion tests, including `additionalTextEdits` as one undo step).
 
+### Snippets (slice 3)
+
+| File | Steps | Result |
+|---|---|---|
+| `09g-java-method-parentheses.png` | `app.gr`, Enter, then type `"you"` | jdtls' snippet inserts `greeting()` with the caret inside the parentheses, as in the reference. Typing fills the argument. rust-analyzer is started with `completion.callable.snippets = "add_parentheses"` for the same behaviour. |
+| `09f-java-fori-snippet-tabstops.png` | Type `fori`, Enter; type `long`, Tab, `k`, Tab ×3, type a statement | The template is re-indented to the current line. Every variable is boxed, and the current one is selected so typing replaces it. The mirrored `i` changes in all three places at once. Tab/Shift+Tab move between variables, Enter/Tab on the last one goes to `$0` inside the loop body, and Esc leaves the template. |
+
 ## Still different from the reference
 
-- Methods are inserted without `()`. Snippets with tab stops come next (slice 3).
 - jdtls still creates `.project` and `bin/` in Gradle projects (the same as the VS Code Java
   extension). `.classpath` and `.settings` are kept out by passing
   `-Djava.import.generatesMetadataFilesAtProjectRoot=false`.

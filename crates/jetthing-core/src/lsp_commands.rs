@@ -43,6 +43,32 @@ impl IdeState {
 }
 
 pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
+    // Tab, Shift+Tab and Esc drive these only while a snippet is active, so
+    // they carry no menu shortcut.
+    for (id, label) in [
+        ("snippet.next", "Next Snippet Stop"),
+        ("snippet.previous", "Previous Snippet Stop"),
+        ("snippet.exit", "Exit Snippet"),
+    ] {
+        registry
+            .register(Command::new(
+                spec(id, label, "Code", None, "{}"),
+                |state: &IdeState| state.snippet.is_some(),
+                move |state: &mut IdeState, _| {
+                    match id {
+                        "snippet.next" => {
+                            state.snippet_next();
+                        }
+                        "snippet.previous" => {
+                            state.snippet_previous();
+                        }
+                        _ => state.exit_snippet(),
+                    }
+                    Ok(Value::Null)
+                },
+            ))
+            .expect("unique built-in id");
+    }
     registry
         .register(Command::new(
             spec(

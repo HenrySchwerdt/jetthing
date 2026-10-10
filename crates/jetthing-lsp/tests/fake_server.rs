@@ -39,6 +39,7 @@ fn registry(args: &[&str]) -> ServerRegistry {
             root_markers: &["fake.project"],
             install_hint: "",
             notify_missing: true,
+            initialization_options: None,
         },
         args: args.iter().map(|arg| arg.to_string()).collect(),
     }));

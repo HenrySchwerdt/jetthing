@@ -708,8 +708,7 @@ fn workspace_folder(root: &Path) -> Result<WorkspaceFolder, LspError> {
     })
 }
 
-/// The capabilities Jetthing advertises. Snippets stay off until the editor
-/// can expand tab stops.
+/// The capabilities Jetthing advertises.
 pub fn client_capabilities() -> ClientCapabilities {
     let markup = Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]);
     ClientCapabilities {
@@ -732,7 +731,8 @@ pub fn client_capabilities() -> ClientCapabilities {
             }),
             completion: Some(CompletionClientCapabilities {
                 completion_item: Some(CompletionItemCapability {
-                    snippet_support: Some(false),
+                    snippet_support: Some(true),
+                    insert_replace_support: Some(true),
                     documentation_format: markup.clone(),
                     deprecated_support: Some(true),
                     label_details_support: Some(true),

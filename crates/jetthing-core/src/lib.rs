@@ -24,6 +24,7 @@ mod lsp_commands;
 mod plugin_host;
 mod project_commands;
 mod settings_commands;
+mod snippet_session;
 mod terminal_commands;
 mod toolchain_commands;
 mod toolwindow;
@@ -37,8 +38,9 @@ mod vcs;
 pub use plugin_host::{
     PluginHostState, PluginStatusWidget, PluginTab, sync_plugin_commands, user_plugin_dir,
 };
-pub use toolchain_commands::ToolchainState;
 pub use completion::CompletionSession;
+pub use snippet_session::SnippetSession;
+pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -86,6 +88,8 @@ pub struct IdeState {
     pub toolchains: ToolchainState,
     /// The code completion popup, while open.
     pub completion: Option<CompletionSession>,
+    /// Tab stops of an inserted snippet, while the user fills them in.
+    pub snippet: Option<SnippetSession>,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
