@@ -1,3 +1,17 @@
+//! Process execution for builds, runs and tests.
+//!
+//! [`TaskService`] runs one child process at a time, streams its output into a
+//! line-oriented [`ConsoleBuffer`] and recognises build steps and compiler messages
+//! ([`BuildEvents`]). Build tools are described by the [`BuildSystem`] trait.
+
+pub mod build_system;
+pub mod console;
+pub mod events;
+
+pub use build_system::{BuildSystem, BuildSystemKind, BuildSystemRegistry, find_program};
+pub use console::{ConsoleBuffer, ConsoleLine};
+pub use events::{BuildEvents, BuildMessage, BuildStep, MessageKind, StepOutcome};
+
 use std::{
     io::Read,
     path::{Path, PathBuf},
@@ -7,6 +21,7 @@ use std::{
         mpsc::{self, Receiver},
     },
     thread,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 
@@ -14,6 +29,10 @@ use thiserror::Error;
 pub enum RunnerError {
     #[error("no supported build system found in {0}")]
     NoBuildSystem(PathBuf),
+    #[error("`{program}` was not found on PATH. {hint}")]
+    ToolNotFound { program: String, hint: String },
+    #[error("{0}")]
+    NotRunnable(String),
     #[error("failed to start task: {0}")]
     Start(#[from] std::io::Error),
     #[error("task process lock is unavailable")]
@@ -38,6 +57,19 @@ pub enum TaskState {
     Running,
     Exited(i32),
     Cancelled,
+    /// The task could not be started; the message says why and what to do.
+    Failed(String),
+}
+
+/// What a task does; decides where its output is shown and how it is labelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TaskKind {
+    Build,
+    Run,
+    Test,
+    Sync,
+    #[default]
+    Custom,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,68 +78,58 @@ pub struct TaskPlan {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: PathBuf,
+    pub env: Vec<(String, String)>,
+    pub kind: TaskKind,
 }
 
 impl TaskPlan {
-    pub fn detect_build(root: &Path) -> Result<Self, RunnerError> {
-        let plan = if root.join("Cargo.toml").is_file() {
-            ("Cargo Build", "cargo", vec!["build"])
-        } else if root.join("gradlew").is_file() {
-            ("Gradle Build", "./gradlew", vec!["build"])
-        } else if root.join("build.gradle.kts").is_file() || root.join("build.gradle").is_file() {
-            ("Gradle Build", "gradle", vec!["build"])
-        } else if root.join("mvnw").is_file() {
-            ("Maven Verify", "./mvnw", vec!["verify"])
-        } else if root.join("pom.xml").is_file() {
-            ("Maven Verify", "mvn", vec!["verify"])
-        } else if root.join("package.json").is_file() {
-            ("npm Test", "npm", vec!["test"])
-        } else if root.join("go.mod").is_file() {
-            ("Go Test", "go", vec!["test", "./..."])
-        } else {
-            return Err(RunnerError::NoBuildSystem(root.to_owned()));
-        };
-        Ok(Self::from_parts(plan, root))
-    }
-
-    /// Detects the default "run application" task for a project root.
-    pub fn detect_run(root: &Path) -> Result<Self, RunnerError> {
-        let plan = if root.join("Cargo.toml").is_file() {
-            let manifest = std::fs::read_to_string(root.join("Cargo.toml"))
-                .ok()
-                .and_then(|source| source.parse::<toml::Value>().ok());
-            let binary = root.join("src/main.rs").is_file()
-                || root.join("src/bin").is_dir()
-                || manifest
-                    .as_ref()
-                    .and_then(|manifest| manifest.get("bin"))
-                    .and_then(toml::Value::as_array)
-                    .is_some_and(|bins| !bins.is_empty());
-            if binary {
-                ("Cargo Run", "cargo", vec!["run"])
-            } else {
-                ("Cargo Test", "cargo", vec!["test"])
-            }
-        } else if root.join("gradlew").is_file() {
-            ("Gradle Run", "./gradlew", vec!["run"])
-        } else if root.join("build.gradle.kts").is_file() || root.join("build.gradle").is_file() {
-            ("Gradle Run", "gradle", vec!["run"])
-        } else if root.join("package.json").is_file() {
-            ("npm Start", "npm", vec!["start"])
-        } else if root.join("go.mod").is_file() {
-            ("Go Run", "go", vec!["run", "."])
-        } else {
-            return Err(RunnerError::NoBuildSystem(root.to_owned()));
-        };
-        Ok(Self::from_parts(plan, root))
-    }
-
-    fn from_parts((name, program, args): (&str, &str, Vec<&str>), root: &Path) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        program: impl Into<String>,
+        args: impl IntoIterator<Item = impl Into<String>>,
+        cwd: impl Into<PathBuf>,
+    ) -> Self {
         Self {
             name: name.into(),
             program: program.into(),
             args: args.into_iter().map(Into::into).collect(),
-            cwd: root.to_owned(),
+            cwd: cwd.into(),
+            env: Vec::new(),
+            kind: TaskKind::Custom,
+        }
+    }
+
+    pub fn with_kind(mut self, kind: TaskKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
+    }
+
+    /// Shell-like rendering for display (`./gradlew build`).
+    pub fn command_line(&self) -> String {
+        std::iter::once(self.program.as_str())
+            .chain(self.args.iter().map(String::as_str))
+            .map(|part| {
+                if part.is_empty() || part.contains(char::is_whitespace) {
+                    format!("\"{part}\"")
+                } else {
+                    part.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Resolves a message path printed by the tool against the task directory.
+    pub fn resolve(&self, path: &Path) -> PathBuf {
+        if path.is_absolute() {
+            path.to_owned()
+        } else {
+            self.cwd.join(path)
         }
     }
 }
@@ -121,7 +143,11 @@ pub struct TaskService {
     active: Option<ActiveTask>,
     state: TaskState,
     output: Vec<OutputChunk>,
+    console: ConsoleBuffer,
+    events: BuildEvents,
     plan: Option<TaskPlan>,
+    started: Option<Instant>,
+    elapsed: Option<Duration>,
 }
 
 impl Default for TaskService {
@@ -130,18 +156,72 @@ impl Default for TaskService {
             active: None,
             state: TaskState::Idle,
             output: Vec::new(),
+            console: ConsoleBuffer::default(),
+            events: BuildEvents::default(),
             plan: None,
+            started: None,
+            elapsed: None,
         }
     }
 }
 
+/// Raw chunks retained for consumers that need exact bytes; bounded like the console.
+const MAX_RAW_CHUNKS: usize = 10_000;
+
 impl TaskService {
     pub fn start(&mut self, plan: TaskPlan) -> Result<(), RunnerError> {
         self.cancel()?;
+        match self.spawn(&plan) {
+            Ok(active) => {
+                self.reset(plan);
+                self.state = TaskState::Running;
+                self.active = Some(active);
+                Ok(())
+            }
+            Err(error) => {
+                let error = match error {
+                    RunnerError::Start(io) if io.kind() == std::io::ErrorKind::NotFound => {
+                        RunnerError::ToolNotFound {
+                            program: plan.program.clone(),
+                            hint: "Install it or fix the run configuration.".into(),
+                        }
+                    }
+                    other => other,
+                };
+                self.reset(plan);
+                self.state = TaskState::Failed(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
+    /// Records a task that could not even be planned, so the failure is visible
+    /// in the tool window instead of only in the status bar.
+    pub fn fail(&mut self, plan: Option<TaskPlan>, message: impl Into<String>) {
+        if self.is_running() {
+            return;
+        }
+        self.active = None;
+        self.reset(plan.unwrap_or_else(|| TaskPlan::new("Build", "", Vec::<String>::new(), "")));
+        self.state = TaskState::Failed(message.into());
+    }
+
+    fn reset(&mut self, plan: TaskPlan) {
+        self.output.clear();
+        self.console.clear();
+        self.events = BuildEvents::default();
+        self.plan = Some(plan);
+        self.started = Some(Instant::now());
+        self.elapsed = None;
+    }
+
+    fn spawn(&self, plan: &TaskPlan) -> Result<ActiveTask, RunnerError> {
         let mut command = Command::new(&plan.program);
         command
             .args(&plan.args)
             .current_dir(&plan.cwd)
+            .envs(plan.env.iter().map(|(key, value)| (key, value)))
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = command.spawn()?;
@@ -149,41 +229,97 @@ impl TaskService {
         let stderr = child.stderr.take();
         let child = Arc::new(Mutex::new(child));
         let (sender, output) = mpsc::channel();
-        if let Some(reader) = stdout
-            && let Err(error) = spawn_reader(reader, OutputStream::Stdout, sender.clone())
-        {
-            if let Ok(mut process) = child.lock() {
-                let _ = process.kill();
+        for (reader, stream) in [
+            (
+                stdout.map(|r| Box::new(r) as Box<dyn Read + Send>),
+                OutputStream::Stdout,
+            ),
+            (
+                stderr.map(|r| Box::new(r) as Box<dyn Read + Send>),
+                OutputStream::Stderr,
+            ),
+        ] {
+            if let Some(reader) = reader
+                && let Err(error) = spawn_reader(reader, stream, sender.clone())
+            {
+                if let Ok(mut process) = child.lock() {
+                    let _ = process.kill();
+                }
+                return Err(error.into());
             }
-            return Err(error.into());
         }
-        if let Some(reader) = stderr
-            && let Err(error) = spawn_reader(reader, OutputStream::Stderr, sender)
-        {
-            if let Ok(mut process) = child.lock() {
-                let _ = process.kill();
-            }
-            return Err(error.into());
-        }
-        self.output.clear();
-        self.plan = Some(plan);
-        self.state = TaskState::Running;
-        self.active = Some(ActiveTask { child, output });
-        Ok(())
+        Ok(ActiveTask { child, output })
     }
 
     pub fn poll(&mut self) -> Result<(), RunnerError> {
         let Some(active) = &self.active else {
             return Ok(());
         };
-        self.output.extend(active.output.try_iter());
+        let now = self.now();
+        let chunks: Vec<OutputChunk> = active.output.try_iter().collect();
+        let mut exited = None;
         if self.state == TaskState::Running {
             let mut child = active.child.lock().map_err(|_| RunnerError::Lock)?;
             if let Some(status) = child.try_wait()? {
-                self.state = TaskState::Exited(status.code().unwrap_or(-1));
+                exited = Some(status.code().unwrap_or(-1));
             }
         }
+        for chunk in chunks {
+            self.ingest(chunk, now);
+        }
+        if let Some(code) = exited {
+            // The readers may still hold the last bytes; wait briefly for their EOF.
+            // Bounded, because a daemon that inherited the pipes can keep them open.
+            if let Some(active) = &self.active {
+                let deadline = Instant::now() + Duration::from_millis(300);
+                let mut rest = Vec::new();
+                loop {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    match active.output.recv_timeout(remaining) {
+                        Ok(chunk) => rest.push(chunk),
+                        Err(_) => break,
+                    }
+                }
+                for chunk in rest {
+                    self.ingest(chunk, now);
+                }
+            }
+            self.complete(now, code == 0);
+            self.state = TaskState::Exited(code);
+        }
         Ok(())
+    }
+
+    fn ingest(&mut self, chunk: OutputChunk, now: Duration) {
+        let completed = self.console.push(chunk.stream, &chunk.text);
+        let lines = self.console.lines();
+        let start = lines.len() - completed.min(lines.len());
+        let base = self.console.dropped();
+        for (offset, line) in lines[start..].iter().enumerate() {
+            self.events.on_line(&line.text, now, base + start + offset);
+        }
+        if self.output.len() >= MAX_RAW_CHUNKS {
+            self.output.drain(..MAX_RAW_CHUNKS / 2);
+        }
+        self.output.push(chunk);
+    }
+
+    fn complete(&mut self, now: Duration, success: bool) {
+        let before = self.console.lines().len();
+        self.console.finish();
+        let base = self.console.dropped();
+        let lines = self.console.lines();
+        for (index, line) in lines.iter().enumerate().skip(before) {
+            self.events.on_line(&line.text, now, base + index);
+        }
+        self.events.finish(now, success);
+        self.elapsed = Some(now);
+    }
+
+    fn now(&self) -> Duration {
+        self.started
+            .map(|started| started.elapsed())
+            .unwrap_or_default()
     }
 
     pub fn cancel(&mut self) -> Result<(), RunnerError> {
@@ -191,6 +327,8 @@ impl TaskService {
             && self.state == TaskState::Running
         {
             active.child.lock().map_err(|_| RunnerError::Lock)?.kill()?;
+            let now = self.now();
+            self.complete(now, false);
             self.state = TaskState::Cancelled;
         }
         Ok(())
@@ -202,11 +340,27 @@ impl TaskService {
     pub fn is_running(&self) -> bool {
         self.state == TaskState::Running
     }
+    /// Raw output chunks exactly as received (bounded).
     pub fn output(&self) -> &[OutputChunk] {
         &self.output
     }
+    /// Cleaned, complete output lines.
+    pub fn console(&self) -> &ConsoleBuffer {
+        &self.console
+    }
+    /// Steps and messages recognised in the output.
+    pub fn events(&self) -> &BuildEvents {
+        &self.events
+    }
     pub fn plan(&self) -> Option<&TaskPlan> {
         self.plan.as_ref()
+    }
+    /// Time since start while running, total duration once finished.
+    pub fn elapsed(&self) -> Option<Duration> {
+        match self.state {
+            TaskState::Running => Some(self.now()),
+            _ => self.elapsed,
+        }
     }
 }
 
@@ -248,38 +402,27 @@ fn spawn_reader(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
 
-    #[test]
-    fn detects_gradle_build_files_and_prefers_existing_wrapper() {
-        let root =
-            std::env::temp_dir().join(format!("jetthing-gradle-detect-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("build.gradle.kts"), "plugins { application }").unwrap();
-        assert_eq!(TaskPlan::detect_build(&root).unwrap().program, "gradle");
-        assert_eq!(TaskPlan::detect_run(&root).unwrap().args, ["run"]);
-        std::fs::write(root.join("gradlew"), "").unwrap();
-        assert_eq!(TaskPlan::detect_build(&root).unwrap().program, "./gradlew");
-        std::fs::remove_dir_all(root).unwrap();
+    fn shell(script: &str) -> TaskPlan {
+        TaskPlan::new("test", "/bin/sh", ["-c", script], "/tmp")
+    }
+
+    fn wait(service: &mut TaskService) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while service.is_running() && Instant::now() < deadline {
+            service.poll().unwrap();
+            thread::sleep(Duration::from_millis(5));
+        }
+        service.poll().unwrap();
     }
 
     #[test]
     fn streams_real_process_output_and_exit_code() {
         let mut service = TaskService::default();
         service
-            .start(TaskPlan {
-                name: "test".into(),
-                program: "/bin/sh".into(),
-                args: vec!["-c".into(), "printf out; printf err >&2; exit 7".into()],
-                cwd: PathBuf::from("/tmp"),
-            })
+            .start(shell("printf out; printf err >&2; exit 7"))
             .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while service.is_running() && Instant::now() < deadline {
-            service.poll().unwrap();
-            thread::sleep(Duration::from_millis(5));
-        }
-        service.poll().unwrap();
+        wait(&mut service);
         assert_eq!(service.state(), &TaskState::Exited(7));
         assert!(
             service
@@ -287,50 +430,79 @@ mod tests {
                 .iter()
                 .any(|chunk| chunk.stream == OutputStream::Stdout && chunk.text.contains("out"))
         );
-        assert!(
+        let lines: Vec<_> = service
+            .console()
+            .lines()
+            .iter()
+            .map(|line| (line.stream, line.text.as_str()))
+            .collect();
+        assert!(lines.contains(&(OutputStream::Stdout, "out")), "{lines:?}");
+        assert!(lines.contains(&(OutputStream::Stderr, "err")), "{lines:?}");
+        assert!(service.elapsed().is_some());
+    }
+
+    #[test]
+    fn recognises_build_steps_from_live_output() {
+        let mut service = TaskService::default();
+        service
+            .start(shell(
+                "echo '> Task :compileJava'; sleep 0.05; \
+                 echo 'src/A.java:3: error: boom' >&2; echo '> Task :test'; echo 'BUILD FAILED in 1s'; exit 1",
+            ))
+            .unwrap();
+        wait(&mut service);
+        let events = service.events();
+        assert_eq!(events.steps().len(), 2, "{:?}", events.steps());
+        assert_eq!(events.count(MessageKind::Error), 1);
+        assert_eq!(events.summary(), Some("BUILD FAILED in 1s"));
+        let message = &events.messages()[0];
+        assert_eq!(
             service
-                .output()
-                .iter()
-                .any(|chunk| chunk.stream == OutputStream::Stderr && chunk.text.contains("err"))
+                .plan()
+                .unwrap()
+                .resolve(message.file.as_ref().unwrap()),
+            PathBuf::from("/tmp/src/A.java")
+        );
+    }
+
+    #[test]
+    fn passes_environment_and_reports_missing_programs() {
+        let mut service = TaskService::default();
+        service
+            .start(shell("printf \"$JETTHING_TEST_VALUE\"").with_env("JETTHING_TEST_VALUE", "42"))
+            .unwrap();
+        wait(&mut service);
+        assert_eq!(service.console().lines()[0].text, "42");
+        let error = service
+            .start(TaskPlan::new(
+                "x",
+                "jetthing-missing-program",
+                ["a"],
+                "/tmp",
+            ))
+            .unwrap_err();
+        assert!(matches!(error, RunnerError::ToolNotFound { .. }));
+        assert!(
+            matches!(service.state(), TaskState::Failed(message) if message.contains("jetthing-missing-program"))
+        );
+        service.fail(None, "no supported build system");
+        assert_eq!(
+            service.state(),
+            &TaskState::Failed("no supported build system".into())
         );
     }
 
     #[test]
     fn cancels_running_process() {
         let mut service = TaskService::default();
-        service
-            .start(TaskPlan {
-                name: "sleep".into(),
-                program: "/bin/sh".into(),
-                args: vec!["-c".into(), "sleep 30".into()],
-                cwd: PathBuf::from("/tmp"),
-            })
-            .unwrap();
+        service.start(shell("sleep 30")).unwrap();
         service.cancel().unwrap();
         assert_eq!(service.state(), &TaskState::Cancelled);
     }
 
     #[test]
-    fn detects_cargo_build() {
-        let root = std::env::temp_dir().join(format!("jetthing-runner-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(
-            root.join("Cargo.toml"),
-            "[package]\nname='x'\nversion='0.1.0'\n",
-        )
-        .unwrap();
-        let plan = TaskPlan::detect_build(&root).unwrap();
-        assert_eq!(plan.program, "cargo");
-        assert_eq!(plan.args, ["build"]);
-        let run = TaskPlan::detect_run(&root).unwrap();
-        assert_eq!(
-            (run.name.as_str(), run.args.as_slice()),
-            ("Cargo Test", &["test".to_owned()][..])
-        );
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
-        assert_eq!(TaskPlan::detect_run(&root).unwrap().args, ["run"]);
-        std::fs::remove_dir_all(root).unwrap();
+    fn command_line_quotes_arguments_with_spaces() {
+        let plan = TaskPlan::new("x", "./gradlew", [":app:test", "--tests", "A B"], "/w");
+        assert_eq!(plan.command_line(), "./gradlew :app:test --tests \"A B\"");
     }
 }

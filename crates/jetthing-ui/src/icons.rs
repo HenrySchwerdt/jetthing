@@ -44,6 +44,8 @@ pub enum Icon {
     Refresh,
     Error,
     Warning,
+    Success,
+    Rerun,
 }
 
 impl Icon {
@@ -284,6 +286,28 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             let dark = Stroke::new(g.len(1.5).max(1.0), theme::ISLAND);
             painter.line_segment([g.p(8.0, 6.0), g.p(8.0, 10.0)], dark);
             painter.circle_filled(g.p(8.0, 12.0), g.len(0.9), theme::ISLAND);
+        }
+        Icon::Success => {
+            let check = Stroke::new(g.len(1.6).max(1.0), theme::SUCCESS);
+            painter.add(Shape::Path(PathShape::line(
+                vec![g.p(3.0, 8.5), g.p(6.5, 12.0), g.p(13.0, 4.5)],
+                check,
+            )));
+        }
+        Icon::Rerun => {
+            let center = g.p(8.0, 8.0);
+            let points = (0..=20)
+                .map(|step| {
+                    let angle = 0.9 + step as f32 / 20.0 * 4.6;
+                    center + vec2(angle.cos(), angle.sin()) * g.len(5.5)
+                })
+                .collect();
+            painter.add(Shape::Path(PathShape::line(points, stroke)));
+            closed(
+                &[(6.5, 6.0), (11.0, 8.5), (6.5, 11.0)],
+                theme::RUN_GREEN,
+                Stroke::new(stroke.width * 0.5, theme::RUN_GREEN),
+            );
         }
     }
 }

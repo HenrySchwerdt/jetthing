@@ -1719,6 +1719,7 @@ dependencies = [
  "flate2",
  "jetthing-command",
  "jetthing-git",
+ "jetthing-gradle",
  "jetthing-language",
  "jetthing-lsp",
  "jetthing-plugins",
@@ -1739,6 +1740,13 @@ name = "jetthing-git"
 version = "0.0.2"
 dependencies = [
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "jetthing-gradle"
+version = "0.0.2"
+dependencies = [
+ "jetthing-runner",
 ]
 
 [[package]]
@@ -1805,6 +1813,7 @@ dependencies = [
 name = "jetthing-runner"
 version = "0.0.2"
 dependencies = [
+ "serde_json",
  "thiserror 2.0.21",
  "toml",
 ]
