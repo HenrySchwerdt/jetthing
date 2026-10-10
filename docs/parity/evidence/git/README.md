@@ -18,9 +18,8 @@ Compared with reference scene 13 (IntelliJ IDEA, `java-gradle`):
   viewer dropdown, “N difference(s)” on the right, base revision hash and path
   above the left pane, “Current version” above the right pane, two line-number
   columns with the connector between them, green inserted block, error-stripe mark.
-- Differences: Java is not syntax highlighted yet (the language layer only
-  highlights some languages; the viewer uses it as soon as it does), no
-  whitespace/highlighting dropdowns, settings gear or help, no include-in-commit
+- Both panes use the editor's tree-sitter highlighting (Java here).
+- Differences: no whitespace/highlighting dropdowns, settings gear or help, no include-in-commit
   checkbox in the gutter, the tab is titled `App.java (Diff)` rather than
   `Commit`, and the diff is read-only.
 
