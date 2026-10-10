@@ -69,7 +69,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     requests = editor_requests;
                     if changed {
                         let snapshot = doc.text.text();
-                        doc.analysis = jetthing_language::analyze(&doc.path, &snapshot);
+                        doc.refresh_analysis(&snapshot);
                         changed_document = Some((
                             doc.path.clone(),
                             snapshot,
@@ -1028,7 +1028,7 @@ mod tests {
                     key: "DEFAULT_KEYWORD",
                 },
             ]),
-            diagnostics: Vec::new(),
+            ..Default::default()
         };
         let job = highlighted_line_job("ä", 0, &analysis);
         assert_eq!(job.text, "ä");

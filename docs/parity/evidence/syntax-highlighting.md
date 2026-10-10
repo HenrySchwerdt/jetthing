@@ -32,6 +32,30 @@ single-colour text (`docs/parity/evidence/jetthing/*/04-editor-project-tree.png`
   (Default → Darcula → Islands Dark), resolves `inherit` references and falls back to `DEFAULT_*`
   keys. The editor resolves every key through Islands Dark.
 
+## Incremental parsing
+
+- `jetthing-text::TextDocument` journals every rope mutation (edits, coalesced typing, undo and
+  redo) as a `ByteEdit` (bytes plus row/byte-column points). New documents start with
+  `EditJournal::Reset`, and a journal with more than 4096 undrained edits also resets.
+- `Document::refresh_analysis` drains the journal. `LanguageAnalysis::apply_edits` applies each
+  edit to the tree (`Tree::edit`) and to the highlight layer, then reparses with the old tree.
+  Only these ranges are re-highlighted: the edited lines, `Tree::changed_ranges`, the lines of
+  `ERROR` nodes (`changed_ranges` misses children relabelled inside an unchanged `ERROR`), and
+  spans the edit cut. Each range grows until it covers whole captures and whole old spans, so no
+  clipped remainder keeps a stale key (for example a comment that lost its `/*`).
+- `tests/incremental.rs` (proptest) applies random edits, undo and redo to the Java, Kotlin, Rust,
+  Bazel and XML samples through the real `TextDocument`. After every step the incremental
+  highlights must equal a full highlight of the same tree, and the tree and highlights must equal a
+  fresh analysis whenever the text parses without errors. Error recovery may legitimately differ
+  between incremental and fresh parses of broken text. Locally it passed 20,000 cases.
+- `syntax-highlighting/04-java-typing-incremental.png`: line 7 was typed with `xdotool type`
+  (`/* new comment */ int answer = 42; String s = "typed";`) into the running app (debug build).
+  Every keystroke went through the incremental path, and the comment, keyword, number and string
+  are coloured while typing.
+- Measured (release, `Big.java`, 10,004 lines, 293 KB): full analysis 98.6 ms; one typed
+  character 5–7 ms, of which about 4.3 ms is the Tree-sitter incremental reparse and the rest
+  highlight splicing. One keystroke re-highlights about 80 bytes.
+
 ## Languages
 
 Rust, Java, Kotlin (`tree-sitter-kotlin-sg`), XML, JSON, TOML, YAML, Markdown (block grammar),

@@ -1701,6 +1701,8 @@ dependencies = [
 name = "jetthing-language"
 version = "0.0.2"
 dependencies = [
+ "jetthing-text",
+ "proptest",
  "serde_json",
  "tree-sitter",
  "tree-sitter-bash",

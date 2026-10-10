@@ -7,7 +7,7 @@ use jetthing_project::{FileEntry, Project};
 use jetthing_runner::{TaskPlan, TaskService, TaskState};
 use jetthing_search::{SearchEvent, SearchService, TextMatch};
 use jetthing_terminal::TerminalSession;
-use jetthing_text::{Selection, SelectionSet, TextDocument};
+use jetthing_text::{EditJournal, Selection, SelectionSet, TextDocument};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -29,6 +29,30 @@ pub struct Document {
     pub text: TextDocument,
     pub analysis: LanguageAnalysis,
     pub selections: SelectionSet,
+}
+
+impl Document {
+    /// Creates a document and its initial language analysis.
+    pub fn new(path: PathBuf, text: &str) -> Self {
+        let mut document = Self {
+            analysis: analyze(&path, text),
+            text: TextDocument::new(text),
+            path,
+            selections: SelectionSet::default(),
+        };
+        // The analysis already reflects `text`.
+        document.text.take_edits();
+        document
+    }
+
+    /// Brings the language analysis up to date with the buffer: journaled
+    /// edits are applied incrementally; otherwise the file is reanalyzed.
+    pub fn refresh_analysis(&mut self, source: &str) {
+        match self.text.take_edits() {
+            EditJournal::Edits(edits) => self.analysis.apply_edits(&self.path, source, &edits),
+            EditJournal::Reset => self.analysis = analyze(&self.path, source),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -118,12 +142,7 @@ impl IdeState {
         }
         let project = self.project.as_ref().ok_or("no project is open")?;
         let text = project.read_text(path).map_err(|e| e.to_string())?;
-        self.documents.push(Document {
-            path: path.to_owned(),
-            text: TextDocument::new(&text),
-            analysis: analyze(path, &text),
-            selections: SelectionSet::default(),
-        });
+        self.documents.push(Document::new(path.to_owned(), &text));
         self.active_document = Some(self.documents.len() - 1);
         self.touch_recent(path);
         self.status = format!("Opened {}", path.display());
@@ -252,7 +271,8 @@ impl IdeState {
             .active_document
             .and_then(|index| self.documents.get_mut(index))
         {
-            document.analysis = analyze(&document.path, &document.text.text());
+            let source = document.text.text();
+            document.refresh_analysis(&source);
         }
     }
 
@@ -481,7 +501,8 @@ impl IdeState {
         let revision = document.text.revision();
         let result = edit(document)?;
         if document.text.revision() != revision {
-            document.analysis = analyze(&document.path, &document.text.text());
+            let source = document.text.text();
+            document.refresh_analysis(&source);
             self.sync_active_lsp();
             self.lsp.clear_completions();
         }
@@ -498,7 +519,8 @@ impl IdeState {
             .text
             .edit(position, position, text)
             .map_err(|e| e.to_string())?;
-        document.analysis = analyze(&document.path, &document.text.text());
+        let source = document.text.text();
+        document.refresh_analysis(&source);
         document
             .selections
             .set_single(Selection::caret(position + text.chars().count()));
@@ -1058,6 +1080,24 @@ mod tests {
         thread,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn document_analysis_follows_edits_and_undo_incrementally() {
+        let mut document = Document::new("App.java".into(), "class App { int x = 1; }\n");
+        document.text.edit(20, 21, "\"s\"").unwrap();
+        let source = document.text.text();
+        document.refresh_analysis(&source);
+        let full = analyze(&document.path, &source);
+        assert_eq!(document.analysis.highlights, full.highlights);
+        assert!(document.text.undo());
+        let source = document.text.text();
+        document.refresh_analysis(&source);
+        assert_eq!(
+            document.analysis.highlights,
+            analyze(&document.path, &source).highlights
+        );
+    }
+
     #[test]
     fn project_open_command_is_shared_engine_behavior() {
         let root = std::env::temp_dir().join(format!("jetthing-core-{}", std::process::id()));

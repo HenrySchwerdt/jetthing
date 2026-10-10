@@ -6,14 +6,17 @@ mod captures;
 pub mod highlight;
 pub mod registry;
 pub mod scheme;
+pub mod syntax;
 
 pub use captures::capture_key;
 pub use highlight::{HighlightLayer, HighlightSpan, QueryError};
+pub use jetthing_text::{ByteEdit, BytePoint};
 pub use registry::{LANGUAGES, LanguageSpec};
 pub use scheme::{ColorScheme, EffectType, FontStyle, Rgba, TextAttributes};
+pub use syntax::SyntaxTree;
 
 use std::path::Path;
-use tree_sitter::{Node, Parser};
+use tree_sitter::Node;
 
 /// Maximum number of syntax diagnostics reported per file.
 const MAX_DIAGNOSTICS: usize = 100;
@@ -32,6 +35,57 @@ pub struct LanguageAnalysis {
     /// Syntax highlighting from the grammar's highlight query.
     pub highlights: HighlightLayer,
     pub diagnostics: Vec<Diagnostic>,
+    /// The incrementally maintained syntax tree, when the language is known.
+    pub syntax: Option<SyntaxTree>,
+}
+
+impl LanguageAnalysis {
+    /// Brings the analysis up to date with `source` after `edits` (as
+    /// journaled by the text buffer): applies them to the syntax tree,
+    /// reparses incrementally and re-highlights only the affected ranges.
+    pub fn apply_edits(&mut self, path: &Path, source: &str, edits: &[ByteEdit]) {
+        if edits.is_empty() {
+            return;
+        }
+        let Some(syntax) = self.syntax.as_mut() else {
+            // Plain text may become a known language (e.g. a new shebang line).
+            if registry::detect(path, source).is_some() {
+                *self = analyze(path, source);
+            }
+            return;
+        };
+        let mut stale: Vec<std::ops::Range<usize>> = Vec::new();
+        for edit in edits {
+            for range in &mut stale {
+                *range = syntax::map_range(range.clone(), edit);
+            }
+            stale.extend(self.highlights.apply_edit(edit));
+        }
+        let Some(mut ranges) = syntax.apply_edits(source, edits) else {
+            *self = analyze(path, source);
+            return;
+        };
+        ranges.extend(
+            stale
+                .into_iter()
+                .map(|range| range.start.min(source.len())..range.end.min(source.len())),
+        );
+        for mut range in syntax::merge_ranges(ranges) {
+            // Grow until the range covers whole new captures and whole old
+            // spans, so no clipped remainder keeps a stale key.
+            loop {
+                let (covered, replacement) = syntax.highlight_covering(source, range);
+                let grown = self.highlights.covering(covered.clone());
+                if grown == covered {
+                    self.highlights.splice(covered, replacement);
+                    break;
+                }
+                range = grown;
+            }
+        }
+        self.diagnostics.clear();
+        collect_diagnostics(syntax.tree().root_node(), &mut self.diagnostics);
+    }
 }
 
 /// Parses and highlights `source`, detecting the language from `path`.
@@ -44,41 +98,56 @@ pub fn analyze(path: &Path, source: &str) -> LanguageAnalysis {
         language: Some(spec.name),
         ..Default::default()
     };
-    let mut parser = Parser::new();
-    if parser.set_language(&spec.grammar()).is_err() {
-        return result;
-    }
-    let Some(tree) = parser.parse(source, None) else {
+    let Some(syntax) = SyntaxTree::parse(spec, source) else {
         return result;
     };
-    result.highlights =
-        highlight::highlight(spec, &tree, source, 0..source.len()).unwrap_or_default();
-    collect_diagnostics(tree.root_node(), &mut result.diagnostics);
+    result.highlights = syntax.highlight(source, 0..source.len());
+    collect_diagnostics(syntax.tree().root_node(), &mut result.diagnostics);
+    result.syntax = Some(syntax);
     result
 }
 
 fn collect_diagnostics(node: Node<'_>, diagnostics: &mut Vec<Diagnostic>) {
-    if diagnostics.len() >= MAX_DIAGNOSTICS || !node.has_error() {
+    if diagnostics.len() >= MAX_DIAGNOSTICS || !(node.has_error() || node.is_missing()) {
         return;
     }
-    if node.is_error() || node.is_missing() {
-        let point = node.start_position();
+    let push = |diagnostics: &mut Vec<Diagnostic>, point: tree_sitter::Point, message: String| {
         diagnostics.push(Diagnostic {
-            message: if node.is_missing() {
-                format!("expected {}", node.kind())
-            } else {
-                "syntax error".into()
-            },
+            message,
             row: point.row + 1,
             column: point.column + 1,
         });
-        if node.is_missing() {
-            return;
-        }
+    };
+    if node.is_missing() {
+        push(
+            diagnostics,
+            node.start_position(),
+            format!("expected {}", node.kind()),
+        );
+        return;
+    }
+    if node.is_error() {
+        push(diagnostics, node.start_position(), "syntax error".into());
     }
     let mut cursor = node.walk();
+    let mut child_error = false;
     for child in node.children(&mut cursor) {
+        child_error |= child.has_error() || child.is_missing();
         collect_diagnostics(child, diagnostics);
+    }
+    // Some grammars flag an error on a node without exposing an ERROR or
+    // MISSING child (e.g. a hidden missing token); report it on the node.
+    if !child_error && !node.is_error() {
+        let point = if node.child_count() == 0 {
+            node.start_position()
+        } else {
+            node.end_position()
+        };
+        push(
+            diagnostics,
+            point,
+            format!("syntax error in {}", node.kind()),
+        );
     }
 }
 
