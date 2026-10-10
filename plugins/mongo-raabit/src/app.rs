@@ -157,6 +157,7 @@ pub enum TabKind {
     Sql(Box<crate::tools::SqlTab>),
     Schema(Box<crate::tools::SchemaTab>),
     Indexes(Box<crate::tools::IndexTab>),
+    Shell(Box<crate::tools::ShellTab>),
 }
 
 impl TabKind {
@@ -169,6 +170,7 @@ impl TabKind {
             Self::Sql(t) => Some(t.session),
             Self::Schema(t) => Some(t.session),
             Self::Indexes(t) => Some(t.session),
+            Self::Shell(t) => Some(t.session),
         }
     }
 }

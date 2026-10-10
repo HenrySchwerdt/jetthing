@@ -23,6 +23,7 @@ pub enum ToolKind {
     Sql,
     Schema,
     Indexes,
+    Shell,
 }
 
 const ROW: f32 = 24.0;
@@ -546,6 +547,9 @@ pub fn open_tool(
     match (kind, collection) {
         (ToolKind::Sql, coll) => {
             app.open_sql(session, db, coll);
+        }
+        (ToolKind::Shell, coll) => {
+            app.open_shell(session, db, coll);
         }
         (ToolKind::Aggregation, Some(coll)) => {
             app.open_aggregation(session, db, coll, None);

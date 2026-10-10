@@ -14,6 +14,7 @@ pub mod jobs;
 pub mod manager;
 mod results;
 mod schema_view;
+mod shell_view;
 mod sql_view;
 pub mod style;
 pub mod tools;
@@ -216,6 +217,7 @@ impl MongoRaabit {
                             TabKind::Indexes(t) => {
                                 (Icon::Index, format!("{} · Indexes", t.collection), p.date)
                             }
+                            TabKind::Shell(t) => (Icon::Shell, format!("{} · Shell", t.db), p.leaf),
                         };
                         let active = index == self.active_tab;
                         let font = FontId::proportional(13.0);
@@ -330,6 +332,10 @@ impl MongoRaabit {
             TabKind::Indexes(_) => {
                 let id = tab.id;
                 index_view::show(self, id, ui);
+            }
+            TabKind::Shell(_) => {
+                let id = tab.id;
+                shell_view::show(self, id, ui);
             }
         }
     }

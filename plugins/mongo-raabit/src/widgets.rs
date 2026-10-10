@@ -261,6 +261,17 @@ pub fn code_editor(
     rows: usize,
     id: impl std::hash::Hash,
 ) -> Response {
+    code_editor_with(ui, text, rows, id, false)
+}
+
+/// Like [`code_editor`]; `fill` grows it to the available height.
+pub fn code_editor_with(
+    ui: &mut Ui,
+    text: &mut String,
+    rows: usize,
+    id: impl std::hash::Hash,
+    fill: bool,
+) -> Response {
     let p = Palette::of(ui);
     let font = FontId::monospace(12.5);
     let mut layouter = |ui: &Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
@@ -275,6 +286,9 @@ pub fn code_editor(
         .corner_radius(CornerRadius::same(8))
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
+            if fill {
+                ui.set_min_height(ui.available_height());
+            }
             ui.add(
                 egui::TextEdit::multiline(text)
                     .id_salt(id)

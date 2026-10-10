@@ -32,6 +32,8 @@ documentation); the look follows the Jetthing Islands theme instead.
 | `sql-dark.png` | SQL Query | SQL with a JOIN and GROUP BY, the generated `$lookup`/`$unwind`/`$group` pipeline, results |
 | `schema-dark.png`, `schema-light.png` | Schema Explorer | presence bars, type-mix bars (validated categorical palette, legend + labels), histogram and top values of the selected field |
 | `indexes-dark.png` | Index Manager | keys, properties (unique/sparse/TTL/partial/hidden), sizes, usage, new-index form |
+| `shell-mongosh-dark.png` | Shell (mongosh 2.13.0) | multi-line JavaScript run in the installed mongosh; `print` output and the result in the console, parsed result as a tree |
+| `shell-builtin-light.png` | Shell (built-in) | the fallback evaluator: `use` and a find with projection/sort/limit, per-statement results |
 | `query-code-dark.png` | Query Code | mongo shell plus 8 driver languages, copy; passwords are replaced by `<password>` |
 
 ```bash
@@ -48,5 +50,5 @@ Chart colors come from the dataviz reference palette, validated with its
 `validate_palette.js` against the island surfaces (dark: all checks pass; light: three
 slots below 3:1 contrast, so every chart carries text labels and a legend).
 
-Known gaps: shell, import/export wizard, server status and users UI are not in these
+Known gaps: import/export wizard, server status and users UI are not in these
 slices; credentials are kept in memory only (OS keychain pending).

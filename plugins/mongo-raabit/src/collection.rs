@@ -164,6 +164,7 @@ fn header(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             for (icon, tip, kind) in [
+                (Icon::Shell, "Shell", ToolKind::Shell),
                 (Icon::Index, "Manage indexes", ToolKind::Indexes),
                 (Icon::Schema, "Schema Explorer", ToolKind::Schema),
                 (Icon::Sql, "SQL Query", ToolKind::Sql),
