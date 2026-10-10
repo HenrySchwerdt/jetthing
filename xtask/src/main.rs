@@ -70,10 +70,11 @@ fn dist() -> Result<()> {
     Ok(())
 }
 
-const PARITY_DOCS: [&str; 3] = [
+const PARITY_DOCS: [&str; 4] = [
     "docs/parity/platform.md",
     "docs/parity/vcs.md",
     "docs/parity/android-studio.md",
+    "docs/parity/nexus-http.md",
 ];
 const STATUSES: [&str; 5] = ["Missing", "Planned", "Partial", "Implemented", "Verified"];
 

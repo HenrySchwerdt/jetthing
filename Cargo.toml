@@ -1,8 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "plugins/*", "xtask"]
-# Manifest-only plugins (no Rust crate).
-exclude = ["plugins/rust"]
+members = ["crates/*", "plugins/*", "plugins/nexus-http/core", "xtask"]
+# Manifest-only plugins (no Rust crate) and plugin folders whose crates live in
+# subdirectories.
+exclude = ["plugins/rust", "plugins/nexus-http"]
 
 [workspace.package]
 version = "0.0.2"
