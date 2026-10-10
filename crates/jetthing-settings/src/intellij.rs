@@ -44,7 +44,10 @@ pub mod ids {
     pub const CUSTOM_FONT_SIZE: &str = "appearance.customFontSize";
     pub const SMOOTH_SCROLLING: &str = "appearance.smoothScrolling";
     pub const COMPACT_MODE: &str = "appearance.compactMode";
+    pub const PROJECT_COLORS: &str = "appearance.projectColors";
     pub const KEYMAP: &str = "keymap.active";
+    /// User shortcut changes, one `keymap<TAB>action<TAB>shortcut…` line per action.
+    pub const KEYMAP_OVERRIDES: &str = "keymap.overrides";
     pub const EDITOR_FONT_FAMILY: &str = "editor.font.family";
     pub const EDITOR_FONT_SIZE: &str = "editor.font.size";
     pub const EDITOR_LINE_HEIGHT: &str = "editor.font.lineHeight";
@@ -220,14 +223,33 @@ fn text(value: &str) -> SettingValue {
 }
 
 /// The keymap the reference IDE selects by default on this platform.
+/// The keymap the reference IDE selects by default on this desktop
+/// (macOS → macOS, GNOME → GNOME, KDE → KDE, other Unix → XWin, else Windows).
 pub fn default_keymap() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "Mac OS X 10.5+"
-    } else if cfg!(windows) {
-        "$default"
-    } else {
-        "Default for GNOME"
+    jetthing_keymap::Desktop::detect().default_keymap()
+}
+
+/// The bundled keymaps: the five primary ones first, then the rest by name.
+fn keymap_options() -> Vec<EnumOption> {
+    let mut ids: Vec<String> = jetthing_keymap::PRIMARY_KEYMAPS
+        .iter()
+        .map(|id| (*id).to_owned())
+        .collect();
+    if let Ok(set) = jetthing_keymap::KeymapSet::shared() {
+        let mut rest: Vec<String> = set
+            .ids()
+            .filter(|id| !jetthing_keymap::PRIMARY_KEYMAPS.contains(id))
+            .map(Into::into)
+            .collect();
+        rest.sort_by_key(|id| id.to_lowercase());
+        ids.extend(rest);
     }
+    ids.into_iter()
+        .map(|id| {
+            let label = jetthing_keymap::display_name(&id).to_owned();
+            EnumOption::new(id, label)
+        })
+        .collect()
 }
 
 fn add_definitions(registry: &mut SettingsRegistry) {
@@ -310,7 +332,7 @@ fn add_definitions(registry: &mut SettingsRegistry) {
         )
         .group(ui_options),
         SettingDef::new(
-            "appearance.projectColors",
+            ids::PROJECT_COLORS,
             look,
             "Use project colors in main toolbar",
             Bool,
@@ -370,14 +392,17 @@ fn add_definitions(registry: &mut SettingsRegistry) {
             ids::KEYMAP,
             "preferences.keymap",
             "Keymap",
-            options(&[
-                ("$default", "Windows"),
-                ("Mac OS X 10.5+", "macOS"),
-                ("Default for GNOME", "GNOME"),
-                ("Default for KDE", "KDE"),
-                ("Default for XWin", "XWin"),
-            ]),
+            SettingKind::Enum {
+                options: keymap_options(),
+            },
             text(default_keymap()),
+        ),
+        SettingDef::new(
+            ids::KEYMAP_OVERRIDES,
+            "preferences.keymap",
+            "Modified shortcuts",
+            SettingKind::List,
+            SettingValue::List(Vec::new()),
         ),
         SettingDef::new(
             ids::EDITOR_FONT_FAMILY,

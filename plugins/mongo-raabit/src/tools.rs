@@ -654,3 +654,253 @@ mod tests {
         assert!(form.to_new_index().is_err());
     }
 }
+
+// ----- shell ------------------------------------------------------------------------------
+
+/// How the shell tab evaluates scripts.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShellEngine {
+    Detecting,
+    Mongosh {
+        path: std::path::PathBuf,
+        version: String,
+    },
+    /// mongosh is not on PATH.
+    Builtin,
+}
+
+/// One run in the shell history.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShellEntry {
+    pub script: String,
+    /// Console text (stdout and stderr, or per-statement results).
+    pub output: String,
+    pub ok: bool,
+    pub elapsed: Duration,
+    /// Parsed result for the tree view.
+    pub value: Option<mongo_raabit_core::bson::Bson>,
+    pub engine: &'static str,
+}
+
+pub struct ShellTab {
+    pub session: SessionId,
+    pub db: String,
+    pub script: String,
+    pub engine: ShellEngine,
+    /// Use the built-in evaluator even when mongosh exists.
+    pub force_builtin: bool,
+    pub history: Vec<ShellEntry>,
+    pub running: bool,
+    pub open: HashSet<String>,
+    pub collections: Vec<String>,
+}
+
+/// Results as documents for the tree view: arrays of documents stay as they are, a
+/// single document or scalar is wrapped.
+pub fn shell_documents(value: &mongo_raabit_core::bson::Bson) -> Vec<Document> {
+    use mongo_raabit_core::bson::{Bson, doc};
+    match value {
+        Bson::Array(items) => items
+            .iter()
+            .map(|item| match item {
+                Bson::Document(d) => d.clone(),
+                other => doc! {"value": other.clone()},
+            })
+            .collect(),
+        Bson::Document(d) => vec![d.clone()],
+        other => vec![doc! {"value": other.clone()}],
+    }
+}
+
+impl MongoRaabit {
+    /// Opens the Query tab of `collection` in Shell mode. Without a collection the first
+    /// collection of the database is used.
+    pub fn open_shell(
+        &mut self,
+        session: SessionId,
+        db: &str,
+        collection: Option<&str>,
+    ) -> Option<TabId> {
+        let collection = match collection {
+            Some(coll) => coll.to_owned(),
+            None => self.first_collection(session, db)?,
+        };
+        let kind = self.collection_kind(session, db, &collection);
+        let id = self.open_collection(session, db, &collection, kind);
+        if let Some(tab) = self.collection_tab_mut(id) {
+            tab.mode = crate::app::QueryMode::Shell;
+        }
+        self.init_shell(id);
+        Some(id)
+    }
+
+    /// Creates the shell state of a Query tab on first use and detects mongosh.
+    pub fn init_shell(&mut self, id: TabId) {
+        let Some(tab) = self.collection_tab_mut(id) else {
+            return;
+        };
+        if tab.shell.is_some() {
+            return;
+        }
+        let (session, db) = (tab.session, tab.db.clone());
+        let script = format!(
+            "db.getCollection(\"{}\").find({{}}).limit(20)",
+            tab.collection
+        );
+        tab.shell = Some(Box::new(ShellTab {
+            session,
+            db: db.clone(),
+            script,
+            engine: ShellEngine::Detecting,
+            force_builtin: false,
+            history: Vec::new(),
+            running: false,
+            open: HashSet::new(),
+            collections: Vec::new(),
+        }));
+        self.jobs.spawn(
+            async move {
+                match mongo_raabit_core::mongosh::find_mongosh() {
+                    Some(path) => {
+                        let version = mongo_raabit_core::mongosh::version(&path)
+                            .await
+                            .unwrap_or_default();
+                        ShellEngine::Mongosh { path, version }
+                    }
+                    None => ShellEngine::Builtin,
+                }
+            },
+            move |app: &mut MongoRaabit, engine| {
+                if let Some(tab) = app.shell_tab_mut(id) {
+                    tab.engine = engine;
+                }
+            },
+        );
+        if let Some(conn) = self.connection_for(session) {
+            let db = db.to_owned();
+            self.jobs.spawn(
+                async move { conn.collections(&db).await },
+                move |app: &mut MongoRaabit, result| {
+                    if let (Some(tab), Ok(list)) = (app.shell_tab_mut(id), result) {
+                        tab.collections = list.into_iter().map(|c| c.name).collect();
+                    }
+                },
+            );
+        }
+    }
+
+    pub fn shell_tab_mut(&mut self, id: TabId) -> Option<&mut ShellTab> {
+        self.collection_tab_mut(id)?.shell.as_deref_mut()
+    }
+
+    /// Run the shell tab's script (or `selection`, when given).
+    pub fn run_shell(&mut self, tab_id: TabId, selection: Option<String>) {
+        let Some(tab) = self.shell_tab_mut(tab_id) else {
+            return;
+        };
+        if tab.running {
+            return;
+        }
+        let script = selection.unwrap_or_else(|| tab.script.clone());
+        if script.trim().is_empty() {
+            return;
+        }
+        tab.running = true;
+        let engine = if tab.force_builtin {
+            ShellEngine::Builtin
+        } else {
+            tab.engine.clone()
+        };
+        let (session, db) = (tab.session, tab.db.clone());
+        let Some(conn) = self.connection_for(session) else {
+            return;
+        };
+        self.jobs.spawn(
+            async move {
+                let start = std::time::Instant::now();
+                match engine {
+                    ShellEngine::Mongosh { path, .. } => {
+                        match conn
+                            .run_mongosh(&path, &db, &script, Duration::from_secs(120))
+                            .await
+                        {
+                            Ok(out) => {
+                                let mut output = out.stdout.trim_end().to_owned();
+                                if !out.stderr.trim().is_empty() {
+                                    if !output.is_empty() {
+                                        output.push('\n');
+                                    }
+                                    output.push_str(out.stderr.trim_end());
+                                }
+                                (
+                                    ShellEntry {
+                                        script,
+                                        output,
+                                        ok: out.success,
+                                        elapsed: out.elapsed,
+                                        value: out.value,
+                                        engine: "mongosh",
+                                    },
+                                    db,
+                                )
+                            }
+                            Err(err) => (
+                                ShellEntry {
+                                    script,
+                                    output: err.to_string(),
+                                    ok: false,
+                                    elapsed: start.elapsed(),
+                                    value: None,
+                                    engine: "mongosh",
+                                },
+                                db,
+                            ),
+                        }
+                    }
+                    _ => {
+                        let mut current = db;
+                        let results = conn.eval_builtin(&mut current, &script).await;
+                        let mut output = String::new();
+                        let mut ok = true;
+                        let mut value = None;
+                        for evaluated in &results {
+                            match &evaluated.result {
+                                Ok(v) => {
+                                    output.push_str(&mongo_raabit_core::shell::to_shell_string(
+                                        v,
+                                        mongo_raabit_core::shell::ShellStyle::Pretty(2),
+                                    ));
+                                    value = Some(v.clone());
+                                }
+                                Err(err) => {
+                                    ok = false;
+                                    output.push_str(&format!("Error: {err}"));
+                                }
+                            }
+                            output.push('\n');
+                        }
+                        (
+                            ShellEntry {
+                                script,
+                                output: output.trim_end().to_owned(),
+                                ok,
+                                elapsed: start.elapsed(),
+                                value,
+                                engine: "built-in",
+                            },
+                            current,
+                        )
+                    }
+                }
+            },
+            move |app: &mut MongoRaabit, (entry, db)| {
+                if let Some(tab) = app.shell_tab_mut(tab_id) {
+                    tab.running = false;
+                    tab.db = db;
+                    tab.open.clear();
+                    tab.history.push(entry);
+                }
+            },
+        );
+    }
+}

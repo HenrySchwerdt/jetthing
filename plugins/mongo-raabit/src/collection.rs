@@ -1,5 +1,5 @@
-//! Query tab of a collection: the query written with the visual builder, as shell code or
-//! as SQL, the paging toolbar and the Table / Tree / JSON result views.
+//! Query tab of a collection: the query written with the visual builder, as shell code,
+//! as SQL or as a mongosh script, the paging toolbar and the Table / Tree / JSON result views.
 
 use crate::app::{CollectionTab, Load, MongoRaabit, QueryMode, ResultView, TabId};
 use crate::icons::{self, Icon};
@@ -52,7 +52,7 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
             header(ui, &p, tab, &server_name, &mut tool);
             ui.add_space(8.0);
             mode_switch(ui, tab);
-            if tab.mode == QueryMode::Sql {
+            if matches!(tab.mode, QueryMode::Sql | QueryMode::Shell) {
                 sql = true;
                 return;
             }
@@ -89,7 +89,12 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
         });
     if sql {
         widgets::separator(ui);
-        crate::sql_view::show(app, tab_id, ui);
+        if app.collection_tab_mut(tab_id).map(|t| t.mode) == Some(QueryMode::Shell) {
+            app.init_shell(tab_id);
+            crate::shell_view::show(app, tab_id, ui);
+        } else {
+            crate::sql_view::show(app, tab_id, ui);
+        }
         if let Some(kind) = tool
             && let Some(tab) = app.collection_tab_mut(tab_id)
         {
@@ -243,6 +248,7 @@ fn mode_switch(ui: &mut Ui, tab: &mut CollectionTab) {
                 (QueryMode::Builder, Icon::Filter, "Builder"),
                 (QueryMode::Code, Icon::Code, "Code"),
                 (QueryMode::Sql, Icon::Sql, "SQL"),
+                (QueryMode::Shell, Icon::Shell, "Shell"),
             ],
         );
     });

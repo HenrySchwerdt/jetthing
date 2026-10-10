@@ -359,11 +359,40 @@ pub struct RequestSettings {
     pub raw_url: bool,
 }
 
+/// How a request talks to the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Protocol {
+    /// One request, one response.
+    #[default]
+    Http,
+    /// A WebSocket connection (`ws://`/`wss://`); the body is the message composer.
+    WebSocket,
+    /// A Server-Sent Events stream (`text/event-stream`).
+    Sse,
+}
+
+impl Protocol {
+    pub fn label(self) -> &'static str {
+        match self {
+            Protocol::Http => "HTTP",
+            Protocol::WebSocket => "WebSocket",
+            Protocol::Sse => "Server-Sent Events",
+        }
+    }
+
+    pub fn is_http(&self) -> bool {
+        *self == Protocol::Http
+    }
+}
+
 /// An HTTP request definition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Request {
     pub id: Id,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Protocol::is_http")]
+    pub protocol: Protocol,
     pub method: Method,
     pub url: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -388,6 +417,7 @@ impl Request {
         Self {
             id: Id::new("req"),
             name: name.into(),
+            protocol: Protocol::Http,
             method,
             url: url.into(),
             params: Vec::new(),

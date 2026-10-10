@@ -15,6 +15,41 @@ Captures in `jetthing/themes/` (Linux, Xvfb 1600×1000, `JETTHING_RENDERER=glow`
    switches on the next frame without a restart. `settings.toml` drops the override
    because Islands Dark is the default.
 
+## Project color in the main toolbar
+
+Reference: `reference/android-studio/04-editor-project-tree.png`. Jetthing:
+`jetthing/themes/toolbar-gradient-dark.png` (project `my-application`, whose badge hashes to
+teal like the reference's "MA" tile), `toolbar-gradient-light.png` (Islands Light) and
+`toolbar-gradient-compare.png` (top: reference toolbar band y 18–82, bottom: Jetthing y 0–64,
+both 700 px wide, scaled 2×).
+
+Steps: `cargo run -p jetthing-app -- <dir named my-application> <file>` under Xvfb 1600×1000;
+turn it off with `"appearance.projectColors" = false` (Settings › Appearance › "Use project
+colors in main toolbar"), which leaves the toolbar at the plain frame color (38,40,44).
+
+Pixel samples (the reference's toolbar starts at y 19 below the window manager's title bar,
+Jetthing's at y 0):
+
+| x | reference (y 22) | Jetthing (y 10) | Jetthing (y 38) |
+|---:|---|---|---|
+| 5 | 38,40,44 | 39,45,48 | 38,44,47 |
+| 20 | 41,53,56 | 41,58,59 | 41,56,57 |
+| 45 | 44,70,72 | 46,80,78 | 44,75,73 |
+| 150 | 46,75,75 | 45,77,76 | 45,74,72 |
+| 300 | 44,66,68 | 43,65,66 | 42,63,63 |
+| 450 | 41,53,56 | 40,53,55 | 41,53,55 |
+| 550 | 40,45,49 | 39,45,48 | 39,45,49 |
+| 650 | 38,40,44 | 38,40,44 | 38,40,44 |
+
+The glow (`crates/jetthing-ui/src/toolbar_gradient.rs`) is a vertex-colored mesh on the
+background layer, below the toolbar widgets and the islands: it rises from the left edge
+to the badge, stays flat to 30 px past it, fades linearly to neutral 570 px right of the
+badge centre, and loses 15 % towards the toolbar's bottom edge before fading out in the
+island gaps. Dark themes blend the badge color (lightened 12 % towards white) at 32 %,
+light themes at 16 %. Differences: Jetthing's badge sits ~12 px further left (no VCS
+widget offset), so the rise is slightly steeper; the light tint has no reference to check
+against.
+
 ## How it works
 
 Every color is a token (`crates/jetthing-ui/src/theme_engine.rs`) naming, per theme,

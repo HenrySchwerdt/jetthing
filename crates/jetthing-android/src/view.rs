@@ -344,6 +344,7 @@ mod tests {
                 target_sdk: None,
                 manifest: Some(PathBuf::from("app/src/main/AndroidManifest.xml")),
                 launcher: None,
+                variants: crate::variants::VariantModel::parse(""),
             }],
             problems: Vec::new(),
         }

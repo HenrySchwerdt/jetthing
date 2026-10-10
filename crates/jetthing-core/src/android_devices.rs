@@ -224,7 +224,8 @@ impl IdeState {
     pub fn poll_android(&mut self) -> bool {
         let devices = self.android.devices.poll();
         let logcat = self.android.logcat.poll();
-        devices || logcat
+        let deploy = self.poll_deploy();
+        devices || logcat || deploy
     }
 }
 

@@ -41,6 +41,10 @@ pub enum Icon {
     Close,
     Minimize,
     Refresh,
+    /// Curved arrow back (rollback / revert).
+    Rollback,
+    /// Two-pane compare (show diff).
+    Diff,
     Error,
     Warning,
     /// Phone outline (devices, Device Manager).
@@ -49,6 +53,12 @@ pub enum Icon {
     Pause,
     ScrollEnd,
     SoftWrap,
+    WeakWarning,
+    Pin,
+    Success,
+    Rerun,
+    /// Stacked squares (Build Variants).
+    Variants,
 }
 
 impl Icon {
@@ -275,6 +285,21 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
             painter.circle_filled(g.p(4.5, 10.0), g.len(0.9), color);
             line(&[(6.5, 10.0), (10.0, 10.0)]);
         }
+        Icon::Variants => {
+            painter.rect_stroke(
+                g.rect(1.5, 5.5, 10.5, 14.5),
+                g.len(1.5),
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+            line(&[
+                (4.5, 3.5),
+                (4.5, 1.5),
+                (14.5, 1.5),
+                (14.5, 11.5),
+                (12.5, 11.5),
+            ]);
+        }
         Icon::Pause => {
             line(&[(5.5, 3.5), (5.5, 12.5)]);
             line(&[(10.5, 3.5), (10.5, 12.5)]);
@@ -299,6 +324,18 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
             );
             line(&[(7.0, 12.5), (9.0, 12.5)]);
         }
+        Icon::Pin => {
+            line(&[(5.0, 2.5), (11.0, 2.5)]);
+            line(&[
+                (6.5, 2.5),
+                (6.5, 7.0),
+                (4.0, 9.5),
+                (12.0, 9.5),
+                (9.5, 7.0),
+                (9.5, 2.5),
+            ]);
+            line(&[(8.0, 9.5), (8.0, 14.0)]);
+        }
         Icon::Refresh => {
             let center = g.p(8.0, 8.0);
             let points = (0..=20)
@@ -312,21 +349,78 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
             painter.line_segment([tip, tip + vec2(g.len(3.0), g.len(0.3))], stroke);
             painter.line_segment([tip, tip + vec2(g.len(0.3), g.len(3.0))], stroke);
         }
+        Icon::Rollback => {
+            // Arrow pointing left that curves down to the right.
+            line(&[(3.0, 6.0), (10.0, 6.0)]);
+            let center = g.p(10.0, 9.5);
+            let points = (0..=12)
+                .map(|step| {
+                    let angle =
+                        -std::f32::consts::FRAC_PI_2 + step as f32 / 12.0 * std::f32::consts::PI;
+                    center + vec2(angle.cos(), angle.sin()) * g.len(3.5)
+                })
+                .collect::<Vec<_>>();
+            painter.add(Shape::Path(PathShape::line(points, stroke)));
+            line(&[(10.0, 13.0), (6.5, 13.0)]);
+            line(&[(5.5, 3.5), (3.0, 6.0), (5.5, 8.5)]);
+        }
+        Icon::Diff => {
+            closed(
+                &[(2.0, 3.0), (7.0, 3.0), (7.0, 13.0), (2.0, 13.0)],
+                Color32::TRANSPARENT,
+                stroke,
+            );
+            closed(
+                &[(9.0, 3.0), (14.0, 3.0), (14.0, 13.0), (9.0, 13.0)],
+                Color32::TRANSPARENT,
+                stroke,
+            );
+            line(&[(3.5, 6.5), (5.5, 6.5)]);
+            line(&[(10.5, 6.5), (12.5, 6.5)]);
+            line(&[(10.5, 9.5), (12.5, 9.5)]);
+        }
         Icon::Error => {
             painter.circle_filled(g.p(8.0, 8.0), g.len(6.5), theme::ERROR);
             let white = Stroke::new(g.len(1.5).max(1.0), theme::ISLAND);
             painter.line_segment([g.p(8.0, 4.5), g.p(8.0, 9.0)], white);
             painter.circle_filled(g.p(8.0, 11.3), g.len(1.0), theme::ISLAND);
         }
-        Icon::Warning => {
+        Icon::Warning | Icon::WeakWarning => {
+            let fill = if icon == Icon::Warning {
+                *theme::WARNING
+            } else {
+                *theme::editor::WEAK_WARNING_EFFECT
+            };
             closed(
                 &[(8.0, 1.5), (15.0, 14.0), (1.0, 14.0)],
-                *theme::WARNING,
-                Stroke::new(stroke.width, theme::WARNING),
+                fill,
+                Stroke::new(stroke.width, fill),
             );
             let dark = Stroke::new(g.len(1.5).max(1.0), theme::ISLAND);
             painter.line_segment([g.p(8.0, 6.0), g.p(8.0, 10.0)], dark);
             painter.circle_filled(g.p(8.0, 12.0), g.len(0.9), theme::ISLAND);
+        }
+        Icon::Success => {
+            let check = Stroke::new(g.len(1.6).max(1.0), theme::SUCCESS);
+            painter.add(Shape::Path(PathShape::line(
+                vec![g.p(3.0, 8.5), g.p(6.5, 12.0), g.p(13.0, 4.5)],
+                check,
+            )));
+        }
+        Icon::Rerun => {
+            let center = g.p(8.0, 8.0);
+            let points = (0..=20)
+                .map(|step| {
+                    let angle = 0.9 + step as f32 / 20.0 * 4.6;
+                    center + vec2(angle.cos(), angle.sin()) * g.len(5.5)
+                })
+                .collect();
+            painter.add(Shape::Path(PathShape::line(points, stroke)));
+            closed(
+                &[(6.5, 6.0), (11.0, 8.5), (6.5, 11.0)],
+                *theme::RUN_GREEN,
+                Stroke::new(stroke.width * 0.5, theme::RUN_GREEN),
+            );
         }
     }
 }

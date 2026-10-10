@@ -554,3 +554,71 @@ fn visual_query_builder_runs_its_query() {
         conn.drop_database(db).await.unwrap();
     });
 }
+
+#[test]
+fn shell_tab_runs_scripts() {
+    use mongo_raabit::tools::ShellEngine;
+    let (mut profile, _) = ConnectionProfile::from_uri(&uri()).unwrap();
+    profile.connect_timeout_ms = Some(1500);
+    let mut app = MongoRaabit::new(None);
+    let session = app.connect(profile);
+    app.wait_idle(Duration::from_secs(10));
+    if app.session(session).unwrap().connection().is_none() {
+        eprintln!(
+            "skipping shell_tab_runs_scripts: no MongoDB server at {}",
+            uri()
+        );
+        return;
+    }
+    let tab = app
+        .open_shell(session, "raabit_test_ui_shell", Some("t"))
+        .unwrap();
+    assert_eq!(
+        app.collection_tab_mut(tab).unwrap().mode,
+        mongo_raabit::app::QueryMode::Shell
+    );
+    app.wait_idle(Duration::from_secs(10));
+    let has_mongosh = matches!(
+        app.shell_tab_mut(tab).unwrap().engine,
+        ShellEngine::Mongosh { .. }
+    );
+    // The built-in evaluator always works.
+    {
+        let t = app.shell_tab_mut(tab).unwrap();
+        t.force_builtin = true;
+        t.script = "db.t.insertOne({x: 1})\ndb.t.find({}, {_id: 0})".into();
+    }
+    app.run_shell(tab, None);
+    app.wait_idle(Duration::from_secs(10));
+    let entry = app
+        .shell_tab_mut(tab)
+        .unwrap()
+        .history
+        .last()
+        .cloned()
+        .unwrap();
+    assert!(entry.ok, "{}", entry.output);
+    assert_eq!(entry.engine, "built-in");
+    assert_eq!(
+        mongo_raabit::tools::shell_documents(entry.value.as_ref().unwrap()),
+        vec![doc! {"x": 1}]
+    );
+    if has_mongosh {
+        app.shell_tab_mut(tab).unwrap().force_builtin = false;
+        app.run_shell(tab, Some("db.t.countDocuments()".into()));
+        app.wait_idle(Duration::from_secs(30));
+        let entry = app
+            .shell_tab_mut(tab)
+            .unwrap()
+            .history
+            .last()
+            .cloned()
+            .unwrap();
+        assert!(entry.ok, "{}", entry.output);
+        assert_eq!(entry.engine, "mongosh");
+        assert_eq!(entry.output.trim(), "1");
+    }
+    app.shell_tab_mut(tab).unwrap().force_builtin = true;
+    app.run_shell(tab, Some("db.dropDatabase()".into()));
+    app.wait_idle(Duration::from_secs(10));
+}

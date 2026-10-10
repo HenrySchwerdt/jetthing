@@ -82,13 +82,15 @@ impl Session {
     }
 }
 
-/// How the query of a collection tab is written: visually, as shell code, or as SQL.
+/// How the query of a collection tab is written: visually, as shell code, as SQL, or
+/// as a free mongosh script (IntelliShell).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QueryMode {
     #[default]
     Builder,
     Code,
     Sql,
+    Shell,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +127,8 @@ pub struct CollectionTab {
     pub builder: crate::query_builder::QueryBuilder,
     /// SQL mode state.
     pub sql: crate::tools::SqlTab,
+    /// Shell mode state, created when the mode is first opened.
+    pub shell: Option<Box<crate::tools::ShellTab>>,
 }
 
 /// An inline edit of one field of one document.
@@ -170,6 +174,7 @@ impl CollectionTab {
                 view: ResultView::Tree,
                 open: HashSet::new(),
             },
+            shell: None,
         }
     }
 }

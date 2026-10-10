@@ -1,0 +1,20 @@
+{
+  "id": "10",
+  "title": "Find in Files (query \"greeting\")",
+  "reference": "reference/intellij-community/java-gradle/10-find-in-files.png",
+  "fixture": "java-gradle",
+  "open": ["src/main/java/com/example/App.java"],
+  "steps": [
+    {"op": "wait", "until": "idle"},
+    {"op": "key", "chord": "Primary+Shift+F"},
+    {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/toolWindows/bottom", "equals": "find"},
+    {"op": "assert", "pointer": "/focus", "equals": "findInFiles"},
+    {"op": "type", "text": "greeting"},
+    {"op": "key", "chord": "Enter"},
+    {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/findInFiles/query", "equals": "greeting"},
+    {"op": "assert", "pointer": "/findInFiles/results", "equals": 4},
+    {"op": "screenshot", "name": "10-find-in-files.png"}
+  ]
+}

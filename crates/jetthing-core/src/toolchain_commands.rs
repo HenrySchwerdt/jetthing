@@ -58,12 +58,8 @@ impl ToolchainState {
     /// Status-bar text and fraction for the first running install.
     pub fn progress(&self) -> Option<(String, Option<f32>)> {
         let job = self.service.jobs().first()?;
-        let name = self
-            .toolchains
-            .catalog()
-            .get(&job.component)
-            .map_or(job.component.clone(), |p| p.spec().name.clone());
-        let mut text = job.describe(&name);
+        // Component ids keep the status bar entry short (`jdtls`, `jdk`).
+        let mut text = job.describe(&job.component);
         let more = self.service.jobs().len() - 1;
         if more > 0 {
             text.push_str(&format!(" (+{more})"));
@@ -84,6 +80,48 @@ impl IdeState {
         self.project.as_ref().map(|p| p.root().to_owned())
     }
 
+    /// Points the language servers at the current toolchain settings and pins.
+    pub(crate) fn refresh_toolchain_resolver(&mut self) {
+        let resolver =
+            crate::toolchain_lsp::ToolchainServerResolver::new(self.toolchains.toolchains.clone());
+        self.lsp.set_resolver(Some(std::sync::Arc::new(resolver)));
+    }
+
+    /// Installs `components` and whatever they require that cannot be found.
+    /// Returns the started jobs (empty when everything is present).
+    pub fn setup_toolchains(
+        &mut self,
+        components: &[&str],
+    ) -> Result<Vec<(String, JobId)>, String> {
+        for component in components {
+            if self
+                .toolchains
+                .toolchains
+                .catalog()
+                .get(component)
+                .is_none()
+            {
+                return Err(format!("unknown toolchain component `{component}`"));
+            }
+        }
+        let missing = self.toolchains.toolchains.missing(components);
+        let mut jobs = Vec::new();
+        for component in missing {
+            let job = self.install_toolchain(&component, None)?;
+            jobs.push((component, job));
+        }
+        if jobs.is_empty() {
+            self.status = "All toolchain components are already set up".into();
+        } else {
+            let ids: Vec<&str> = jobs
+                .iter()
+                .map(|(component, _)| component.as_str())
+                .collect();
+            self.status = format!("Setting up {}…", ids.join(", "));
+        }
+        Ok(jobs)
+    }
+
     /// Applies finished installs to the status line. Call from the UI loop.
     pub fn poll_toolchains(&mut self) {
         let events = self.toolchains.service.poll();
@@ -91,6 +129,7 @@ impl IdeState {
     }
 
     fn apply_toolchain_events(&mut self, events: &[ToolchainEvent]) {
+        let mut installed_any = false;
         for event in events {
             if let ToolchainEvent::Finished {
                 component, result, ..
@@ -98,10 +137,23 @@ impl IdeState {
             {
                 let name = self.toolchains.component_name(component);
                 self.status = match result {
-                    Ok(installed) => format!("{name} {} installed", installed.version),
+                    Ok(installed) => {
+                        installed_any = true;
+                        format!("{name} {} installed", installed.version)
+                    }
                     Err(error) => format!("{name} setup failed: {error}"),
                 };
             }
+        }
+        // Language servers that were missing can start now; wait until the
+        // whole setup (e.g. jdtls and its JDK) has finished.
+        if installed_any
+            && !self.toolchains.service.is_busy()
+            && self.lsp.missing_servers().next().is_some()
+        {
+            let status = std::mem::take(&mut self.status);
+            self.restart_language_servers();
+            self.status = status;
         }
     }
 
@@ -124,7 +176,7 @@ impl IdeState {
             .toolchains
             .service
             .install(&self.toolchains.toolchains, component, request);
-        self.status = format!("Setting up {}…", self.toolchains.component_name(component));
+        self.status = format!("Setting up {component}…");
         Ok(job)
     }
 }
@@ -256,6 +308,62 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                     Some(Err(error)) => Err(CommandError::Failed(error)),
                     None => Err(CommandError::Failed("install timed out".into())),
                 }
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "toolchain.setup",
+                "Set Up Toolchains",
+                "Toolchains",
+                None,
+                r#"{"components":["string"],"wait":"bool?"}"#,
+            ),
+            |_| true,
+            |state: &mut IdeState, params| {
+                let ids = crate::string_array_param(&params, "components")?;
+                let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+                let jobs = state
+                    .setup_toolchains(&ids)
+                    .map_err(CommandError::InvalidParams)?;
+                let mut result: Vec<Value> = jobs
+                    .iter()
+                    .map(|(component, job)| json!({"component": component, "job": job}))
+                    .collect();
+                if params.get("wait").and_then(Value::as_bool) == Some(true) {
+                    let mut seen: Vec<ToolchainEvent> = Vec::new();
+                    for (entry, (_, job)) in result.iter_mut().zip(&jobs) {
+                        // A job may have finished while waiting on an earlier one.
+                        let earlier = seen.iter().find_map(|event| match event {
+                            ToolchainEvent::Finished {
+                                job: done, result, ..
+                            } if done == job => Some(result.clone()),
+                            _ => None,
+                        });
+                        let outcome = match earlier {
+                            Some(result) => Some(result),
+                            None => {
+                                let (events, outcome) = state
+                                    .toolchains
+                                    .service
+                                    .wait(*job, Duration::from_secs(60 * 60));
+                                state.apply_toolchain_events(&events);
+                                seen.extend(events);
+                                outcome
+                            }
+                        };
+                        match outcome {
+                            Some(Ok(installed)) => {
+                                entry["version"] = json!(installed.version);
+                                entry["path"] = json!(installed.path);
+                            }
+                            Some(Err(error)) => return Err(CommandError::Failed(error)),
+                            None => return Err(CommandError::Failed("setup timed out".into())),
+                        }
+                    }
+                }
+                Ok(json!(result))
             },
         ))
         .expect("unique built-in id");
@@ -401,6 +509,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 .map_err(|error| CommandError::Failed(error.to_string()))?;
                 let root = state.project_root();
                 state.toolchains.reload(root.as_deref());
+                state.refresh_toolchain_resolver();
                 let located = state.toolchains.toolchains.locate(&id);
                 Ok(located.as_ref().map_or(Value::Null, located_json))
             },
@@ -634,6 +743,86 @@ mod tests {
             .unwrap();
         assert_eq!(pins[0]["component"], "bazel");
         assert_eq!(pins[0]["request"]["value"], "7.3.1");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn setup_installs_missing_requirements_too() {
+        let dir = temp("toolchain-setup");
+        let body = archive(b"#!/bin/sh\n");
+        let sha = sha256_hex(&body);
+        let url = serve(body);
+        let mut state = state_with_demo(&dir, url.clone(), sha.clone());
+        // `demo-ls` requires `demo`; both come from the same test archive.
+        let mut spec =
+            ComponentSpec::new("demo-ls", "Demo LS", ComponentKind::LanguageServer, "demo");
+        spec.requires = vec!["demo".into()];
+        let platform = Platform::parse("linux", "x86_64").unwrap();
+        let mut catalog = state.toolchains.toolchains.catalog().clone();
+        catalog.register(Arc::new(StaticProvider {
+            spec,
+            index: ReleaseIndex {
+                releases: vec![IndexedRelease {
+                    version: ToolVersion::new("2.0"),
+                    channels: vec![],
+                    artifacts: BTreeMap::from([(
+                        platform.key(),
+                        Artifact {
+                            url,
+                            checksum: Checksum::Sha256(sha),
+                            archive: ArchiveKind::TarGz,
+                            size: None,
+                        },
+                    )]),
+                    license: None,
+                }],
+            },
+        }));
+        state.toolchains.toolchains =
+            Toolchains::new(catalog, ToolchainStore::new(dir.join("toolchains")))
+                .with_platform(platform)
+                .with_environment(Default::default(), BTreeMap::new());
+        let commands = built_in_commands();
+        let result = commands
+            .execute(
+                "toolchain.setup",
+                &mut state,
+                json!({"components": ["demo-ls"], "wait": true}),
+            )
+            .unwrap();
+        let mut installed: Vec<&str> = result
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["component"].as_str().unwrap())
+            .collect();
+        installed.sort();
+        assert_eq!(installed, ["demo", "demo-ls"]);
+        assert!(
+            result
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["version"].is_string())
+        );
+        // Everything present: nothing to do.
+        let again = commands
+            .execute(
+                "toolchain.setup",
+                &mut state,
+                json!({"components": ["demo-ls"]}),
+            )
+            .unwrap();
+        assert_eq!(again, json!([]));
+        assert!(
+            commands
+                .execute(
+                    "toolchain.setup",
+                    &mut state,
+                    json!({"components": ["nope"]})
+                )
+                .is_err()
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

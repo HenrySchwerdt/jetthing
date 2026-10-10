@@ -4,10 +4,28 @@ use std::{
 };
 use thiserror::Error;
 
+mod blame;
+mod branch;
 mod diff;
+mod log;
+mod remote;
 mod watcher;
+mod worktree;
+pub use blame::{BlameLine, blame};
+pub use branch::{
+    PendingOperation, abort_operation, checkout, create_branch, delete_branch, merge,
+    pending_operation, rebase, rename_branch, validate_branch_name,
+};
 pub use diff::{FileDiff, Hunk, HunkKind, LineRange, split_lines};
+pub use log::{
+    Branches, CommitDetails, CommitFile, CommitInfo, GraphEdge, GraphRow, LocalBranch, LogQuery,
+    branches, commit_details, graph, log,
+};
+pub use remote::{PushPlan, RemoteEvent, RemoteJob, RemoteOperation, push_plan, remotes};
 pub use watcher::{Notify, StatusWatcher};
+pub use worktree::{
+    StashEntry, last_commit_message, stash_apply, stash_drop, stash_list, stash_push,
+};
 
 #[derive(Debug, Error)]
 pub enum GitError {
@@ -77,7 +95,16 @@ impl RepositoryStatus {
     /// Content of repository-relative `path` at `HEAD`, or `None` when the
     /// file is not in `HEAD` (new file or no commits yet).
     pub fn head_text(&self, path: &Path) -> Result<Option<String>, GitError> {
-        let spec = format!("HEAD:{}", git_path(path));
+        self.text_at("HEAD", path)
+    }
+
+    /// Content of repository-relative `path` at `revision`, or `None` when the
+    /// file does not exist there.
+    pub fn text_at(&self, revision: &str, path: &Path) -> Result<Option<String>, GitError> {
+        if revision.is_empty() || revision.starts_with('-') || revision.contains(':') {
+            return Err(GitError::Command(format!("invalid revision `{revision}`")));
+        }
+        let spec = format!("{revision}:{}", git_path(path));
         if !run(&self.root, &["cat-file", "-e", &spec])?
             .status
             .success()
@@ -86,6 +113,27 @@ impl RepositoryStatus {
         }
         let output = checked(&self.root, &["show", &spec])?;
         decode_text(path, output.stdout).map(Some)
+    }
+
+    /// Diff of repository-relative `path` between two revisions (`old` may be
+    /// `None` for a root commit).
+    pub fn diff_revisions(
+        &self,
+        path: &Path,
+        old: Option<&str>,
+        new: &str,
+    ) -> Result<FileDiff, GitError> {
+        let old_text = match old {
+            Some(old) => self.text_at(old, path)?,
+            None => None,
+        };
+        let new_text = self.text_at(new, path)?;
+        Ok(FileDiff::compute(
+            path.to_owned(),
+            old.map(|old| old.chars().take(7).collect()),
+            old_text.unwrap_or_default(),
+            new_text.unwrap_or_default(),
+        ))
     }
 
     /// Short hash of `HEAD`, or `None` before the first commit.

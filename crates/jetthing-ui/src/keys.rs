@@ -24,6 +24,8 @@ pub fn for_windows_linux(mac: &str) -> String {
         "⌘W" => return "Ctrl+F4".into(),
         "⌥F12" => return "Alt+F12".into(),
         "⌘," => return "Ctrl+Alt+S".into(),
+        "⇧⌘]" => return "Alt+Right".into(),
+        "⇧⌘[" => return "Alt+Left".into(),
         "⌃G" => return "Alt+J".into(),
         "⌃⇧G" => return "Alt+Shift+J".into(),
         "⌃⌘G" => return "Ctrl+Alt+Shift+J".into(),

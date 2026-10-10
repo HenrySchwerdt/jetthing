@@ -233,6 +233,18 @@ impl App {
                         tab.form.partial = "{ status: { $ne: \"delivered\" } }".into();
                     }
                 }
+                "shell" => {
+                    if let Some(id) = self.raabit.open_shell(session, &db, Some(&coll)) {
+                        wait(&mut self.raabit);
+                        if let Some(t) = text
+                            && let Some(tab) = self.raabit.shell_tab_mut(id)
+                        {
+                            tab.script = t;
+                            tab.force_builtin = std::env::var("RAABIT_BUILTIN").is_ok();
+                        }
+                        self.raabit.run_shell(id, None);
+                    }
+                }
                 other => eprintln!("unknown --tool {other}"),
             }
             wait(&mut self.raabit);

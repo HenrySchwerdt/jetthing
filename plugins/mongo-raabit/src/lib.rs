@@ -16,6 +16,7 @@ pub mod plugin;
 pub mod query_builder;
 mod results;
 mod schema_view;
+mod shell_view;
 mod sql_view;
 pub mod stage_builder;
 mod structure_view;

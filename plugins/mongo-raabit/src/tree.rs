@@ -23,6 +23,7 @@ pub enum ToolKind {
     Sql,
     Schema,
     Indexes,
+    Shell,
 }
 
 const ROW: f32 = 24.0;
@@ -454,6 +455,7 @@ pub fn show(app: &mut MongoRaabit, ui: &mut Ui) {
                                     ui.separator();
                                     for (label, kind) in [
                                         ("Query with SQL", ToolKind::Sql),
+                                        ("Query with Shell", ToolKind::Shell),
                                         ("Aggregation", ToolKind::Aggregation),
                                         ("Structure: Schema", ToolKind::Schema),
                                         ("Structure: Indexes", ToolKind::Indexes),
@@ -546,6 +548,9 @@ pub fn open_tool(
     match (kind, collection) {
         (ToolKind::Sql, coll) => {
             app.open_sql(session, db, coll);
+        }
+        (ToolKind::Shell, coll) => {
+            app.open_shell(session, db, coll);
         }
         (ToolKind::Aggregation, Some(coll)) => {
             app.open_aggregation(session, db, coll, None);

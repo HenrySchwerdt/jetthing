@@ -282,7 +282,7 @@ impl Toolchains {
     }
 
     /// Resolves the release to install for `component`: `request` if given,
-    /// else the project pin, else latest.
+    /// else the project pin, else the provider's default (latest, LTS for JDKs).
     pub fn resolve(
         &self,
         component: &str,
@@ -293,7 +293,10 @@ impl Toolchains {
             .catalog
             .get(component)
             .ok_or_else(|| ToolchainError::UnknownComponent(component.into()))?;
-        let request = request.cloned().unwrap_or_else(|| self.request(component));
+        let request = request
+            .cloned()
+            .or_else(|| self.pins.get(component).map(|pin| pin.request.clone()))
+            .unwrap_or_else(|| provider.default_request());
         provider.resolve(
             &request,
             &self.platform,
@@ -328,7 +331,11 @@ impl Toolchains {
                 .clone()
                 .or_else(|| std::env::var_os("PATH"))
                 .unwrap_or_default();
-            let paths = bins.into_iter().chain(std::env::split_paths(&current));
+            // Empty entries would mean the current directory.
+            let paths = bins
+                .into_iter()
+                .chain(std::env::split_paths(&current))
+                .filter(|path| !path.as_os_str().is_empty());
             if let Ok(joined) = std::env::join_paths(paths) {
                 env.insert("PATH".into(), joined);
             }
