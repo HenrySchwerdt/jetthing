@@ -23,11 +23,11 @@ mod settings_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
-pub use settings_commands::Settings;
 pub use android_commands::AndroidState;
 pub use android_devices::DeviceHub;
 pub use android_logcat::LogcatState;
 pub use disk_sync::{DiskConflict, Waker, content_hash};
+pub use settings_commands::Settings;
 mod vcs;
 pub use plugin_host::{
     PluginHostState, PluginStatusWidget, PluginTab, sync_plugin_commands, user_plugin_dir,

@@ -249,8 +249,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     if let Some(tab) = app.state.diff.as_ref() {
         let title = crate::diff_ui::tab_title(tab);
         let tooltip = format!("Diff of {} against HEAD", tab.path.display());
-        let (clicked, closed, end) =
-            diff_tab(ui, bar, x, &title, &tooltip, app.state.diff_active);
+        let (clicked, closed, end) = diff_tab(ui, bar, x, &title, &tooltip, app.state.diff_active);
         x = end;
         if closed {
             app.dispatch("diff.close", Value::Null);
