@@ -1,13 +1,57 @@
-use anyhow::{Context, Result, bail};
-use std::{fs, path::Path, process::Command};
+mod parity;
+mod scenes;
+
+use anyhow::{Context, Result, anyhow, bail};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+const USAGE: &str =
+    "usage: cargo xtask parity [--check] | dist | scenes [--only 01,05] [--out DIR] [--release]";
+
+fn workspace_root() -> PathBuf {
+    // Prefer the current directory when it holds the inventory (normal `cargo run`
+    // from the workspace root); fall back to the xtask manifest's parent.
+    let cwd = std::env::current_dir().unwrap_or_default();
+    if cwd.join("docs/parity").is_dir() {
+        cwd
+    } else {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+    }
+}
 
 fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1);
-    match args.next().as_deref() {
-        Some("parity") => parity(args.any(|a| a == "--check")),
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("parity") => {
+            let mut check = false;
+            for arg in &args[1..] {
+                match arg.as_str() {
+                    "--check" => check = true,
+                    other => bail!("unknown argument `{other}`; {USAGE}"),
+                }
+            }
+            parity(check)
+        }
         Some("dist") => dist(),
-        _ => bail!("usage: cargo xtask parity [--check] | cargo xtask dist"),
+        Some("scenes") => scenes::run(args.into_iter().skip(1)),
+        _ => bail!(USAGE),
     }
+}
+
+fn parity(check: bool) -> Result<()> {
+    match parity::run(&workspace_root(), check).map_err(|e| anyhow!("{e}"))? {
+        parity::Outcome::Valid { rows } => println!("parity tables valid: {rows} rows"),
+        parity::Outcome::UpToDate => println!("parity dashboard and README are up to date"),
+        parity::Outcome::Written(paths) => {
+            for path in paths {
+                println!("wrote {}", path.display());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Builds release binaries and stages a distributable directory under `dist/`.
@@ -63,74 +107,4 @@ fn dist() -> Result<()> {
     // Forward slashes on every platform so CI scripts can parse the path.
     println!("dist/{name}");
     Ok(())
-}
-
-const STATUSES: [&str; 5] = ["Missing", "Planned", "Partial", "Implemented", "Verified"];
-
-/// Validates the parity tables and, unless `check` is set, rewrites the dashboard.
-///
-/// `--check` validates rows (known status, unique IDs) instead of comparing the
-/// generated dashboard, so parallel PRs that each add rows do not conflict on it.
-fn parity(check: bool) -> Result<()> {
-    let mut totals = [0usize; STATUSES.len()];
-    let mut seen = std::collections::HashMap::new();
-    let mut problems = Vec::new();
-    // Every inventory in docs/parity/ counts, so new plugins only add a file.
-    let mut docs: Vec<String> = fs::read_dir("docs/parity")
-        .context("read docs/parity")?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| {
-            path.extension().is_some_and(|ext| ext == "md")
-                && path.file_name().is_some_and(|name| name != "dashboard.md")
-        })
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-        .collect();
-    docs.sort();
-    for doc in &docs {
-        let text = fs::read_to_string(doc).with_context(|| format!("read {doc}"))?;
-        for (number, line) in text.lines().enumerate() {
-            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
-            let Some(id) = cells.get(1).filter(|id| is_parity_id(id)) else {
-                continue;
-            };
-            let location = format!("{doc}:{}", number + 1);
-            if let Some(first) = seen.insert(id.to_string(), location.clone()) {
-                problems.push(format!("{location}: duplicate ID {id} (first at {first})"));
-            }
-            match STATUSES.iter().position(|status| cells.contains(status)) {
-                Some(i) => totals[i] += 1,
-                None => problems.push(format!(
-                    "{location}: {id} has no status; use one of {}",
-                    STATUSES.join(", ")
-                )),
-            }
-        }
-    }
-    if !problems.is_empty() {
-        bail!("parity tables are invalid:\n{}", problems.join("\n"));
-    }
-    if check {
-        println!("parity tables valid: {} rows", seen.len());
-        return Ok(());
-    }
-    let total: usize = totals.iter().sum();
-    let report = format!(
-        "# Parity dashboard\n\nGenerated from `docs/parity/*.md`.\n\n| Status | Count |\n|---|---:|\n| Missing | {} |\n| Planned | {} |\n| Partial | {} |\n| Implemented | {} |\n| Verified | {} |\n| **Total** | **{}** |\n",
-        totals[0], totals[1], totals[2], totals[3], totals[4], total
-    );
-    let path = Path::new("docs/parity/dashboard.md");
-    fs::write(path, &report)?;
-    println!("wrote {}", path.display());
-    Ok(())
-}
-
-/// Matches row IDs such as `PLAT-001` or `AND-010`.
-fn is_parity_id(cell: &str) -> bool {
-    let Some((prefix, number)) = cell.split_once('-') else {
-        return false;
-    };
-    !prefix.is_empty()
-        && prefix.chars().all(|c| c.is_ascii_uppercase())
-        && !number.is_empty()
-        && number.chars().all(|c| c.is_ascii_digit())
 }
