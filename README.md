@@ -12,3 +12,7 @@ cargo run -p xtask -- parity
 
 See `docs/roadmap.md` for honest status and limitations.
 
+<!-- parity:begin -->
+**Parity progress:** 9.9% implemented (weighted), 0.0% verified, across 656 tracked
+features in 13 areas. See [`docs/parity/dashboard.md`](docs/parity/dashboard.md).
+<!-- parity:end -->
