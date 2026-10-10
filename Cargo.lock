@@ -2435,6 +2435,7 @@ dependencies = [
  "jetthing-lsp",
  "jetthing-plugins",
  "jetthing-project",
+ "jetthing-runnables",
  "jetthing-runner",
  "jetthing-search",
  "jetthing-settings",
@@ -2552,6 +2553,14 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "walkdir",
+]
+
+[[package]]
+name = "jetthing-runnables"
+version = "0.0.2"
+dependencies = [
+ "jetthing-language",
+ "tree-sitter",
 ]
 
 [[package]]

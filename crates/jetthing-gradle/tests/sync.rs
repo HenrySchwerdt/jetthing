@@ -80,5 +80,42 @@ fn syncs_multi_module_fixture_with_real_gradle() {
         model.task(":jetthingModel").is_none(),
         "helper task must be hidden"
     );
+    assert!(model.task(":app:jetthingRunMain").is_none());
+
+    // The init script's JavaExec task runs any main class (gutter run icons).
+    let script = build.init_script().unwrap();
+    std::fs::write(
+        root.join("app/src/main/java/demo/App.java"),
+        "package demo;\npublic class App { public static void main(String[] a) { System.out.println(\"ran \" + a.length); } }\n",
+    )
+    .unwrap();
+    let plan = build
+        .task_plan(
+            jetthing_runner::TaskKind::Run,
+            "App",
+            &[
+                ":app:jetthingRunMain".into(),
+                "--init-script".into(),
+                script.display().to_string(),
+                "-Pjetthing.mainClass=demo.App".into(),
+                "-q".into(),
+            ],
+        )
+        .unwrap();
+    service.start(plan).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(600);
+    while service.is_running() && Instant::now() < deadline {
+        service.poll().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    service.poll().unwrap();
+    let console: Vec<_> = service
+        .console()
+        .lines()
+        .iter()
+        .map(|l| l.text.clone())
+        .collect();
+    assert_eq!(service.state(), &TaskState::Exited(0), "{console:#?}");
+    assert!(console.iter().any(|line| line == "ran 0"), "{console:#?}");
     let _ = std::fs::remove_dir_all(&root);
 }

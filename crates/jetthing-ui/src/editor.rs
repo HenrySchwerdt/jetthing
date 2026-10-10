@@ -23,6 +23,8 @@ pub enum EditorRequest {
     Copy,
     Cut,
     Paste(String),
+    /// Click on a gutter run icon (line, screen position for the popup).
+    Gutter(usize, egui::Pos2),
 }
 
 pub struct EditorOutput {
@@ -70,8 +72,9 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             } else {
                 Vec::new()
             };
+            let gutter = app.state.gutter_marks();
             let doc = &mut app.state.documents[index];
-            match editor_surface(ui, doc, &diagnostics, &highlights) {
+            match editor_surface(ui, doc, &diagnostics, &highlights, &gutter) {
                 Ok(EditorOutput {
                     changed,
                     caret_pos,
@@ -119,6 +122,7 @@ fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: EditorRequest)
                 Err(error) => app.state.status = error.to_string(),
             }
         }
+        EditorRequest::Gutter(line, position) => crate::gutter_popup::open(ctx, line, position),
         EditorRequest::Paste(text) => {
             let whole_line = app.clipboard_line.as_deref() == Some(text.as_str());
             app.dispatch(
@@ -477,6 +481,7 @@ fn editor_surface(
     document: &mut Document,
     lsp_diagnostics: &[jetthing_lsp::LspDiagnostic],
     highlights: &[(usize, usize)],
+    gutter: &[jetthing_core::GutterMark],
 ) -> Result<EditorOutput, String> {
     let mut requests = Vec::new();
     let font = theme::editor_font(ui.style());
@@ -550,7 +555,25 @@ fn editor_surface(
                     .max(0.0) as usize,
             };
             let block_drag_id = editor_id().with("block_drag_anchor");
+            // Run icons sit between the line numbers and the text.
+            let gutter_hit = response
+                .interact_pointer_pos()
+                .filter(|position| {
+                    let x = position.x - rect.left();
+                    x >= gutter_width - 18.0 && x < gutter_width + 2.0
+                })
+                .and_then(|position| {
+                    let line = ((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize;
+                    gutter
+                        .iter()
+                        .any(|mark| mark.line == line)
+                        .then_some((line, position))
+                });
             if response.clicked()
+                && let Some((line, position)) = gutter_hit
+            {
+                requests.push(EditorRequest::Gutter(line, position));
+            } else if response.clicked()
                 && let Some(position) = response.interact_pointer_pos()
             {
                 let offset = position_to_offset(position);
@@ -703,6 +726,13 @@ fn editor_surface(
                         *theme::editor::LINE_NUMBER
                     },
                 );
+                if let Some(mark) = gutter.iter().find(|mark| mark.line == line) {
+                    crate::gutter_popup::paint_icon(
+                        &painter,
+                        egui::pos2(rect.left() + gutter_width - 9.0, y + ROW_HEIGHT / 2.0),
+                        mark.kind,
+                    );
+                }
                 // Indent guides every four columns of leading whitespace.
                 let indent = content.chars().take_while(|c| *c == ' ').count();
                 for level in (4..=indent.saturating_sub(1)).step_by(4) {

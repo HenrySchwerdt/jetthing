@@ -20,6 +20,7 @@ mod editor;
 mod editor_keys;
 mod findbar;
 mod gradle_window;
+mod gutter_popup;
 mod icons;
 mod keys;
 mod logcat_ui;
@@ -503,6 +504,13 @@ impl IdeApp {
         if consume(Modifiers::COMMAND, Key::F9) {
             self.dispatch("build.project", Value::Null);
         }
+        // Run context configuration (gutter target at the caret): ⌃⇧R on macOS,
+        // Ctrl+Shift+F10 elsewhere.
+        if (mac && consume(Modifiers::CTRL | Modifiers::SHIFT, Key::R))
+            || consume(Modifiers::CTRL | Modifiers::SHIFT, Key::F10)
+        {
+            self.dispatch("run.gutter", Value::Null);
+        }
         // Run: ⌃R on macOS, Shift+F10 elsewhere (Ctrl+R is Replace there).
         if (mac && consume(Modifiers::CTRL, Key::R)) || consume(Modifiers::SHIFT, Key::F10) {
             self.dispatch("run.project", Value::Null);
@@ -727,6 +735,7 @@ impl eframe::App for IdeApp {
             run_config_dialog::open(self, ctx, Some(focus.as_str()).filter(|f| !f.is_empty()));
         }
         run_config_dialog::show(self, ctx);
+        gutter_popup::show(self, ctx);
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
         about::show(self, ctx);

@@ -22,6 +22,7 @@ pub mod diagnostics;
 mod disk_sync;
 mod editor_commands;
 mod gradle_commands;
+mod gutter_commands;
 mod lsp_commands;
 mod plugin_host;
 mod project_commands;
@@ -38,6 +39,8 @@ pub use disk_sync::{DiskConflict, Waker, content_hash};
 pub use settings_commands::Settings;
 mod vcs;
 pub use build_commands::{BuildSystems, DetectedBuild};
+pub use gutter_commands::GutterMark;
+pub use jetthing_runnables::RunnableKind;
 pub use plugin_host::{
     PluginHostState, PluginStatusWidget, PluginTab, sync_plugin_commands, user_plugin_dir,
 };
@@ -100,6 +103,8 @@ pub struct IdeState {
     pub run_configurations: jetthing_runner::RunManager,
     /// Pending request to show the Run/Debug Configurations dialog (focused name).
     pub edit_run_configurations: Option<String>,
+    /// Gutter run targets of the active document, cached per text revision.
+    pub runnable_cache: gutter_commands::RunnableCache,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -651,6 +656,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     editor_commands::register(&mut registry);
     disk_sync::register(&mut registry);
     gradle_commands::register(&mut registry);
+    gutter_commands::register(&mut registry);
     run_config_commands::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
