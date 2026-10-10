@@ -43,6 +43,17 @@ impl Project {
     pub fn entries(&self, max: usize) -> Vec<FileEntry> {
         WalkDir::new(&self.root)
             .follow_links(false)
+            .sort_by(|a, b| {
+                // Project view order: directories first, then case-insensitive names.
+                b.file_type()
+                    .is_dir()
+                    .cmp(&a.file_type().is_dir())
+                    .then_with(|| {
+                        let a = a.file_name().to_string_lossy().to_lowercase();
+                        let b = b.file_name().to_string_lossy().to_lowercase();
+                        a.cmp(&b)
+                    })
+            })
             .into_iter()
             .filter_entry(|e| {
                 !matches!(

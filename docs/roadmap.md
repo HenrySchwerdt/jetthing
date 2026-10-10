@@ -26,6 +26,13 @@
 - [x] Cancellable background project text search with streamed result navigation
 - [x] Detected Cargo/Gradle/Maven/npm/Go builds with streamed output and cancellation
 - [ ] UI automation/control socket and screenshot tests
+- [x] New UI "Islands Dark" workbench: merged toolbar, stripe, islands, breadcrumbs status bar
+- [x] One-tool-window-per-anchor model with typed `toolwindow.*` commands
+- [x] Search Everywhere (Double Shift) over actions and files with fuzzy ranking
+- [x] Collapsible, sorted project tree with VCS file colors
+- [x] Run widget (`run.project`) next to Build, with OpenGL fallback renderer
+- [x] Release packaging (`cargo xtask dist`) and CI/release workflows
+- [ ] Light theme, settings dialog, and bundled icon set beyond the core actions
 
 ## M2 — language intelligence
 
@@ -57,4 +64,6 @@ Use installed SDK, ADB, emulator, and Gradle; do not depend on Android Studio.
 ## Next task
 
 Add incremental Tree-sitter edit notifications and expand the editor interaction model
-with vertical movement, clipboard operations, find/replace, indentation, and IME input.
+with clipboard operations, find/replace, and IME input (vertical movement, smart Home/End
+and auto-indent on Enter landed with the workbench restyle). Add a UI control socket so
+the screenshot walkthrough in `docs/parity/evidence/` becomes an automated test.
