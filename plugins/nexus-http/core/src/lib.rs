@@ -4,14 +4,17 @@
 //! storage ([`storage`]), templating with variables and template tags
 //! ([`template`]), authentication ([`auth`]), request execution ([`exec`]), the
 //! cookie jar ([`cookies`]), response history and chaining ([`history`]),
-//! JSONPath filters ([`filter`]) and response assertions ([`assertions`]).
+//! JSONPath filters ([`filter`]), response assertions ([`assertions`]), importers
+//! ([`import`]) and code generation ([`codegen`]).
 
 pub mod assertions;
 pub mod auth;
+pub mod codegen;
 pub mod cookies;
 pub mod exec;
 pub mod filter;
 pub mod history;
+pub mod import;
 pub mod model;
 pub mod response;
 pub mod storage;

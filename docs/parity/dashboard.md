@@ -14,16 +14,16 @@ rows. Rows tagged `[Ultimate]` are IntelliJ IDEA Ultimate-only features.
 | Areas | 15 |
 | Rows | 699 |
 | Total weight | 1525 |
-| **Weighted % implemented** | **10.8%** |
+| **Weighted % implemented** | **10.9%** |
 | **Weighted % verified** | **0.0%** |
 
 ## Status counts
 
 | Status | Rows | Weight |
 |---|---:|---:|
-| Missing | 594 | 1257 |
+| Missing | 592 | 1255 |
 | Planned | 1 | 1 |
-| Partial | 78 | 204 |
+| Partial | 80 | 206 |
 | Implemented | 26 | 63 |
 | Verified | 0 | 0 |
 | **Total** | **699** | **1525** |
@@ -44,7 +44,7 @@ rows. Rows tagged `[Ultimate]` are IntelliJ IDEA Ultimate-only features.
 | IntelliJ IDEA parity: tool windows | [intellij-tool-windows.md](intellij-tool-windows.md) | 42 | 114 | 37 | 0 | 5 | 0 | 0 | 10.1% | 0.0% |
 | IntelliJ IDEA parity: frameworks, databases, and integrations | [intellij-ultimate.md](intellij-ultimate.md) | 43 | 57 | 42 | 0 | 1 | 0 | 0 | 0.9% | 0.0% |
 | IntelliJ IDEA parity: version control | [intellij-vcs.md](intellij-vcs.md) | 58 | 139 | 53 | 0 | 3 | 2 | 0 | 10.8% | 0.0% |
-| nexus-http parity | [nexus-http.md](nexus-http.md) | 17 | 17 | 6 | 0 | 11 | 0 | 0 | 32.4% | 0.0% |
+| nexus-http parity | [nexus-http.md](nexus-http.md) | 17 | 17 | 4 | 0 | 13 | 0 | 0 | 38.2% | 0.0% |
 | Platform parity | [platform.md](platform.md) | 38 | 38 | 1 | 0 | 22 | 15 | 0 | 68.4% | 0.0% |
 | Toolchain provisioning parity | [toolchains.md](toolchains.md) | 4 | 16 | 0 | 0 | 4 | 0 | 0 | 50.0% | 0.0% |
 
@@ -52,5 +52,5 @@ rows. Rows tagged `[Ultimate]` are IntelliJ IDEA Ultimate-only features.
 
 | Edition scope | Rows | Weight | % implemented | % verified |
 |---|---:|---:|---:|---:|
-| Community / platform (untagged) | 647 | 1455 | 11.3% | 0.0% |
+| Community / platform (untagged) | 647 | 1455 | 11.4% | 0.0% |
 | Ultimate-only (`[Ultimate]`) | 52 | 70 | 0.7% | 0.0% |

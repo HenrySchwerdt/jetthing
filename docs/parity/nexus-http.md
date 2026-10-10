@@ -18,8 +18,8 @@ documentation and observable behavior.
 | NEX-009 | Insomnia | Response viewer | Missing | — | — | engine provides pretty JSON, body kind detection, JSONPath filter, timeline and timings; UI pending |
 | NEX-010 | Insomnia | Response history | Partial | — | bounded history tests | last 20 responses per request in `.nexus/local/`; UI pending |
 | NEX-011 | Insomnia | Assertions and collection runner | Partial | — | assertion unit tests | status/header/JSONPath/body/time/size checks; runner pending |
-| NEX-012 | Insomnia | Import (curl, Insomnia v4/v5, Postman v2.1, OpenAPI 3) | Missing | — | — | planned next slice |
-| NEX-013 | Insomnia | Code generation | Missing | — | — | planned next slice |
+| NEX-012 | Insomnia | Import and export (curl, Insomnia v4/v5, Postman v2.1, OpenAPI 3) | Partial | — | importer unit tests per format, export round trip | format auto-detection; folders, environments, auth, bodies, disabled rows, Insomnia base64 response-tag filters and Postman dynamic variables mapped; OpenAPI tags → folders, `$ref`, examples or schema-generated bodies, security schemes; single-file nexus-http export with secrets blanked; Swagger 2.0, Postman v1, gRPC/WebSocket requests and Insomnia export are not supported; import UI pending |
+| NEX-013 | Insomnia | Code generation | Partial | — | per-target snippet tests, curl snippet re-imports to the same request | curl, Python requests, JavaScript fetch, Go net/http, Rust reqwest, Java HttpClient, Kotlin OkHttp from the rendered request; multipart is emitted as its raw encoded body, binary bodies are omitted with a note; UI pending |
 | NEX-014 | Insomnia | GraphQL | Partial | — | GraphQL body encoding test | query/variables/operation body; introspection and autocomplete pending |
 | NEX-015 | Insomnia | WebSocket, Server-Sent Events, gRPC | Missing | — | — | planned |
 | NEX-016 | Insomnia | Plugin packaging and standalone `--app nexus-http` | Missing | — | — | waits for the plugin API (#48) |
