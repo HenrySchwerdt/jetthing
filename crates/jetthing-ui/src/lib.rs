@@ -5,15 +5,15 @@
 //! islands and a status bar with navigation breadcrumbs. Every user action is
 //! dispatched through the typed command registry.
 
+mod about;
 mod android_sdk;
 mod android_view;
-mod about;
 mod chrome;
 mod control;
+mod crash_notice;
 mod device_manager;
 mod diff_ui;
 mod disk_banner;
-mod crash_notice;
 mod editor;
 mod editor_keys;
 mod findbar;
