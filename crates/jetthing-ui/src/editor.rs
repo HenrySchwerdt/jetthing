@@ -47,6 +47,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 app.caret_screen_pos = None;
                 return;
             }
+            crate::disk_banner::show(app, ui);
             if app.find.open {
                 crate::findbar::show(app, ui);
             }

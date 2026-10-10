@@ -7,6 +7,9 @@ use thiserror::Error;
 use walkdir::WalkDir;
 
 pub mod generator;
+mod watcher;
+
+pub use watcher::{FileChanges, ProjectWatcher};
 
 #[derive(Debug, Error)]
 pub enum ProjectError {
@@ -184,8 +187,18 @@ impl Project {
         Ok(())
     }
 
+    /// Writes a file inside the project, recreating it (and missing parent
+    /// directories) when it was deleted outside the IDE.
     pub fn write_text(&self, relative: &Path, text: &str) -> Result<(), ProjectError> {
-        let path = self.checked(relative)?;
+        let path = if self.root.join(relative).symlink_metadata().is_ok() {
+            self.checked(relative)?
+        } else {
+            let path = self.checked_new(relative)?;
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            path
+        };
         fs::write(path, text).map_err(ProjectError::from)
     }
 }

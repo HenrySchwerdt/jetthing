@@ -8,6 +8,7 @@
 mod about;
 mod chrome;
 mod control;
+mod disk_banner;
 mod editor;
 mod editor_keys;
 mod findbar;
@@ -60,6 +61,8 @@ pub struct IdeApp {
     window_focused: bool,
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
+    /// Whether background services can wake this window yet.
+    waker_installed: bool,
 }
 
 impl IdeApp {
@@ -132,6 +135,7 @@ impl IdeApp {
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
             control: None,
+            waker_installed: false,
         }
     }
 
@@ -393,6 +397,10 @@ impl IdeApp {
         if consume(Modifiers::COMMAND, Key::S) {
             self.autosave();
         }
+        // Reload All from Disk: ⌥⌘Y on macOS, Ctrl+Alt+Y elsewhere.
+        if consume(Modifiers::COMMAND | Modifiers::ALT, Key::Y) {
+            self.dispatch("file.synchronize", Value::Null);
+        }
         if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z) {
             self.dispatch("editor.redo", Value::Null);
         }
@@ -538,6 +546,12 @@ impl eframe::App for IdeApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.waker_installed {
+            let ctx = ctx.clone();
+            self.state.waker.set(move || ctx.request_repaint());
+            self.waker_installed = true;
+        }
+        self.state.poll_files();
         self.state.poll_search();
         self.state.poll_runner();
         self.state.poll_lsp();
