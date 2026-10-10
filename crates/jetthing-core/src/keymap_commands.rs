@@ -96,6 +96,18 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     editor("CommentByLineComment", "editor.commentLine"),
     editor("MoveLineUp", "editor.moveLineUp"),
     editor("MoveLineDown", "editor.moveLineDown"),
+    editor("SelectNextOccurrence", "editor.selectNextOccurrence"),
+    editor("UnselectPreviousOccurrence", "editor.unselectOccurrence"),
+    editor("SelectAllOccurrences", "editor.selectAllOccurrences"),
+    editor(
+        "EditorAddCaretPerSelectedLine",
+        "editor.addCaretsToLineEnds",
+    ),
+    editor("EditorToggleColumnMode", "editor.toggleColumnMode"),
+    editor("EditorJoinLines", "editor.joinLines"),
+    editor("EditorToggleCase", "editor.toggleCase"),
+    editor("EditorSplitLine", "editor.splitLine"),
+    editor("EditorStartNewLineBefore", "editor.startNewLineBefore"),
 ];
 
 pub fn command_for_action(action: &str) -> Option<&'static ActionCommand> {

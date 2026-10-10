@@ -105,7 +105,42 @@ fn install_startup_panic_hook() {
     }));
 }
 
+const USAGE: &str = "usage: jetthing [PROJECT_DIR] [FILE...]
+
+Opens PROJECT_DIR (or the welcome screen) and FILEs relative to it.
+  -V, --version   print version and build information
+  -h, --help      print this help
+Environment: JETTHING_RENDERER=glow, JETTHING_NO_UPDATE_CHECK,
+JETTHING_CONTROL_SOCKET. See README.md.";
+
+/// Release builds on Windows have no console of their own; print `--version`
+/// into the terminal that started them.
+#[cfg(windows)]
+fn attach_parent_console() {
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    // SAFETY: no pointers are passed; failure only means there is no console.
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_parent_console() {}
+
 fn main() -> eframe::Result<()> {
+    let first = std::env::args_os().nth(1);
+    if let Some(text) = jetthing_ui::build_info::cli_flag_output(
+        "jetthing",
+        USAGE,
+        first.as_deref().and_then(|arg| arg.to_str()),
+    ) {
+        attach_parent_console();
+        println!("{text}");
+        return Ok(());
+    }
     install_startup_panic_hook();
     // Usage: jetthing-app [PROJECT_DIR] [FILE...]
     let mut args = std::env::args_os().skip(1).map(PathBuf::from);

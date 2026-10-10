@@ -14,6 +14,7 @@ cargo run -p jetthing-app                           # welcome screen, Open Proje
 cargo run -p jetthing-app -- .                      # open a project
 cargo run -p jetthing-app -- . src/main.rs          # open a project and files
 cargo run -p jetthing-cli -- commands               # headless command discovery
+cargo run -p jetthing-app -- --version              # version, commit, date, target
 cargo run -p xtask -- parity                        # regenerate the parity dashboard
 ```
 
@@ -31,7 +32,8 @@ Java templates require JDK 21 and Gradle on PATH; Rust templates require Cargo.
 ## UI automation
 
 Set `JETTHING_CONTROL_SOCKET=/path/ctl.sock` to let scripts drive a running IDE over
-JSON lines: run commands, read state, send keys and text, wait, and take screenshots.
+JSON lines: run commands, read state, send keys, text and clicks, wait, and take screenshots.
+On Windows the value names a named pipe (`jetthing` → `\\.\pipe\jetthing`).
 
 ```bash
 JETTHING_CONTROL_SOCKET=/tmp/jt.sock cargo run -p jetthing-app -- . &
@@ -101,3 +103,8 @@ JetBrains icons or artwork are bundled. IntelliJ and JetBrains are trademarks of
 JetBrains s.r.o.; Jetthing is not affiliated with or endorsed by JetBrains.
 
 See `docs/roadmap.md` for honest status and limitations.
+
+<!-- parity:begin -->
+**Parity progress:** 9.5% implemented (weighted), 0.0% verified, across 665 tracked
+features in 13 areas. See [`docs/parity/dashboard.md`](docs/parity/dashboard.md).
+<!-- parity:end -->
