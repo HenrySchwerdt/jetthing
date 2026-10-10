@@ -7,7 +7,6 @@ use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, RichText, vec2};
 use jetthing_core::{Anchor, ToolWindow};
 use jetthing_git::ChangeKind;
-use jetthing_runner::{OutputStream, TaskState};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -69,7 +68,7 @@ pub fn bottom(app: &mut IdeApp, ctx: &egui::Context) {
         .frame(island_frame())
         .show(ctx, |ui| match window {
             ToolWindow::Find => find(app, ui),
-            ToolWindow::Build => build(app, ui),
+            ToolWindow::Build => crate::build_window::show(app, ui),
             ToolWindow::Problems => problems(app, ui),
             ToolWindow::Terminal => terminal(app, ui),
             ToolWindow::Logcat => crate::logcat_ui::show(app, ui),
@@ -846,92 +845,6 @@ fn highlighted_preview(
     job
 }
 
-fn build(app: &mut IdeApp, ui: &mut egui::Ui) {
-    let title = app
-        .state
-        .runner
-        .plan()
-        .map(|plan| plan.name.clone())
-        .unwrap_or_else(|| "Build".into());
-    let running = app.state.runner.is_running();
-    let hide = tool_window_header(ui, &title, |ui| {
-        if running {
-            if icons::button_colored(ui, Icon::Stop, *theme::STOP_RED, "Stop", false).clicked() {
-                app.dispatch("run.cancel", Value::Null);
-            }
-        } else if app.state.project.is_some() {
-            if icons::button(ui, Icon::Build, "Build Project").clicked() {
-                app.dispatch("build.project", Value::Null);
-            }
-            if icons::button_colored(ui, Icon::Run, *theme::RUN_GREEN, "Run", false).clicked() {
-                app.dispatch("run.project", Value::Null);
-            }
-        }
-    });
-    if hide {
-        app.toggle_tool_window(ToolWindow::Build);
-    }
-    let (state_text, state_color) = match app.state.runner.state() {
-        TaskState::Idle => ("Nothing has run yet".to_owned(), theme::TEXT_INFO),
-        TaskState::Running => ("Running…".to_owned(), theme::TEXT_SECONDARY),
-        TaskState::Exited(0) => ("Finished successfully".to_owned(), theme::SUCCESS),
-        TaskState::Exited(code) => (format!("Failed with exit code {code}"), theme::ERROR),
-        TaskState::Cancelled => ("Cancelled".to_owned(), theme::WARNING),
-    };
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        if running {
-            ui.add(egui::Spinner::new().size(12.0).color(theme::ACCENT));
-        }
-        ui.label(RichText::new(state_text).color(state_color));
-        if let Some(plan) = app.state.runner.plan() {
-            ui.label(
-                RichText::new(format!("{} {}", plan.program, plan.args.join(" ")))
-                    .monospace()
-                    .color(theme::TEXT_INFO),
-            );
-        }
-    });
-    let lines = app.console.lines(app.state.runner.output());
-    egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 4))
-        .show(ui, |ui| {
-            let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
-            // Whole rows only: a view stuck to the bottom must not cut the
-            // first visible line in half under the status row.
-            let height = crate::console::whole_rows_height(ui.available_height(), row_height);
-            egui::ScrollArea::both()
-                .auto_shrink([false, false])
-                .max_height(height)
-                .stick_to_bottom(true)
-                .show_rows(ui, row_height, lines.len(), |ui, range| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for line in &lines[range] {
-                        let color = match line.stream {
-                            OutputStream::Stdout => *theme::editor::TEXT,
-                            OutputStream::Stderr => console_stderr_color(&line.text),
-                        };
-                        ui.add(
-                            egui::Label::new(RichText::new(&line.text).monospace().color(color))
-                                .extend(),
-                        );
-                    }
-                });
-        });
-}
-
-/// Cargo writes progress to stderr; only highlight lines that are real errors/warnings.
-fn console_stderr_color(text: &str) -> Color32 {
-    let trimmed = text.trim_start();
-    if trimmed.starts_with("error") {
-        *theme::ERROR
-    } else if trimmed.starts_with("warning") {
-        *theme::WARNING
-    } else {
-        *theme::editor::TEXT
-    }
-}
-
 fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
     crate::problems_ui::tool_window(app, ui);
 }
@@ -994,17 +907,5 @@ mod tests {
             Some(40.0 * 24.0 + 12.0 - 200.0)
         );
         assert_eq!(reveal_offset(0, 24.0, 300.0, 400.0), Some(0.0));
-    }
-
-    #[test]
-    fn stderr_lines_are_only_red_for_errors() {
-        assert_eq!(
-            console_stderr_color("error[E0308]: mismatched"),
-            *theme::ERROR
-        );
-        assert_eq!(
-            console_stderr_color("   Compiling foo"),
-            *theme::editor::TEXT
-        );
     }
 }

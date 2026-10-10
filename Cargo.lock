@@ -2452,6 +2452,7 @@ dependencies = [
  "jetthing-android",
  "jetthing-command",
  "jetthing-git",
+ "jetthing-gradle",
  "jetthing-keymap",
  "jetthing-language",
  "jetthing-lsp",
@@ -2475,6 +2476,13 @@ version = "0.0.2"
 dependencies = [
  "similar",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "jetthing-gradle"
+version = "0.0.2"
+dependencies = [
+ "jetthing-runner",
 ]
 
 [[package]]
@@ -2580,6 +2588,7 @@ dependencies = [
 name = "jetthing-runner"
 version = "0.0.2"
 dependencies = [
+ "serde_json",
  "thiserror 2.0.21",
  "toml",
 ]

@@ -11,9 +11,9 @@ mod android_view;
 mod blame_gutter;
 mod branches_popup;
 mod change_popup;
+mod build_window;
 mod chrome;
 mod completion_ui;
-mod console;
 mod context_menus;
 mod control;
 mod crash_notice;
@@ -71,7 +71,6 @@ pub struct IdeApp {
     /// Active editor file last revealed in the Project tree.
     tree_revealed: Option<PathBuf>,
     caret_screen_pos: Option<egui::Pos2>,
-    run_label: Option<String>,
     last_shift_release: Option<Instant>,
     shift_tainted: bool,
     last_bottom: Option<ToolWindow>,
@@ -104,8 +103,6 @@ pub struct IdeApp {
     /// Registry generation the contributed commands were synced at.
     plugin_generation: u64,
     plugins_window: Option<plugin_ui::PluginsWindow>,
-    /// Build/Run output converted to display lines.
-    console: console::ConsoleView,
     /// Open push dialog.
     push_dialog: Option<push_dialog::PushDialog>,
     /// Open branch name/confirmation dialog.
@@ -185,12 +182,6 @@ impl IdeApp {
         if check_updates && state.settings.bool(ids::CHECK_UPDATES).unwrap_or(true) {
             let _ = commands.execute("app.checkForUpdates", &mut state, json!({"silent": true}));
         }
-        let run_label = state.project.as_ref().and_then(|project| {
-            jetthing_runner::TaskPlan::detect_run(project.root())
-                .or_else(|_| jetthing_runner::TaskPlan::detect_build(project.root()))
-                .ok()
-                .map(|plan| plan.name)
-        });
         Self {
             state,
             commands,
@@ -201,7 +192,6 @@ impl IdeApp {
             tree_selection: None,
             tree_revealed: None,
             caret_screen_pos: None,
-            run_label,
             last_shift_release: None,
             shift_tainted: false,
             last_bottom: None,
@@ -225,7 +215,6 @@ impl IdeApp {
             plugin_commands: Vec::new(),
             plugin_generation: u64::MAX,
             plugins_window: None,
-            console: console::ConsoleView::default(),
             change_popup: None,
             branch_dialog: None,
             push_dialog: None,
@@ -300,12 +289,6 @@ impl IdeApp {
         self.search_input.clear();
         self.terminal_selection = None;
         self.find = findbar::FindBar::default();
-        self.run_label = self.state.project.as_ref().and_then(|project| {
-            jetthing_runner::TaskPlan::detect_run(project.root())
-                .or_else(|_| jetthing_runner::TaskPlan::detect_build(project.root()))
-                .ok()
-                .map(|plan| plan.name)
-        });
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
             "{} – Jetthing",
             self.project_name()

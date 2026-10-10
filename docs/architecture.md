@@ -21,8 +21,12 @@ no crate below `jetthing-ui` imports UI types.
   bounded results and binary/large-file exclusion.
 - `jetthing-git`: repository/branch/status modeling and argument-safe Git operations;
   it delegates repository semantics to the installed Git executable.
-- `jetthing-runner`: detected build plans and cancellable child-process execution with
-  streamed, separated stdout/stderr and explicit exit state.
+- `jetthing-runner`: the `BuildSystem` provider trait and registry (Cargo, Maven, Bazel,
+  npm, Go built in), cancellable child-process execution, a line-oriented console model
+  (`\r` progress, ANSI stripping) and a build-event parser (steps with durations, compiler
+  messages with source locations).
+- `jetthing-gradle`: static Gradle build detection (settings includes, wrapper, plugin
+  ids/aliases including Android) and the Gradle `BuildSystem` provider.
 - `jetthing-android`: Android SDK discovery (IDE setting, `local.properties`, `ANDROID_HOME`,
   `ANDROID_SDK_ROOT`, OS default), installed-package inventory, and Android Gradle project
   detection; host access goes through the `HostEnvironment` trait so tests use fakes.

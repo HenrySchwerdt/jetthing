@@ -66,6 +66,7 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     global("CloseContent", "editor.close", "{}"),
     global("CompileDirty", "build.project", "{}"),
     global("Run", "run.project", "{}"),
+    global("Rerun", "run.rerun", "{}"),
     global("Stop", "run.cancel", "{}"),
     global("CheckinProject", "toolwindow.activate.commit", "{}"),
     global("HideAllWindows", "toolwindow.hideAll", "{}"),
