@@ -143,5 +143,26 @@ fn completion_resolves_docs_applies_imports_and_shows_quick_doc() {
         .set_single(jetthing_text::Selection::caret(0));
     state.poll_lsp();
     assert!(state.docs.popup.is_none());
+
+    // Typing `(` (a server trigger character) opens parameter info with the
+    // active parameter located in the label; closing and Ctrl+P work too.
+    let end = state.documents[0].text.len_chars();
+    state.documents[0].text.edit(end, end, "(").unwrap();
+    state.documents[0]
+        .selections
+        .set_single(jetthing_text::Selection::caret(end + 1));
+    state.signature_after_typing("(");
+    assert!(wait(&mut state, |state| state.signature.popup.is_some()));
+    let info = state.signature.popup.clone().unwrap();
+    assert_eq!(info.signatures[0].label, "greeting(String name, int times)");
+    assert_eq!(info.signatures[0].active, Some((22, 31)));
+    commands
+        .execute("language.closeParameterInfo", &mut state, json!({}))
+        .unwrap();
+    assert!(state.signature.popup.is_none());
+    commands
+        .execute("language.parameterInfo", &mut state, json!({}))
+        .unwrap();
+    assert!(wait(&mut state, |state| state.signature.popup.is_some()));
     std::fs::remove_dir_all(root).unwrap();
 }

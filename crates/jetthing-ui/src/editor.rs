@@ -99,8 +99,10 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
         app.state.sync_document_lsp(&path, &text, version);
         app.state.snippet_after_change();
         app.state.completion_after_typing(&typed);
+        app.state.signature_after_typing(&typed);
     } else if app.state.active_caret() != caret_before {
         app.state.snippet_after_caret_move();
+        app.state.signature_after_caret_move();
         if app.state.completion.is_some() {
             app.state.refresh_completion();
         }

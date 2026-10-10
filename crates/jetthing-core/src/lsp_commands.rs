@@ -46,6 +46,40 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     registry
         .register(Command::new(
             spec(
+                "language.parameterInfo",
+                "Parameter Info",
+                "Code",
+                Some("⌘P"),
+                "{}",
+            ),
+            |state: &IdeState| state.active_has_language_server(),
+            |state: &mut IdeState, _| {
+                state
+                    .request_parameter_info(None, true)
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "language.closeParameterInfo",
+                "Close Parameter Info",
+                "Code",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.signature.popup.is_some(),
+            |state: &mut IdeState, _| {
+                state.close_parameter_info();
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
                 "language.quickDoc",
                 "Quick Documentation",
                 "Code",

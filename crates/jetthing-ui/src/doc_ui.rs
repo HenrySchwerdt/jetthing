@@ -341,6 +341,70 @@ pub fn show_quick_doc(app: &mut IdeApp, ctx: &egui::Context) {
     app.doc_view.rect = Some(rect);
 }
 
+/// Parameter info above the caret line: every overload on its own line, the
+/// active one bright with its current parameter in bold.
+pub fn show_parameter_info(app: &mut IdeApp, ctx: &egui::Context) {
+    let Some(info) = app.state.signature.popup.as_ref() else {
+        return;
+    };
+    let Some(caret) = app.caret_screen_pos else {
+        return;
+    };
+    let jobs: Vec<LayoutJob> = info.signatures.iter().map(signature_job).collect();
+    // `caret_screen_pos` is the bottom of the caret line. The popup sits above
+    // that line, or below the caret when the overloads do not fit above.
+    let line_top = caret.y - 20.0;
+    let height = jobs.len() as f32 * (theme::EDITOR_FONT_SIZE + 6.0) + 14.0;
+    let screen = ctx.content_rect();
+    let (pivot, y) = if line_top - height > screen.top() + 48.0 {
+        (egui::Align2::LEFT_BOTTOM, line_top - 2.0)
+    } else {
+        (egui::Align2::LEFT_TOP, caret.y + 2.0)
+    };
+    egui::Area::new(egui::Id::new("parameter_info"))
+        .order(egui::Order::Foreground)
+        .pivot(pivot)
+        .fixed_pos(pos2(caret.x - 12.0, y))
+        .show(ctx, |ui| {
+            popup_frame()
+                .inner_margin(egui::Margin::symmetric(10, 6))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    for job in jobs {
+                        ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Extend));
+                    }
+                });
+        });
+}
+
+fn signature_job(line: &jetthing_core::SignatureLine) -> LayoutJob {
+    let base = if line.current {
+        theme::TEXT_BRIGHT
+    } else {
+        theme::TEXT_INFO
+    };
+    let mut job = LayoutJob::default();
+    let normal = egui::TextFormat {
+        font_id: FontId::monospace(theme::EDITOR_FONT_SIZE),
+        color: base,
+        ..Default::default()
+    };
+    let bold = egui::TextFormat {
+        font_id: theme::mono_bold(theme::EDITOR_FONT_SIZE),
+        color: if line.current { LINK } else { base },
+        ..Default::default()
+    };
+    let chars: Vec<char> = line.label.chars().collect();
+    let (start, end) = line.active.unwrap_or((chars.len(), chars.len()));
+    let start = start.min(chars.len());
+    let end = end.clamp(start, chars.len());
+    let piece = |range: std::ops::Range<usize>| chars[range].iter().collect::<String>();
+    job.append(&piece(0..start), 0.0, normal.clone());
+    job.append(&piece(start..end), 0.0, bold);
+    job.append(&piece(end..chars.len()), 0.0, normal);
+    job
+}
+
 /// Requests documentation when the pointer rests on a symbol, and closes a
 /// mouse popup when the pointer moves away from both the symbol and the popup.
 pub fn track_hover(app: &mut IdeApp, ctx: &egui::Context, hover: Option<(usize, egui::Pos2)>) {
@@ -418,6 +482,30 @@ mod tests {
             panic!("expected list item");
         };
         assert_eq!(item.text, "• one");
+    }
+
+    #[test]
+    fn signature_lines_bold_the_active_parameter() {
+        let job = signature_job(&jetthing_core::SignatureLine {
+            label: "greeting(String name, int times)".into(),
+            active: Some((22, 31)),
+            current: true,
+        });
+        assert_eq!(job.text, "greeting(String name, int times)");
+        let bold: Vec<&str> = job
+            .sections
+            .iter()
+            .filter(|section| section.format.font_id == theme::mono_bold(theme::EDITOR_FONT_SIZE))
+            .map(|section| &job.text[section.byte_range.clone()])
+            .collect();
+        assert_eq!(bold, ["int times"]);
+        // Out-of-range offsets from a server cannot panic.
+        let odd = signature_job(&jetthing_core::SignatureLine {
+            label: "f()".into(),
+            active: Some((5, 9)),
+            current: false,
+        });
+        assert_eq!(odd.text, "f()");
     }
 
     #[test]

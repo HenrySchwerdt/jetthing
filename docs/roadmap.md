@@ -62,7 +62,8 @@ Rust via rust-analyzer.
 - [x] IntelliJ-style completion popup: auto-popup, camel-hump filtering/ranking, Enter/Tab
 - [x] Completion snippets with tab stops, mirrors and auto-import edits
 - [x] Completion documentation panel (resolve), quick documentation and hover
-- [ ] Signature help, navigation, formatting, code actions
+- [x] Parameter info (signature help) after `(`/`,`, after completing calls, and Ctrl+P
+- [ ] Navigation, formatting, code actions
 
 ## M3 — professional workflows
 

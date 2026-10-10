@@ -51,12 +51,20 @@ Accepting an item that was never resolved resolves it afterwards and applies its
 `additionalTextEdits` (jdtls only computes imports during resolve). This is covered end to end by
 `crates/jetthing-core/tests/fake_lsp_flow.rs`.
 
+### Parameter info (slice 5)
+
+| File | Steps | Result |
+|---|---|---|
+| `parameter-info-after-completion.png` | `app.gr`, Enter | Completing a call leaves the caret in `greeting(|)` and opens parameter info by itself, with `String name` highlighted, as the reference IDE does. |
+| `parameter-info-overloads.png` | Type `String.valueOf(` | `(` is a jdtls signature-help trigger character. All overloads are listed above the call. The active one is bright with its current parameter in bold, the others are grey. The popup moves below the caret when it does not fit above. Ctrl+P (⌘P) opens it explicitly, typing `,` or moving the caret re-queries it, and Esc closes it. |
+
 ## Still different from the reference
 
 - jdtls still creates `.project` and `bin/` in Gradle projects (the same as the VS Code Java
   extension). `.classpath` and `.settings` are kept out by passing
   `-Djava.import.generatesMetadataFilesAtProjectRoot=false`.
-- No star/arrow relevance markers or parameter info yet. Links in documentation are not clickable.
+- No star/arrow relevance markers. Links in documentation are not clickable. Parameter info does not
+  narrow the overloads by the arguments already typed (the server decides the active one).
 - The popup closes when nothing matches, like the reference. Explicit Ctrl+Space with no results
   reports "No suggestions" in the status bar instead of a popup message.
 

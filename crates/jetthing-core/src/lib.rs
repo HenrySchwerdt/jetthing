@@ -20,6 +20,7 @@ mod editor_commands;
 mod lsp_commands;
 mod project_commands;
 mod quick_doc;
+mod signature_help;
 mod snippet_session;
 mod terminal_commands;
 mod toolchain_commands;
@@ -27,6 +28,7 @@ mod toolwindow;
 mod update_commands;
 pub use completion::CompletionSession;
 pub use quick_doc::{DocsState, QuickDoc};
+pub use signature_help::{ParameterInfo, SignatureLine, SignatureState};
 pub use snippet_session::SnippetSession;
 pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
@@ -67,6 +69,8 @@ pub struct IdeState {
     pub snippet: Option<SnippetSession>,
     /// Quick documentation popup and completion documentation panel.
     pub docs: DocsState,
+    /// Parameter info popup.
+    pub signature: SignatureState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -422,6 +426,7 @@ impl IdeState {
         let restarted = self.lsp.poll();
         self.poll_completion();
         self.poll_docs();
+        self.poll_signature();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };

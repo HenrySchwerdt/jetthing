@@ -461,6 +461,20 @@ impl IdeState {
         if !resolved && item.additional_text_edits.is_none() {
             self.resolve_accepted(item, inserted_at);
         }
+        // Completing a call leaves the caret inside `(`: show parameter info,
+        // as the reference IDE does.
+        let after_paren = self
+            .active_document
+            .and_then(|index| self.documents.get(index))
+            .and_then(|document| {
+                let head = document.selections.primary().head;
+                head.checked_sub(1)
+                    .and_then(|before| document.text.char_at(before))
+            })
+            == Some('(');
+        if after_paren {
+            let _ = self.request_parameter_info(None, false);
+        }
         self.sync_active_lsp();
         Ok(())
     }

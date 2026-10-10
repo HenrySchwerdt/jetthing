@@ -393,6 +393,9 @@ impl IdeApp {
         if consume(Modifiers::CTRL, Key::Space) {
             self.dispatch("language.complete", Value::Null);
         }
+        if self.editor_focused(ctx) && consume(Modifiers::COMMAND, Key::P) {
+            self.dispatch("language.parameterInfo", Value::Null);
+        }
         // Quick Documentation: F1 on macOS, Ctrl+Q elsewhere.
         if self.editor_focused(ctx)
             && ((mac && consume(Modifiers::NONE, Key::F1))
@@ -411,6 +414,8 @@ impl IdeApp {
                 self.dispatch("language.closeQuickDoc", Value::Null);
             } else if self.state.completion.is_some() {
                 self.dispatch("completion.close", Value::Null);
+            } else if self.state.signature.popup.is_some() {
+                self.dispatch("language.closeParameterInfo", Value::Null);
             } else if self.state.snippet.is_some() {
                 self.dispatch("snippet.exit", Value::Null);
             } else if self.find.open
@@ -605,6 +610,7 @@ impl eframe::App for IdeApp {
         let lookup = completion_ui::show(self, ctx);
         doc_ui::show_completion_panel(self, ctx, lookup);
         doc_ui::show_quick_doc(self, ctx);
+        doc_ui::show_parameter_info(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
         notifications::show(self, ctx);
