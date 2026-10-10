@@ -1,0 +1,24 @@
+{
+  "id": "11",
+  "title": "Terminal (ls --color, git log --oneline)",
+  "reference": "reference/intellij-community/java-gradle/11-terminal.png",
+  "fixture": "java-gradle",
+  "open": ["src/main/java/com/example/App.java"],
+  "steps": [
+    {"op": "wait", "until": "idle"},
+    {"op": "key", "chord": "Alt+F12"},
+    {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/toolWindows/bottom", "equals": "terminal"},
+    {"op": "assert", "pointer": "/focus", "equals": "terminal"},
+    {"op": "sleep", "ms": 1000},
+    {"op": "type", "text": "ls --color"},
+    {"op": "key", "chord": "Enter"},
+    {"op": "wait", "until": "text", "text": "settings.gradle.kts"},
+    {"op": "type", "text": "git log --oneline"},
+    {"op": "key", "chord": "Enter"},
+    {"op": "wait", "until": "text", "text": "Initial commit"},
+    {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/terminal", "contains": "(HEAD -> master) Add greeting"},
+    {"op": "screenshot", "name": "11-terminal.png"}
+  ]
+}

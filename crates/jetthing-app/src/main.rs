@@ -42,12 +42,77 @@ fn run(
         Box::new(move |cc| {
             cc.egui_ctx.set_theme(eframe::egui::Theme::Dark);
             jetthing_ui::install_theme(&cc.egui_ctx);
-            Ok(Box::new(jetthing_ui::IdeApp::new(project, files)))
+            let mut app = jetthing_ui::IdeApp::new(project, files);
+            app.start_control_from_env(&cc.egui_ctx);
+            Ok(Box::new(app))
         }),
     )
 }
 
+/// Turns winit's panic about a missing system library (e.g. `Library
+/// libxkbcommon-x11.so could not be loaded.`) into install instructions.
+fn missing_library_hint(message: &str) -> Option<String> {
+    let rest = message.split("Library ").nth(1)?;
+    let (library, _) = rest.split_once(" could not be loaded")?;
+    let library = library.trim();
+    // Debian/Ubuntu and Fedora package names for the libraries winit loads at runtime.
+    let packages = [
+        ("libxkbcommon-x11", "libxkbcommon-x11-0", "libxkbcommon-x11"),
+        ("libxkbcommon", "libxkbcommon0", "libxkbcommon"),
+        (
+            "libwayland-client",
+            "libwayland-client0",
+            "libwayland-client",
+        ),
+        (
+            "libwayland-cursor",
+            "libwayland-cursor0",
+            "libwayland-cursor",
+        ),
+        ("libX11-xcb", "libx11-xcb1", "libX11-xcb"),
+        ("libX11", "libx11-6", "libX11"),
+        ("libXcursor", "libxcursor1", "libXcursor"),
+        ("libXi", "libxi6", "libXi"),
+        ("libXrandr", "libxrandr2", "libXrandr"),
+        ("libxcb", "libxcb1", "libxcb"),
+    ];
+    let install = packages
+        .iter()
+        .find(|(prefix, _, _)| library.starts_with(&format!("{prefix}.")))
+        .map(|(_, apt, dnf)| {
+            format!(
+                "\n  Debian/Ubuntu: sudo apt install {apt}\n  Fedora:        sudo dnf install {dnf}"
+            )
+        })
+        .unwrap_or_default();
+    Some(format!(
+        "jetthing: cannot start: the system library {library} is missing.\nInstall it with your package manager and start Jetthing again.{install}"
+    ))
+}
+
+/// Missing desktop libraries make winit panic during startup; report them
+/// as an actionable error instead of a backtrace.
+fn install_startup_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        match missing_library_hint(message) {
+            Some(hint) => {
+                eprintln!("{hint}");
+                std::process::exit(1);
+            }
+            None => default_hook(info),
+        }
+    }));
+}
+
 fn main() -> eframe::Result<()> {
+    install_startup_panic_hook();
     // Usage: jetthing-app [PROJECT_DIR] [FILE...]
     let mut args = std::env::args_os().skip(1).map(PathBuf::from);
     let project = args.next();
@@ -77,5 +142,23 @@ fn main() -> eframe::Result<()> {
             run(eframe::Renderer::Glow, &title, project, files)
         }
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_xkbcommon_gets_install_instructions() {
+        let hint =
+            missing_library_hint("Library libxkbcommon-x11.so could not be loaded.").unwrap();
+        assert!(hint.contains("libxkbcommon-x11.so is missing"), "{hint}");
+        assert!(hint.contains("apt install libxkbcommon-x11-0"), "{hint}");
+        assert!(hint.contains("dnf install libxkbcommon-x11"), "{hint}");
+        let generic = missing_library_hint("Library libfoo.so.3 could not be loaded").unwrap();
+        assert!(generic.contains("libfoo.so.3 is missing"));
+        assert!(!generic.contains("apt install"));
+        assert_eq!(missing_library_hint("index out of bounds"), None);
     }
 }

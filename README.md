@@ -20,6 +20,10 @@ cargo run -p xtask -- parity                        # regenerate the parity dash
 If wgpu finds no usable adapter (VMs, old drivers) the app falls back to OpenGL
 automatically; `JETTHING_RENDERER=glow` forces it.
 
+On Linux the window needs the X11/Wayland client libraries, for example on Debian/Ubuntu
+`libxkbcommon-x11-0` (X11) or `libwayland-client0` (Wayland), plus OpenGL/Vulkan drivers.
+A missing library is reported with the package to install.
+
 Use **New Project** on the welcome screen or in File to generate an Empty, Rust,
 or Java/Gradle project. Choose an existing parent folder and a new project name.
 Java templates require JDK 21 and Gradle on PATH; Rust templates require Cargo.
@@ -44,6 +48,22 @@ Download from the [latest release](https://github.com/HenrySchwerdt/jetthing/rel
 Builds are not signed by default, so Windows SmartScreen and macOS Gatekeeper warn on
 first launch. [`docs/release.md`](docs/release.md) explains how to proceed, and covers
 checksums, silent installs and optional signing.
+
+## UI automation
+
+Set `JETTHING_CONTROL_SOCKET=/path/ctl.sock` to let scripts drive a running IDE over
+JSON lines: run commands, read state, send keys and text, wait, and take screenshots.
+
+```bash
+JETTHING_CONTROL_SOCKET=/tmp/jt.sock cargo run -p jetthing-app -- . &
+export JETTHING_CONTROL_SOCKET=/tmp/jt.sock
+cargo run -p jetthing-cli -- ui wait idle
+cargo run -p jetthing-cli -- ui key Ctrl+Shift+A
+cargo run -p jetthing-cli -- ui screenshot /tmp/find-action.png
+cargo run -p jetthing-cli -- ui state
+```
+
+See `docs/parity/evidence/ui-control-socket.md` for the protocol.
 
 ## Builds, releases and updates
 

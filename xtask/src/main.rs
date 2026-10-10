@@ -1,4 +1,5 @@
 mod dist;
+mod scenes;
 
 use anyhow::{Context, Result, bail};
 use std::{fs, path::Path};
@@ -8,8 +9,9 @@ fn main() -> Result<()> {
     match args.next().as_deref() {
         Some("parity") => parity(args.any(|a| a == "--check")),
         Some("dist") => dist::dist(dist::Options::parse(args)?),
+        Some("scenes") => scenes::run(args),
         _ => bail!(
-            "usage: cargo xtask parity [--check] | cargo xtask dist [--installer] [--target <triple>]"
+            "usage: cargo xtask parity [--check] | dist [--installer] [--target <triple>] | scenes [--only 01,05] [--out DIR] [--release]"
         ),
     }
 }
