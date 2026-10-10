@@ -92,6 +92,8 @@ pub struct IdeApp {
     last_shift_release: Option<Instant>,
     shift_tainted: bool,
     last_bottom: Option<ToolWindow>,
+    /// Right-anchored tool window seen last frame (Gradle, Bazel, Device Manager).
+    last_right: Option<ToolWindow>,
     find: findbar::FindBar,
     /// Text of the last whole-line copy, so pasting it inserts a line.
     clipboard_line: Option<String>,
@@ -222,6 +224,7 @@ impl IdeApp {
             last_shift_release: None,
             shift_tainted: false,
             last_bottom: None,
+            last_right: None,
             find: findbar::FindBar::default(),
             clipboard_line: None,
             dialog: None,
@@ -453,7 +456,11 @@ impl IdeApp {
             self.toggle_tool_window(ToolWindow::Terminal);
         }
         self.detect_double_shift(ctx);
-        if !terminal_focused && consume(Modifiers::NONE, Key::Escape) {
+        // The Run/Debug Configurations modal closes itself on Escape.
+        if !terminal_focused
+            && !run_config_dialog::is_open(ctx)
+            && consume(Modifiers::NONE, Key::Escape)
+        {
             if egui::Popup::is_any_open(ctx) {
                 // Context menus and main-menu dropdowns close first.
                 egui::Popup::close_all(ctx);
@@ -508,6 +515,14 @@ impl IdeApp {
     /// Activating a tool window moves keyboard focus into it; hiding it returns
     /// focus to the editor.
     fn follow_tool_window_focus(&mut self, ctx: &egui::Context) {
+        // Hiding a right-anchored tool window also hands focus back to the editor.
+        let right = self.state.tool_windows.visible(Anchor::Right);
+        if right != self.last_right {
+            if right.is_none() && self.state.active_document.is_some() {
+                ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
+            }
+            self.last_right = right;
+        }
         let bottom = self.state.tool_windows.visible(Anchor::Bottom);
         if bottom == self.last_bottom {
             return;
@@ -890,6 +905,41 @@ mod tests {
         };
         let _ = ctx.run(frame_input(vec![close]), |ctx| app.frame(ctx));
         assert!(app.state.documents.is_empty(), "Ctrl+F4 closes the tab");
+    }
+
+    #[test]
+    fn escape_closes_the_run_configurations_dialog() {
+        let (mut app, ctx) = headless_app("run-config-escape", "a.txt", "hello\n");
+        app.dispatch("runConfig.edit", Value::Null);
+        for _ in 0..2 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        assert!(run_config_dialog::is_open(&ctx));
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = ctx.run(frame_input(vec![escape]), |ctx| app.frame(ctx));
+        let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        assert!(!run_config_dialog::is_open(&ctx));
+    }
+
+    #[test]
+    fn hiding_a_right_tool_window_returns_focus_to_the_editor() {
+        let (mut app, ctx) = headless_app("right-focus", "a.txt", "hello\n");
+        app.dispatch("toolwindow.toggle", json!({"id": "deviceManager"}));
+        for _ in 0..2 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        ctx.memory_mut(|m| m.surrender_focus(editor::editor_id()));
+        app.dispatch("toolwindow.toggle", json!({"id": "deviceManager"}));
+        for _ in 0..2 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        assert!(ctx.memory(|m| m.has_focus(editor::editor_id())));
     }
 
     #[test]

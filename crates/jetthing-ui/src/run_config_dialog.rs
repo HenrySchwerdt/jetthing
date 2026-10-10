@@ -246,6 +246,12 @@ fn state_id() -> egui::Id {
     egui::Id::new("run_config_dialog")
 }
 
+/// Whether the dialog is showing.
+pub fn is_open(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<State>(state_id()))
+        .is_some_and(|state| state.open)
+}
+
 /// Opens the dialog with the project's configurations (selecting `focus` if given).
 pub fn open(app: &IdeApp, ctx: &egui::Context, focus: Option<&str>) {
     let drafts: Vec<Draft> = app
