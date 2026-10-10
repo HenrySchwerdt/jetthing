@@ -48,10 +48,6 @@ impl AndroidState {
 }
 
 impl IdeState {
-    fn project_root(&self) -> Option<PathBuf> {
-        self.project.as_ref().map(|p| p.root().to_owned())
-    }
-
     /// Uses `path` as the Android SDK. For an Android project it is also
     /// recorded in `local.properties`, as Android Studio does on sync.
     pub fn set_android_sdk(&mut self, path: &Path) -> Result<(), String> {

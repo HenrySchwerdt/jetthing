@@ -7,12 +7,14 @@
 
 mod android_sdk;
 mod android_view;
+mod about;
 mod chrome;
 mod control;
 mod device_manager;
 mod diff_ui;
 mod disk_banner;
 mod editor;
+mod editor_keys;
 mod findbar;
 mod icons;
 mod keys;
@@ -27,6 +29,7 @@ mod syntax;
 mod terminal_ui;
 mod theme;
 mod theme_engine;
+mod toolchain_status;
 mod toolwindows;
 mod welcome;
 mod widgets;
@@ -40,6 +43,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub use jetthing_plugins::PluginFactory;
+pub use jetthing_core::build_info;
 pub use theme::install as install_theme;
 
 pub struct IdeApp {
@@ -457,7 +461,9 @@ impl IdeApp {
             self.dispatch("language.complete", Value::Null);
         }
         if consume(Modifiers::NONE, Key::Escape) {
-            if self.dialog.is_some() {
+            if self.state.about_open {
+                self.state.about_open = false;
+            } else if self.dialog.is_some() {
                 self.dialog = None;
             } else if self.palette.open {
                 self.palette.open = false;
@@ -650,6 +656,10 @@ impl eframe::App for IdeApp {
             ctx.request_repaint();
         }
         self.state.poll_git();
+        self.state.poll_toolchains();
+        if self.state.toolchains.service.is_busy() {
+            ctx.request_repaint_after(Duration::from_millis(200));
+        }
         if self.state.lsp.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(100));
         } else if !self.state.lsp.servers().is_empty() || self.state.android.devices.is_tracking() {
@@ -713,6 +723,7 @@ impl eframe::App for IdeApp {
         settings_dialog::show(self, ctx);
         android_sdk::show(self, ctx);
         notifications::show(self, ctx);
+        about::show(self, ctx);
         lsp_status::notices(self, ctx);
         plugin_ui::plugins_window(self, ctx);
         plugin_ui::notifications(self, ctx);

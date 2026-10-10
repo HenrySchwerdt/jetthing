@@ -32,6 +32,12 @@ no crate below `jetthing-ui` imports UI types.
   (`registry`), and `LspManager`, which starts servers lazily per workspace root and
   restarts crashed ones (`manager`). Uses `lsp-types`; no UI code. Popups live in
   `jetthing-ui`. `jetthing-fake-lsp` is a scriptable test server.
+- `jetthing-toolchains`: toolchain provisioning (language servers, JDKs/SDKs, build tools,
+  debuggers, formatters). Component model and `ComponentProvider` catalog trait, version
+  requests, resumable SHA-256-verified downloads through `HTTPS_PROXY`/`NO_PROXY`, safe
+  `tar.gz`/`tar.xz`/`zip`/`gz` extraction, atomic installs under
+  `<data dir>/jetthing/toolchains/<component>/<version>/`, PATH-first discovery, project pins
+  and a background install service. No UI code; see "Toolchain provisioning" below.
 - `jetthing-plugin-api`: the toolkit-free plugin contract (`Plugin`, contributions,
   `PluginHost`, `jetthing-plugin.toml` manifest, opaque `ViewFrame`); see `docs/plugins/api.md`.
 - `jetthing-plugins`: plugin registry: discovery, activation order, enable/disable and
@@ -56,6 +62,41 @@ no crate below `jetthing-ui` imports UI types.
   blocking client; toolkit-independent. The workbench drains requests each frame.
 - `jetthing-cli`: headless command discovery and execution, and `ui …` requests to a
   running workbench over the control socket.
+
+## Toolchain provisioning
+
+`jetthing-toolchains` is the single place that finds or installs the external programs a
+language needs. Other subsystems (LSP registry, build/run providers, Android, Bazel,
+debuggers) do not search `PATH` themselves; they ask the resolver:
+
+```rust
+let toolchains: &Toolchains = &state.toolchains.toolchains; // jetthing-core
+toolchains.executable("jdtls");            // Option<PathBuf>
+toolchains.locate("jdk");                  // Option<Located { executable, home, version, source }>
+toolchains.missing(&["jdtls"]);            // ["jdtls", "jdk"] incl. `requires`, when not found
+toolchains.environment(&["jdk", "jdtls"]); // PATH prefix + JAVA_HOME for child processes
+```
+
+Lookup order: `path` configured in `toolchains.toml` → managed install matching the project
+pin (when a version is pinned) → home variable (`JAVA_HOME`, `ANDROID_HOME`) → `PATH` → newest
+managed install. Pins come from `.jetthing/toolchains.toml` first, then `rust-toolchain(.toml)`,
+`.bazelversion`, Gradle `JavaLanguageVersion.of(n)`/`jvmToolchain(n)`,
+`gradle/gradle-daemon-jvm.properties`, `.sdkmanrc`, `.nvmrc`/`.node-version`,
+`.python-version` and `go.mod`.
+
+Language bundles describe components with a `ComponentSpec` (id, executables, bin dirs, home
+variables, required components) and resolve versions to a `Release` (URL, SHA-256 or checksum
+URL, archive kind) by implementing `ComponentProvider`; `StaticProvider` and `IndexProvider`
+(JSON index, e.g. a corporate mirror) cover simple sources. Nothing downloads without consent:
+installs start only from the `toolchain.install` command. Downloads resume with `Range`
+requests, are verified before extraction (a mismatch deletes the file), extract into
+`.staging/` and are renamed into place, so a version directory is either complete or absent.
+
+Commands: `toolchain.list`, `toolchain.locate`, `toolchain.missing`, `toolchain.install`
+(`wait: true` blocks, for the CLI), `toolchain.cancel`, `toolchain.jobs`, `toolchain.uninstall`,
+`toolchain.usePath` ("use existing installation", stored in the user `toolchains.toml`) and
+`toolchain.pins`. Running installs show in the status bar with a progress bar; clicking it cancels.
+`JETTHING_TOOLCHAINS_DIR` overrides the install root.
 
 ## Command contract
 
