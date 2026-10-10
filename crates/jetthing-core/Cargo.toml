@@ -16,6 +16,11 @@ jetthing-settings = { path = "../jetthing-settings" }
 jetthing-search = { path = "../jetthing-search" }
 jetthing-terminal = { path = "../jetthing-terminal" }
 jetthing-text = { path = "../jetthing-text" }
+jetthing-toolchains = { path = "../jetthing-toolchains" }
 jetthing-update = { path = "../jetthing-update" }
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+flate2 = "1"
+tar = "0.4"

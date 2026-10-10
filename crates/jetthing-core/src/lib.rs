@@ -12,14 +12,17 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+pub mod build_info;
 mod editor_commands;
 mod lsp_commands;
 mod project_commands;
 mod settings_commands;
 mod terminal_commands;
+mod toolchain_commands;
 mod toolwindow;
 mod update_commands;
 pub use settings_commands::Settings;
+pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -50,6 +53,8 @@ pub struct IdeState {
     pub runner: TaskService,
     /// Language servers of the open project, started lazily per language.
     pub lsp: LspManager,
+    /// Toolchain provisioning: discovery, pins and background installs.
+    pub toolchains: ToolchainState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -59,6 +64,8 @@ pub struct IdeState {
     pub update_state: UpdateState,
     /// Whether the update balloon is showing.
     pub update_notification: bool,
+    /// Whether Help → About is showing (`app.about`).
+    pub about_open: bool,
     update_silent: bool,
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
@@ -106,6 +113,7 @@ impl IdeState {
         self.plugins.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
         self.lsp.set_project(Some(project.root()));
+        self.toolchains.reload(Some(project.root()));
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -607,6 +615,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     terminal_commands::register(&mut registry);
     settings_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
+    toolchain_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(
