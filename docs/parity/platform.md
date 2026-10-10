@@ -30,3 +30,24 @@
 
 Statuses are intentionally conservative. “Implemented” means the listed scope works;
 only “Verified” will count as independently parity-validated.
+
+## Editor core (PLATFORM-EDIT)
+
+Row IDs mirror `docs/spec/features/platform.md` (`EDIT-007` is `PLATFORM-EDIT-007`). Reference
+behaviour is the spec row; Jetthing evidence is in `evidence/editor-multicaret.md`.
+
+| ID | Reference | Feature | Status | Commands | Tests | Limitations / evidence |
+|---|---|---|---|---|---|---|
+| EDIT-006 | IntelliJ Platform | Add/remove caret by click | Implemented | Alt+Shift+Click / ⌥⇧Click | `editor_keys` toggle helper | adds a caret, or removes an existing bare caret at the click point |
+| EDIT-007 | IntelliJ Platform | Clone Caret Above/Below | Implemented | `editor.cloneCaretAbove`, `editor.cloneCaretBelow`; double Ctrl (⌥ on macOS) held + ↑/↓ | `multicaret` + registry tests | clones every caret at the same character column, clamped to short lines; columns are characters, not visual columns (tabs count as one) |
+| EDIT-008 | IntelliJ Platform | Add Selection for Next Occurrence | Implemented | `editor.selectNextOccurrence` (Alt+J / ⌃G) | `multicaret` + registry tests | first press selects the word at the caret (then whole-word matches); from a selection matches substrings; case-sensitive, wraps; Xvfb `evidence/editor-multicaret/linux-next-occurrence.png` |
+| EDIT-009 | IntelliJ Platform | Unselect Occurrence | Implemented | `editor.unselectOccurrence` (Alt+Shift+J / ⌃⇧G) | `multicaret` tests | removes occurrences in reverse order of addition |
+| EDIT-010 | IntelliJ Platform | Select All Occurrences | Implemented | `editor.selectAllOccurrences` (Ctrl+Alt+Shift+J / ⌃⌘G) | `multicaret` tests | word at caret uses whole words, explicit selection uses substrings |
+| EDIT-011 | IntelliJ Platform | Add Carets to Ends of Selected Lines | Implemented | `editor.addCaretsToLineEnds` (Alt+Shift+G / ⌥⇧G) | `multicaret` tests | — |
+| EDIT-012 | IntelliJ Platform | Column selection mode | Partial | `editor.toggleColumnMode` (Alt+Shift+Insert / ⌘⇧8) | `multicaret` block tests, key binding tests | Shift+arrows and drags make rectangular selections that keep their columns across short lines; status bar shows `Column`; no virtual space (short lines are clamped); `evidence/editor-multicaret/linux-column-block.png` |
+| EDIT-013 | IntelliJ Platform | Rectangular selection by mouse | Partial | Alt+drag, middle-drag | manual Xvfb run | Ctrl+Alt+Shift+drag (add a further block) pending |
+| EDIT-014 | IntelliJ Platform | Multi-caret semantics | Partial | typing, Backspace/Delete, paste, arrows/Home/End | `SelectionSet` + `ops` tests | all carets move and edit together; typing at N carets is one undo step; N clipboard lines paste one per caret; colliding carets merge; Esc collapses; PageUp/PageDown and Ctrl+Home/End still collapse to the primary caret; `evidence/editor-multicaret/linux-multicaret-typing.png` |
+| EDIT-040 | IntelliJ Platform | Join Lines | Partial | `editor.joinLines` (Ctrl+Shift+J / ⌃⇧J) | `transform` + registry tests | per caret or across a selection, one undo step; collapses indentation to one space (none next to brackets/punctuation), merges continued line comments; language smart joins (string concatenation) pending |
+| EDIT-041 | IntelliJ Platform | Split Line / Start New Line / Start New Line Before | Implemented | `editor.splitLine` (Ctrl+Enter / ⌘↩), Shift+Enter, `editor.startNewLineBefore` (Ctrl+Alt+Enter / ⌥⌘↩) | `transform` tests | new lines keep the current line's indentation |
+| EDIT-043 | IntelliJ Platform | Toggle Case | Implemented | `editor.toggleCase` (Ctrl+Shift+U / ⇧⌘U) | `transform` tests | all-lowercase text becomes uppercase, otherwise lowercase; word at a bare caret; Unicode case mapping (`ß` → `SS`) |
+| EDIT-044 | IntelliJ Platform | Sort / Reverse Lines | Implemented | `editor.sortLines`, `editor.reverseLines` | `transform` tests | selected lines or whole file; code-point order (reference collation unverified); keeps CRLF |

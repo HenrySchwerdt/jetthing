@@ -111,6 +111,32 @@ pub fn paste(
         selections.set_all(next);
         return Ok(());
     }
+    let lines: Vec<&str> = text
+        .strip_suffix('\n')
+        .unwrap_or(text)
+        .split('\n')
+        .collect();
+    let count = selections.selections().len();
+    if count > 1 && lines.len() == count {
+        // One clipboard line per caret, as when the text was copied from N carets.
+        let mut changes = Vec::new();
+        let mut next = Vec::new();
+        let mut shift: isize = 0;
+        for (selection, line) in selections.selections().iter().zip(&lines) {
+            let added = line.chars().count();
+            let start = selection.start().saturating_add_signed(shift);
+            next.push(Selection::caret(start + added));
+            shift += added as isize - (selection.end() - selection.start()) as isize;
+            changes.push(TextChange {
+                start_char: selection.start(),
+                end_char: selection.end(),
+                inserted: (*line).to_owned(),
+            });
+        }
+        doc.edit_many(changes)?;
+        selections.set_all(next);
+        return Ok(());
+    }
     selections.insert(doc, text)
 }
 
@@ -779,6 +805,28 @@ mod tests {
         assert_eq!(doc.text(), "two\none\nthree");
         assert!(doc.undo());
         assert_eq!(doc.text(), "two\nthree");
+    }
+
+    #[test]
+    fn pastes_one_clipboard_line_per_caret() {
+        let (mut doc, mut selections) = setup("a b c", Selection { anchor: 0, head: 1 });
+        selections.add(Selection { anchor: 2, head: 3 });
+        selections.add(Selection { anchor: 4, head: 5 });
+        let (copied, whole) = copy_text(&doc, &selections);
+        assert_eq!(copied, "a\nb\nc");
+        selections.set_all(vec![
+            Selection::caret(1),
+            Selection::caret(3),
+            Selection::caret(5),
+        ]);
+        paste(&mut doc, &mut selections, "1\n22\n3", whole).unwrap();
+        assert_eq!(doc.text(), "a1 b22 c3");
+        assert_eq!(selections.selections()[1], Selection::caret(6));
+        assert!(doc.undo());
+        // A count mismatch pastes the whole text at every caret.
+        selections.set_all(vec![Selection::caret(0), Selection::caret(2)]);
+        paste(&mut doc, &mut selections, "x\ny\nz", false).unwrap();
+        assert_eq!(doc.text(), "x\ny\nza x\ny\nzb c");
     }
 
     #[test]
