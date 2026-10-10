@@ -779,6 +779,58 @@ mod tests {
         });
     }
 
+    /// A headless workbench with `file` open, for frame-level UI tests.
+    pub(crate) fn headless_app(name: &str, file: &str, text: &str) -> (IdeApp, egui::Context) {
+        let root =
+            std::env::temp_dir().join(format!("jetthing-ui-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(file), text).unwrap();
+        let app = IdeApp::new(Some(root.clone()), vec![root.join(file)]);
+        let ctx = egui::Context::default();
+        install_theme(&ctx);
+        (app, ctx)
+    }
+
+    pub(crate) fn frame_input(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1440.0, 900.0),
+            )),
+            focused: true,
+            events,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn escape_in_the_editor_keeps_keyboard_focus() {
+        let (mut app, ctx) = headless_app("escape-focus", "a.txt", "hello\n");
+        for _ in 0..3 {
+            app.focus_editor(&ctx);
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        assert!(ctx.memory(|m| m.has_focus(editor::editor_id())));
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = ctx.run(frame_input(vec![escape]), |ctx| app.frame(ctx));
+        let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        assert!(
+            ctx.memory(|m| m.has_focus(editor::editor_id())),
+            "Escape with no popup open keeps the editor focused"
+        );
+        // Typing right after Escape still reaches the buffer.
+        let typed = egui::Event::Text("x".into());
+        let _ = ctx.run(frame_input(vec![typed]), |ctx| app.frame(ctx));
+        assert_eq!(app.state.documents[0].text.text(), "xhello\n");
+    }
+
     #[test]
     fn parameterless_commands_are_detected_from_their_schema() {
         let specs = built_in_commands().specs();

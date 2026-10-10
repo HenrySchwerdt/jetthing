@@ -1245,7 +1245,9 @@ fn editor_surface(
                 tab: true,
                 horizontal_arrows: true,
                 vertical_arrows: true,
-                escape: false,
+                // egui surrenders focus on Escape by default; the workbench's
+                // Escape handler closes popups instead and the editor keeps focus.
+                escape: true,
             },
         )
     });
