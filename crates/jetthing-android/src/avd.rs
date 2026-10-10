@@ -173,12 +173,13 @@ impl EmulatorProcess {
     /// (KVM, HVF or WHPX); without it, it exits and [`Self::poll_exit`] reports
     /// its own error output.
     pub fn launch(program: &Path, avd: &str) -> std::io::Result<Self> {
-        let mut child = Command::new(program)
-            .args(["-avd", avd])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        let mut child = crate::adb::spawn(
+            Command::new(program)
+                .args(["-avd", avd])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )?;
         let output = Arc::new(Mutex::new(String::new()));
         for stream in [
             child

@@ -223,6 +223,24 @@ pub fn frame_track_message(payload: &str) -> String {
     format!("{:04x}{payload}", payload.len())
 }
 
+/// Spawns `command`, retrying briefly while the executable is busy (ETXTBSY):
+/// a script that was just written can stay open in a child forked by another
+/// thread for a moment.
+pub(crate) fn spawn(command: &mut Command) -> std::io::Result<Child> {
+    let mut attempts = 0;
+    loop {
+        match command.spawn() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 20 =>
+            {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            result => return result,
+        }
+    }
+}
+
 /// Handle to an `adb` executable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Adb {
@@ -244,14 +262,18 @@ impl Adb {
 
     /// Runs `adb <args>` to completion and returns stdout.
     pub fn run(&self, args: &[&str]) -> Result<String, AdbError> {
-        let output = self
-            .command()
-            .args(args)
-            .output()
-            .map_err(|source| AdbError::Spawn {
-                program: self.program.clone(),
-                source,
-            })?;
+        let spawn_error = |source| AdbError::Spawn {
+            program: self.program.clone(),
+            source,
+        };
+        let output = spawn(
+            self.command()
+                .args(args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .and_then(Child::wait_with_output)
+        .map_err(spawn_error)?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -322,16 +344,16 @@ pub struct DeviceTracker {
 
 impl DeviceTracker {
     fn start(adb: Adb) -> Result<Self, AdbError> {
-        let mut child = adb
-            .command()
-            .args(["track-devices", "-l"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|source| AdbError::Spawn {
-                program: adb.program.clone(),
-                source,
-            })?;
+        let mut child = spawn(
+            adb.command()
+                .args(["track-devices", "-l"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .map_err(|source| AdbError::Spawn {
+            program: adb.program.clone(),
+            source,
+        })?;
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let child = Arc::new(Mutex::new(child));

@@ -387,13 +387,14 @@ pub struct LogcatSession {
 
 impl LogcatSession {
     pub fn start(adb: &Adb, serial: &str) -> Result<Self, String> {
-        let mut child = std::process::Command::new(&adb.program)
-            .args(["-s", serial, "logcat", "-v", "threadtime"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("cannot run {}: {e}", adb.program.display()))?;
+        let mut child = crate::adb::spawn(
+            std::process::Command::new(&adb.program)
+                .args(["-s", serial, "logcat", "-v", "threadtime"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .map_err(|e| format!("cannot run {}: {e}", adb.program.display()))?;
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let child = Arc::new(Mutex::new(child));
