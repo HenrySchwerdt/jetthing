@@ -68,6 +68,14 @@ its checksum and swapped in place of the running executable (the previous one is
 | `JETTHING_GITHUB_TOKEN` / `GITHUB_TOKEN` | token for a private release repository |
 | `JETTHING_UPDATE_REPOSITORY` | `owner/repo` to update from (default `HenrySchwerdt/jetthing`) |
 
+## Logs and crash reports
+
+`jetthing.log` lives in `~/.local/state/jetthing/logs` (Linux), `~/Library/Logs/Jetthing`
+(macOS) or `%LOCALAPPDATA%\Jetthing\logs` (Windows); `JETTHING_LOG_DIR` overrides it.
+**Help → Show Log in Files** opens it. A crash writes `crash-*.txt` there (build, panic,
+backtrace, log tail) and the next start offers it in a notification; attach it to bug
+reports together with **Help → About → Copy**.
+
 ## Keyboard
 
 Shortcuts follow the default keymap of the reference IDE (macOS / Windows & Linux):

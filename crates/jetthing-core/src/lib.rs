@@ -13,6 +13,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub mod build_info;
+mod diagnostic_commands;
+pub mod diagnostics;
 mod editor_commands;
 mod lsp_commands;
 mod project_commands;
@@ -64,6 +66,8 @@ pub struct IdeState {
     pub update_notification: bool,
     /// Whether Help → About is showing (`app.about`).
     pub about_open: bool,
+    /// Unseen crash report from a previous session (`app.dismissCrashReport`).
+    pub crash_report: Option<PathBuf>,
     update_silent: bool,
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
@@ -595,6 +599,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     editor_commands::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
+    diagnostic_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
     toolchain_commands::register(&mut registry);

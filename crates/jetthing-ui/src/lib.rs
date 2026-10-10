@@ -8,6 +8,7 @@
 mod about;
 mod chrome;
 mod control;
+mod crash_notice;
 mod editor;
 mod editor_keys;
 mod findbar;
@@ -32,7 +33,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-pub use jetthing_core::build_info;
+pub use jetthing_core::{build_info, diagnostics};
 pub use theme::install as install_theme;
 
 pub struct IdeApp {
@@ -67,7 +68,11 @@ impl IdeApp {
     /// or absolute inside it.
     pub fn new(project: Option<PathBuf>, files: Vec<PathBuf>) -> Self {
         let check_updates = std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none();
-        Self::with_update_check(project, files, check_updates)
+        let mut app = Self::with_update_check(project, files, check_updates);
+        if let Some(dir) = diagnostics::active_log_dir() {
+            app.state.check_crash_reports(&dir);
+        }
+        app
     }
 
     fn with_update_check(
@@ -137,6 +142,7 @@ impl IdeApp {
 
     fn dispatch(&mut self, id: &str, params: Value) {
         if let Err(error) = self.commands.execute(id, &mut self.state, params) {
+            diagnostics::log(diagnostics::Level::Warn, &format!("{id}: {error}"));
             self.state.status = error.to_string();
         }
     }
@@ -584,6 +590,7 @@ impl eframe::App for IdeApp {
         palette::show(self, ctx);
         popups::show(self, ctx);
         notifications::show(self, ctx);
+        crash_notice::show(self, ctx);
         about::show(self, ctx);
         lsp_status::notices(self, ctx);
         // Include operations started by controls in this frame, and keep
