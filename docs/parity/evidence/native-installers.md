@@ -38,5 +38,15 @@ smoke-tests each installer:
   Applications link, `plutil -lint`, `codesign --verify --deep --strict`, `lipo`
   architectures and a CLI run on the native architecture.
 
-The run and its artifact list are linked from the pull request that introduced the
-installers (#53).
+First green run: [Release #12](https://github.com/HenrySchwerdt/jetthing/actions/runs/38059816135)
+(workflow_dispatch on `feat/native-installers`, commit `bfd2745`, version 0.0.2;
+`release` job skipped as intended off `main`). Every job passed: `checks`,
+`package linux-x86_64`, `package windows-x86_64`, `package macos-aarch64` and
+`package macos-x86_64`, including each smoke-test step. Artifacts:
+
+| Artifact | Contents |
+|---|---|
+| `jetthing-0.0.2-linux-x86_64` | `jetthing-0.0.2-linux-x86_64.tar.gz`, `jetthing_0.0.2_amd64.deb`, `.sha256` each |
+| `jetthing-0.0.2-windows-x86_64` | `jetthing-0.0.2-windows-x86_64.zip`, `jetthing-0.0.2-windows-x86_64.msi`, `.sha256` each |
+| `jetthing-0.0.2-macos-aarch64` | `jetthing-0.0.2-macos-aarch64.tar.gz`, `jetthing-0.0.2-macos-aarch64.dmg`, `.sha256` each |
+| `jetthing-0.0.2-macos-x86_64` | `jetthing-0.0.2-macos-x86_64.tar.gz`, `jetthing-0.0.2-macos-x86_64.dmg`, `.sha256` each |
