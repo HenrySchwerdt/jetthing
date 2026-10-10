@@ -338,7 +338,11 @@ fn aggregation_sql_schema_and_index_tabs() {
     );
 
     // SQL.
-    let sql = app.open_sql(session, db, Some("sales"));
+    let sql = app.open_sql(session, db, Some("sales")).unwrap();
+    assert_eq!(
+        app.collection_tab_mut(sql).unwrap().mode,
+        mongo_raabit::app::QueryMode::Sql
+    );
     app.sql_tab_mut(sql).unwrap().sql = "SELECT region, SUM(amount) AS total FROM sales GROUP BY region ORDER BY total DESC LIMIT 1".into();
     app.run_sql(sql);
     app.wait_idle(Duration::from_secs(10));
@@ -376,8 +380,10 @@ fn aggregation_sql_schema_and_index_tabs() {
             .any(|f| f.path == "region" && f.top_values.len() == 3)
     );
 
-    // Indexes: create, hide, drop.
+    // Indexes: create, hide, drop. They share the Structure tab with the schema.
     let idx = app.open_indexes(session, db, "sales");
+    assert_eq!(idx, schema);
+    assert_eq!(app.tabs.len(), 4, "welcome, query, aggregation, structure");
     app.wait_idle(Duration::from_secs(10));
     assert_eq!(
         app.index_tab_mut(idx)
@@ -441,6 +447,115 @@ fn aggregation_sql_schema_and_index_tabs() {
 }
 
 #[test]
+fn visual_query_builder_runs_its_query() {
+    use mongo_raabit::app::QueryMode;
+    use mongo_raabit::core::builder::{Condition, Group, Item, MatchMode, Operator, SortKey};
+    use mongo_raabit::query_builder;
+    let (mut profile, _) = ConnectionProfile::from_uri(&uri()).unwrap();
+    profile.connect_timeout_ms = Some(1500);
+    let mut app = MongoRaabit::new(None);
+    let session = app.connect(profile);
+    app.wait_idle(Duration::from_secs(10));
+    let Some(conn) = app.session(session).unwrap().connection().cloned() else {
+        eprintln!(
+            "skipping visual_query_builder_runs_its_query: no MongoDB server at {}",
+            uri()
+        );
+        return;
+    };
+    let db = "raabit_test_ui_query_builder";
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let _ = conn.drop_database(db).await;
+        conn.insert_documents(
+            db,
+            "people",
+            (0..40)
+                .map(|i| {
+                    doc! {
+                        "i": i,
+                        "name": format!("{}{i}", if i % 3 == 0 { "Ada" } else { "Linus" }),
+                        "tier": if i % 4 == 0 { "pro" } else { "free" },
+                        "address": {"city": if i % 2 == 0 { "Berlin" } else { "Oslo" }},
+                    }
+                })
+                .collect(),
+        )
+        .await
+        .unwrap();
+    });
+    app.open_collection(session, db, "people", CollectionKind::Collection);
+    app.wait_idle(Duration::from_secs(10));
+    let tab_id = app.active_tab_id().unwrap();
+
+    // The builder is the default mode and sees the fields of the first page.
+    let ctx = egui::Context::default();
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| app.ui(ui));
+    });
+    {
+        let tab = app.collection_tab_mut(tab_id).unwrap();
+        assert_eq!(tab.mode, QueryMode::Builder);
+        let fields = query_builder::field_names(&tab.result.ready().unwrap().documents);
+        assert_eq!(fields[0], "_id");
+        assert!(fields.contains(&"address.city".to_owned()));
+
+        // name starts with "ada" (any case) AND (tier = pro OR city = Oslo) AND i ≤ 30,
+        // newest first.
+        let model = &mut tab.builder.model;
+        model.filter.items = vec![
+            Item::Condition(Condition {
+                ignore_case: true,
+                ..Condition::new("name", Operator::StartsWith, "ada")
+            }),
+            Item::Group(Group {
+                mode: MatchMode::Any,
+                items: vec![
+                    Item::Condition(Condition::new("tier", Operator::Equals, "pro")),
+                    Item::Condition(Condition::new("address.city", Operator::Equals, "Oslo")),
+                ],
+            }),
+            Item::Condition(Condition::new("i", Operator::LessOrEqual, "30")),
+        ];
+        model.sort = vec![SortKey {
+            field: "i".into(),
+            descending: true,
+        }];
+        tab.query = tab.builder.to_query_text();
+    }
+    app.run_query(tab_id, true);
+    app.wait_idle(Duration::from_secs(10));
+    {
+        let tab = app.collection_tab_mut(tab_id).unwrap();
+        assert_eq!(tab.query_error, None);
+        let got: Vec<i32> = tab
+            .result
+            .ready()
+            .unwrap()
+            .documents
+            .iter()
+            .map(|d| d.get_i32("i").unwrap())
+            .collect();
+        // Multiples of 3 up to 30 that are multiples of 4 or odd.
+        assert_eq!(got, [27, 24, 21, 15, 12, 9, 3, 0]);
+        assert_eq!(tab.count, Load::Ready(8));
+
+        // Switching back from Code mode takes the generated text over unchanged.
+        let before = tab.builder.clone();
+        let query = tab.query.clone();
+        tab.builder.take_over(&query);
+        assert_eq!(tab.builder, before);
+    }
+    // Render the builder with real fields and results.
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| app.ui(ui));
+    });
+    rt.block_on(async {
+        conn.drop_database(db).await.unwrap();
+    });
+}
+
+#[test]
 fn shell_tab_runs_scripts() {
     use mongo_raabit::tools::ShellEngine;
     let (mut profile, _) = ConnectionProfile::from_uri(&uri()).unwrap();
@@ -455,7 +570,13 @@ fn shell_tab_runs_scripts() {
         );
         return;
     }
-    let tab = app.open_shell(session, "raabit_test_ui_shell", None);
+    let tab = app
+        .open_shell(session, "raabit_test_ui_shell", Some("t"))
+        .unwrap();
+    assert_eq!(
+        app.collection_tab_mut(tab).unwrap().mode,
+        mongo_raabit::app::QueryMode::Shell
+    );
     app.wait_idle(Duration::from_secs(10));
     let has_mongosh = matches!(
         app.shell_tab_mut(tab).unwrap().engine,

@@ -303,7 +303,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
         icons::paint(
             ui.painter(),
             layout.icon,
-            Icon::for_file(&name),
+            app.file_icon(&doc.path),
             *icons::ICON,
         );
         let text_rect = layout.text;

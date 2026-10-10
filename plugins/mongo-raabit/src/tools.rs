@@ -1,5 +1,5 @@
-//! State and background operations of the tool tabs: Aggregation Editor, SQL Query,
-//! Schema Explorer and Index Manager.
+//! State and background operations of the tool tabs: Aggregation Editor, SQL mode of
+//! the Query tab, and the Structure tab (Schema Explorer and Index Manager).
 
 use crate::app::{Load, MongoRaabit, ResultView, SessionId, Tab, TabId, TabKind};
 use mongo_raabit_core::Connection;
@@ -37,6 +37,57 @@ pub struct AggregationTab {
     pub view: ResultView,
     pub open: HashSet<String>,
     pub stage_error: Option<String>,
+    /// Stages (by index) the user switched to the code editor.
+    pub stage_code: HashSet<usize>,
+    /// Stage whose switch to the form was refused because the form cannot show it.
+    pub form_hint: Option<usize>,
+}
+
+impl AggregationTab {
+    /// Insert a stage at `at`, keeping per-stage editor modes aligned.
+    pub fn insert_stage(&mut self, at: usize, stage: Stage) {
+        let at = at.min(self.pipeline.stages.len());
+        self.pipeline.stages.insert(at, stage);
+        self.remap_stages(|i| Some(if i >= at { i + 1 } else { i }));
+    }
+
+    /// Remove stage `index`, keeping per-stage editor modes aligned.
+    pub fn remove_stage(&mut self, index: usize) {
+        if index >= self.pipeline.stages.len() {
+            return;
+        }
+        self.pipeline.stages.remove(index);
+        self.remap_stages(|i| match i.cmp(&index) {
+            std::cmp::Ordering::Less => Some(i),
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Greater => Some(i - 1),
+        });
+    }
+
+    /// Move a stage, keeping per-stage editor modes aligned.
+    pub fn move_stage(&mut self, from: usize, to: usize) {
+        let len = self.pipeline.stages.len();
+        if from >= len || to >= len {
+            return;
+        }
+        self.pipeline.move_stage(from, to);
+        self.remap_stages(|i| {
+            Some(if i == from {
+                to
+            } else if from < to && i > from && i <= to {
+                i - 1
+            } else if to < from && i >= to && i < from {
+                i + 1
+            } else {
+                i
+            })
+        });
+    }
+
+    fn remap_stages(&mut self, map: impl Fn(usize) -> Option<usize>) {
+        self.stage_code = self.stage_code.iter().filter_map(|&i| map(i)).collect();
+        self.form_hint = self.form_hint.and_then(&map);
+    }
 }
 
 pub struct SqlTab {
@@ -106,6 +157,21 @@ impl IndexForm {
     }
 }
 
+/// Which half of the Structure tab is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StructureSection {
+    #[default]
+    Schema,
+    Indexes,
+}
+
+/// Structure tab: Schema Explorer and Index Manager of one collection.
+pub struct StructureTab {
+    pub section: StructureSection,
+    pub schema: SchemaTab,
+    pub indexes: IndexTab,
+}
+
 pub struct IndexTab {
     pub session: SessionId,
     pub db: String,
@@ -161,6 +227,8 @@ impl MongoRaabit {
             view: ResultView::Tree,
             open: HashSet::new(),
             stage_error: None,
+            stage_code: HashSet::new(),
+            form_hint: None,
         })));
         self.preview_stage(id);
         id
@@ -260,26 +328,28 @@ impl MongoRaabit {
 
     // ----- SQL --------------------------------------------------------------------------
 
-    pub fn open_sql(&mut self, session: SessionId, db: &str, collection: Option<&str>) -> TabId {
-        let sql = match collection {
-            Some(coll) => format!("SELECT *\nFROM {coll}\nLIMIT 50"),
-            None => "SELECT *\nFROM collection\nLIMIT 50".into(),
+    /// Opens the Query tab of `collection` in SQL mode. Without a collection (SQL on a
+    /// database) the first collection of the database is used.
+    pub fn open_sql(
+        &mut self,
+        session: SessionId,
+        db: &str,
+        collection: Option<&str>,
+    ) -> Option<TabId> {
+        let collection = match collection {
+            Some(coll) => coll.to_owned(),
+            None => self.first_collection(session, db)?,
         };
-        self.push_tab(TabKind::Sql(Box::new(SqlTab {
-            session,
-            db: db.to_owned(),
-            sql,
-            result: Load::Idle,
-            view: ResultView::Tree,
-            open: HashSet::new(),
-        })))
+        let kind = self.collection_kind(session, db, &collection);
+        let id = self.open_collection(session, db, &collection, kind);
+        if let Some(tab) = self.collection_tab_mut(id) {
+            tab.mode = crate::app::QueryMode::Sql;
+        }
+        Some(id)
     }
 
     pub fn sql_tab_mut(&mut self, id: TabId) -> Option<&mut SqlTab> {
-        match self.tab_kind_mut(id)? {
-            TabKind::Sql(tab) => Some(tab),
-            _ => None,
-        }
+        self.collection_tab_mut(id).map(|tab| &mut tab.sql)
     }
 
     pub fn run_sql(&mut self, tab_id: TabId) {
@@ -319,24 +389,69 @@ impl MongoRaabit {
     // ----- schema -----------------------------------------------------------------------
 
     pub fn open_schema(&mut self, session: SessionId, db: &str, collection: &str) -> TabId {
-        let id = self.push_tab(TabKind::Schema(Box::new(SchemaTab {
-            session,
-            db: db.to_owned(),
-            collection: collection.to_owned(),
-            size: 1000,
-            method: SampleMethod::Random,
-            report: Load::Idle,
-            selected: None,
+        self.open_structure(session, db, collection, StructureSection::Schema)
+    }
+
+    /// Focuses (or opens) the Structure tab of `db.collection` on `section`.
+    pub fn open_structure(
+        &mut self,
+        session: SessionId,
+        db: &str,
+        collection: &str,
+        section: StructureSection,
+    ) -> TabId {
+        let existing = self.tabs.iter().position(|t| {
+            matches!(&t.kind, TabKind::Structure(s)
+                if s.schema.session == session && s.schema.db == db && s.schema.collection == collection)
+        });
+        if let Some(index) = existing {
+            self.active_tab = index;
+            let id = self.tabs[index].id;
+            if let Some(TabKind::Structure(tab)) = self.tab_kind_mut(id) {
+                tab.section = section;
+            }
+            return id;
+        }
+        let id = self.push_tab(TabKind::Structure(Box::new(StructureTab {
+            section,
+            schema: SchemaTab {
+                session,
+                db: db.to_owned(),
+                collection: collection.to_owned(),
+                size: 1000,
+                method: SampleMethod::Random,
+                report: Load::Idle,
+                selected: None,
+            },
+            indexes: IndexTab {
+                session,
+                db: db.to_owned(),
+                collection: collection.to_owned(),
+                indexes: Load::Idle,
+                form: IndexForm {
+                    keys: "{  : 1 }".into(),
+                    ..IndexForm::default()
+                },
+                form_open: false,
+                error: None,
+                busy: false,
+                confirm_drop: None,
+            },
         })));
         self.analyze_schema(id);
+        self.load_indexes(id);
         id
     }
 
-    pub fn schema_tab_mut(&mut self, id: TabId) -> Option<&mut SchemaTab> {
+    pub fn structure_tab_mut(&mut self, id: TabId) -> Option<&mut StructureTab> {
         match self.tab_kind_mut(id)? {
-            TabKind::Schema(tab) => Some(tab),
+            TabKind::Structure(tab) => Some(tab),
             _ => None,
         }
+    }
+
+    pub fn schema_tab_mut(&mut self, id: TabId) -> Option<&mut SchemaTab> {
+        self.structure_tab_mut(id).map(|tab| &mut tab.schema)
     }
 
     pub fn analyze_schema(&mut self, tab_id: TabId) {
@@ -379,29 +494,11 @@ impl MongoRaabit {
     // ----- indexes ----------------------------------------------------------------------
 
     pub fn open_indexes(&mut self, session: SessionId, db: &str, collection: &str) -> TabId {
-        let id = self.push_tab(TabKind::Indexes(Box::new(IndexTab {
-            session,
-            db: db.to_owned(),
-            collection: collection.to_owned(),
-            indexes: Load::Idle,
-            form: IndexForm {
-                keys: "{  : 1 }".into(),
-                ..IndexForm::default()
-            },
-            form_open: false,
-            error: None,
-            busy: false,
-            confirm_drop: None,
-        })));
-        self.load_indexes(id);
-        id
+        self.open_structure(session, db, collection, StructureSection::Indexes)
     }
 
     pub fn index_tab_mut(&mut self, id: TabId) -> Option<&mut IndexTab> {
-        match self.tab_kind_mut(id)? {
-            TabKind::Indexes(tab) => Some(tab),
-            _ => None,
-        }
+        self.structure_tab_mut(id).map(|tab| &mut tab.indexes)
     }
 
     pub fn load_indexes(&mut self, tab_id: TabId) {
@@ -497,6 +594,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stage_modes_follow_stage_edits() {
+        let mut tab = AggregationTab {
+            session: SessionId::default(),
+            db: "db".into(),
+            collection: "c".into(),
+            pipeline: Pipeline {
+                stages: vec![
+                    Stage::new("$match"),
+                    Stage::new("$sort"),
+                    Stage::new("$limit"),
+                ],
+            },
+            selected: 0,
+            preview: Load::Idle,
+            preview_seq: 0,
+            preview_limit: 20,
+            sample: 0,
+            result: Load::Idle,
+            view: ResultView::Tree,
+            open: HashSet::new(),
+            stage_error: None,
+            stage_code: HashSet::from([1]),
+            form_hint: Some(2),
+        };
+        tab.insert_stage(0, Stage::new("$skip"));
+        assert_eq!(tab.stage_code, HashSet::from([2]));
+        assert_eq!(tab.form_hint, Some(3));
+        tab.move_stage(2, 0);
+        assert_eq!(tab.pipeline.stages[0].operator, "$sort");
+        assert_eq!(tab.stage_code, HashSet::from([0]));
+        assert_eq!(tab.form_hint, Some(3));
+        tab.move_stage(0, 3);
+        assert_eq!(tab.stage_code, HashSet::from([3]));
+        assert_eq!(tab.form_hint, Some(2));
+        tab.remove_stage(3);
+        assert!(tab.stage_code.is_empty());
+        assert_eq!(tab.form_hint, Some(2));
+        tab.remove_stage(9);
+        assert_eq!(tab.pipeline.stages.len(), 3);
+    }
+
+    #[test]
     fn index_form_validation() {
         let mut form = IndexForm {
             keys: "{ email: 1, 'address.city': -1 }".into(),
@@ -574,14 +713,43 @@ pub fn shell_documents(value: &mongo_raabit_core::bson::Bson) -> Vec<Document> {
 }
 
 impl MongoRaabit {
-    pub fn open_shell(&mut self, session: SessionId, db: &str, collection: Option<&str>) -> TabId {
-        let script = match collection {
-            Some(coll) => format!("db.getCollection(\"{coll}\").find({{}}).limit(20)"),
-            None => "show collections".into(),
+    /// Opens the Query tab of `collection` in Shell mode. Without a collection the first
+    /// collection of the database is used.
+    pub fn open_shell(
+        &mut self,
+        session: SessionId,
+        db: &str,
+        collection: Option<&str>,
+    ) -> Option<TabId> {
+        let collection = match collection {
+            Some(coll) => coll.to_owned(),
+            None => self.first_collection(session, db)?,
         };
-        let id = self.push_tab(TabKind::Shell(Box::new(ShellTab {
+        let kind = self.collection_kind(session, db, &collection);
+        let id = self.open_collection(session, db, &collection, kind);
+        if let Some(tab) = self.collection_tab_mut(id) {
+            tab.mode = crate::app::QueryMode::Shell;
+        }
+        self.init_shell(id);
+        Some(id)
+    }
+
+    /// Creates the shell state of a Query tab on first use and detects mongosh.
+    pub fn init_shell(&mut self, id: TabId) {
+        let Some(tab) = self.collection_tab_mut(id) else {
+            return;
+        };
+        if tab.shell.is_some() {
+            return;
+        }
+        let (session, db) = (tab.session, tab.db.clone());
+        let script = format!(
+            "db.getCollection(\"{}\").find({{}}).limit(20)",
+            tab.collection
+        );
+        tab.shell = Some(Box::new(ShellTab {
             session,
-            db: db.to_owned(),
+            db: db.clone(),
             script,
             engine: ShellEngine::Detecting,
             force_builtin: false,
@@ -589,7 +757,7 @@ impl MongoRaabit {
             running: false,
             open: HashSet::new(),
             collections: Vec::new(),
-        })));
+        }));
         self.jobs.spawn(
             async move {
                 match mongo_raabit_core::mongosh::find_mongosh() {
@@ -619,14 +787,10 @@ impl MongoRaabit {
                 },
             );
         }
-        id
     }
 
     pub fn shell_tab_mut(&mut self, id: TabId) -> Option<&mut ShellTab> {
-        match self.tab_kind_mut(id)? {
-            TabKind::Shell(tab) => Some(tab),
-            _ => None,
-        }
+        self.collection_tab_mut(id)?.shell.as_deref_mut()
     }
 
     /// Run the shell tab's script (or `selection`, when given).

@@ -1,9 +1,11 @@
 //! Small modal popups: New File/Directory, Rename, Delete, Go to Line, Recent Files.
 
-use crate::icons::{self, Icon};
+use crate::icons;
+use crate::native_dialog::Purpose;
 use crate::widgets::row_text;
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Rect, RichText, Sense, vec2};
+use jetthing_core::{JavaKind, KotlinKind};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -23,6 +25,15 @@ pub enum Dialog {
         parent: PathBuf,
         directory: bool,
         name: String,
+    },
+    /// IntelliJ's small "New Java Class" / "New Kotlin Class/File" popup: a name
+    /// field above a kind list.
+    NewClass {
+        dir: PathBuf,
+        kotlin: bool,
+        name: String,
+        kind: usize,
+        error: Option<String>,
     },
     Rename {
         path: PathBuf,
@@ -52,6 +63,7 @@ impl Dialog {
             Dialog::NewProject { .. } => "newProject",
             Dialog::OpenProject { .. } => "openProject",
             Dialog::NewEntry { .. } => "newEntry",
+            Dialog::NewClass { .. } => "newClass",
             Dialog::Rename { .. } => "rename",
             Dialog::Delete { .. } => "delete",
             Dialog::GotoLine { .. } => "gotoLine",
@@ -133,6 +145,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     let focus = std::mem::take(&mut app.dialog_focus);
     let mut keep = true;
     let mut error = None;
+    let mut browse = None;
     match &mut dialog {
         Dialog::NewProject {
             name,
@@ -166,11 +179,16 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                         }
                         ui.end_row();
                         ui.label("Location");
-                        ui.add(
-                            egui::TextEdit::singleline(parent)
-                                .id(egui::Id::new("new_project_parent"))
-                                .desired_width(360.0),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(parent)
+                                    .id(egui::Id::new("new_project_parent"))
+                                    .desired_width(300.0),
+                            );
+                            if ui.button("Browse…").clicked() {
+                                browse = Some(Purpose::NewProjectLocation);
+                            }
+                        });
                         ui.end_row();
                         ui.label("Template");
                         let choices = [
@@ -269,6 +287,9 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 }
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
+                    if ui.button("Browse…").clicked() {
+                        browse = Some(Purpose::OpenProject);
+                    }
                     if ui
                         .add_enabled(!path.trim().is_empty(), egui::Button::new("Open"))
                         .clicked()
@@ -327,6 +348,97 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                         }
                     }
                     Err(e) => error = Some(e.to_string()),
+                }
+            }
+        }
+        Dialog::NewClass {
+            dir,
+            kotlin,
+            name,
+            kind,
+            error: class_error,
+        } => {
+            let kinds: Vec<(&str, &str)> = if *kotlin {
+                KotlinKind::ALL
+                    .iter()
+                    .map(|k| (k.id(), k.label()))
+                    .collect()
+            } else {
+                JavaKind::ALL.iter().map(|k| (k.id(), k.label())).collect()
+            };
+            // Up/Down pick the kind while the name field keeps the keyboard focus.
+            let step = ctx.input_mut(|input| {
+                let down = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+                let up = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+                down as isize - up as isize
+            });
+            *kind = (*kind as isize + step).clamp(0, kinds.len() as isize - 1) as usize;
+            let mut submit = false;
+            popup_frame(ctx, "dialog_new_class", 360.0, |ui| {
+                title(
+                    ui,
+                    if *kotlin {
+                        "New Kotlin Class/File"
+                    } else {
+                        "New Java Class"
+                    },
+                );
+                let changed;
+                (submit, changed) = name_field(ui, name, focus);
+                if changed {
+                    *class_error = None;
+                }
+                ui.add_space(4.0);
+                for (index, (_, label)) in kinds.iter().enumerate() {
+                    let (rect, response) = crate::widgets::list_row(ui, index == *kind);
+                    let text_color = if index == *kind {
+                        theme::TEXT_BRIGHT
+                    } else {
+                        theme::TEXT
+                    };
+                    row_text(
+                        ui,
+                        rect,
+                        rect.left() + 12.0,
+                        label,
+                        egui::FontId::proportional(theme::UI_FONT_SIZE),
+                        text_color,
+                    );
+                    if response.clicked() {
+                        *kind = index;
+                    }
+                    if response.double_clicked() {
+                        submit = true;
+                    }
+                }
+                if let Some(message) = class_error.as_ref() {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(message).color(theme::ERROR));
+                } else {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new("Name, or a qualified name like com.foo.Bar")
+                            .color(theme::TEXT_INFO),
+                    );
+                }
+            });
+            if submit && !name.trim().is_empty() {
+                let command = if *kotlin {
+                    "project.newKotlinFile"
+                } else {
+                    "project.newJavaClass"
+                };
+                let params = json!({"dir": dir, "name": name.trim(), "kind": kinds[*kind].0});
+                match app.commands.execute(command, &mut app.state, params) {
+                    Ok(result) => {
+                        keep = false;
+                        app.tree_selection = result
+                            .get("path")
+                            .and_then(|p| p.as_str())
+                            .map(PathBuf::from);
+                        ctx.memory_mut(|m| m.request_focus(crate::editor::editor_id()));
+                    }
+                    Err(e) => *class_error = Some(e.to_string()),
                 }
             }
         }
@@ -477,7 +589,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                     icons::paint(
                         ui.painter(),
                         Rect::from_min_size(rect.left_center() + vec2(8.0, -8.0), vec2(16.0, 16.0)),
-                        Icon::for_file(&name),
+                        app.file_icon(path),
                         *icons::ICON,
                     );
                     let x = row_text(
@@ -523,6 +635,9 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     }
     if keep {
         app.dialog = Some(dialog);
+    }
+    if let Some(purpose) = browse {
+        app.browse(purpose);
     }
 }
 

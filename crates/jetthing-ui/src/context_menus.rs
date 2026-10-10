@@ -59,6 +59,8 @@ fn applies(action: &str, target: &Target) -> bool {
             match action {
                 "NewFile"
                 | "NewDir"
+                | "NewClass"
+                | "Kotlin.NewFile"
                 | "CopyAbsolutePath"
                 | "CopyContentRootPath"
                 | "FindInPath" => true,
@@ -332,6 +334,33 @@ mod tests {
         assert!(!root.contains(&"Rename…".to_owned()));
         assert!(!root.contains(&"Delete…".to_owned()));
         assert!(!root.contains(&"Edit Source".to_owned()));
+    }
+
+    #[test]
+    fn new_submenu_offers_java_kotlin_file_and_directory() {
+        let menu = Catalog::shared().menu("ProjectViewPopupMenu");
+        let items = filter_menu(&menu, &|action| {
+            applies(
+                action,
+                &Target::Tree {
+                    path: "src/main/java".into(),
+                    is_dir: true,
+                },
+            )
+        });
+        let Some(MenuItem::Submenu { items: new, .. }) = items.first() else {
+            panic!("New submenu first");
+        };
+        let new = labels(new);
+        for label in [
+            "Java Class",
+            "Kotlin Class/File",
+            "File",
+            "Directory/Package",
+        ] {
+            assert!(new.contains(&label.to_owned()), "{label} in {new:?}");
+        }
+        assert!(keybindings::is_implemented("NewClass"));
     }
 
     #[test]

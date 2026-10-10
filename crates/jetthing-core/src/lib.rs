@@ -36,8 +36,10 @@ mod gutter_commands;
 pub mod keymap_commands;
 mod line_changes;
 mod lsp_commands;
+mod new_class;
 mod plugin_host;
 mod problems;
+pub use new_class::{JavaKind, KotlinKind};
 mod project_commands;
 mod remote_commands;
 mod run_config_commands;
@@ -230,6 +232,9 @@ pub struct IdeState {
     pub waker: Waker,
     /// Files or `.git` changed outside the IDE since VCS status was loaded.
     pub vcs_stale: bool,
+    /// Paths queued for the next native file dialog (control socket and tests inject
+    /// the user's choice here instead of opening an OS dialog).
+    pub injected_dialog_paths: std::collections::VecDeque<PathBuf>,
 }
 
 /// Status bar summary after a Git refresh: "1 change on main", "3 changes on main".
@@ -822,6 +827,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     run_config_commands::register(&mut registry);
     folds::register(&mut registry);
     project_commands::register(&mut registry);
+    new_class::register(&mut registry);
     update_commands::register(&mut registry);
     diagnostic_commands::register(&mut registry);
     terminal_commands::register(&mut registry);

@@ -204,13 +204,14 @@ impl App {
                     }
                 }
                 "sql" => {
-                    let id = self.raabit.open_sql(session, &db, Some(&coll));
-                    if let Some(t) = text
-                        && let Some(tab) = self.raabit.sql_tab_mut(id)
-                    {
-                        tab.sql = t;
+                    if let Some(id) = self.raabit.open_sql(session, &db, Some(&coll)) {
+                        if let Some(t) = text
+                            && let Some(tab) = self.raabit.sql_tab_mut(id)
+                        {
+                            tab.sql = t;
+                        }
+                        self.raabit.run_sql(id);
                     }
-                    self.raabit.run_sql(id);
                 }
                 "schema" => {
                     let id = self.raabit.open_schema(session, &db, &coll);
@@ -233,15 +234,16 @@ impl App {
                     }
                 }
                 "shell" => {
-                    let id = self.raabit.open_shell(session, &db, Some(&coll));
-                    wait(&mut self.raabit);
-                    if let Some(t) = text
-                        && let Some(tab) = self.raabit.shell_tab_mut(id)
-                    {
-                        tab.script = t;
-                        tab.force_builtin = std::env::var("RAABIT_BUILTIN").is_ok();
+                    if let Some(id) = self.raabit.open_shell(session, &db, Some(&coll)) {
+                        wait(&mut self.raabit);
+                        if let Some(t) = text
+                            && let Some(tab) = self.raabit.shell_tab_mut(id)
+                        {
+                            tab.script = t;
+                            tab.force_builtin = std::env::var("RAABIT_BUILTIN").is_ok();
+                        }
+                        self.raabit.run_shell(id, None);
                     }
-                    self.raabit.run_shell(id, None);
                 }
                 other => eprintln!("unknown --tool {other}"),
             }

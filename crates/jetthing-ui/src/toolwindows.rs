@@ -230,9 +230,9 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
             x += 16.0;
             let name = IdeApp::file_name(path);
             let icon = if *is_dir {
-                Icon::Folder
+                Icon::for_folder(path)
             } else {
-                Icon::for_file(&name)
+                app.file_icon(path)
             };
             icons::paint(
                 ui.painter(),
@@ -584,7 +584,7 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     icons::paint(
                         ui.painter(),
                         Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-                        Icon::for_file(&name),
+                        app.file_icon(path),
                         *icons::ICON,
                     );
                     x += 22.0;
@@ -857,6 +857,15 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.y = 0.0;
             for result in &results[range] {
                 let (rect, response) = list_row(ui, false);
+                icons::paint(
+                    ui.painter(),
+                    Rect::from_min_size(
+                        egui::pos2(rect.left() + 10.0, rect.center().y - 8.0),
+                        vec2(16.0, 16.0),
+                    ),
+                    app.file_icon(&result.path),
+                    icons::ICON,
+                );
                 // The location stays visible at the right; the preview (already
                 // elided around the match by the search engine) is clipped before it.
                 let location = ui
@@ -869,7 +878,7 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
                 ui.painter()
                     .with_clip_rect(rect.with_max_x(location_x - 12.0))
                     .galley(
-                        egui::pos2(rect.left() + 16.0, rect.center().y - galley.size().y / 2.0),
+                        egui::pos2(rect.left() + 34.0, rect.center().y - galley.size().y / 2.0),
                         galley,
                         *theme::editor::TEXT,
                     );
