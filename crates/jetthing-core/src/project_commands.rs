@@ -175,7 +175,9 @@ impl IdeState {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         let json = serde_json::to_string_pretty(&self.workspace()).map_err(|e| e.to_string())?;
-        std::fs::write(path, json).map_err(|error| error.to_string())
+        std::fs::write(path, json).map_err(|error| error.to_string())?;
+        // Completion statistics are per user; flush them with the workspace.
+        self.completion_stats.save()
     }
 
     /// Restores tabs, tree expansion and tool windows; missing files are skipped.

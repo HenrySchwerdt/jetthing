@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 pub mod build_info;
 mod completion;
+mod completion_stats;
 mod diagnostic_commands;
 pub mod diagnostics;
 mod editor_commands;
@@ -27,6 +28,7 @@ mod toolchain_commands;
 mod toolwindow;
 mod update_commands;
 pub use completion::CompletionSession;
+pub use completion_stats::CompletionStats;
 pub use quick_doc::{DocsState, QuickDoc};
 pub use signature_help::{ParameterInfo, SignatureLine, SignatureState};
 pub use snippet_session::SnippetSession;
@@ -65,6 +67,8 @@ pub struct IdeState {
     pub toolchains: ToolchainState,
     /// The code completion popup, while open.
     pub completion: Option<CompletionSession>,
+    /// What the user picked before, to rank it first next time.
+    pub completion_stats: CompletionStats,
     /// Tab stops of an inserted snippet, while the user fills them in.
     pub snippet: Option<SnippetSession>,
     /// Quick documentation popup and completion documentation panel.

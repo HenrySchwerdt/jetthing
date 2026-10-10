@@ -84,6 +84,8 @@ impl IdeApp {
     ) -> Self {
         let commands = built_in_commands();
         let mut state = IdeState::default();
+        // Tests use in-memory statistics; the app keeps the user's.
+        state.completion_stats = jetthing_core::CompletionStats::user();
         if let Some(path) = project {
             if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
             {

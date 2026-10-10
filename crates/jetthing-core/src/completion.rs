@@ -169,6 +169,15 @@ impl IdeState {
             }
         }
         self.refresh_completion();
+        // The server may ask for an item to be selected first (`preselect`).
+        if let Some(session) = self.completion.as_mut()
+            && let Some(row) = session
+                .ranked
+                .iter()
+                .position(|row| session.items[row.index].preselect == Some(true))
+        {
+            session.selected = row;
+        }
     }
 
     /// Re-filters after the document or caret changed; closes the session
@@ -208,9 +217,13 @@ impl IdeState {
             .selected_item()
             .map(|item| item.label.clone())
             .filter(|_| prefix == session.prefix);
+        let language = self.lsp.language_id(&absolute).unwrap_or("text");
+        let stats = &self.completion_stats;
         let ranked = self
             .lsp
-            .rank_completions(&absolute, &session.items, &prefix);
+            .rank_completions(&absolute, &session.items, &prefix, |item| {
+                stats.weight(language, item)
+            });
         let close = !session.waiting && ranked.is_empty() && !session.explicit;
         let Some(session) = self.completion.as_mut() else {
             return;
@@ -361,6 +374,12 @@ impl IdeState {
             .ranked
             .get(session.selected)
             .is_some_and(|row| session.resolved.contains(&row.index));
+        if let Some(language) = self
+            .active_absolute_path()
+            .and_then(|path| self.lsp.language_id(&path))
+        {
+            self.completion_stats.record(language, &item);
+        }
         let index = self.active_document.ok_or("no active document")?;
         let document = self
             .documents

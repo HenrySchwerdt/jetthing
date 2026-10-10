@@ -153,7 +153,7 @@ fn manager_starts_lazily_reports_progress_and_routes_completion() {
     );
     assert!(!result.incomplete);
     assert_eq!(manager.trigger_characters(&file), ["."]);
-    let ranked = manager.rank_completions(&file, &result.items, "gRF");
+    let ranked = manager.rank_completions(&file, &result.items, "gRF", |_| 0);
     assert_eq!(result.items[ranked[0].index].label, "getRequiredField");
     manager.close_document(&file).unwrap();
     std::fs::remove_dir_all(root).unwrap();

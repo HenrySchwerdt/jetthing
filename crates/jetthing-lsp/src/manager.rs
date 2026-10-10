@@ -640,12 +640,16 @@ impl LspManager {
         path: &Path,
         items: &[CompletionItem],
         prefix: &str,
+        usage: impl Fn(&CompletionItem) -> i32,
     ) -> Vec<crate::completion::RankedItem> {
         match self.registry.for_path(path) {
-            Some((provider, _)) => {
-                crate::completion::rank(items, prefix, |item| provider.completion_relevance(item))
-            }
-            None => crate::completion::rank(items, prefix, |_| 0),
+            Some((provider, _)) => crate::completion::rank_with_usage(
+                items,
+                prefix,
+                |item| provider.completion_relevance(item),
+                usage,
+            ),
+            None => crate::completion::rank_with_usage(items, prefix, |_| 0, usage),
         }
     }
 
