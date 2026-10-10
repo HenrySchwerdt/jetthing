@@ -1,0 +1,17 @@
+{
+  "id": "12",
+  "title": "Commit tool window (one change, one unversioned file)",
+  "reference": "reference/intellij-community/java-gradle/12-commit.png",
+  "fixture": "java-gradle",
+  "open": ["src/main/java/com/example/App.java"],
+  "steps": [
+    {"op": "appendFile", "path": "src/main/java/com/example/App.java", "contents": "// changed outside the IDE\n"},
+    {"op": "writeFile", "path": "notes.txt", "contents": "unversioned\n"},
+    {"op": "execute", "command": "git.refresh"},
+    {"op": "key", "chord": "Alt+0"},
+    {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/toolWindows/left", "equals": "commit"},
+    {"op": "assert", "pointer": "/status", "contains": "change"},
+    {"op": "screenshot", "name": "12-commit.png"}
+  ]
+}

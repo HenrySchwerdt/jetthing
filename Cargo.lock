@@ -5003,6 +5003,9 @@ name = "xtask"
 version = "0.0.2"
 dependencies = [
  "anyhow",
+ "jetthing-control",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
