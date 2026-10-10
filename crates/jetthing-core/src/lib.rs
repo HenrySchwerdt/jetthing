@@ -13,12 +13,14 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod editor_commands;
+mod line_changes;
 mod lsp_commands;
 mod project_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
 mod vcs;
+pub use line_changes::hunk_at_line;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -55,6 +57,8 @@ pub struct IdeState {
     pub diff_active: bool,
     /// Lets background services wake the UI.
     pub repaint: RepaintHook,
+    /// Per-document changed lines against HEAD (gutter markers).
+    line_changes: std::collections::HashMap<PathBuf, line_changes::LineChanges>,
     pub runner: TaskService,
     /// Language servers of the open project, started lazily per language.
     pub lsp: LspManager,
@@ -346,6 +350,7 @@ impl IdeState {
         if let Some(git) = &self.git {
             self.status = changes_summary(git.changes.len(), &git.branch);
         }
+        self.invalidate_line_changes();
         self.refresh_diff();
         Ok(())
     }
@@ -606,6 +611,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     terminal_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
     vcs::register(&mut registry);
+    line_changes::register(&mut registry);
     registry
         .register(Command::new(
             spec(

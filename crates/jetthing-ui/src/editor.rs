@@ -22,6 +22,8 @@ pub enum EditorRequest {
     Copy,
     Cut,
     Paste(String),
+    /// A gutter change marker was clicked: hunk index and screen position.
+    ShowChange(usize, egui::Pos2),
 }
 
 pub struct EditorOutput {
@@ -63,8 +65,9 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             } else {
                 Vec::new()
             };
+            let changes = app.state.document_changes(index).to_vec();
             let doc = &mut app.state.documents[index];
-            match editor_surface(ui, doc, &diagnostics, &highlights) {
+            match editor_surface(ui, doc, &diagnostics, &highlights, &changes) {
                 Ok(EditorOutput {
                     changed,
                     caret_pos,
@@ -96,6 +99,9 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
 fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: EditorRequest) {
     match request {
         EditorRequest::Command(id, params) => app.dispatch(id, params),
+        EditorRequest::ShowChange(hunk, position) => {
+            app.change_popup = Some(crate::change_popup::ChangePopup::new(hunk, position));
+        }
         EditorRequest::Copy | EditorRequest::Cut => {
             let id = if matches!(request, EditorRequest::Copy) {
                 "editor.copy"
@@ -463,6 +469,7 @@ fn editor_surface(
     document: &mut Document,
     lsp_diagnostics: &[jetthing_lsp::LspDiagnostic],
     highlights: &[(usize, usize)],
+    changes: &[jetthing_git::Hunk],
 ) -> Result<EditorOutput, String> {
     let mut requests = Vec::new();
     let font = egui::FontId::monospace(theme::EDITOR_FONT_SIZE);
@@ -515,7 +522,22 @@ fn editor_surface(
                     .min(content.chars().count());
                 document.text.line_to_char(line).unwrap_or(0) + column
             };
+            // Clicking a change marker opens the change popup instead of
+            // moving the caret.
+            let marker_hit = response
+                .interact_pointer_pos()
+                .filter(|position| {
+                    crate::change_popup::in_marker_column(position.x - rect.left(), gutter_width)
+                })
+                .and_then(|position| {
+                    let line = ((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize;
+                    jetthing_core::hunk_at_line(changes, line).map(|hunk| (hunk, position))
+                });
             if response.clicked()
+                && let Some((hunk, position)) = marker_hit
+            {
+                requests.push(EditorRequest::ShowChange(hunk, position));
+            } else if response.clicked()
                 && let Some(position) = response.interact_pointer_pos()
             {
                 let offset = position_to_offset(position);
@@ -647,6 +669,13 @@ fn editor_surface(
                     } else {
                         theme::editor::LINE_NUMBER
                     },
+                );
+                crate::change_popup::paint_marker(
+                    &painter,
+                    changes,
+                    line,
+                    egui::pos2(rect.left() + gutter_width, y),
+                    ROW_HEIGHT,
                 );
                 // Indent guides every four columns of leading whitespace.
                 let indent = content.chars().take_while(|c| *c == ' ').count();

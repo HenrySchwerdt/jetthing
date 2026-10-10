@@ -11,6 +11,9 @@ Captured on Linux under Xvfb (1600×1000, `JETTHING_RENDERER=glow`,
 | `13b-diff-external-change-words.png` | With the diff open, run `sed -i 's/"Hello, "/"Hi there, "/' App.java` and `echo new > NOTES.txt` in another process; wait ~2 s, no clicks | 12 Commit / 13 Diff |
 | `13c-diff-unified.png` | F7, then choose “Unified viewer” in the toolbar | 13 Diff (unified mode) |
 | `12c-tree-autorefresh.png` | Change `settings.gradle` outside the IDE, Alt+1 | issue #47 bug 3 |
+| `gutter-change-markers.png` | Open `App.java` with a modified line (6), an inserted comment (11) and a deleted `import` (wedge above 3) | editor gutter (no numbered scene) |
+| `gutter-change-popup.png` | Click the blue marker on line 6 | gutter change popup |
+| `gutter-rollback.png` | Click “Rollback” in the popup: line 6 is back to the HEAD text and its marker is gone | — |
 
 Compared with reference scene 13 (IntelliJ IDEA, `java-gradle`):
 

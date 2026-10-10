@@ -5,6 +5,7 @@
 //! islands and a status bar with navigation breadcrumbs. Every user action is
 //! dispatched through the typed command registry.
 
+mod change_popup;
 mod chrome;
 mod control;
 mod diff_ui;
@@ -58,6 +59,8 @@ pub struct IdeApp {
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
     repaint_hook_installed: bool,
+    /// Open gutter change-marker popup.
+    change_popup: Option<change_popup::ChangePopup>,
 }
 
 impl IdeApp {
@@ -131,6 +134,7 @@ impl IdeApp {
             window_focused: true,
             control: None,
             repaint_hook_installed: false,
+            change_popup: None,
         }
     }
 
@@ -343,6 +347,18 @@ impl IdeApp {
                 self.dispatch("diff.previousChange", Value::Null);
             }
         }
+        if self.state.active_document.is_some() && !diff_tab && self.editor_focused(ctx) {
+            let chord = Modifiers::CTRL | Modifiers::ALT | Modifiers::SHIFT;
+            if consume(chord, Key::ArrowDown) {
+                self.dispatch("vcs.nextChange", Value::Null);
+            }
+            if consume(chord, Key::ArrowUp) {
+                self.dispatch("vcs.previousChange", Value::Null);
+            }
+            if consume(Modifiers::COMMAND | Modifiers::ALT, Key::Z) {
+                self.dispatch("vcs.rollbackChange", Value::Null);
+            }
+        }
         if self.state.active_document.is_some() && !diff_tab {
             // Go to Line: ⌘L on macOS, Ctrl+G elsewhere.
             if (mac && consume(Modifiers::COMMAND, Key::L))
@@ -380,6 +396,8 @@ impl IdeApp {
         if consume(Modifiers::NONE, Key::Escape) {
             if self.dialog.is_some() {
                 self.dialog = None;
+            } else if self.change_popup.is_some() {
+                self.change_popup = None;
             } else if self.palette.open {
                 self.palette.open = false;
             } else if self.find.open
@@ -596,6 +614,7 @@ impl eframe::App for IdeApp {
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }
+        change_popup::show(self, ctx);
         editor::completion_popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
