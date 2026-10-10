@@ -128,6 +128,30 @@ cargo test -p jetthing-core ai_terminal
   scrolled into scrollback and seemed lost. Found during the Xvfb walkthrough by tracing
   the PTY bytes; the real-PTY test waits for the shell prompt like the IDE does.
 
+## Agent mode (slice 5)
+
+```sh
+cargo test -p jetthing-ai agent
+cargo test -p jetthing-core ai_agent demo_agent
+```
+
+- **Agent** tab in AI Chat: describe a task; the agent replies with a numbered plan and
+  works through it with tools: `list_files`, `read_file` (with line numbers), `search`,
+  `edit_file` (old text must match exactly once), `create_file` and `run_command`.
+- Reading, listing and searching run automatically. **Every edit, new file and command
+  waits for Approve / Reject**, with a diff or the command line (plus the terminal risk
+  warning) on the approval card (`15-…`). Rejections and failures (text not found,
+  ambiguous match, file exists, another task running) go back to the model as error
+  results so it can adapt.
+- Edits are applied to the editor document as one undoable step, then saved so builds and
+  tests see them (`16-…`); commands run in the Build tool window and return the exit code
+  and the last 200 output lines.
+- Loop rules from the Claude API guidance: tool schemas are strict, streamed tool inputs
+  are validated before running and answered with `INVALID_JSON` errors when malformed,
+  `max_tokens` with a pending tool call stops instead of running a truncated call, all
+  results of a turn go back in one message, thinking blocks are kept in the history, and
+  a task stops after 30 model turns. **Stop** cancels the request and a running command.
+
 ## Evidence
 
 Linux, Xvfb 1600×1000, `JETTHING_RENDERER=glow`, 2026-10-10. Answers come from the
@@ -150,8 +174,10 @@ offline demo provider (`JETTHING_AI_MOCK=1`, labelled "mock-chat (demo)"); no
 | `ai/12-commit-message-generated.png` | Commit window with a generated message and the AI button |
 | `ai/13-terminal-suggestion.png` | Terminal AI bar with a suggested command awaiting Run / Insert / Cancel |
 | `ai/14-terminal-confirmed-run.png` | output after Run |
+| `ai/15-agent-awaiting-approval.png` | agent plan, automatic list/read steps, edit awaiting approval with diff |
+| `ai/16-agent-task-complete.png` | approved edit applied and saved, summary, task complete |
 
 ## Gaps
 
-Alt+Enter intention integration, fixing failed tests, Explain Commit, agent mode, `@file`/`@symbol`,
+Alt+Enter intention integration, fixing failed tests, Explain Commit, agent checkpoints/multi-file review, `@file`/`@symbol`,
 open-tabs/VCS context and OS keychain storage are follow-up slices.

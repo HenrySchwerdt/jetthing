@@ -5,6 +5,7 @@
 //! builds a provider from settings the user explicitly enabled.
 
 pub mod actions;
+pub mod agent;
 pub mod anthropic;
 pub mod chat;
 pub mod commit;

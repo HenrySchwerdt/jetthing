@@ -8,7 +8,7 @@ use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, RichText, text::LayoutJob, vec2};
 use jetthing_ai::ProviderKind;
 use jetthing_ai::chat::{ContextKind, SLASH_COMMANDS, TurnState};
-use jetthing_ai::diff::{DiffKind, stats};
+use jetthing_ai::diff::{DiffKind, DiffLine, stats};
 use jetthing_ai::markdown::{MdBlock, Span, parse};
 use jetthing_ai::{Role, settings::PROJECT_POLICY_FILE};
 use jetthing_core::{Anchor, ToolWindow};
@@ -41,8 +41,17 @@ impl Default for SetupForm {
     }
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Mode {
+    #[default]
+    Chat,
+    Agent,
+}
+
 #[derive(Default)]
 pub struct AiChatUi {
+    pub(crate) mode: Mode,
+    pub(crate) agent_input: String,
     pub(crate) inline: crate::ai_inline::InlineUi,
     pub(crate) terminal_open: bool,
     pub(crate) terminal_input: String,
@@ -102,6 +111,11 @@ pub fn right(app: &mut IdeApp, ctx: &egui::Context) {
             } else if !enabled {
                 setup(app, ui, &mut actions);
             } else {
+                mode_tabs(app, ui);
+                if app.ai_ui.mode == Mode::Agent {
+                    crate::ai_agent::panel(app, ui);
+                    return;
+                }
                 egui::TopBottomPanel::bottom("ai_chat_input_panel")
                     .show_separator_line(false)
                     .frame(egui::Frame::new().inner_margin(egui::Margin {
@@ -119,6 +133,33 @@ pub fn right(app: &mut IdeApp, ctx: &egui::Context) {
     for action in actions {
         perform(app, ctx, action);
     }
+}
+
+/// Chat | Agent switch below the header.
+fn mode_tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.add_space(10.0);
+        for (mode, label) in [(Mode::Chat, "Chat"), (Mode::Agent, "Agent")] {
+            let mut text = RichText::new(label);
+            if app.ai_ui.mode == mode {
+                text = text.color(theme::TEXT_BRIGHT).strong();
+            }
+            if ui.selectable_label(app.ai_ui.mode == mode, text).clicked() {
+                app.ai_ui.mode = mode;
+            }
+        }
+        if app
+            .state
+            .ai
+            .agent
+            .as_ref()
+            .is_some_and(|a| a.phase.is_active())
+            && app.ai_ui.mode == Mode::Chat
+        {
+            ui.label(RichText::new("agent running…").color(theme::TEXT_INFO));
+        }
+    });
+    ui.add_space(2.0);
 }
 
 fn perform(app: &mut IdeApp, ctx: &egui::Context, action: Action) {
@@ -822,6 +863,65 @@ fn highlighted(language: &str, code: &str) -> LayoutJob {
     job
 }
 
+/// Line diff with old/new line numbers and added/removed tinting.
+pub(crate) fn diff_view(ui: &mut egui::Ui, diff: &[DiffLine], max_height: f32, id: &str) {
+    let row_height = 18.0;
+    egui::ScrollArea::both()
+        .id_salt(id)
+        .max_height(max_height)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if diff.is_empty() {
+                ui.label(RichText::new("No textual change.").color(theme::TEXT_INFO));
+            }
+            for line in diff {
+                let (fill, sign, color) = match line.kind {
+                    DiffKind::Added => (
+                        Color32::from_rgba_unmultiplied(0x4E, 0x9D, 0x6C, 0x40),
+                        "+",
+                        theme::editor::TEXT,
+                    ),
+                    DiffKind::Removed => (
+                        Color32::from_rgba_unmultiplied(0xC5, 0x4E, 0x58, 0x40),
+                        "−",
+                        theme::editor::TEXT,
+                    ),
+                    DiffKind::Skipped => (Color32::TRANSPARENT, " ", theme::TEXT_INFO),
+                    DiffKind::Context => (Color32::TRANSPARENT, " ", theme::TEXT_SECONDARY),
+                };
+                let number = |n: Option<usize>| {
+                    n.map(|n| format!("{n:>4}"))
+                        .unwrap_or_else(|| "    ".into())
+                };
+                let text = format!(
+                    "{} {} {} {}",
+                    number(line.old_line),
+                    number(line.new_line),
+                    sign,
+                    line.text
+                );
+                let font = egui::FontId::monospace(theme::EDITOR_FONT_SIZE - 1.0);
+                let galley = ui.painter().layout_no_wrap(text, font, color);
+                let (rect, _) = ui.allocate_exact_size(
+                    vec2(ui.available_width().max(galley.size().x + 8.0), row_height),
+                    egui::Sense::hover(),
+                );
+                ui.painter().rect_filled(rect, 0.0, fill);
+                ui.painter().galley(
+                    egui::pos2(rect.left() + 4.0, rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    color,
+                );
+            }
+        });
+}
+
+/// Renders Markdown without code-block actions (agent messages).
+pub(crate) fn markdown_readonly(ui: &mut egui::Ui, text: &str) {
+    markdown(ui, usize::MAX, text, false, &mut Vec::new());
+}
+
 /// Modal diff preview for "Apply…".
 pub fn diff_preview(app: &mut IdeApp, ctx: &egui::Context) {
     let Some(preview) = app.state.ai.pending_apply.as_ref() else {
@@ -857,68 +957,12 @@ pub fn diff_preview(app: &mut IdeApp, ctx: &egui::Context) {
                         ui.label(RichText::new(format!("−{removed}")).color(theme::UNTRACKED));
                     });
                     ui.add_space(8.0);
-                    let row_height = 18.0;
-                    egui::ScrollArea::both()
-                        .max_height((screen.height() * 0.55).max(160.0))
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 0.0;
-                            if diff.is_empty() {
-                                ui.label(
-                                    RichText::new("The suggestion matches the current code.")
-                                        .color(theme::TEXT_INFO),
-                                );
-                            }
-                            for line in &diff {
-                                let (fill, sign, color) = match line.kind {
-                                    DiffKind::Added => (
-                                        Color32::from_rgba_unmultiplied(0x4E, 0x9D, 0x6C, 0x40),
-                                        "+",
-                                        theme::editor::TEXT,
-                                    ),
-                                    DiffKind::Removed => (
-                                        Color32::from_rgba_unmultiplied(0xC5, 0x4E, 0x58, 0x40),
-                                        "−",
-                                        theme::editor::TEXT,
-                                    ),
-                                    DiffKind::Skipped => {
-                                        (Color32::TRANSPARENT, " ", theme::TEXT_INFO)
-                                    }
-                                    DiffKind::Context => {
-                                        (Color32::TRANSPARENT, " ", theme::TEXT_SECONDARY)
-                                    }
-                                };
-                                let number = |n: Option<usize>| {
-                                    n.map(|n| format!("{n:>4}"))
-                                        .unwrap_or_else(|| "    ".into())
-                                };
-                                let text = format!(
-                                    "{} {} {} {}",
-                                    number(line.old_line),
-                                    number(line.new_line),
-                                    sign,
-                                    line.text
-                                );
-                                let font = egui::FontId::monospace(theme::EDITOR_FONT_SIZE - 1.0);
-                                let galley = ui.painter().layout_no_wrap(text, font, color);
-                                let (rect, _) = ui.allocate_exact_size(
-                                    vec2(
-                                        ui.available_width().max(galley.size().x + 8.0),
-                                        row_height,
-                                    ),
-                                    egui::Sense::hover(),
-                                );
-                                ui.painter().rect_filled(rect, 0.0, fill);
-                                ui.painter().galley(
-                                    egui::pos2(
-                                        rect.left() + 4.0,
-                                        rect.center().y - galley.size().y / 2.0,
-                                    ),
-                                    galley,
-                                    color,
-                                );
-                            }
-                        });
+                    diff_view(
+                        ui,
+                        &diff,
+                        (screen.height() * 0.55).max(160.0),
+                        "ai_apply_diff",
+                    );
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         if ui

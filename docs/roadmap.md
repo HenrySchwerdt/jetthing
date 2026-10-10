@@ -55,7 +55,7 @@
 - [x] AI actions (Explain, Refactor, Generate tests/docs, Find problems, Fix with AI on problems and failed builds)
 - [x] Commit message generation from the selected changes
 - [x] Terminal natural language → command with confirmation
-- [ ] Agent mode with per-edit approval
+- [x] Agent mode with a visible plan, per-edit/command approval and Stop
 
 ## M2 — language intelligence
 

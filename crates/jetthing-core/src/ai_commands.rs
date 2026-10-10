@@ -58,6 +58,8 @@ pub struct AiState {
     pub commit_draft: Option<crate::ai_vcs::CommitDraft>,
     /// Natural-language terminal command suggestion awaiting confirmation.
     pub shell: Option<crate::ai_terminal::ShellSuggestion>,
+    /// Agent mode task.
+    pub agent: Option<crate::ai_agent::AgentRun>,
 }
 
 impl Default for AiState {
@@ -79,6 +81,7 @@ impl Default for AiState {
             auto_preview: None,
             commit_draft: None,
             shell: None,
+            agent: None,
         }
     }
 }
@@ -204,6 +207,7 @@ impl IdeState {
         self.ai.auto_preview = None;
         self.ai.commit_draft = None;
         self.ai.shell = None;
+        self.ai.agent = None;
         self.ai.chat = ChatSession::default();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
@@ -319,6 +323,9 @@ impl IdeState {
             if self.ai_commit_update(id, &update) || self.ai_terminal_update(id, &update) {
                 continue;
             }
+            let Some(update) = self.ai_agent_update(id, update) else {
+                continue;
+            };
             if self.ai.inline_request.as_ref().is_some_and(|r| r.id == id) {
                 if let AiUpdate::Finished(result) = update {
                     self.ai_inline_finished(result);
@@ -339,6 +346,7 @@ impl IdeState {
                 }
             }
         }
+        self.ai_agent_poll();
     }
 
     fn code_block(&self, turn: usize, block: usize) -> Result<String, String> {
@@ -516,6 +524,9 @@ fn demo_reply(request: &ChatRequest) -> MockReply {
         .last()
         .map(|m| m.text())
         .unwrap_or_default();
+    if request.system == jetthing_ai::agent::SYSTEM_PROMPT {
+        return demo_agent_reply(request);
+    }
     if request.system == jetthing_ai::shell::SYSTEM_PROMPT {
         // A fixed, read-only command: demo mode does not interpret the request.
         return MockReply::text("ls -la");
@@ -573,6 +584,88 @@ fn demo_reply(request: &ChatRequest) -> MockReply {
             .to_owned(),
     };
     let mut reply = MockReply::text(&text);
+    reply.delay = std::time::Duration::from_millis(15);
+    reply
+}
+
+/// Scripted demo agent: list files, read the first Rust (or any) file, propose a
+/// one-line comment edit, then summarize. Never derived from real analysis.
+fn demo_agent_reply(request: &ChatRequest) -> MockReply {
+    let last_result = || {
+        request
+            .messages
+            .last()
+            .and_then(|message| {
+                message.content.iter().find_map(|block| match block {
+                    jetthing_ai::ContentBlock::ToolResult {
+                        content, is_error, ..
+                    } => Some((content.clone(), *is_error)),
+                    _ => None,
+                })
+            })
+            .unwrap_or_default()
+    };
+    let mut reply = match request.messages.len() {
+        1 => MockReply {
+            chunks: vec![
+                "Plan (demo mode, no real analysis):\n\n1. List the project files.\n2. Read \
+                 the main source file.\n3. Propose a small edit for your approval.\n4. Summarize.\n"
+                    .into(),
+            ],
+            tool_calls: vec![("list_files".into(), serde_json::json!({}))],
+            ..MockReply::default()
+        },
+        3 => {
+            let (listing, _) = last_result();
+            let path = listing
+                .lines()
+                .find(|line| line.ends_with(".rs"))
+                .or_else(|| listing.lines().next())
+                .unwrap_or("README.md")
+                .to_owned();
+            MockReply::tool("read_file", serde_json::json!({"path": path}))
+        }
+        5 => {
+            let (content, is_error) = last_result();
+            let first = content
+                .lines()
+                .next()
+                .and_then(|line| line.split_once("| "))
+                .map(|(_, text)| text.to_owned())
+                .filter(|text| !text.trim().is_empty() && !is_error);
+            let path = request.messages[3]
+                .content
+                .iter()
+                .find_map(|block| match block {
+                    jetthing_ai::ContentBlock::ToolUse { input, .. } => {
+                        input["path"].as_str().map(str::to_owned)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            match first {
+                Some(line) => MockReply::tool(
+                    "edit_file",
+                    serde_json::json!({
+                        "path": path,
+                        "old_text": line,
+                        "new_text": format!("// Reviewed by the Jetthing agent (demo).\n{line}"),
+                    }),
+                ),
+                None => MockReply::text("The file is empty; nothing to change (demo)."),
+            }
+        }
+        _ => {
+            let (result, is_error) = last_result();
+            MockReply::text(&if is_error {
+                format!("The change was not applied: {result} (demo summary).")
+            } else {
+                format!(
+                    "{result}. In demo mode the agent only adds a review comment; configure a provider for real tasks."
+                )
+            })
+        }
+    };
     reply.delay = std::time::Duration::from_millis(15);
     reply
 }
@@ -792,6 +885,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     crate::ai_actions::register(registry);
     crate::ai_vcs::register(registry);
     crate::ai_terminal::register(registry);
+    crate::ai_agent::register(registry);
 }
 
 #[cfg(test)]
@@ -1093,6 +1187,45 @@ mod tests {
             .unwrap();
         wait(&mut state);
         assert_eq!(provider.requests()[0].messages[0].text(), "hi");
+    }
+
+    #[test]
+    fn demo_agent_proposes_an_approvable_edit_and_summarizes() {
+        let (mut state, commands, _) = open("demo-agent", Arc::new(MockProvider::default()));
+        state
+            .ai
+            .use_provider(Arc::new(MockProvider::responding(demo_reply)));
+        commands
+            .execute("ai.agent.start", &mut state, json!({"goal": "review"}))
+            .unwrap();
+        let settle = |state: &mut IdeState| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                state.poll_ai();
+                let phase = state.ai.agent.as_ref().unwrap().phase.clone();
+                if !matches!(
+                    phase,
+                    crate::AgentPhase::Thinking | crate::AgentPhase::RunningCommand
+                ) {
+                    return phase;
+                }
+                assert!(Instant::now() < deadline, "demo agent stuck");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        assert_eq!(settle(&mut state), crate::AgentPhase::AwaitingApproval);
+        commands
+            .execute("ai.agent.approve", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(settle(&mut state), crate::AgentPhase::Done);
+        let text = state
+            .documents
+            .iter()
+            .find(|d| d.path == Path::new("src/lib.rs"))
+            .unwrap()
+            .text
+            .text();
+        assert!(text.starts_with("// Reviewed by the Jetthing agent (demo).\nfn a() {}"));
     }
 
     #[test]

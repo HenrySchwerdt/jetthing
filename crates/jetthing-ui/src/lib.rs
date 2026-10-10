@@ -7,6 +7,7 @@
 
 mod about;
 mod ai_actions;
+mod ai_agent;
 mod ai_chat;
 mod ai_inline;
 mod ai_terminal;
@@ -569,7 +570,13 @@ impl eframe::App for IdeApp {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
         self.state.poll_ai();
-        if self.state.ai.service.is_busy() {
+        let agent_running = self
+            .state
+            .ai
+            .agent
+            .as_ref()
+            .is_some_and(|a| a.phase == jetthing_core::AgentPhase::RunningCommand);
+        if self.state.ai.service.is_busy() || agent_running {
             ctx.request_repaint_after(Duration::from_millis(30));
         }
         if self.state.search.is_running() || self.state.runner.is_running() {
