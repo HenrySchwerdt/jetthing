@@ -75,7 +75,10 @@ pub use branch_commands::abort_label;
 pub use folds::{CollapsedFold, FoldState};
 pub use git_log::GitLogState;
 pub use line_changes::hunk_at_line;
-pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
+pub use toolwindow::{
+    Anchor, BOTTOM_DEFAULT_HEIGHT, BOTTOM_MIN_HEIGHT, EDITOR_MIN_HEIGHT, ToolWindow,
+    ToolWindowLayout,
+};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
 };

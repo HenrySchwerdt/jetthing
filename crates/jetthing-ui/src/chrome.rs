@@ -1,7 +1,7 @@
 //! Workbench chrome: merged main toolbar, tool window stripes and status bar.
 
 use crate::icons::{self, Icon};
-use crate::widgets::{self, chrome_frame};
+use crate::widgets::{self, chrome_frame, glow_through_frame};
 use crate::{IdeApp, keys, theme};
 use eframe::egui::{self, Color32, Rect, Sense, vec2};
 use jetthing_core::{Anchor, ToolWindow};
@@ -10,6 +10,15 @@ use serde_json::{Value, json};
 pub const TOOLBAR_HEIGHT: f32 = 40.0;
 pub const STATUS_BAR_HEIGHT: f32 = 26.0;
 pub const STRIPE_WIDTH: f32 = 40.0;
+
+/// Width reserved at the left of the main toolbar for the macOS traffic-light
+/// buttons, which overlay the content in the unified title bar.
+pub const MAC_TRAFFIC_LIGHT_INSET: f32 = 72.0;
+
+/// Left inset of the toolbar content: room for the traffic lights on macOS only.
+pub fn toolbar_leading_inset(macos: bool) -> f32 {
+    if macos { MAC_TRAFFIC_LIGHT_INSET } else { 0.0 }
+}
 
 /// Whether the window draws its own title bar (no OS decorations).
 pub fn custom_title_bar() -> bool {
@@ -45,6 +54,7 @@ pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
             );
             let ui = &mut content;
             ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_space(toolbar_leading_inset(cfg!(target_os = "macos")));
             if !crate::main_menu::show(app, ui) {
                 ui.add_space(4.0);
                 let badge = project_widget(app, ui);
@@ -506,7 +516,7 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
         .exact_width(STRIPE_WIDTH)
         .resizable(false)
         .show_separator_line(false)
-        .frame(chrome_frame().inner_margin(egui::Margin::symmetric(4, 6)))
+        .frame(glow_through_frame().inner_margin(egui::Margin::symmetric(4, 6)))
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.vertical(|ui| {
@@ -797,6 +807,11 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_macos_reserves_room_for_the_traffic_lights() {
+        assert_eq!(toolbar_leading_inset(true), MAC_TRAFFIC_LIGHT_INSET);
+        assert_eq!(toolbar_leading_inset(false), 0.0);
+    }
     use super::*;
 
     #[test]
