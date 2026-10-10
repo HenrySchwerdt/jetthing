@@ -72,6 +72,9 @@ pub const UNTRACKED: Color32 = hex(0xE37774);
 pub const MUTED: Color32 = hex(0x6F737A);
 /// `CompletionPopup.selectionBackground`.
 pub const COMPLETION_SELECTION: Color32 = hex(0x113A5C);
+/// Banner.warningBackground / Banner.warningBorderColor (editor notifications).
+pub const BANNER_WARNING: Color32 = hex(0x44321D);
+pub const BANNER_WARNING_BORDER: Color32 = hex(0x694820);
 
 /// `Island.arc` is 20 (diameter); egui radii are half of that.
 pub const ISLAND_RADIUS: u8 = 10;
