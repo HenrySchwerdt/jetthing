@@ -43,6 +43,7 @@
 - [x] Project tree New/Rename/Delete, commit with message and file selection
 - [x] Workspace restore (`.jetthing/workspace.json`), autosave on focus loss
 - [x] Check for Updates with verified self-update from GitHub releases
+- [x] `--version` and Help → About with embedded build info (commit, date, target)
 - [x] Versioned release pipeline (0.0.2) publishing on every version bump
 
 ## M2 — language intelligence
@@ -73,6 +74,14 @@ workspace layout persistence, plugin manager, and recovery.
 
 Product-neutral bundles start with Web and Rust, then Java/Kotlin/Gradle and Android.
 Use installed SDK, ADB, emulator, and Gradle; do not depend on Android Studio.
+
+- [x] Toolchain provisioning core (`jetthing-toolchains`): verified resumable downloads, atomic
+      installs, PATH-first discovery, project pins, `toolchain.*` commands, status-bar progress
+- [ ] "Missing toolchain" editor notification with Set up, Settings > Toolchains page
+- [ ] Catalog: JDK (foojay Disco) + jdtls, rust-analyzer/rustup, Android cmdline-tools/sdkmanager,
+      kotlin-lsp, bazelisk/starpls, Node/typescript-language-server, pyright/ruff, gopls/delve,
+      clangd, lemminx, taplo, yaml-language-server
+- [ ] LSP "server not found" → Set up through the resolver; build/run, Android, Bazel use it
 
 ## Next task
 

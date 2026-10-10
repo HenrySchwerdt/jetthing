@@ -1,0 +1,111 @@
+# IntelliJ IDEA parity: main menu and window chrome
+
+Main menu actions of the New UI (File, Edit, View, Window, Tools, Help) and the
+surrounding window chrome: Welcome screen, main toolbar, navigation bar, status bar,
+and context menus. Navigate/Code/Refactor/Build/Run/Git menu actions are catalogued in
+their own area files to avoid double counting.
+
+Sources: IntelliJ IDEA public documentation (<https://www.jetbrains.com/help/idea/>), the predefined Windows
+keymap reference (<https://www.jetbrains.com/help/idea/reference-keymap-win-default.html>) and the unified-distribution FAQ (<https://lp.jetbrains.com/intellij-idea-unified-faq/>), which lists
+the features that need an Ultimate subscription. Rows were written from public
+documentation and observable behavior only; no JetBrains code, artwork, or branding
+is reused.
+
+Rows tagged `[Ultimate]` require an IntelliJ IDEA Ultimate subscription. Untagged rows are
+available in the free distribution. `Weight` (1-5) is the relative importance used by the
+weighted dashboard: 5 = core daily workflow, 3 = significant, 2 = moderate, 1 = minor.
+Statuses describe Jetthing, conservatively: nothing in this catalog is `Verified`.
+
+| ID | Reference | Feature | Status | Weight | Commands | Tests | Limitations / evidence |
+|---|---|---|---|---:|---|---|---|
+| IJ-MENU-001 | [new-project-wizard](https://www.jetbrains.com/help/idea/new-project-wizard.html) | File > New > Project wizard | Missing | 3 | — | — | not started |
+| IJ-MENU-002 | [new-project-wizard](https://www.jetbrains.com/help/idea/new-project-wizard.html) | File > New > Project from Existing Sources | Missing | 2 | — | — | not started |
+| IJ-MENU-003 | [new-project-wizard](https://www.jetbrains.com/help/idea/new-project-wizard.html) | File > New > Project from Version Control (clone) | Missing | 3 | — | — | not started |
+| IJ-MENU-004 | [creating-and-managing-modules](https://www.jetbrains.com/help/idea/creating-and-managing-modules.html) | File > New > Module | Missing | 2 | — | — | not started |
+| IJ-MENU-005 | [using-file-and-code-templates](https://www.jetbrains.com/help/idea/using-file-and-code-templates.html) | File > New file from template (class, file, directory, package) | Missing | 3 | — | — | not started |
+| IJ-MENU-006 | [scratches](https://www.jetbrains.com/help/idea/scratches.html) | File > New > Scratch File | Missing | 2 | — | — | not started |
+| IJ-MENU-007 | [open-close-and-move-projects](https://www.jetbrains.com/help/idea/open-close-and-move-projects.html) | File > Open (project folder) | Partial | 5 | `project.open` | command unit test | startup path and CLI argument only; no file chooser dialog |
+| IJ-MENU-008 | [open-close-and-move-projects](https://www.jetbrains.com/help/idea/open-close-and-move-projects.html) | File > Recent Projects | Missing | 3 | — | — | not started |
+| IJ-MENU-009 | [open-close-and-move-projects](https://www.jetbrains.com/help/idea/open-close-and-move-projects.html) | File > Close Project | Missing | 2 | — | — | not started |
+| IJ-MENU-010 | [open-close-and-move-projects](https://www.jetbrains.com/help/idea/open-close-and-move-projects.html) | Open project in new / current window prompt | Missing | 1 | — | — | not started |
+| IJ-MENU-011 | [configuring-project-and-ide-settings](https://www.jetbrains.com/help/idea/configuring-project-and-ide-settings.html) | File > Settings (Ctrl+Alt+S) | Missing | 5 | — | — | not started |
+| IJ-MENU-012 | [project-settings-and-structure](https://www.jetbrains.com/help/idea/project-settings-and-structure.html) | File > Project Structure (Ctrl+Alt+Shift+S) | Missing | 3 | — | — | not started |
+| IJ-MENU-013 | [configuring-project-and-ide-settings](https://www.jetbrains.com/help/idea/configuring-project-and-ide-settings.html) | File > New Projects Setup (settings for new projects) | Missing | 1 | — | — | not started |
+| IJ-MENU-014 | [sharing-your-ide-settings](https://www.jetbrains.com/help/idea/sharing-your-ide-settings.html) | File > Manage IDE Settings (import/export/sync) | Missing | 2 | — | — | not started |
+| IJ-MENU-015 | [saving-and-reverting-changes](https://www.jetbrains.com/help/idea/saving-and-reverting-changes.html) | File > Save All (Ctrl+S) | Implemented | 5 | `editor.saveAll` | manual launch | writes every dirty buffer; IntelliJ-style autosave on focus loss pending |
+| IJ-MENU-016 | [saving-and-reverting-changes](https://www.jetbrains.com/help/idea/saving-and-reverting-changes.html) | Autosave on frame deactivation / idle | Missing | 3 | — | — | not started |
+| IJ-MENU-017 | [saving-and-reverting-changes](https://www.jetbrains.com/help/idea/saving-and-reverting-changes.html) | File > Reload All from Disk | Missing | 2 | — | — | not started |
+| IJ-MENU-018 | [invalidate-caches](https://www.jetbrains.com/help/idea/invalidate-caches.html) | File > Invalidate Caches / Restart | Missing | 1 | — | — | not started |
+| IJ-MENU-019 | [repair-ide](https://www.jetbrains.com/help/idea/repair-ide.html) | File > Repair IDE | Missing | 1 | — | — | not started |
+| IJ-MENU-020 | [encoding](https://www.jetbrains.com/help/idea/encoding.html) | File > File Properties > File Encoding | Missing | 2 | — | — | not started |
+| IJ-MENU-021 | [configuring-line-endings-and-line-separators](https://www.jetbrains.com/help/idea/configuring-line-endings-and-line-separators.html) | File > File Properties > Line Separators | Missing | 2 | — | — | not started |
+| IJ-MENU-022 | [saving-and-reverting-changes](https://www.jetbrains.com/help/idea/saving-and-reverting-changes.html) | File > File Properties > Make File Read-Only | Missing | 1 | — | — | not started |
+| IJ-MENU-025 | [lightedit-mode](https://www.jetbrains.com/help/idea/lightedit-mode.html) | LightEdit mode (open a single file without a project) | Missing | 1 | — | — | not started |
+| IJ-MENU-027 | [open-close-and-move-projects](https://www.jetbrains.com/help/idea/open-close-and-move-projects.html) | Exit / quit application | Implemented | 2 | `app.quit` | manual launch | macOS tested; unsaved-changes confirmation pending |
+| IJ-MENU-030 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Undo (Ctrl+Z) | Implemented | 5 | `editor.undo` | rope unit/property tests | per-document history; global (project-wide) undo for refactorings pending |
+| IJ-MENU-031 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Redo (Ctrl+Shift+Z) | Implemented | 5 | `editor.redo` | rope unit/property tests | per-document history |
+| IJ-MENU-032 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Cut (Ctrl+X) | Missing | 5 | — | — | clipboard integration pending |
+| IJ-MENU-033 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Copy (Ctrl+C) | Missing | 5 | — | — | clipboard integration pending |
+| IJ-MENU-034 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Paste (Ctrl+V) | Missing | 5 | — | — | clipboard integration pending |
+| IJ-MENU-035 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Paste from History (Ctrl+Shift+V) | Missing | 2 | — | — | not started |
+| IJ-MENU-036 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Paste as Plain Text (Ctrl+Alt+Shift+V) | Missing | 1 | — | — | not started |
+| IJ-MENU-037 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Copy Path/Reference (Ctrl+Shift+C / Ctrl+Alt+Shift+C) | Missing | 2 | — | — | not started |
+| IJ-MENU-038 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Select All (Ctrl+A) | Partial | 3 | — | — | editor key handler selects the whole buffer; not yet a registered command and not covered by an automated UI test |
+| IJ-MENU-039 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Delete | Partial | 2 | `editor.insertText` | multi-cursor deletion unit test | Backspace/Delete in editor; not exposed as a menu command |
+| IJ-MENU-040 | [finding-and-replacing-text-in-file](https://www.jetbrains.com/help/idea/finding-and-replacing-text-in-file.html) | Edit > Find > Find / Replace (entry points) | Missing | 3 | — | — | see IJ-NAV rows for behavior |
+| IJ-MENU-041 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Toggle Case (Ctrl+Shift+U) | Missing | 1 | — | — | not started |
+| IJ-MENU-042 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Join Lines (Ctrl+Shift+J) | Missing | 2 | — | — | not started |
+| IJ-MENU-043 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Duplicate Line or Selection (Ctrl+D) | Missing | 3 | — | — | not started |
+| IJ-MENU-044 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Edit > Delete Line (Ctrl+Y) | Missing | 3 | — | — | not started |
+| IJ-MENU-045 | [using-macros-in-the-editor](https://www.jetbrains.com/help/idea/using-macros-in-the-editor.html) | Edit > Macros (record, play back, edit) | Missing | 1 | — | — | not started |
+| IJ-MENU-050 | [tool-windows](https://www.jetbrains.com/help/idea/tool-windows.html) | View > Tool Windows submenu | Missing | 3 | — | — | tool windows are fixed panels |
+| IJ-MENU-051 | [viewing-modes](https://www.jetbrains.com/help/idea/viewing-modes.html) | View > Appearance > Presentation / Distraction-free / Zen / Full Screen modes | Missing | 2 | — | — | not started |
+| IJ-MENU-052 | [guided-tour-around-the-user-interface](https://www.jetbrains.com/help/idea/guided-tour-around-the-user-interface.html) | View > Appearance > toggle toolbar, status bar, navigation bar, tool window bars | Missing | 2 | — | — | not started |
+| IJ-MENU-053 | [viewing-reference-information](https://www.jetbrains.com/help/idea/viewing-reference-information.html) | View > Quick Documentation (Ctrl+Q) | Missing | 3 | — | — | see IJ-ED rows |
+| IJ-MENU-054 | [recent-files-and-changes](https://www.jetbrains.com/help/idea/recent-files-and-changes.html) | View > Recent Files (Ctrl+E) | Missing | 5 | — | — | not started |
+| IJ-MENU-055 | [recent-files-and-changes](https://www.jetbrains.com/help/idea/recent-files-and-changes.html) | View > Recent Locations (Ctrl+Shift+E) | Missing | 3 | — | — | not started |
+| IJ-MENU-056 | [recent-files-and-changes](https://www.jetbrains.com/help/idea/recent-files-and-changes.html) | View > Recent Changes (Alt+Shift+C) | Missing | 1 | — | — | not started |
+| IJ-MENU-057 | [comparing-file-versions](https://www.jetbrains.com/help/idea/comparing-file-versions.html) | View > Compare With... / Compare with Clipboard | Missing | 2 | — | — | not started |
+| IJ-MENU-058 | [ide-zoom-level](https://www.jetbrains.com/help/idea/ide-zoom-level.html) | View > Appearance > Zoom IDE | Missing | 2 | — | — | not started |
+| IJ-MENU-059 | [user-interface-themes](https://www.jetbrains.com/help/idea/user-interface-themes.html) | View > Quick Switch Scheme (Ctrl+`) | Missing | 1 | — | — | not started |
+| IJ-MENU-060 | [viewing-structure-of-a-source-file](https://www.jetbrains.com/help/idea/viewing-structure-of-a-source-file.html) | View > File Structure popup (Ctrl+F12) | Missing | 3 | — | — | see IJ-NAV rows |
+| IJ-MENU-070 | [tool-window-layouts](https://www.jetbrains.com/help/idea/tool-window-layouts.html) | Window > Layouts (store, restore, switch tool window layouts) | Missing | 2 | — | — | not started |
+| IJ-MENU-071 | [manipulating-the-tool-windows](https://www.jetbrains.com/help/idea/manipulating-the-tool-windows.html) | Window > Restore Default Layout (Shift+F12) | Missing | 1 | — | — | not started |
+| IJ-MENU-072 | [manipulating-the-tool-windows](https://www.jetbrains.com/help/idea/manipulating-the-tool-windows.html) | Window > Hide All Tool Windows (Ctrl+Shift+F12) | Missing | 2 | — | — | not started |
+| IJ-MENU-073 | [using-code-editor](https://www.jetbrains.com/help/idea/using-code-editor.html#split_screen) | Window > Editor Tabs > Split Vertically / Horizontally | Missing | 3 | — | — | not started |
+| IJ-MENU-074 | [using-code-editor](https://www.jetbrains.com/help/idea/using-code-editor.html#manage_tabs) | Window > Editor Tabs > Close / Close Others / Close All / Pin Tab | Missing | 3 | — | — | not started |
+| IJ-MENU-075 | [using-code-editor](https://www.jetbrains.com/help/idea/using-code-editor.html#manage_tabs) | Window > Editor Tabs > Reopen Closed Tab | Missing | 2 | — | — | not started |
+| IJ-MENU-076 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Window > Editor Tabs > Select Next / Previous Tab (Alt+Right/Left) | Missing | 3 | — | — | not started |
+| IJ-MENU-077 | [keymap](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) | Open source in new window / detach editor tab (Shift+F4) | Missing | 1 | — | — | not started |
+| IJ-MENU-078 | [open-close-and-move-projects](https://www.jetbrains.com/help/idea/open-close-and-move-projects.html) | Window > Next / Previous Project Window | Missing | 1 | — | — | not started |
+| IJ-MENU-079 | [notifications](https://www.jetbrains.com/help/idea/notifications.html) | Window > Notifications / Background Tasks | Missing | 2 | — | — | not started |
+| IJ-MENU-080 | [terminal-emulator](https://www.jetbrains.com/help/idea/terminal-emulator.html) | Tools > Terminal entry point | Partial | 3 | `terminal.open`, `terminal.toggle` | real PTY process test | see PLAT-008 |
+| IJ-MENU-081 | [settings-tools-external-tools](https://www.jetbrains.com/help/idea/settings-tools-external-tools.html) | Tools > External Tools | Missing | 2 | — | — | not started |
+| IJ-MENU-082 | [javadocs](https://www.jetbrains.com/help/idea/javadocs.html) | Tools > Generate JavaDoc | Missing | 1 | — | — | not started |
+| IJ-MENU-083 | [new-project-wizard](https://www.jetbrains.com/help/idea/new-project-wizard.html) | Tools > Save Project as Template | Missing | 1 | — | — | not started |
+| IJ-MENU-084 | [run-for-the-first-time](https://www.jetbrains.com/help/idea/run-for-the-first-time.html) | Tools > Create Desktop Entry / Command-line Launcher | Missing | 1 | — | — | not started |
+| IJ-MENU-085 | [handling-issues](https://www.jetbrains.com/help/idea/handling-issues.html) | Tools > Tasks & Contexts | Missing | 1 | — | — | not started |
+| IJ-MENU-087 | [running-anything](https://www.jetbrains.com/help/idea/running-anything.html) | Run Anything (double Ctrl) | Missing | 3 | — | — | not started |
+| IJ-MENU-090 | [mastering-keyboard-shortcuts](https://www.jetbrains.com/help/idea/mastering-keyboard-shortcuts.html) | Help > Keyboard Shortcuts PDF / keymap reference | Missing | 1 | — | — | not started |
+| IJ-MENU-091 | [productivity-guide](https://www.jetbrains.com/help/idea/productivity-guide.html) | Help > My Productivity (feature usage statistics) | Missing | 1 | — | — | not started |
+| IJ-MENU-092 | [tuning-the-ide](https://www.jetbrains.com/help/idea/tuning-the-ide.html) | Help > Edit Custom VM Options / Custom Properties | Missing | 1 | — | — | not started |
+| IJ-MENU-093 | [directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs](https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html) | Help > Show Log in Files / Collect Logs | Missing | 1 | — | — | not started |
+| IJ-MENU-094 | [activity-monitor](https://www.jetbrains.com/help/idea/activity-monitor.html) | Help > Diagnostic Tools > Activity Monitor | Missing | 1 | — | — | not started |
+| IJ-MENU-095 | [update](https://www.jetbrains.com/help/idea/update.html) | Help > Check for Updates | Missing | 1 | — | — | not started |
+| IJ-MENU-096 | [feature-trainer](https://www.jetbrains.com/help/idea/feature-trainer.html) | Help > Learn IDE Features (interactive tutorials) | Missing | 1 | — | — | not started |
+| IJ-MENU-097 | [getting-started](https://www.jetbrains.com/help/idea/getting-started.html) | Help > Tip of the Day / Getting Started | Missing | 1 | — | — | not started |
+| IJ-MENU-100 | [run-for-the-first-time](https://www.jetbrains.com/help/idea/run-for-the-first-time.html) | Welcome screen (projects list, clone, customize, plugins, learn) | Missing | 3 | — | — | not started |
+| IJ-MENU-101 | [new-ui](https://www.jetbrains.com/help/idea/new-ui.html) | Main toolbar: project widget (switch / open recent project) | Missing | 3 | — | — | not started |
+| IJ-MENU-102 | [new-ui](https://www.jetbrains.com/help/idea/new-ui.html) | Main toolbar: VCS widget (branch name, branch popup) | Partial | 3 | `git.refresh` | real repository integration test | branch name shown in Git panel; no toolbar popup |
+| IJ-MENU-103 | [new-ui](https://www.jetbrains.com/help/idea/new-ui.html) | Main toolbar: run widget (configuration selector, Run, Debug, Stop) | Missing | 5 | — | — | not started |
+| IJ-MENU-104 | [new-ui](https://www.jetbrains.com/help/idea/new-ui.html) | Main menu as hamburger / merged into title bar (Windows/Linux) | Partial | 1 | main menu model (`jetthing-menu`) | spec-structure and headless render tests | hamburger button in the merged toolbar opens File … Help built from the spec groups; see ACT-002 |
+| IJ-MENU-105 | [guided-tour-around-the-user-interface](https://www.jetbrains.com/help/idea/guided-tour-around-the-user-interface.html#navigation-bar) | Navigation bar (breadcrumbs of project path) | Missing | 2 | — | — | not started |
+| IJ-MENU-106 | [guided-tour-around-the-user-interface](https://www.jetbrains.com/help/idea/guided-tour-around-the-user-interface.html#status-bar) | Status bar: caret position, line separator, encoding, indent, read-only lock | Missing | 3 | — | — | not started |
+| IJ-MENU-107 | [guided-tour-around-the-user-interface](https://www.jetbrains.com/help/idea/guided-tour-around-the-user-interface.html#status-bar) | Status bar: background task progress and indexing indicator | Missing | 2 | — | — | not started |
+| IJ-MENU-108 | [guided-tour-around-the-user-interface](https://www.jetbrains.com/help/idea/guided-tour-around-the-user-interface.html#status-bar) | Status bar: navigation breadcrumbs of current file | Missing | 1 | — | — | not started |
+| IJ-MENU-109 | [guided-tour-around-the-user-interface](https://www.jetbrains.com/help/idea/guided-tour-around-the-user-interface.html#context-menus) | Context menus in editor, project tree, tabs, and tool windows | Missing | 3 | — | — | not started |
+| IJ-MENU-110 | [notifications](https://www.jetbrains.com/help/idea/notifications.html) | Balloon notifications and notification history | Missing | 2 | — | — | not started |
+| IJ-MENU-111 | [searching-everywhere](https://www.jetbrains.com/help/idea/searching-everywhere.html#find_action) | Find Action (Ctrl+Shift+A) over all registered commands | Partial | 5 | — | jetthing-command registry tests | command palette (Cmd/Ctrl+P) lists and runs registered commands; substring match only, no fuzzy ranking or settings/option search |
+| IJ-MENU-112 | [user-interface-themes](https://www.jetbrains.com/help/idea/user-interface-themes.html) | Light / dark / high-contrast themes and sync with OS | Missing | 2 | — | — | single built-in dark theme |
+| IJ-MENU-113 | [accessibility](https://www.jetbrains.com/help/idea/accessibility.html) | Accessibility: screen reader support, keyboard-only navigation | Missing | 2 | — | — | not started |
+| IJ-MENU-114 | [viewing-modes](https://www.jetbrains.com/help/idea/viewing-modes.html) | Native macOS full screen and tabbed windows | Missing | 1 | — | — | not started |

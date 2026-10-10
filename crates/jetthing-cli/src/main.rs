@@ -15,6 +15,15 @@ requests:
 The socket defaults to $JETTHING_CONTROL_SOCKET.";
 
 fn main() {
+    let first = std::env::args_os().nth(1);
+    if let Some(text) = jetthing_core::build_info::cli_flag_output(
+        "jetthing-cli",
+        "usage: jetthing-cli <commands|run|ui> …\n  -V, --version   print version and build information",
+        first.as_deref().and_then(|arg| arg.to_str()),
+    ) {
+        println!("{text}");
+        return;
+    }
     let mut args = std::env::args().skip(1);
     let mode = args.next().unwrap_or_else(|| "commands".into());
     let registry = built_in_commands();
