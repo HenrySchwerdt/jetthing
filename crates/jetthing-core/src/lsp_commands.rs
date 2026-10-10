@@ -43,6 +43,57 @@ impl IdeState {
 }
 
 pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
+    registry
+        .register(Command::new(
+            spec(
+                "language.quickDoc",
+                "Quick Documentation",
+                "Code",
+                Some("F1"),
+                "{}",
+            ),
+            |state: &IdeState| state.active_has_language_server(),
+            |state: &mut IdeState, _| {
+                state.toggle_quick_doc().map_err(CommandError::Failed)?;
+                Ok(json!({"panel": state.docs.completion_panel}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "language.hoverAt",
+                "Show Documentation at Offset",
+                "Code",
+                None,
+                r#"{"offset":0}"#,
+            ),
+            |state: &IdeState| state.active_has_language_server(),
+            |state: &mut IdeState, params| {
+                let offset = usize_param(&params, "offset")?;
+                state
+                    .request_quick_doc(offset, true)
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "language.closeQuickDoc",
+                "Close Documentation",
+                "Code",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.docs.popup.is_some(),
+            |state: &mut IdeState, _| {
+                state.close_quick_doc();
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
     // Tab, Shift+Tab and Esc drive these only while a snippet is active, so
     // they carry no menu shortcut.
     for (id, label) in [

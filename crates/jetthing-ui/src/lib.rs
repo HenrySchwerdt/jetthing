@@ -10,6 +10,7 @@ mod chrome;
 mod completion_ui;
 mod control;
 mod crash_notice;
+mod doc_ui;
 mod editor;
 mod editor_keys;
 mod findbar;
@@ -61,6 +62,7 @@ pub struct IdeApp {
     window_focused: bool,
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
+    doc_view: doc_ui::DocView,
 }
 
 impl IdeApp {
@@ -136,6 +138,7 @@ impl IdeApp {
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
             control: None,
+            doc_view: doc_ui::DocView::default(),
         }
     }
 
@@ -390,6 +393,13 @@ impl IdeApp {
         if consume(Modifiers::CTRL, Key::Space) {
             self.dispatch("language.complete", Value::Null);
         }
+        // Quick Documentation: F1 on macOS, Ctrl+Q elsewhere.
+        if self.editor_focused(ctx)
+            && ((mac && consume(Modifiers::NONE, Key::F1))
+                || (!mac && consume(Modifiers::CTRL, Key::Q)))
+        {
+            self.dispatch("language.quickDoc", Value::Null);
+        }
         if consume(Modifiers::NONE, Key::Escape) {
             if self.state.about_open {
                 self.state.about_open = false;
@@ -397,6 +407,8 @@ impl IdeApp {
                 self.dialog = None;
             } else if self.palette.open {
                 self.palette.open = false;
+            } else if self.state.docs.popup.is_some() {
+                self.dispatch("language.closeQuickDoc", Value::Null);
             } else if self.state.completion.is_some() {
                 self.dispatch("completion.close", Value::Null);
             } else if self.state.snippet.is_some() {
@@ -590,7 +602,9 @@ impl eframe::App for IdeApp {
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }
-        completion_ui::show(self, ctx);
+        let lookup = completion_ui::show(self, ctx);
+        doc_ui::show_completion_panel(self, ctx, lookup);
+        doc_ui::show_quick_doc(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
         notifications::show(self, ctx);

@@ -29,6 +29,8 @@ pub fn for_windows_linux(mac: &str) -> String {
         "⇧⌘8" => return "Alt+Shift+Insert".into(),
         "⌘↩" => return "Ctrl+Enter".into(),
         "⌥⌘↩" => return "Ctrl+Alt+Enter".into(),
+        // Quick Documentation.
+        "F1" => return "Ctrl+Q".into(),
         _ => {}
     }
     let mut chars = mac.chars().peekable();

@@ -11,6 +11,7 @@
 pub mod client;
 pub mod completion;
 pub mod manager;
+pub mod markup;
 pub mod registry;
 pub mod snippet;
 pub mod transport;
@@ -21,8 +22,8 @@ pub use client::{
 };
 pub use lsp_types;
 pub use manager::{
-    CompletionResult, CompletionTrigger, LspManager, LspNotice, ServerInfo, ServerKey,
-    ServerStatus, describe_progress,
+    CompletionResult, CompletionTrigger, LspManager, LspNotice, RequestHandle, ServerInfo,
+    ServerKey, ServerStatus, describe_progress,
 };
 pub use registry::{
     LanguageServerProvider, LaunchContext, LspSettings, ServerRegistry, ServerSettings, ServerSpec,

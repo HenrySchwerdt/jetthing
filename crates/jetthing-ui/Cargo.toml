@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
+pulldown-cmark.workspace = true
 jetthing-command = { path = "../jetthing-command" }
 jetthing-control = { path = "../jetthing-control" }
 jetthing-core = { path = "../jetthing-core" }

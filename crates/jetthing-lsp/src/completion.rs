@@ -286,6 +286,8 @@ pub fn rank(
         group(a.class)
             .cmp(&group(b.class))
             .then_with(|| is_deprecated(item_a).cmp(&is_deprecated(item_b)))
+            // Templates (postfix `nnull`, `sysout`, …) after real members.
+            .then_with(|| is_snippet(item_a).cmp(&is_snippet(item_b)))
             .then_with(|| b_relevance.cmp(a_relevance))
             .then_with(|| compare_sort_text(item_a, item_b))
             .then_with(|| a.class.cmp(&b.class))
@@ -311,6 +313,10 @@ fn compare_labels(a: &str, b: &str) -> Ordering {
     a.to_lowercase()
         .cmp(&b.to_lowercase())
         .then_with(|| a.cmp(b))
+}
+
+fn is_snippet(item: &CompletionItem) -> bool {
+    item.kind == Some(CompletionItemKind::SNIPPET)
 }
 
 #[allow(deprecated)] // `deprecated` is the pre-3.15 field some servers still send.
@@ -482,6 +488,19 @@ mod tests {
             .map(|ranked| items[ranked.index].label.as_str())
             .collect();
         assert_eq!(ranked, ["greeting", "clone", "finalize"]);
+    }
+
+    #[test]
+    fn templates_rank_after_members_unless_they_match_better() {
+        let mut items = vec![
+            item("nnull", "1"),
+            item("notify", "5"),
+            item("getClass", "5"),
+        ];
+        items[0].kind = Some(CompletionItemKind::SNIPPET);
+        assert_eq!(labels(&items, ""), ["getClass", "notify", "nnull"]);
+        assert_eq!(labels(&items, "nn"), ["nnull"]);
+        assert_eq!(labels(&items, "n"), ["notify", "nnull"]);
     }
 
     #[test]

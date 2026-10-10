@@ -19,12 +19,14 @@ pub mod diagnostics;
 mod editor_commands;
 mod lsp_commands;
 mod project_commands;
+mod quick_doc;
 mod snippet_session;
 mod terminal_commands;
 mod toolchain_commands;
 mod toolwindow;
 mod update_commands;
 pub use completion::CompletionSession;
+pub use quick_doc::{DocsState, QuickDoc};
 pub use snippet_session::SnippetSession;
 pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
@@ -63,6 +65,8 @@ pub struct IdeState {
     pub completion: Option<CompletionSession>,
     /// Tab stops of an inserted snippet, while the user fills them in.
     pub snippet: Option<SnippetSession>,
+    /// Quick documentation popup and completion documentation panel.
+    pub docs: DocsState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -417,6 +421,7 @@ impl IdeState {
     pub fn poll_lsp(&mut self) {
         let restarted = self.lsp.poll();
         self.poll_completion();
+        self.poll_docs();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };

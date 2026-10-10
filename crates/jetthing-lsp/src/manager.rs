@@ -98,6 +98,13 @@ pub struct LspManager {
     completion_result: Option<CompletionResult>,
 }
 
+/// An in-flight request sent with [`LspManager::send_request`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestHandle {
+    pub server: ServerKey,
+    pub id: u64,
+}
+
 /// Why completion was requested (LSP `CompletionTriggerKind`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompletionTrigger {
@@ -648,6 +655,59 @@ impl LspManager {
             .and_then(|service| service.capabilities().completion_provider.as_ref())
             .and_then(|provider| provider.trigger_characters.clone())
             .unwrap_or_default()
+    }
+
+    /// Sends a typed request to the ready server of `path`. The handle is used
+    /// to collect (`take_response`) or cancel (`cancel_request`) the result.
+    pub fn send_request<R: lsp_types::request::Request>(
+        &mut self,
+        path: &Path,
+        params: R::Params,
+    ) -> Result<RequestHandle, LspError> {
+        let service = self.ready_server_for(path)?;
+        let server = ServerKey {
+            server: service.name().into(),
+            root: service.root().to_owned(),
+        };
+        let id = service.request::<R>(params)?;
+        let server = self
+            .documents
+            .get(path)
+            .map(|document| document.server.clone())
+            .unwrap_or(server);
+        Ok(RequestHandle { server, id })
+    }
+
+    /// The decoded response for `handle`, once it has arrived.
+    pub fn take_response<R: lsp_types::request::Request>(
+        &mut self,
+        handle: &RequestHandle,
+    ) -> Option<Result<R::Result, LspError>> {
+        let service = self.service_mut(&handle.server);
+        match service {
+            Some(service) => service.take_typed::<R>(handle.id),
+            None => Some(Err(LspError::NotReady(handle.server.server.clone()))),
+        }
+    }
+
+    /// Whether `handle` is still waiting for its response.
+    pub fn is_pending(&self, handle: &RequestHandle) -> bool {
+        self.servers
+            .iter()
+            .find(|server| server.key == handle.server)
+            .and_then(|server| server.service.as_ref())
+            .is_some_and(|service| service.is_pending(handle.id))
+    }
+
+    pub fn cancel_request(&mut self, handle: &RequestHandle) {
+        if let Some(service) = self.service_mut(&handle.server) {
+            service.cancel(handle.id);
+        }
+    }
+
+    /// Server capabilities for `path`'s running server.
+    pub fn capabilities_for(&self, path: &Path) -> Option<&lsp_types::ServerCapabilities> {
+        self.server_for(path).map(LspService::capabilities)
     }
 
     /// The language id the server uses for `path`.

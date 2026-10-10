@@ -260,6 +260,7 @@ impl IdeApp {
             || self.dialog.is_some()
             || self.state.about_open
             || self.completion_visible()
+            || self.state.docs.popup.is_some()
     }
 
     fn completion_visible(&self) -> bool {
