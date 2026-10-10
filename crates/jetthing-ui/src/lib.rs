@@ -174,7 +174,9 @@ impl IdeApp {
             self.dispatch("language.complete", Value::Null);
         }
         if consume(Modifiers::NONE, Key::Escape) {
-            if let Some(lsp) = self.state.lsp.as_mut()
+            if self.palette.open {
+                self.palette.open = false;
+            } else if let Some(lsp) = self.state.lsp.as_mut()
                 && !lsp.completions().is_empty()
             {
                 lsp.clear_completions();
