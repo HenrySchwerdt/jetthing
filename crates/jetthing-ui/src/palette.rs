@@ -50,6 +50,15 @@ impl Palette {
         self.show_tab(Tab::All);
     }
 
+    /// Selected tab, as reported by the automation `state` request.
+    pub fn tab_name(&self) -> &'static str {
+        match self.tab {
+            Tab::All => "all",
+            Tab::Files => "files",
+            Tab::Actions => "actions",
+        }
+    }
+
     pub fn show_tab(&mut self, tab: Tab) {
         self.open = true;
         self.query.clear();

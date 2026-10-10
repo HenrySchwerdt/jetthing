@@ -36,7 +36,9 @@ fn run(
         Box::new(move |cc| {
             cc.egui_ctx.set_theme(eframe::egui::Theme::Dark);
             jetthing_ui::install_theme(&cc.egui_ctx);
-            Ok(Box::new(jetthing_ui::IdeApp::new(project, files)))
+            let mut app = jetthing_ui::IdeApp::new(project, files);
+            app.start_control_from_env(&cc.egui_ctx);
+            Ok(Box::new(app))
         }),
     )
 }

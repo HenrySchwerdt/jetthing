@@ -24,6 +24,22 @@ Use **New Project** on the welcome screen or in File to generate an Empty, Rust,
 or Java/Gradle project. Choose an existing parent folder and a new project name.
 Java templates require JDK 21 and Gradle on PATH; Rust templates require Cargo.
 
+## UI automation
+
+Set `JETTHING_CONTROL_SOCKET=/path/ctl.sock` to let scripts drive a running IDE over
+JSON lines: run commands, read state, send keys and text, wait, and take screenshots.
+
+```bash
+JETTHING_CONTROL_SOCKET=/tmp/jt.sock cargo run -p jetthing-app -- . &
+export JETTHING_CONTROL_SOCKET=/tmp/jt.sock
+cargo run -p jetthing-cli -- ui wait idle
+cargo run -p jetthing-cli -- ui key Ctrl+Shift+A
+cargo run -p jetthing-cli -- ui screenshot /tmp/find-action.png
+cargo run -p jetthing-cli -- ui state
+```
+
+See `docs/parity/evidence/ui-control-socket.md` for the protocol.
+
 ## Builds, releases and updates
 
 ```bash
