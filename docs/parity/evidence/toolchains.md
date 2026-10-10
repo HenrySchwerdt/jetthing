@@ -47,10 +47,43 @@ $ jetthing-cli run toolchain.install '{"component":"jdk"}'
 invalid parameters: unknown toolchain component `jdk`
 ```
 
+## Slice 3a — first catalog entries
+
+Built-in providers (`crates/jetthing-toolchains/src/providers/`): `jdk` (foojay Disco API),
+`jdtls` (download.eclipse.org milestones), `rust-analyzer`, `bazelisk` and `taplo` (GitHub
+releases with asset digests). Provider tests: `cargo test -p jetthing-toolchains --test providers`.
+
+Live run on a Linux x86_64 container, 2026-10-10. A system JDK 21 is present
+(`JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64`), so `toolchain.list` correctly keeps
+preferring it while the managed install exists alongside:
+
+```text
+$ export JETTHING_TOOLCHAINS_DIR=/tmp/tcroot
+$ jetthing-cli run toolchain.install '{"component":"jdk","version":"21","wait":true}'
+{"component":"jdk","job":1,"path":"/tmp/tcroot/jdk/21.0.12.1+1","version":"21.0.12.1+1"}   # 16.7 s
+$ /tmp/tcroot/jdk/21.0.12.1+1/bin/java -version
+openjdk version "21.0.12.1" 2026-08-18 LTS
+$ cat /tmp/tcroot/jdk/21.0.12.1+1/.jetthing-install.json
+{ "component": "jdk", "version": "21.0.12.1+1",
+  "source_url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz",
+  "sha256": "ce79869e1307ed8ee1e2baa86a412b1eb5b75d10a01006d788a6f968bcfaee94", ... }
+$ jetthing-cli run toolchain.install '{"component":"jdtls","wait":true}'
+{"component":"jdtls","job":1,"path":"/tmp/tcroot/jdtls/1.61.0","version":"1.61.0"}       # 5.9 s
+$ jetthing-cli run toolchain.list
+jdk:   located JAVA_HOME (/usr/lib/jvm/java-21-openjdk-amd64), installed ["21.0.12.1+1"]
+jdtls: located managed (/tmp/tcroot/jdtls/1.61.0/bin/jdtls), installed ["1.61.0"], requires ["jdk"]
+rust-analyzer: located PATH (/root/.cargo/bin/rust-analyzer)
+```
+
+(`toolchain.list` output abbreviated from JSON.) In this sandbox the GitHub REST API is
+blocked by the network policy, so no live rust-analyzer/bazelisk/taplo install is recorded;
+their release assets themselves download fine.
+
 ## Pending (next slices)
 
-- Catalog entries (JDK via foojay + jdtls, rust-analyzer, Android SDK, ...) and end-to-end
-  runs on a clean container: open a Java Gradle project without a JDK → Set up → completion.
+- More catalog entries (rustup toolchains, Android SDK, kotlin-lsp, Node, Python, Go, ...)
+  and end-to-end runs on a clean container: open a Java Gradle project without a JDK →
+  Set up → completion (needs the LSP resolver hook so jdtls starts from the managed install).
 - "Missing toolchain" editor notification and Settings > Languages & Frameworks > Toolchains.
 - Status-bar progress screenshot (the widget only appears while an install runs).
 - Probing versions of `PATH` binaries; signature (GPG/minisign) verification.

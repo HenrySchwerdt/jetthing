@@ -8,7 +8,7 @@ use crate::{IdeState, spec, string_param};
 use jetthing_command::{Command, CommandError, CommandRegistry};
 use jetthing_toolchains::service::{JobId, ToolchainEvent, ToolchainService};
 use jetthing_toolchains::{
-    Catalog, ToolVersion, ToolchainSettings, ToolchainStore, Toolchains, VersionRequest,
+    ToolVersion, ToolchainSettings, ToolchainStore, Toolchains, VersionRequest,
 };
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ impl Default for ToolchainState {
         let store = ToolchainStore::new(jetthing_toolchains::default_root());
         store.clean();
         Self::new(
-            Toolchains::new(Catalog::new(), store),
+            Toolchains::new(jetthing_toolchains::providers::builtin_catalog(), store),
             ToolchainSettings::user_file(),
         )
     }
@@ -428,7 +428,8 @@ mod tests {
     use jetthing_toolchains::catalog::{IndexedRelease, ReleaseIndex};
     use jetthing_toolchains::download::sha256_hex;
     use jetthing_toolchains::{
-        ArchiveKind, Artifact, Checksum, ComponentKind, ComponentSpec, Platform, StaticProvider,
+        ArchiveKind, Artifact, Catalog, Checksum, ComponentKind, ComponentSpec, Platform,
+        StaticProvider,
     };
     use std::collections::BTreeMap;
     use std::io::{Read, Write};

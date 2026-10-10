@@ -94,7 +94,10 @@ managed install. Pins come from `.jetthing/toolchains.toml` first, then `rust-to
 Language bundles describe components with a `ComponentSpec` (id, executables, bin dirs, home
 variables, required components) and resolve versions to a `Release` (URL, SHA-256 or checksum
 URL, archive kind) by implementing `ComponentProvider`; `StaticProvider` and `IndexProvider`
-(JSON index, e.g. a corporate mirror) cover simple sources. Nothing downloads without consent:
+(JSON index, e.g. a corporate mirror) cover simple sources. Built-in providers live in
+`jetthing_toolchains::providers`: `jdk` (foojay Disco API, Temurin unless `distribution` is
+set), `jdtls` (Eclipse milestones), and GitHub-release tools (`rust-analyzer`, `bazelisk`,
+`taplo`) verified with the asset `digest` or a published checksum file. Nothing downloads without consent:
 installs start only from the `toolchain.install` command. Downloads resume with `Range`
 requests, are verified before extraction (a mismatch deletes the file), extract into
 `.staging/` and are renamed into place, so a version directory is either complete or absent.
