@@ -9,11 +9,6 @@ use jetthing_dap::{OutputCategory, Session, SessionState};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-/// Red breakpoint dot, breakpoint line tint and suspended-line highlight.
-pub const BREAKPOINT: Color32 = Color32::from_rgb(0xDB, 0x5C, 0x5C);
-pub const BREAKPOINT_LINE: Color32 = Color32::from_rgb(0x3B, 0x26, 0x28);
-pub const EXECUTION_LINE: Color32 = Color32::from_rgb(0x2D, 0x43, 0x6E);
-
 pub fn paint_execution_arrow(painter: &egui::Painter, center: egui::Pos2) {
     let points = vec![
         center + vec2(-6.0, -4.0),
@@ -24,7 +19,7 @@ pub fn paint_execution_arrow(painter: &egui::Painter, center: egui::Pos2) {
     ];
     painter.add(egui::Shape::convex_polygon(
         points,
-        Color32::from_rgb(0x56, 0x8A, 0xF2),
+        *theme::ACCENT,
         egui::Stroke::NONE,
     ));
 }

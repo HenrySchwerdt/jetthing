@@ -348,7 +348,7 @@ fn option_value(options: &[String], name: &str) -> Option<String> {
 
 fn cargo_package_name(crate_dir: &Path) -> Option<String> {
     let manifest = std::fs::read_to_string(crate_dir.join("Cargo.toml")).ok()?;
-    let value: toml::Value = manifest.parse().ok()?;
+    let value: toml::Table = toml::from_str(&manifest).ok()?;
     value
         .get("package")?
         .get("name")?
@@ -570,6 +570,19 @@ mod tests {
     use crate::{IdeState, built_in_commands};
     use jetthing_dap::SessionState;
     use serde_json::{Value, json};
+
+    #[test]
+    fn reads_the_package_name_from_a_manifest() {
+        let dir = std::env::temp_dir().join(format!("jt-pkg-name-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        assert_eq!(super::cargo_package_name(&dir).as_deref(), Some("demo"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     use std::time::{Duration, Instant};
 
     #[test]

@@ -746,9 +746,9 @@ fn editor_surface(
                 let row =
                     Rect::from_min_size(egui::pos2(rect.left(), y), vec2(rect.width(), row_height));
                 if debug.execution_line == Some(line) {
-                    painter.rect_filled(row, 0.0, crate::debug_window::EXECUTION_LINE);
+                    painter.rect_filled(row, 0.0, theme::editor::EXECUTION_LINE);
                 } else if debug.breakpoints.contains(&line) {
-                    painter.rect_filled(row, 0.0, crate::debug_window::BREAKPOINT_LINE);
+                    painter.rect_filled(row, 0.0, theme::editor::BREAKPOINT_LINE);
                 } else if line == caret_line && document.selections.primary().is_caret() {
                     painter.rect_filled(row, 0.0, theme::editor::CARET_ROW);
                 }
@@ -756,7 +756,7 @@ fn editor_surface(
                     painter.circle_filled(
                         egui::pos2(rect.left() + 12.0, y + row_height / 2.0),
                         6.0,
-                        crate::debug_window::BREAKPOINT,
+                        *theme::ERROR,
                     );
                 }
                 if debug.execution_line == Some(line) {
