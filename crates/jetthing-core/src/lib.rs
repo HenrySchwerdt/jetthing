@@ -16,6 +16,7 @@ pub mod build_info;
 mod diagnostic_commands;
 pub mod diagnostics;
 mod editor_commands;
+mod git_log;
 mod line_changes;
 mod lsp_commands;
 mod project_commands;
@@ -25,6 +26,7 @@ mod toolwindow;
 mod update_commands;
 pub use toolchain_commands::ToolchainState;
 mod vcs;
+pub use git_log::GitLogState;
 pub use line_changes::hunk_at_line;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
@@ -56,6 +58,8 @@ pub struct IdeState {
     pub git: Option<RepositoryStatus>,
     /// Background status refresh for external changes.
     git_watcher: Option<jetthing_git::StatusWatcher>,
+    /// Git tool window Log tab.
+    pub git_log: GitLogState,
     /// The diff viewer tab, if open.
     pub diff: Option<DiffTab>,
     /// Whether the diff tab (rather than a document) is the selected editor tab.
@@ -129,6 +133,7 @@ impl IdeState {
         self.toolchains.reload(Some(project.root()));
         self.start_git_watcher();
         self.close_diff();
+        self.git_log = GitLogState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -363,6 +368,7 @@ impl IdeState {
             self.status = changes_summary(git.changes.len(), &git.branch);
         }
         self.invalidate_line_changes();
+        self.invalidate_git_log();
         self.refresh_diff();
         Ok(())
     }
@@ -626,6 +632,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     toolchain_commands::register(&mut registry);
     vcs::register(&mut registry);
     line_changes::register(&mut registry);
+    git_log::register(&mut registry);
     registry
         .register(Command::new(
             spec(

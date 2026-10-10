@@ -56,6 +56,9 @@ pub struct DiffTab {
     pub reveal: Option<usize>,
     pub old_analysis: LanguageAnalysis,
     pub new_analysis: LanguageAnalysis,
+    /// Short hash of the new side when comparing two commits; `None` for the
+    /// working copy (which then updates live).
+    pub new_revision: Option<String>,
 }
 
 impl DiffTab {
@@ -71,6 +74,7 @@ impl DiffTab {
             viewer,
             old_analysis,
             new_analysis,
+            new_revision: None,
         }
     }
 
@@ -143,6 +147,7 @@ impl IdeState {
         let rescan = self.git.as_ref().map(structural_changes) != Some(structural_changes(&status));
         self.git = Some(status);
         self.invalidate_line_changes();
+        self.invalidate_git_log();
         if rescan && let Some(project) = &self.project {
             self.files = project.entries(20_000);
         }
@@ -193,7 +198,12 @@ impl IdeState {
     /// Recomputes the open diff after the file or HEAD changed. The tab stays
     /// open even if the file no longer differs.
     pub fn refresh_diff(&mut self) {
-        let Some(path) = self.diff.as_ref().map(|tab| tab.path.clone()) else {
+        let Some(path) = self
+            .diff
+            .as_ref()
+            .filter(|tab| tab.new_revision.is_none())
+            .map(|tab| tab.path.clone())
+        else {
             return;
         };
         if let Ok(diff) = self.compute_diff(&path)
@@ -201,6 +211,32 @@ impl IdeState {
         {
             tab.update(diff);
         }
+    }
+
+    /// Opens the diff tab for repository-relative `path` as changed by
+    /// commit `hash` (against its first parent).
+    pub fn show_commit_diff(&mut self, hash: &str, path: &Path) -> Result<(), String> {
+        let git = self
+            .git
+            .as_ref()
+            .ok_or("the project is not a Git repository")?;
+        let commit = self
+            .git_log
+            .commits
+            .iter()
+            .find(|commit| commit.hash == hash)
+            .ok_or_else(|| format!("commit {hash} is not in the loaded log"))?;
+        let parent = commit.parents.first().cloned();
+        let short = commit.short.clone();
+        let diff = git
+            .diff_revisions(path, parent.as_deref(), hash)
+            .map_err(|error| error.to_string())?;
+        let viewer = self.diff.as_ref().map(|tab| tab.viewer).unwrap_or_default();
+        let mut tab = DiffTab::new(path.to_owned(), diff, viewer);
+        tab.new_revision = Some(short);
+        self.diff = Some(tab);
+        self.diff_active = true;
+        Ok(())
     }
 
     pub fn close_diff(&mut self) {

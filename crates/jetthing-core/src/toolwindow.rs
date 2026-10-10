@@ -19,16 +19,18 @@ pub enum ToolWindow {
     Build,
     Problems,
     Terminal,
+    Git,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 6] = [
+    pub const ALL: [ToolWindow; 7] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Find,
         ToolWindow::Build,
         ToolWindow::Problems,
         ToolWindow::Terminal,
+        ToolWindow::Git,
     ];
 
     pub fn id(self) -> &'static str {
@@ -39,6 +41,7 @@ impl ToolWindow {
             ToolWindow::Build => "build",
             ToolWindow::Problems => "problems",
             ToolWindow::Terminal => "terminal",
+            ToolWindow::Git => "git",
         }
     }
 
@@ -50,6 +53,7 @@ impl ToolWindow {
             ToolWindow::Build => "Build",
             ToolWindow::Problems => "Problems",
             ToolWindow::Terminal => "Terminal",
+            ToolWindow::Git => "Git",
         }
     }
 
@@ -62,15 +66,18 @@ impl ToolWindow {
             ToolWindow::Build => "⌘4",
             ToolWindow::Problems => "⌘6",
             ToolWindow::Terminal => "⌥F12",
+            ToolWindow::Git => "⌘9",
         }
     }
 
     pub fn anchor(self) -> Anchor {
         match self {
             ToolWindow::Project | ToolWindow::Commit => Anchor::Left,
-            ToolWindow::Find | ToolWindow::Build | ToolWindow::Problems | ToolWindow::Terminal => {
-                Anchor::Bottom
-            }
+            ToolWindow::Find
+            | ToolWindow::Build
+            | ToolWindow::Problems
+            | ToolWindow::Terminal
+            | ToolWindow::Git => Anchor::Bottom,
         }
     }
 
