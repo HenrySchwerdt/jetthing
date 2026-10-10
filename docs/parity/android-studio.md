@@ -8,7 +8,7 @@ The installed application was inspected read-only and is not a runtime dependenc
 |---|---|---|---|---|---|
 | AND-001 | Detect Android SDK | Planned | `android.sdk.detect` | — | host path observed only |
 | AND-002 | Detect Gradle Android project | Missing | — | — | M4 |
-| AND-003 | Kotlin/Java editing | Partial | `language.complete` | registry mapping tests, ignored real jdtls test | Java diagnostics and completion through jdtls (`evidence/lsp/09-java-completion-jdtls.png`); Kotlin through kotlin-lsp/kotlin-language-server when installed (not yet verified); Android-specific completion and highlighting pending |
+| AND-003 | Kotlin/Java editing | Partial | `language.complete`, `language.quickDoc`, `language.parameterInfo` | registry mapping tests, ignored real jdtls and kotlin-lsp tests | Java (jdtls) and Kotlin (JetBrains kotlin-lsp) diagnostics, completion, documentation and parameter info (`evidence/lsp/09-java-autopopup-after-dot.png`, `evidence/lsp/09-kotlin-completion-kotlin-lsp.png`); Android-specific completion (resources, manifest) not verified on an Android project yet |
 | AND-004 | Device listing | Missing | `android.devices.list` | — | ADB available, adapter pending |
 | AND-005 | Emulator launch | Missing | `android.emulator.start` | — | emulator available, adapter pending |
 | AND-006 | Gradle build | Missing | `build.run` | — | universal runner pending |

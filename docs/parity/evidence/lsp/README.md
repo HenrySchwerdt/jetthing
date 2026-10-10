@@ -8,7 +8,8 @@ Android Studio 2026.2.1) from `docs/parity/evidence/reference/`. Before this wor
 ## Environment
 
 - Linux, Xvfb 1600x1000, `JETTHING_RENDERER=glow JETTHING_NO_UPDATE_CHECK=1`.
-- rust-analyzer 1.97.0 (rustup component), Eclipse JDT LS 1.40.0 (`jdtls` on PATH), OpenJDK 21.
+- rust-analyzer 1.97.0 (rustup component), Eclipse JDT LS 1.40.0 (`jdtls` on PATH), OpenJDK 21,
+  JetBrains kotlin-lsp server 263.6379.0 (from the Open VSX `JetBrains.kotlin-server` bundle).
 - `/home/user/samples/java-gradle`: `settings.gradle.kts`, `build.gradle.kts` (application plugin,
   Java 21 toolchain) and `src/main/java/com/example/App.java` as in the reference scene.
 
@@ -19,6 +20,12 @@ Android Studio 2026.2.1) from `docs/parity/evidence/reference/`. Before this wor
 | `status-jdtls-import-progress.png` | Open the project, open `App.java` | jdtls starts lazily on the first Java file. The status bar shows its `$/progress` report ("jdtls: Initialize Workspace 69% (Importing root project …)") with a spinner. |
 | `09-java-completion-jdtls.png` | After the import, type `app.` on line 10 and press Ctrl+Space | The popup lists the jdtls members (`clone`, `equals`, …, `greeting`, …) with their signatures. jdtls diagnostics are also shown (squiggle under `app.`, red dot on Problems). |
 | `kotlin-server-missing-notice.png` | Open a `.kt` file without a Kotlin server installed | Balloon "Kotlin language server not found" with the install hint, "Copy Install Hint" and "Restart Language Servers". The status bar shows "kotlin: not installed". |
+
+### Kotlin
+
+| File | Steps | Result |
+|---|---|---|
+| `09-kotlin-completion-kotlin-lsp.png` | `/home/user/samples/kotlin-app` (Kotlin JVM Gradle project), type `greeter.` | JetBrains kotlin-lsp (server build 263.6379.0, `bin/intellij-server --stdio`, linked as `kotlin-lsp`) answers while the status bar still shows "kotlin: Importing (Gradle)". `greeting(name: String)  String` is first, then `equals`/`hashCode`/`toString`. This matches the Android Studio scene's row layout. |
 
 ### Completion popup rework (slice 2)
 
