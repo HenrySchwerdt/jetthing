@@ -936,12 +936,7 @@ fn editor_surface(
 }
 
 pub fn completion_popup(app: &mut IdeApp, ctx: &egui::Context) {
-    let completions = app
-        .state
-        .lsp
-        .as_ref()
-        .map(|lsp| lsp.completions().to_vec())
-        .unwrap_or_default();
+    let completions = app.state.lsp.completions().to_vec();
     if completions.is_empty() {
         app.completion_selected = 0;
         return;

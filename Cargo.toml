@@ -12,6 +12,7 @@ rust-version = "1.91"
 anyhow = "1.0"
 eframe = { version = "0.33", features = ["wgpu"] }
 egui = "0.33"
+lsp-types = "0.95"
 parking_lot = "0.12"
 portable-pty = "0.9"
 ropey = "1.6"
@@ -23,6 +24,7 @@ tree-sitter = "0.25"
 tree-sitter-rust = "0.24"
 url = { version = "2.5", features = ["serde"] }
 walkdir = "2.5"
+which = "7"
 
 
 [profile.release]
