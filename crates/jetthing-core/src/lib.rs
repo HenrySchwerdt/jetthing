@@ -64,6 +64,11 @@ pub struct IdeState {
 impl IdeState {
     pub fn open_project(&mut self, path: &Path) -> Result<(), String> {
         let project = Project::open(path).map_err(|e| e.to_string())?;
+        self.prepare_project_switch()?;
+        self.install_project(project)
+    }
+
+    pub(crate) fn prepare_project_switch(&mut self) -> Result<(), String> {
         if self.project.is_some() {
             if self.runner.is_running() {
                 return Err("Stop the running task before opening another project.".into());
@@ -71,6 +76,10 @@ impl IdeState {
             self.save_all()?;
             self.save_workspace()?;
         }
+        Ok(())
+    }
+
+    pub(crate) fn install_project(&mut self, project: Project) -> Result<(), String> {
         self.files = project.entries(20_000);
         self.documents.clear();
         self.active_document = None;

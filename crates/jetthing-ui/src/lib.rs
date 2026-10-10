@@ -133,6 +133,18 @@ impl IdeApp {
         });
     }
 
+    fn new_project_dialog(&mut self) {
+        self.open_dialog(popups::Dialog::NewProject {
+            name: "untitled".into(),
+            parent: std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .unwrap_or_else(|_| ".".into()),
+            kind: "java-gradle-kotlin".into(),
+            group: "org.example".into(),
+            error: None,
+        });
+    }
+
     fn open_project_path(&mut self, path: &str, ctx: &egui::Context) -> Result<(), String> {
         self.commands
             .execute(
@@ -141,6 +153,11 @@ impl IdeApp {
                 json!({"path": path.trim()}),
             )
             .map_err(|error| error.to_string())?;
+        self.project_opened(ctx);
+        Ok(())
+    }
+
+    fn project_opened(&mut self, ctx: &egui::Context) {
         self.dispatch("plugin.refresh", Value::Null);
         self.tree_selection = None;
         self.commit_overrides.clear();
@@ -158,7 +175,6 @@ impl IdeApp {
             "{} – Jetthing",
             self.project_name()
         )));
-        Ok(())
     }
 
     fn editor_focused(&self, ctx: &egui::Context) -> bool {
