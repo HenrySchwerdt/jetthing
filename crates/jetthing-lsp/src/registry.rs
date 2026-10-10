@@ -403,7 +403,7 @@ impl LanguageServerProvider for JdtlsProvider {
         if config.initialization_options.is_none() {
             config.initialization_options = Some(serde_json::json!({
                 "settings": {"java": {
-                    "completion": {"guessMethodArguments": "off"},
+                    "completion": {"guessMethodArguments": "insertParameterNames"},
                     "signatureHelp": {"enabled": true}
                 }},
                 "extendedClientCapabilities": {"progressReportProvider": false}
