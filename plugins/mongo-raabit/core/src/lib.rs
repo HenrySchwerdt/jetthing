@@ -14,6 +14,7 @@ pub mod schema;
 pub mod secrets;
 pub mod shell;
 pub mod sql;
+pub mod stage_form;
 pub mod transfer;
 pub mod tunnel;
 

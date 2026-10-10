@@ -37,6 +37,57 @@ pub struct AggregationTab {
     pub view: ResultView,
     pub open: HashSet<String>,
     pub stage_error: Option<String>,
+    /// Stages (by index) the user switched to the code editor.
+    pub stage_code: HashSet<usize>,
+    /// Stage whose switch to the form was refused because the form cannot show it.
+    pub form_hint: Option<usize>,
+}
+
+impl AggregationTab {
+    /// Insert a stage at `at`, keeping per-stage editor modes aligned.
+    pub fn insert_stage(&mut self, at: usize, stage: Stage) {
+        let at = at.min(self.pipeline.stages.len());
+        self.pipeline.stages.insert(at, stage);
+        self.remap_stages(|i| Some(if i >= at { i + 1 } else { i }));
+    }
+
+    /// Remove stage `index`, keeping per-stage editor modes aligned.
+    pub fn remove_stage(&mut self, index: usize) {
+        if index >= self.pipeline.stages.len() {
+            return;
+        }
+        self.pipeline.stages.remove(index);
+        self.remap_stages(|i| match i.cmp(&index) {
+            std::cmp::Ordering::Less => Some(i),
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Greater => Some(i - 1),
+        });
+    }
+
+    /// Move a stage, keeping per-stage editor modes aligned.
+    pub fn move_stage(&mut self, from: usize, to: usize) {
+        let len = self.pipeline.stages.len();
+        if from >= len || to >= len {
+            return;
+        }
+        self.pipeline.move_stage(from, to);
+        self.remap_stages(|i| {
+            Some(if i == from {
+                to
+            } else if from < to && i > from && i <= to {
+                i - 1
+            } else if to < from && i >= to && i < from {
+                i + 1
+            } else {
+                i
+            })
+        });
+    }
+
+    fn remap_stages(&mut self, map: impl Fn(usize) -> Option<usize>) {
+        self.stage_code = self.stage_code.iter().filter_map(|&i| map(i)).collect();
+        self.form_hint = self.form_hint.and_then(&map);
+    }
 }
 
 pub struct SqlTab {
@@ -176,6 +227,8 @@ impl MongoRaabit {
             view: ResultView::Tree,
             open: HashSet::new(),
             stage_error: None,
+            stage_code: HashSet::new(),
+            form_hint: None,
         })));
         self.preview_stage(id);
         id
@@ -539,6 +592,48 @@ impl MongoRaabit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stage_modes_follow_stage_edits() {
+        let mut tab = AggregationTab {
+            session: SessionId::default(),
+            db: "db".into(),
+            collection: "c".into(),
+            pipeline: Pipeline {
+                stages: vec![
+                    Stage::new("$match"),
+                    Stage::new("$sort"),
+                    Stage::new("$limit"),
+                ],
+            },
+            selected: 0,
+            preview: Load::Idle,
+            preview_seq: 0,
+            preview_limit: 20,
+            sample: 0,
+            result: Load::Idle,
+            view: ResultView::Tree,
+            open: HashSet::new(),
+            stage_error: None,
+            stage_code: HashSet::from([1]),
+            form_hint: Some(2),
+        };
+        tab.insert_stage(0, Stage::new("$skip"));
+        assert_eq!(tab.stage_code, HashSet::from([2]));
+        assert_eq!(tab.form_hint, Some(3));
+        tab.move_stage(2, 0);
+        assert_eq!(tab.pipeline.stages[0].operator, "$sort");
+        assert_eq!(tab.stage_code, HashSet::from([0]));
+        assert_eq!(tab.form_hint, Some(3));
+        tab.move_stage(0, 3);
+        assert_eq!(tab.stage_code, HashSet::from([3]));
+        assert_eq!(tab.form_hint, Some(2));
+        tab.remove_stage(3);
+        assert!(tab.stage_code.is_empty());
+        assert_eq!(tab.form_hint, Some(2));
+        tab.remove_stage(9);
+        assert_eq!(tab.pipeline.stages.len(), 3);
+    }
 
     #[test]
     fn index_form_validation() {
