@@ -27,6 +27,14 @@ pub enum EditorRequest {
     Gutter(usize, egui::Pos2),
 }
 
+/// Debugger decorations for the open document.
+pub struct EditorDebug {
+    /// Zero-based lines with breakpoints.
+    pub breakpoints: Vec<usize>,
+    /// Zero-based line where execution is suspended.
+    pub execution_line: Option<usize>,
+}
+
 pub struct EditorOutput {
     pub changed: bool,
     pub caret_pos: Option<egui::Pos2>,
@@ -73,8 +81,17 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 Vec::new()
             };
             let gutter = app.state.gutter_marks();
+            let path = app.state.documents[index].path.clone();
+            let debug = EditorDebug {
+                breakpoints: app.state.breakpoint_lines(&path),
+                execution_line: app
+                    .state
+                    .execution_point()
+                    .filter(|point| point.path == path)
+                    .map(|point| point.line),
+            };
             let doc = &mut app.state.documents[index];
-            match editor_surface(ui, doc, &diagnostics, &highlights, &gutter) {
+            match editor_surface(ui, doc, &diagnostics, &highlights, &gutter, &debug) {
                 Ok(EditorOutput {
                     changed,
                     caret_pos,
@@ -482,6 +499,7 @@ fn editor_surface(
     lsp_diagnostics: &[jetthing_lsp::LspDiagnostic],
     highlights: &[(usize, usize)],
     gutter: &[jetthing_core::GutterMark],
+    debug: &EditorDebug,
 ) -> Result<EditorOutput, String> {
     let mut requests = Vec::new();
     let font = theme::editor_font(ui.style());
@@ -569,10 +587,25 @@ fn editor_surface(
                         .any(|mark| mark.line == line)
                         .then_some((line, position))
                 });
+            // Clicking a line number toggles a breakpoint, as in the reference.
+            let number_hit = response
+                .interact_pointer_pos()
+                .filter(|position| position.x - rect.left() < gutter_width - 18.0)
+                .map(|position| {
+                    (((position.y - rect.top()) / row_height).floor().max(0.0) as usize)
+                        .min(line_count.saturating_sub(1))
+                });
             if response.clicked()
                 && let Some((line, position)) = gutter_hit
             {
                 requests.push(EditorRequest::Gutter(line, position));
+            } else if response.clicked()
+                && let Some(line) = number_hit
+            {
+                requests.push(EditorRequest::Command(
+                    "debug.toggleBreakpoint",
+                    json!({"path": document.path, "line": line}),
+                ));
             } else if response.clicked()
                 && let Some(position) = response.interact_pointer_pos()
             {
@@ -712,8 +745,25 @@ fn editor_surface(
                 let line_end = line_start + content.chars().count();
                 let row =
                     Rect::from_min_size(egui::pos2(rect.left(), y), vec2(rect.width(), row_height));
-                if line == caret_line && document.selections.primary().is_caret() {
+                if debug.execution_line == Some(line) {
+                    painter.rect_filled(row, 0.0, crate::debug_window::EXECUTION_LINE);
+                } else if debug.breakpoints.contains(&line) {
+                    painter.rect_filled(row, 0.0, crate::debug_window::BREAKPOINT_LINE);
+                } else if line == caret_line && document.selections.primary().is_caret() {
                     painter.rect_filled(row, 0.0, theme::editor::CARET_ROW);
+                }
+                if debug.breakpoints.contains(&line) {
+                    painter.circle_filled(
+                        egui::pos2(rect.left() + 12.0, y + row_height / 2.0),
+                        6.0,
+                        crate::debug_window::BREAKPOINT,
+                    );
+                }
+                if debug.execution_line == Some(line) {
+                    crate::debug_window::paint_execution_arrow(
+                        &painter,
+                        egui::pos2(rect.left() + 12.0, y + row_height / 2.0),
+                    );
                 }
                 painter.text(
                     egui::pos2(rect.left() + gutter_width - 18.0, y + row_height / 2.0),

@@ -12,6 +12,7 @@ jetthing-bazel = { path = "../jetthing-bazel" }
 jetthing-command = { path = "../jetthing-command" }
 jetthing-control = { path = "../jetthing-control" }
 jetthing-core = { path = "../jetthing-core" }
+jetthing-dap = { path = "../jetthing-dap" }
 jetthing-git = { path = "../jetthing-git" }
 jetthing-gradle = { path = "../jetthing-gradle" }
 jetthing-language = { path = "../jetthing-language" }

@@ -13,6 +13,7 @@ mod build_window;
 mod chrome;
 mod control;
 mod crash_notice;
+mod debug_window;
 mod device_manager;
 mod diff_ui;
 mod disk_banner;
@@ -504,6 +505,30 @@ impl IdeApp {
         if consume(Modifiers::COMMAND, Key::F9) {
             self.dispatch("build.project", Value::Null);
         }
+        // Debugger: Debug (⌃D / Shift+F9), breakpoints (⌘F8 / Ctrl+F8), stepping
+        // (F8, F7, ⇧F8), Resume (⌥⌘R / F9), Evaluate (⌥F8). Only when enabled, so the
+        // function keys stay free outside a debug session.
+        let mut debug_key = |enabled_id: &'static str, hit: bool| {
+            if hit && self.commands.is_enabled(enabled_id, &self.state) {
+                self.dispatch(enabled_id, Value::Null);
+            }
+        };
+        let debug = (mac && consume(Modifiers::CTRL, Key::D)) || consume(Modifiers::SHIFT, Key::F9);
+        debug_key("debug.start", debug);
+        let toggle = consume(Modifiers::COMMAND, Key::F8);
+        debug_key("debug.toggleBreakpoint", toggle);
+        let step_out = consume(Modifiers::SHIFT, Key::F8);
+        debug_key("debug.stepOut", step_out);
+        let step_over = consume(Modifiers::NONE, Key::F8);
+        debug_key("debug.stepOver", step_over);
+        let step_into = consume(Modifiers::NONE, Key::F7);
+        debug_key("debug.stepInto", step_into);
+        let resume = if mac {
+            consume(Modifiers::ALT | Modifiers::COMMAND, Key::R)
+        } else {
+            consume(Modifiers::NONE, Key::F9)
+        };
+        debug_key("debug.resume", resume);
         // Run context configuration (gutter target at the caret): ⌃⇧R on macOS,
         // Ctrl+Shift+F10 elsewhere.
         if (mac && consume(Modifiers::CTRL | Modifiers::SHIFT, Key::R))
@@ -656,6 +681,10 @@ impl eframe::App for IdeApp {
         }
         self.state.poll_search();
         self.state.poll_runner();
+        self.state.poll_debug();
+        if self.state.is_debugging() {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
         self.state.poll_lsp();
         self.state.poll_updates();
         if self.state.poll_android() {

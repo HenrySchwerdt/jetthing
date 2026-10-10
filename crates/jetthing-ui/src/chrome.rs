@@ -326,6 +326,35 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         app.dispatch("run.cancel", Value::Null);
     }
     let detected = app.state.detected_build.clone();
+    // Right-to-left: the Debug button sits right of Run, as in the reference.
+    if app.state.is_debugging() {
+        if icons::button_colored(ui, Icon::Stop, theme::STOP_RED, "Stop Debugging", false).clicked()
+        {
+            app.dispatch("debug.stop", Value::Null);
+        }
+    } else {
+        let can_debug = app.commands.is_enabled("debug.start", &app.state);
+        let color = if can_debug {
+            theme::RUN_GREEN
+        } else {
+            theme::TEXT_DISABLED
+        };
+        if ui
+            .add_enabled_ui(can_debug, |ui| {
+                icons::button_colored(
+                    ui,
+                    Icon::Debug,
+                    color,
+                    &format!("Debug ({})", keys::display("⌃D")),
+                    false,
+                )
+            })
+            .inner
+            .clicked()
+        {
+            app.dispatch("debug.start", Value::Null);
+        }
+    }
     let can_build = app.commands.is_enabled("build.project", &app.state);
     let build_tip = match &detected {
         None if app.state.project.is_some() => "No supported build system detected".to_owned(),
@@ -642,6 +671,7 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
                     stripe_button(app, ui, ToolWindow::Problems, Icon::Problems);
                     stripe_button(app, ui, ToolWindow::Terminal, Icon::Terminal);
                     stripe_button(app, ui, ToolWindow::Build, Icon::Build);
+                    stripe_button(app, ui, ToolWindow::Debug, Icon::Debug);
                     stripe_button(app, ui, ToolWindow::Find, Icon::Find);
                 });
             });

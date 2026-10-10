@@ -17,6 +17,7 @@ mod android_logcat;
 mod bazel_commands;
 mod build_commands;
 pub mod build_info;
+mod debug_commands;
 mod diagnostic_commands;
 pub mod diagnostics;
 mod disk_sync;
@@ -39,6 +40,7 @@ pub use disk_sync::{DiskConflict, Waker, content_hash};
 pub use settings_commands::Settings;
 mod vcs;
 pub use build_commands::{BuildSystems, DetectedBuild};
+pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
 pub use gutter_commands::GutterMark;
 pub use jetthing_runnables::RunnableKind;
 pub use plugin_host::{
@@ -105,6 +107,8 @@ pub struct IdeState {
     pub edit_run_configurations: Option<String>,
     /// Gutter run targets of the active document, cached per text revision.
     pub runnable_cache: gutter_commands::RunnableCache,
+    /// Breakpoints and the active debug session.
+    pub debugger: debug_commands::DebuggerState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -189,6 +193,7 @@ impl IdeState {
         self.load_gradle_model();
         self.load_bazel_targets();
         self.load_run_configurations();
+        self.load_breakpoints();
         self.restore_workspace();
         Ok(())
     }
@@ -653,6 +658,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_logcat::register(&mut registry);
     bazel_commands::register(&mut registry);
     build_commands::register(&mut registry);
+    debug_commands::register(&mut registry);
     editor_commands::register(&mut registry);
     disk_sync::register(&mut registry);
     gradle_commands::register(&mut registry);
