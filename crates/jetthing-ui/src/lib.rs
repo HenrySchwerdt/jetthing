@@ -840,6 +840,59 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_w_extends_the_selection_through_the_keymap() {
+        let source = "class A {\n    int f() { return 1 + 42; }\n}\n";
+        let (mut app, ctx) = headless_app("extend-selection", "A.java", source);
+        for keymap in ["$default", "Default for XWin"] {
+            app.dispatch(
+                "settings.set",
+                json!({"id": "keymap.active", "value": keymap}),
+            );
+            let caret = source.find("42").unwrap();
+            app.state.documents[0]
+                .selections
+                .set_single(jetthing_text::Selection::caret(caret));
+            for _ in 0..2 {
+                app.focus_editor(&ctx);
+                let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+            }
+            let press = |key, modifiers| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            };
+            let selected = |app: &IdeApp| {
+                let document = &app.state.documents[0];
+                let selection = document.selections.primary();
+                document
+                    .text
+                    .slice(selection.start(), selection.end())
+                    .unwrap()
+            };
+            let ctrl_w = press(egui::Key::W, egui::Modifiers::CTRL);
+            let _ = ctx.run(frame_input(vec![ctrl_w.clone()]), |ctx| app.frame(ctx));
+            assert_eq!(selected(&app), "42", "{keymap}");
+            let _ = ctx.run(frame_input(vec![ctrl_w]), |ctx| app.frame(ctx));
+            assert_eq!(selected(&app), "1 + 42", "{keymap}");
+            let shrink = press(egui::Key::W, egui::Modifiers::CTRL | egui::Modifiers::SHIFT);
+            let _ = ctx.run(frame_input(vec![shrink]), |ctx| app.frame(ctx));
+            assert_eq!(selected(&app), "42", "{keymap}");
+            assert_eq!(app.state.documents.len(), 1, "Ctrl+W never closes the tab");
+        }
+        let close = egui::Event::Key {
+            key: egui::Key::F4,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL,
+        };
+        let _ = ctx.run(frame_input(vec![close]), |ctx| app.frame(ctx));
+        assert!(app.state.documents.is_empty(), "Ctrl+F4 closes the tab");
+    }
+
+    #[test]
     fn modal_dialogs_render_above_notification_balloons() {
         let (mut app, ctx) = headless_app("balloon-order", "a.txt", "hello\n");
         app.state.update_notification = true;
