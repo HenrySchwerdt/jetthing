@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 mod editor_commands;
 mod project_commands;
+mod terminal_commands;
 mod toolwindow;
 mod update_commands;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
@@ -260,7 +261,11 @@ impl IdeState {
     }
 
     pub fn open_terminal(&mut self) -> Result<(), String> {
-        if self.terminal.is_none() {
+        if self
+            .terminal
+            .as_ref()
+            .is_none_or(|terminal| terminal.is_exited())
+        {
             let cwd = self
                 .project
                 .as_ref()
@@ -584,6 +589,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     editor_commands::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
+    terminal_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(

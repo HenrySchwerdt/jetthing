@@ -55,7 +55,7 @@ pub fn bottom(app: &mut IdeApp, ctx: &egui::Context) {
     };
     egui::TopBottomPanel::bottom("bottom_tool_window")
         .default_height(260.0)
-        .min_height(110.0)
+        .min_height(180.0)
         .resizable(true)
         .show_separator_line(false)
         .frame(island_frame())
@@ -886,104 +886,12 @@ fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
 }
 
 fn terminal(app: &mut IdeApp, ui: &mut egui::Ui) {
-    let exited = app.state.terminal.as_ref().is_some_and(|t| t.is_exited());
-    let hide = tool_window_header(ui, "Terminal", |ui| {
-        if exited {
-            ui.label(RichText::new("process exited").color(theme::ERROR));
-        }
-    });
-    if hide {
-        app.toggle_tool_window(ToolWindow::Terminal);
-        return;
-    }
-    let transcript = app
-        .state
-        .terminal
-        .as_mut()
-        .map(|terminal| strip_ansi(terminal.poll()))
-        .unwrap_or_default();
-    egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 4))
-        .show(ui, |ui| {
-            let input_height = 28.0;
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .stick_to_bottom(true)
-                .max_height((ui.available_height() - input_height).max(0.0))
-                .show(ui, |ui| {
-                    ui.label(
-                        RichText::new(transcript)
-                            .monospace()
-                            .color(theme::editor::TEXT),
-                    );
-                });
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("❯").monospace().color(theme::SUCCESS));
-                let input = ui.add(
-                    egui::TextEdit::singleline(&mut app.terminal_input)
-                        .id(terminal_input_id())
-                        .font(egui::TextStyle::Monospace)
-                        .frame(false)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("Type a command and press Enter"),
-                );
-                if input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    let command = std::mem::take(&mut app.terminal_input) + "\r";
-                    app.dispatch("terminal.sendText", json!({"text": command}));
-                    input.request_focus();
-                }
-            });
-        });
-}
-
-/// Removes ANSI escape sequences until the terminal grid renderer lands.
-fn strip_ansi(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
-            match chars.peek() {
-                Some('[') => {
-                    chars.next();
-                    for next in chars.by_ref() {
-                        if ('@'..='~').contains(&next) {
-                            break;
-                        }
-                    }
-                }
-                Some(']') => {
-                    chars.next();
-                    while let Some(next) = chars.next() {
-                        if next == '\u{7}' {
-                            break;
-                        }
-                        if next == '\u{1b}' && chars.peek() == Some(&'\\') {
-                            chars.next();
-                            break;
-                        }
-                    }
-                }
-                _ => {
-                    chars.next();
-                }
-            }
-        } else if c != '\r' {
-            output.push(c);
-        }
-    }
-    output
+    crate::terminal_ui::show(app, ui);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn strips_csi_and_osc_sequences() {
-        assert_eq!(strip_ansi("\u{1b}[1;32mok\u{1b}[0m\r\n"), "ok\n");
-        assert_eq!(strip_ansi("\u{1b}]0;title\u{7}$ "), "$ ");
-        assert_eq!(strip_ansi("plain"), "plain");
-    }
 
     #[test]
     fn stderr_lines_are_only_red_for_errors() {

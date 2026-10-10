@@ -13,6 +13,7 @@ mod keys;
 mod notifications;
 mod palette;
 mod popups;
+mod terminal_ui;
 mod theme;
 mod toolwindows;
 mod welcome;
@@ -31,7 +32,7 @@ pub struct IdeApp {
     state: IdeState,
     commands: CommandRegistry<IdeState>,
     palette: palette::Palette,
-    terminal_input: String,
+    terminal_selection: Option<(terminal_ui::GridPoint, terminal_ui::GridPoint)>,
     search_input: String,
     tree_selection: Option<PathBuf>,
     completion_selected: usize,
@@ -96,7 +97,7 @@ impl IdeApp {
             state,
             commands,
             palette: palette::Palette::default(),
-            terminal_input: String::new(),
+            terminal_selection: None,
             search_input: String::new(),
             tree_selection: None,
             completion_selected: 0,
@@ -163,7 +164,7 @@ impl IdeApp {
         self.commit_overrides.clear();
         self.commit_message.clear();
         self.search_input.clear();
-        self.terminal_input.clear();
+        self.terminal_selection = None;
         self.find = findbar::FindBar::default();
         self.run_label = self.state.project.as_ref().and_then(|project| {
             jetthing_runner::TaskPlan::detect_run(project.root())
@@ -278,6 +279,29 @@ impl IdeApp {
             }
         }
         let mac = cfg!(target_os = "macos");
+        if ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
+            && self.dialog.is_none()
+            && !self.palette.open
+        {
+            if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::A) {
+                self.palette.show_tab(palette::Tab::Actions);
+            }
+            if consume(Modifiers::COMMAND, Key::O) {
+                self.open_project_dialog();
+            }
+            if consume(Modifiers::ALT, Key::F12) || consume(Modifiers::CTRL, Key::Backtick) {
+                self.toggle_tool_window(ToolWindow::Terminal);
+            }
+            self.detect_double_shift(ctx);
+            if consumed_chord.get() {
+                ctx.input_mut(|input| {
+                    input
+                        .events
+                        .retain(|event| !matches!(event, egui::Event::Text(_)))
+                });
+            }
+            return;
+        }
         if consume(Modifiers::COMMAND, Key::O) {
             self.open_project_dialog();
         }
@@ -507,7 +531,8 @@ impl eframe::App for IdeApp {
         if self.state.search.is_running() || self.state.runner.is_running() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
-        if self.state.terminal.is_some() {
+        if let Some(terminal) = self.state.terminal.as_mut() {
+            terminal.poll();
             ctx.request_repaint_after(Duration::from_millis(100));
         }
         // Like the reference IDE, save all files when the window loses focus.

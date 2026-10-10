@@ -22,7 +22,8 @@
 - [x] Tree-sitter Rust parsing, syntax highlighting, and parse diagnostics
 - [ ] Incremental Tree-sitter edit notifications and multi-language grammars
 - [x] Integrated native PTY terminal with shell input and command dispatch
-- [ ] ANSI terminal grid, hyperlinks, selection, and multiple sessions
+- [x] Interactive ANSI terminal grid, direct shell keys, selection/copy, scrollback and resize
+- [ ] Terminal hyperlinks, mouse reporting and multiple sessions
 - [x] Cancellable background project text search with streamed result navigation
 - [x] Detected Cargo/Gradle/Maven/npm/Go builds with streamed output and cancellation
 - [ ] UI automation/control socket and screenshot tests
