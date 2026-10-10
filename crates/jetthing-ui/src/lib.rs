@@ -3,6 +3,7 @@ use jetthing_command::CommandRegistry;
 use jetthing_core::{IdeState, built_in_commands};
 use jetthing_git::ChangeKind;
 use jetthing_language::{LanguageAnalysis, SyntaxKind};
+use jetthing_lsp::ServerState;
 use jetthing_runner::{OutputStream, TaskState};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -95,6 +96,7 @@ impl eframe::App for IdeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.state.poll_search();
         self.state.poll_runner();
+        self.state.poll_lsp();
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::P)) {
             self.palette_open = true;
         }
@@ -147,6 +149,9 @@ impl eframe::App for IdeApp {
                     {
                         self.dispatch("build.project", Value::Null);
                     }
+                    if ui.button("Problems").clicked() {
+                        self.state.problems_visible = !self.state.problems_visible;
+                    }
                     ui.add_space(12.0);
                     let root = self
                         .state
@@ -173,11 +178,19 @@ impl eframe::App for IdeApp {
                                 ui.label(language);
                             }
                             let count = document.analysis.diagnostics.len();
+                            let count = count + self.state.active_lsp_diagnostics().len();
                             ui.label(format!(
                                 "{} problem{}",
                                 count,
                                 if count == 1 { "" } else { "s" }
                             ));
+                        }
+                        if let Some(lsp) = &self.state.lsp {
+                            ui.label(match lsp.state() {
+                                ServerState::Starting => "LSP starting",
+                                ServerState::Ready => "LSP ready",
+                                ServerState::Exited => "LSP exited",
+                            });
                         }
                     });
                 });
@@ -230,6 +243,57 @@ impl eframe::App for IdeApp {
                             if ui.selectable_label(false, label).clicked() {
                                 self.dispatch("editor.openFile", json!({"path": result.path}));
                             }
+                        }
+                    });
+                });
+        }
+        if self.state.problems_visible {
+            egui::TopBottomPanel::bottom("problems")
+                .default_height(210.0)
+                .min_height(100.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong("Problems");
+                        if ui.small_button("×").clicked() {
+                            self.state.problems_visible = false;
+                        }
+                    });
+                    ui.separator();
+                    if let Some(error) = &self.state.lsp_error {
+                        ui.colored_label(Color32::from_rgb(238, 135, 135), error);
+                    }
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if let Some(document) = self
+                            .state
+                            .active_document
+                            .and_then(|index| self.state.documents.get(index))
+                        {
+                            for diagnostic in &document.analysis.diagnostics {
+                                ui.label(format!(
+                                    "{}:{}:{}  {}",
+                                    document.path.display(),
+                                    diagnostic.row,
+                                    diagnostic.column,
+                                    diagnostic.message
+                                ));
+                            }
+                        }
+                        for diagnostic in self.state.active_lsp_diagnostics() {
+                            let color = if diagnostic.severity == Some(1) {
+                                Color32::from_rgb(238, 135, 135)
+                            } else {
+                                Color32::from_rgb(224, 190, 100)
+                            };
+                            ui.colored_label(
+                                color,
+                                format!(
+                                    "{}:{}  {}",
+                                    diagnostic.start_line + 1,
+                                    diagnostic.start_character + 1,
+                                    diagnostic.message
+                                ),
+                            );
                         }
                     });
                 });
@@ -425,6 +489,7 @@ impl eframe::App for IdeApp {
                     }
                 });
             });
+        let mut changed_document = None;
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 for index in 0..self.state.documents.len() {
@@ -474,6 +539,11 @@ impl eframe::App for IdeApp {
                         self.state.status = error.to_string();
                     } else {
                         doc.analysis = jetthing_language::analyze(&doc.path, &snapshot);
+                        changed_document = Some((
+                            doc.path.clone(),
+                            snapshot,
+                            doc.text.revision().min(i32::MAX as u64) as i32,
+                        ));
                     }
                 }
             } else {
@@ -482,6 +552,9 @@ impl eframe::App for IdeApp {
                 });
             }
         });
+        if let Some((path, text, version)) = changed_document {
+            self.state.sync_document_lsp(&path, &text, version);
+        }
         if self.palette_open {
             let mut open = true;
             egui::Window::new("Search Everywhere")

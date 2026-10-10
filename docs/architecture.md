@@ -20,6 +20,8 @@ no crate below `jetthing-ui` imports UI types.
   it delegates repository semantics to the installed Git executable.
 - `jetthing-runner`: detected build plans and cancellable child-process execution with
   streamed, separated stdout/stderr and explicit exit state.
+- `jetthing-lsp`: JSON-RPC framing, language-server lifecycle, document synchronization,
+  diagnostics, and completion transport; providers remain behind platform abstractions.
 - `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,
   and validation. Executable/Wasm loading is deliberately not claimed yet.
 - `jetthing-core`: application state and built-in command handlers.

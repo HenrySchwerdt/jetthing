@@ -32,6 +32,11 @@ VFS snapshots, background indexing, LSP transport, diagnostics, completion, symb
 navigation, formatting, cancellation, and persistent caches. First verified integration:
 Rust via rust-analyzer.
 
+- [x] JSON-RPC/LSP process transport and initialization
+- [x] Rust document open/change synchronization and published diagnostics
+- [x] Completion request transport and result modeling
+- [ ] Completion popup/caret integration, hover, navigation, formatting, and code actions
+
 ## M3 — professional workflows
 
 Git, search/replace, build/run configurations, test UI, DAP debugger, terminal,

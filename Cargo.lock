@@ -1560,6 +1560,7 @@ dependencies = [
  "jetthing-command",
  "jetthing-git",
  "jetthing-language",
+ "jetthing-lsp",
  "jetthing-plugins",
  "jetthing-project",
  "jetthing-runner",
@@ -1582,6 +1583,16 @@ version = "0.1.0"
 dependencies = [
  "tree-sitter",
  "tree-sitter-rust",
+]
+
+[[package]]
+name = "jetthing-lsp"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "url",
 ]
 
 [[package]]
@@ -1641,6 +1652,7 @@ dependencies = [
  "jetthing-core",
  "jetthing-git",
  "jetthing-language",
+ "jetthing-lsp",
  "jetthing-runner",
  "serde_json",
 ]
@@ -3425,6 +3437,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

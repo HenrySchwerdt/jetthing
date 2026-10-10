@@ -1,6 +1,7 @@
 use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
 use jetthing_git::RepositoryStatus;
 use jetthing_language::{LanguageAnalysis, analyze};
+use jetthing_lsp::{LspDiagnostic, LspService, ServerState};
 use jetthing_plugins::PluginManifest;
 use jetthing_project::{FileEntry, Project};
 use jetthing_runner::{TaskPlan, TaskService, TaskState};
@@ -36,6 +37,9 @@ pub struct IdeState {
     pub git_visible: bool,
     pub runner: TaskService,
     pub build_visible: bool,
+    pub lsp: Option<LspService>,
+    pub lsp_error: Option<String>,
+    pub problems_visible: bool,
     pub status: String,
 }
 
@@ -48,6 +52,14 @@ impl IdeState {
         self.search.cancel();
         self.search_results.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
+        self.lsp = None;
+        self.lsp_error = None;
+        if project.root().join("Cargo.toml").is_file() {
+            match LspService::start_rust_analyzer(project.root()) {
+                Ok(service) => self.lsp = Some(service),
+                Err(error) => self.lsp_error = Some(error.to_string()),
+            }
+        }
         self.status = format!("Opened {}", project.root().display());
         self.project = Some(project);
         Ok(())
@@ -65,6 +77,12 @@ impl IdeState {
             analysis: analyze(path, &text),
         });
         self.active_document = Some(self.documents.len() - 1);
+        if let Some(lsp) = &mut self.lsp {
+            let absolute = project.root().join(path);
+            if let Err(error) = lsp.open_document(&absolute, &text, 0) {
+                self.lsp_error = Some(error.to_string());
+            }
+        }
         self.status = format!("Opened {}", path.display());
         Ok(())
     }
@@ -220,6 +238,46 @@ impl IdeState {
             };
         }
     }
+
+    pub fn poll_lsp(&mut self) {
+        if let Some(lsp) = &mut self.lsp
+            && let Err(error) = lsp.poll()
+        {
+            self.lsp_error = Some(error.to_string());
+        }
+    }
+
+    pub fn sync_document_lsp(&mut self, relative_path: &Path, text: &str, version: i32) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let Some(lsp) = &mut self.lsp else {
+            return;
+        };
+        if let Err(error) = lsp.change_document(&project.root().join(relative_path), text, version)
+        {
+            self.lsp_error = Some(error.to_string());
+        }
+    }
+
+    pub fn active_lsp_diagnostics(&self) -> Vec<LspDiagnostic> {
+        let Some(index) = self.active_document else {
+            return Vec::new();
+        };
+        let Some(document) = self.documents.get(index) else {
+            return Vec::new();
+        };
+        let Some(project) = &self.project else {
+            return Vec::new();
+        };
+        let Some(lsp) = &self.lsp else {
+            return Vec::new();
+        };
+        lsp.diagnostics()
+            .get(&project.root().join(&document.path))
+            .cloned()
+            .unwrap_or_default()
+    }
 }
 
 fn spec(
@@ -266,6 +324,16 @@ fn string_array_param(params: &Value, name: &str) -> Result<Vec<String>, Command
         .map(|value| value.unwrap_or_default())
 }
 
+fn usize_param(params: &Value, name: &str) -> Result<usize, CommandError> {
+    params
+        .get(name)
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| {
+            CommandError::InvalidParams(format!("expected non-negative integer field `{name}`"))
+        })
+}
+
 pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
     registry
@@ -283,6 +351,40 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .open_project(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"root": state.project.as_ref().unwrap().root()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "language.completion",
+                "Request Completion",
+                "Code",
+                None,
+                r#"{"path":"string","line":0,"character":0}"#,
+            ),
+            |state: &IdeState| {
+                state
+                    .lsp
+                    .as_ref()
+                    .is_some_and(|lsp| lsp.state() == ServerState::Ready)
+            },
+            |state: &mut IdeState, params| {
+                let relative = string_param(&params, "path")?;
+                let line = usize_param(&params, "line")?;
+                let character = usize_param(&params, "character")?;
+                let root = state
+                    .project
+                    .as_ref()
+                    .ok_or_else(|| CommandError::Disabled("language.completion".into()))?
+                    .root();
+                let id = state
+                    .lsp
+                    .as_mut()
+                    .ok_or_else(|| CommandError::Disabled("language.completion".into()))?
+                    .request_completion(&root.join(relative), line, character)
+                    .map_err(|error| CommandError::Failed(error.to_string()))?;
+                Ok(json!({"requestId": id}))
             },
         ))
         .expect("unique built-in id");
