@@ -143,7 +143,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                             ),
                             SwitcherEntry::ToolWindow(window) => (
                                 window.title().to_owned(),
-                                window.shortcut().to_owned(),
+                                String::new(),
                                 window_icon(*window),
                             ),
                         };

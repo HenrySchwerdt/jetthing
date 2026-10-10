@@ -1,0 +1,40 @@
+{
+  "id": "22",
+  "title": "Go to File (Ctrl+Shift+N, query \"app\")",
+  "fixture": "java-gradle",
+  "open": [
+    "src/main/java/com/example/App.java",
+    "src/test/java/com/example/AppTest.java"
+  ],
+  "steps": [
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "key",
+      "chord": "Primary+Shift+N"
+    },
+    {
+      "op": "wait",
+      "until": "popup"
+    },
+    {
+      "op": "type",
+      "text": "app"
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "assert",
+      "pointer": "/popups/searchEverywhere",
+      "equals": "files"
+    },
+    {
+      "op": "screenshot",
+      "name": "22-go-to-file.png"
+    }
+  ]
+}

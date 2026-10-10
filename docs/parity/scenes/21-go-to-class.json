@@ -1,0 +1,40 @@
+{
+  "id": "21",
+  "title": "Go to Class (Ctrl+N, query \"App\")",
+  "fixture": "java-gradle",
+  "open": [
+    "src/main/java/com/example/App.java",
+    "src/test/java/com/example/AppTest.java"
+  ],
+  "steps": [
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "key",
+      "chord": "Primary+N"
+    },
+    {
+      "op": "wait",
+      "until": "popup"
+    },
+    {
+      "op": "type",
+      "text": "App"
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "assert",
+      "pointer": "/popups/searchEverywhere",
+      "equals": "classes"
+    },
+    {
+      "op": "screenshot",
+      "name": "21-go-to-class.png"
+    }
+  ]
+}

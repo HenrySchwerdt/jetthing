@@ -383,6 +383,10 @@ impl IdeApp {
             "terminal": self.terminal_text(),
             "popups": {
                 "searchEverywhere": self.palette.open.then(|| self.palette.tab_name()),
+                "switcher": self.state.navigation.switcher.as_ref().map(|switcher| match switcher.selected_entry() {
+                    jetthing_core::navigation::SwitcherEntry::File(path) => relative(path),
+                    jetthing_core::navigation::SwitcherEntry::ToolWindow(window) => window.title().to_owned(),
+                }),
                 "dialog": self.dialog.as_ref().map(|dialog| dialog.kind()),
                 "findBar": self.find.open,
                 "completion": self.completion_visible(),
