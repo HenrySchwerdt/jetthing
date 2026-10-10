@@ -27,10 +27,11 @@ pub enum ToolWindow {
     BuildVariants,
     Gradle,
     Bazel,
+    AiChat,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 13] = [
+    pub const ALL: [ToolWindow; 14] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Structure,
@@ -44,6 +45,7 @@ impl ToolWindow {
         ToolWindow::BuildVariants,
         ToolWindow::Gradle,
         ToolWindow::Bazel,
+        ToolWindow::AiChat,
     ];
 
     pub fn id(self) -> &'static str {
@@ -59,6 +61,7 @@ impl ToolWindow {
             ToolWindow::Logcat => "logcat",
             ToolWindow::Git => "git",
             ToolWindow::BuildVariants => "buildVariants",
+            ToolWindow::AiChat => "aiChat",
             ToolWindow::Gradle => "gradle",
             ToolWindow::Bazel => "bazel",
         }
@@ -77,6 +80,7 @@ impl ToolWindow {
             ToolWindow::Logcat => "Logcat",
             ToolWindow::Git => "Git",
             ToolWindow::BuildVariants => "Build Variants",
+            ToolWindow::AiChat => "AI Chat",
             ToolWindow::Gradle => "Gradle",
             ToolWindow::Bazel => "Bazel",
         }
@@ -93,12 +97,14 @@ impl ToolWindow {
             ToolWindow::Build => "⌘4",
             ToolWindow::Problems => "⌘6",
             ToolWindow::Terminal => "⌥F12",
-            // Unbound by default, like the reference IDE.
+            // Unbound by default, like the reference IDE (which also assigns no
+            // default shortcut to its AI chat window).
             ToolWindow::DeviceManager
             | ToolWindow::Logcat
             | ToolWindow::BuildVariants
             | ToolWindow::Gradle
-            | ToolWindow::Bazel => "",
+            | ToolWindow::Bazel
+            | ToolWindow::AiChat => "",
             ToolWindow::Git => "⌘9",
         }
     }
@@ -115,7 +121,10 @@ impl ToolWindow {
             | ToolWindow::Terminal
             | ToolWindow::Logcat
             | ToolWindow::Git => Anchor::Bottom,
-            ToolWindow::DeviceManager | ToolWindow::Gradle | ToolWindow::Bazel => Anchor::Right,
+            ToolWindow::DeviceManager
+            | ToolWindow::Gradle
+            | ToolWindow::Bazel
+            | ToolWindow::AiChat => Anchor::Right,
         }
     }
 
@@ -249,6 +258,9 @@ mod tests {
         assert_eq!(layout.visible(Anchor::Bottom), None);
         assert!(layout.toggle(ToolWindow::Commit));
         assert!(!layout.is_visible(ToolWindow::Project));
+        layout.show(ToolWindow::AiChat);
+        assert_eq!(layout.visible(Anchor::Right), Some(ToolWindow::AiChat));
+        assert!(layout.is_visible(ToolWindow::Commit));
         layout.show(ToolWindow::DeviceManager);
         assert_eq!(
             layout.visible(Anchor::Right),

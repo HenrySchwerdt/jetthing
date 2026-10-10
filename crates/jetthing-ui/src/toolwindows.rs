@@ -750,6 +750,9 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     ))
                     .color(theme::TEXT_INFO),
                 );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::ai_vcs::commit_message_button(app, ui, &selected);
+                });
             });
         });
     if commit_now
@@ -805,15 +808,9 @@ impl IdeApp {
 
 fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
     app.sync_find_inputs();
-    let hide = tool_window_header(ui, "Find in Files", |ui| {
-        if app.state.search.is_running()
-            && icons::button_colored(ui, Icon::Stop, *theme::STOP_RED, "Cancel", false).clicked()
-        {
-            app.dispatch("search.cancel", Value::Null);
-        }
-    });
-    if hide {
-        app.toggle_tool_window(ToolWindow::Find);
+    if crate::navigation_ui::find_header(app, ui) {
+        crate::navigation_ui::usages_view(app, ui);
+        return;
     }
     ui.horizontal(|ui| {
         ui.add_space(12.0);
@@ -850,6 +847,7 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
         );
         submit |= mask.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if submit && !app.search_input.is_empty() {
+            app.state.navigation.usages_selected = false;
             app.dispatch(
                 "search.project",
                 find_params(&app.search_input, &app.find_options),

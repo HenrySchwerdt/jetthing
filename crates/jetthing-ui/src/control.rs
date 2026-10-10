@@ -281,6 +281,7 @@ impl IdeApp {
             || self.state.first_run_open
             || self.completion_visible()
             || egui::Popup::is_any_open(ctx)
+            || self.state.docs.popup.is_some()
     }
 
     fn completion_visible(&self) -> bool {
@@ -384,9 +385,9 @@ impl IdeApp {
             "terminal": self.terminal_text(),
             "popups": {
                 "searchEverywhere": self.palette.open.then(|| self.palette.tab_name()),
-                "switcher": self.state.navigation.switcher.as_ref().map(|switcher| match switcher.selected_entry() {
-                    jetthing_core::navigation::SwitcherEntry::File(path) => relative(path),
-                    jetthing_core::navigation::SwitcherEntry::ToolWindow(window) => window.title().to_owned(),
+                "switcher": self.state.quick_nav.switcher.as_ref().map(|switcher| match switcher.selected_entry() {
+                    jetthing_core::quick_nav::SwitcherEntry::File(path) => relative(path),
+                    jetthing_core::quick_nav::SwitcherEntry::ToolWindow(window) => window.title().to_owned(),
                 }),
                 "dialog": self.dialog.as_ref().map(|dialog| dialog.kind()),
                 "findBar": self.find.open,
@@ -575,10 +576,10 @@ mod tests {
             let _ = ctx.run(input, |ctx| app.detect_double_shift(ctx));
         }
         assert_eq!(
-            app.state.navigation.request,
+            app.state.quick_nav.request,
             Some(
-                jetthing_core::navigation::NavigationRequest::SearchEverywhere(
-                    jetthing_core::navigation::SearchTab::All
+                jetthing_core::quick_nav::NavigationRequest::SearchEverywhere(
+                    jetthing_core::quick_nav::SearchTab::All
                 )
             )
         );
@@ -602,7 +603,7 @@ mod tests {
         let mut app =
             IdeApp::with_update_check(Some(dir.clone()), vec![PathBuf::from("src/main.rs")], false);
         app.palette
-            .show_tab(jetthing_core::navigation::SearchTab::All);
+            .show_tab(jetthing_core::quick_nav::SearchTab::All);
         let ctx = egui::Context::default();
         let response = app.control_execute(
             &ctx,

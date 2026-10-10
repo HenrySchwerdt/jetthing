@@ -7,8 +7,8 @@ members = [
     "plugins/mongo-raabit/core",
     "xtask",
 ]
-# Manifest-only plugins (no Rust crate).
-exclude = ["plugins/rust"]
+# Plugins that are not host crates (manifest-only, Lua, wasm32 guests).
+exclude = ["plugins/rust", "plugins/hello-lua", "plugins/hello-wasm"]
 
 [workspace.package]
 version = "0.0.4"
@@ -23,6 +23,7 @@ egui = "0.33"
 lsp-types = "0.95"
 parking_lot = "0.12"
 portable-pty = "0.9"
+pulldown-cmark = { version = "0.13", default-features = false }
 quick-xml = "0.37"
 ropey = "1.6"
 serde = { version = "1.0", features = ["derive"] }

@@ -1,764 +1,453 @@
-//! Search Everywhere, Recent Locations and the Switcher: engine side.
+//! Code navigation through language servers: Go to Declaration / Type
+//! Declaration / Implementation, Find Usages, Show Usages, and the Back /
+//! Forward navigation history.
 //!
-//! The popups live in `jetthing-ui`; everything they list, rank or cycle is
-//! decided here so it can be tested without a window. Commands (`navigate.*`)
-//! only record a [`NavigationRequest`] that the UI turns into a popup, or drive
-//! the [`Switcher`] state directly.
-
-use crate::{IdeState, ToolWindow, spec};
+//! Requests are asynchronous: a command sends the request and returns at
+//! once; [`IdeState::poll_navigation`] (called from `poll_lsp`) applies the
+//! answer: one target is opened, several become [`NavigationState::choices`]
+//! for a chooser popup, and usages fill [`NavigationState::usages`].
+use crate::{IdeState, spec, string_param, usize_param};
 use jetthing_command::{Command, CommandError, CommandRegistry};
-use jetthing_language::structure::{StructureItem, SymbolKind};
-use jetthing_lsp::completion::{MatchClass, fuzzy_match, match_class};
-use jetthing_lsp::lsp_types;
-use jetthing_lsp::{WorkspaceSymbolHit, WorkspaceSymbolRequestHandle};
-use jetthing_project::FileEntry;
+use jetthing_lsp::{Feature, LspLocation, RequestHandle, parse_locations};
+use jetthing_text::{Selection, ops};
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
 
-/// Tabs of the Search Everywhere popup.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum SearchTab {
-    #[default]
-    All,
-    Classes,
-    Files,
-    Symbols,
-    Actions,
+/// History entries kept per direction.
+const HISTORY_LIMIT: usize = 100;
+/// Usages listed at most (the reference IDE also stops and warns).
+const USAGE_LIMIT: usize = 2_000;
+/// Files larger than this are not read to show a usage's line.
+const PREVIEW_FILE_LIMIT: u64 = 4 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NavigationKind {
+    Declaration,
+    TypeDeclaration,
+    Implementation,
+    FindUsages,
+    ShowUsages,
 }
 
-impl SearchTab {
-    pub const ALL: [SearchTab; 5] = [
-        SearchTab::All,
-        SearchTab::Classes,
-        SearchTab::Files,
-        SearchTab::Symbols,
-        SearchTab::Actions,
-    ];
-
-    pub fn id(self) -> &'static str {
+impl NavigationKind {
+    fn feature(self) -> Feature {
         match self {
-            SearchTab::All => "all",
-            SearchTab::Classes => "classes",
-            SearchTab::Files => "files",
-            SearchTab::Symbols => "symbols",
-            SearchTab::Actions => "actions",
+            Self::Declaration => Feature::Definition,
+            Self::TypeDeclaration => Feature::TypeDefinition,
+            Self::Implementation => Feature::Implementation,
+            Self::FindUsages | Self::ShowUsages => Feature::References,
         }
     }
 
-    pub fn label(self) -> &'static str {
+    fn not_found(self) -> &'static str {
         match self {
-            SearchTab::All => "All",
-            SearchTab::Classes => "Classes",
-            SearchTab::Files => "Files",
-            SearchTab::Symbols => "Symbols",
-            SearchTab::Actions => "Actions",
+            Self::Declaration => "Cannot find declaration to go to",
+            Self::TypeDeclaration => "Cannot find type declaration to go to",
+            Self::Implementation => "No implementations found",
+            Self::FindUsages | Self::ShowUsages => "No usages found",
         }
     }
-
-    pub fn parse(id: &str) -> Option<SearchTab> {
-        SearchTab::ALL.into_iter().find(|tab| tab.id() == id)
-    }
-
-    /// The next (or previous) tab, wrapping around.
-    pub fn step(self, backward: bool) -> SearchTab {
-        let index = SearchTab::ALL
-            .iter()
-            .position(|tab| *tab == self)
-            .unwrap_or(0);
-        let len = SearchTab::ALL.len();
-        SearchTab::ALL[(index + if backward { len - 1 } else { 1 }) % len]
-    }
 }
 
-/// A popup the UI should open, set by a `navigate.*` command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NavigationRequest {
-    SearchEverywhere(SearchTab),
-    RecentFiles,
-    RecentLocations,
-}
-
-// ---------------------------------------------------------------- ranking
-
-/// Candidates ranked best-first; `positions` are char indices to highlight.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Ranked<T> {
-    pub item: T,
-    pub positions: Vec<usize>,
-    class: MatchClass,
-    score: i32,
-}
-
-/// Camel-hump ranks `candidates` against `query` (the completion matcher):
-/// exact and prefix matches first, then humps, then tighter matches, then
-/// shorter names. An empty query keeps the candidates' own order.
-pub fn rank<T>(
-    query: &str,
-    candidates: impl IntoIterator<Item = (T, String)>,
-    limit: usize,
-) -> Vec<Ranked<T>> {
-    let mut ranked: Vec<(Ranked<T>, usize)> = Vec::new();
-    for (item, name) in candidates {
-        let (class, score, positions) = if query.is_empty() {
-            (MatchClass::Inner, 0, Vec::new())
-        } else {
-            let Some(found) = fuzzy_match(query, &name) else {
-                continue;
-            };
-            (
-                match_class(query, &name, &found),
-                found.score,
-                found.positions,
-            )
-        };
-        ranked.push((
-            Ranked {
-                item,
-                positions,
-                class,
-                score,
-            },
-            name.chars().count(),
-        ));
-    }
-    if !query.is_empty() {
-        ranked.sort_by(|(a, a_len), (b, b_len)| {
-            a.class
-                .cmp(&b.class)
-                .then(b.score.cmp(&a.score))
-                .then(a_len.cmp(b_len))
-        });
-    }
-    ranked.into_iter().map(|(r, _)| r).take(limit).collect()
-}
-
-/// Whether `name` matches `query` with camel-hump semantics (empty matches all).
-pub fn matches(query: &str, name: &str) -> bool {
-    query.is_empty() || fuzzy_match(query, name).is_some()
-}
-
-/// Splits `Name:12` into the name pattern and a one-based line.
-pub fn split_line_suffix(query: &str) -> (&str, Option<usize>) {
-    if let Some((name, line)) = query.rsplit_once(':')
-        && !line.is_empty()
-        && let Ok(line) = line.parse::<usize>()
-    {
-        return (name, Some(line.max(1)));
-    }
-    (query, None)
-}
-
-// ------------------------------------------------------------ symbol index
-
-/// A class or symbol the popups can navigate to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SymbolEntry {
-    pub name: String,
-    pub kind: SymbolKind,
-    /// Project-relative for indexed files, absolute for files outside the project.
+/// A caret position in a project file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Place {
     pub path: PathBuf,
-    /// Zero-based line.
-    pub line: usize,
-    pub container: Option<String>,
+    pub offset: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Stamp {
-    len: u64,
-    modified: Option<SystemTime>,
-}
-
-/// Tree-sitter outlines of project files, cached by size and modification time.
-#[derive(Default)]
-pub struct SymbolIndex {
-    files: HashMap<PathBuf, (Option<Stamp>, Vec<SymbolEntry>)>,
-}
-
-const MAX_INDEXED_FILE: u64 = 1_000_000;
-const MAX_INDEXED_FILES: usize = 5_000;
-
-impl SymbolIndex {
-    /// Indexes uncached files until `budget` runs out; returns whether every
-    /// supported file is now indexed. `open` supplies the live text of open
-    /// documents, which always win over the file on disk.
-    pub fn refresh(
-        &mut self,
-        root: &Path,
-        files: &[FileEntry],
-        open: &[(PathBuf, String)],
-        budget: Duration,
-    ) -> bool {
-        let started = Instant::now();
-        for (path, text) in open {
-            let symbols = entries(path, outline(path, text));
-            self.files.insert(path.clone(), (None, symbols));
-        }
-        let mut complete = true;
-        for entry in files
-            .iter()
-            .filter(|entry| !entry.is_dir)
-            .take(MAX_INDEXED_FILES)
-        {
-            let path = &entry.relative_path;
-            if open.iter().any(|(open, _)| open == path) {
-                continue;
-            }
-            if jetthing_language::registry::detect(path, "").is_none_or(|spec| !spec.has_tags()) {
-                continue;
-            }
-            let Ok(meta) = std::fs::metadata(root.join(path)) else {
-                continue;
-            };
-            let stamp = Stamp {
-                len: meta.len(),
-                modified: meta.modified().ok(),
-            };
-            if self
-                .files
-                .get(path)
-                .is_some_and(|(cached, _)| cached.as_ref() == Some(&stamp))
-            {
-                continue;
-            }
-            if started.elapsed() >= budget {
-                complete = false;
-                break;
-            }
-            let symbols = if meta.len() > MAX_INDEXED_FILE {
-                Vec::new()
-            } else {
-                std::fs::read_to_string(root.join(path))
-                    .map(|text| entries(path, outline(path, &text)))
-                    .unwrap_or_default()
-            };
-            self.files.insert(path.clone(), (Some(stamp), symbols));
-        }
-        complete
-    }
-
-    pub fn clear(&mut self) {
-        self.files.clear();
-    }
-
-    pub fn all(&self) -> impl Iterator<Item = &SymbolEntry> {
-        self.files.values().flat_map(|(_, symbols)| symbols.iter())
-    }
-}
-
-/// Declarations of `source` in file order, flattened from the file structure
-/// (tree-sitter tags queries); empty for languages without one.
-fn outline(path: &Path, source: &str) -> Vec<(String, SymbolKind, usize)> {
-    fn flatten(items: &[StructureItem], out: &mut Vec<(String, SymbolKind, usize)>) {
-        for item in items {
-            out.push((item.name.clone(), item.kind, item.line));
-            flatten(&item.children, out);
-        }
-    }
-    let mut out = Vec::new();
-    flatten(
-        &jetthing_language::analyze(path, source).structure(),
-        &mut out,
-    );
-    out.sort_by_key(|(_, _, line)| *line);
-    out
-}
-
-/// Declarations Go to Class lists: classes, interfaces, enums and type aliases.
-pub fn is_class_like(kind: SymbolKind) -> bool {
-    matches!(
-        kind,
-        SymbolKind::Class | SymbolKind::Interface | SymbolKind::Enum | SymbolKind::Type
-    )
-}
-
-fn entries(path: &Path, symbols: Vec<(String, SymbolKind, usize)>) -> Vec<SymbolEntry> {
-    symbols
-        .into_iter()
-        .map(|(name, kind, line)| SymbolEntry {
-            name,
-            kind,
-            path: path.to_owned(),
-            line,
-            container: None,
-        })
-        .collect()
-}
-
-fn lsp_kind(kind: lsp_types::SymbolKind) -> SymbolKind {
-    use lsp_types::SymbolKind as K;
-    match kind {
-        K::CLASS | K::STRUCT | K::OBJECT => SymbolKind::Class,
-        K::INTERFACE => SymbolKind::Interface,
-        K::ENUM => SymbolKind::Enum,
-        K::FUNCTION => SymbolKind::Function,
-        K::METHOD | K::CONSTRUCTOR => SymbolKind::Method,
-        K::FIELD | K::PROPERTY | K::ENUM_MEMBER => SymbolKind::Field,
-        K::CONSTANT | K::VARIABLE => SymbolKind::Constant,
-        K::MODULE | K::NAMESPACE | K::PACKAGE => SymbolKind::Module,
-        K::TYPE_PARAMETER => SymbolKind::Type,
-        _ => SymbolKind::Other,
-    }
-}
-
-// -------------------------------------------------------------- providers
-
-/// An action row: a command with its keymap shortcut.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActionCandidate {
-    pub id: String,
-    pub label: String,
-    pub category: String,
-    pub shortcut: String,
-    pub enabled: bool,
-}
-
-/// One row of the popup.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Hit {
-    File { path: PathBuf, line: Option<usize> },
-    Symbol(SymbolEntry),
-    Action(ActionCandidate),
-}
-
-/// What the providers draw from.
-pub struct SearchSources<'a> {
-    pub files: &'a [FileEntry],
-    /// Most recently used first; listed for an empty Files query.
-    pub recent: &'a [PathBuf],
-    pub symbols: Vec<&'a SymbolEntry>,
-    /// Extra results from a running language server (deduplicated here).
-    pub server_symbols: &'a [SymbolEntry],
-    pub actions: &'a [ActionCandidate],
-}
-
-/// Rows per section on the All tab.
-const ALL_SECTION: [(SearchTab, usize); 4] = [
-    (SearchTab::Classes, 4),
-    (SearchTab::Files, 4),
-    (SearchTab::Symbols, 4),
-    (SearchTab::Actions, 4),
-];
-const TAB_LIMIT: usize = 30;
-
-/// Runs the provider(s) of `tab`. The All tab concatenates short sections.
-pub fn search(tab: SearchTab, query: &str, sources: &SearchSources) -> Vec<Ranked<Hit>> {
-    let query = query.trim();
-    if tab == SearchTab::All {
-        return ALL_SECTION
-            .into_iter()
-            .flat_map(|(tab, limit)| provider(tab, query, sources, limit))
-            .collect();
-    }
-    provider(tab, query, sources, TAB_LIMIT)
-}
-
-fn provider(
-    tab: SearchTab,
-    query: &str,
-    sources: &SearchSources,
-    limit: usize,
-) -> Vec<Ranked<Hit>> {
-    match tab {
-        SearchTab::Files => files(query, sources, limit),
-        SearchTab::Classes => symbols(query, sources, limit, true),
-        SearchTab::Symbols => symbols(query, sources, limit, false),
-        SearchTab::Actions => rank(
-            query,
-            sources
-                .actions
-                .iter()
-                .map(|action| (Hit::Action(action.clone()), action.label.clone())),
-            limit,
-        ),
-        SearchTab::All => Vec::new(),
-    }
-}
-
-fn files(query: &str, sources: &SearchSources, limit: usize) -> Vec<Ranked<Hit>> {
-    let (pattern, line) = split_line_suffix(query);
-    if pattern.is_empty() {
-        return sources
-            .recent
-            .iter()
-            .take(limit)
-            .map(|path| Ranked {
-                item: Hit::File {
-                    path: path.clone(),
-                    line,
-                },
-                positions: Vec::new(),
-                class: MatchClass::Inner,
-                score: 0,
-            })
-            .collect();
-    }
-    rank(
-        pattern,
-        sources
-            .files
-            .iter()
-            .filter(|entry| !entry.is_dir)
-            .map(|entry| {
-                let name = file_name(&entry.relative_path);
-                (
-                    Hit::File {
-                        path: entry.relative_path.clone(),
-                        line,
-                    },
-                    name,
-                )
-            }),
-        limit,
-    )
-}
-
-fn symbols(query: &str, sources: &SearchSources, limit: usize, classes: bool) -> Vec<Ranked<Hit>> {
-    let keep = |kind: SymbolKind| {
-        if classes {
-            is_class_like(kind)
-        } else {
-            !is_class_like(kind)
-        }
-    };
-    let mut seen = std::collections::HashSet::new();
-    let candidates: Vec<(Hit, String)> = sources
-        .symbols
-        .iter()
-        .copied()
-        .chain(sources.server_symbols.iter())
-        .filter(|symbol| keep(symbol.kind))
-        .filter(|symbol| seen.insert((symbol.path.clone(), symbol.name.clone(), symbol.line)))
-        .map(|symbol| (Hit::Symbol(symbol.clone()), symbol.name.clone()))
-        .collect();
-    let mut ranked = rank(query, candidates, usize::MAX);
-    if query.is_empty() {
-        ranked.sort_by(|a, b| hit_name(&a.item).cmp(hit_name(&b.item)));
-    }
-    ranked.truncate(limit);
-    ranked
-}
-
-fn hit_name(hit: &Hit) -> &str {
-    match hit {
-        Hit::Symbol(symbol) => &symbol.name,
-        _ => "",
-    }
-}
-
-/// File name of a project-relative path.
-pub fn file_name(path: &Path) -> String {
-    path.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string())
-}
-
-// -------------------------------------------------------- server symbols
-
-/// A `workspace/symbol` query in flight and its latest answer.
-#[derive(Default)]
-pub struct ServerSymbols {
-    request: Option<(WorkspaceSymbolRequestHandle, String)>,
-    /// Query the current `results` answer.
-    pub answered: Option<String>,
-    pub results: Vec<SymbolEntry>,
-}
-
-impl ServerSymbols {
-    pub fn clear(&mut self) {
-        self.request = None;
-        self.answered = None;
-        self.results.clear();
-    }
-}
-
-// --------------------------------------------------------------- switcher
-
-/// An entry of the Switcher: an open file or a tool window.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SwitcherEntry {
-    File(PathBuf),
-    ToolWindow(ToolWindow),
-}
-
-/// The Ctrl+Tab popup: held Ctrl cycles, releasing it commits.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Switcher {
-    pub entries: Vec<SwitcherEntry>,
-    pub selected: usize,
-}
-
-impl Switcher {
-    /// Opens on the entry after (or, backward, before) the current one, which
-    /// is first in the list: Ctrl+Tab jumps to the previous file at once.
-    pub fn open(entries: Vec<SwitcherEntry>, backward: bool) -> Option<Switcher> {
-        if entries.is_empty() {
-            return None;
-        }
-        let mut switcher = Switcher {
-            entries,
-            selected: 0,
-        };
-        switcher.cycle(backward);
-        Some(switcher)
-    }
-
-    pub fn cycle(&mut self, backward: bool) {
-        let len = self.entries.len();
-        self.selected = (self.selected + if backward { len - 1 } else { 1 }) % len;
-    }
-
-    pub fn selected_entry(&self) -> &SwitcherEntry {
-        &self.entries[self.selected]
-    }
-}
-
-// ------------------------------------------------------ recent locations
-
-/// A place the caret was, for Recent Locations (Ctrl+Shift+E).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecentLocation {
+/// One navigation target or usage, with the text of its line for display.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NavigationItem {
+    /// Project-relative, or absolute for files outside the project.
     pub path: PathBuf,
-    /// Zero-based line.
+    pub external: bool,
+    /// 0-based line and character columns.
     pub line: usize,
-    /// Text of the line when the location was recorded.
-    pub preview: String,
+    pub column: usize,
+    pub end_column: usize,
+    /// The line's text, trimmed of its line break.
+    pub line_text: String,
 }
 
-const MAX_LOCATIONS: usize = 50;
-/// Caret moves within this many lines of the newest location update it.
-const SAME_PLACE_LINES: usize = 5;
+/// Targets for a chooser (several declarations/implementations) or the
+/// Show Usages popup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NavigationList {
+    pub kind: NavigationKind,
+    pub title: String,
+    pub items: Vec<NavigationItem>,
+    pub truncated: bool,
+}
 
-/// Navigation state kept by [`IdeState`].
-#[derive(Default)]
+#[derive(Debug)]
+struct Pending {
+    kind: NavigationKind,
+    handle: RequestHandle,
+    symbol: String,
+    origin: Place,
+}
+
+#[derive(Debug, Default)]
 pub struct NavigationState {
-    /// Popup the UI should open next.
-    pub request: Option<NavigationRequest>,
-    pub switcher: Option<Switcher>,
-    /// Newest first.
-    pub locations: Vec<RecentLocation>,
-    pub index: SymbolIndex,
-    /// Whether the last [`SymbolIndex::refresh`] covered every file.
-    pub index_complete: bool,
-    pub server: ServerSymbols,
+    back: Vec<Place>,
+    forward: Vec<Place>,
+    pending: Option<Pending>,
+    /// Several targets to choose from, or the Show Usages popup.
+    pub choices: Option<NavigationList>,
+    /// The latest Find Usages result, shown in the Find tool window.
+    pub usages: Option<NavigationList>,
+    /// Whether the Find tool window shows the usages instead of text results.
+    pub usages_selected: bool,
 }
 
 impl NavigationState {
-    /// Records the caret at `path:line`. Small moves update the newest entry
-    /// instead of piling up near-duplicates.
-    pub fn note_location(&mut self, path: &Path, line: usize, preview: &str) {
-        if let Some(newest) = self.locations.first_mut()
-            && newest.path == path
-            && newest.line.abs_diff(line) <= SAME_PLACE_LINES
-        {
-            newest.line = line;
-            newest.preview = preview.to_owned();
-            return;
-        }
-        self.locations.retain(|existing| {
-            !(existing.path == path && existing.line.abs_diff(line) <= SAME_PLACE_LINES)
-        });
-        self.locations.insert(
-            0,
-            RecentLocation {
-                path: path.to_owned(),
-                line,
-                preview: preview.to_owned(),
-            },
-        );
-        self.locations.truncate(MAX_LOCATIONS);
+    pub fn can_go_back(&self) -> bool {
+        !self.back.is_empty()
     }
 
-    pub fn forget(&mut self, path: &Path) {
-        self.locations
-            .retain(|location| !location.path.starts_with(path));
+    pub fn can_go_forward(&self) -> bool {
+        !self.forward.is_empty()
+    }
+
+    pub fn is_pending(&self) -> bool {
+        self.pending.is_some()
     }
 }
 
 impl IdeState {
-    /// Entries for the Switcher: open files, most recently used first, then
-    /// the tool windows that are currently visible.
-    pub fn switcher_entries(&self) -> Vec<SwitcherEntry> {
-        let open: Vec<&PathBuf> = self
-            .documents
-            .iter()
-            .map(|document| &document.path)
-            .collect();
-        let mut files: Vec<PathBuf> = self
-            .recent_files
-            .iter()
-            .filter(|path| open.contains(path))
-            .cloned()
-            .collect();
-        let rest: Vec<PathBuf> = open
-            .into_iter()
-            .filter(|path| !files.contains(path))
-            .cloned()
-            .collect();
-        files.extend(rest);
-        // The active document leads so the first Ctrl+Tab lands on the previous one.
-        if let Some(active) = self.active_document.and_then(|i| self.documents.get(i))
-            && let Some(position) = files.iter().position(|path| *path == active.path)
-        {
-            let active = files.remove(position);
-            files.insert(0, active);
+    fn canonical_root(&self) -> Option<PathBuf> {
+        let root = self.project.as_ref()?.root();
+        Some(root.canonicalize().unwrap_or_else(|_| root.to_owned()))
+    }
+
+    /// The caret position of the active document.
+    pub fn current_place(&self) -> Option<Place> {
+        let document = self.documents.get(self.active_document?)?;
+        Some(Place {
+            path: document.path.clone(),
+            offset: document.selections.primary().head,
+        })
+    }
+
+    fn remember(&mut self, place: Place) {
+        if self.navigation.back.last() != Some(&place) {
+            self.navigation.back.push(place);
+            if self.navigation.back.len() > HISTORY_LIMIT {
+                self.navigation.back.remove(0);
+            }
         }
-        files
-            .into_iter()
-            .map(SwitcherEntry::File)
-            .chain(
-                ToolWindow::ALL
-                    .into_iter()
-                    .filter(|window| self.tool_windows.is_visible(*window))
-                    .map(SwitcherEntry::ToolWindow),
-            )
+    }
+
+    /// Opens `place` and puts the caret there, without touching the history.
+    fn show_place(&mut self, place: &Place) -> Result<(), String> {
+        self.open_file(&place.path)?;
+        let index = self.active_document.ok_or("no active document")?;
+        let document = &mut self.documents[index];
+        let offset = place.offset.min(document.text.len_chars());
+        document.selections.set_single(Selection::caret(offset));
+        Ok(())
+    }
+
+    /// Jumps to a navigation item, recording the current place for Back.
+    pub fn navigate_to(&mut self, item: &NavigationItem) -> Result<(), String> {
+        if item.external {
+            return Err(format!(
+                "{} is outside the project; opening library sources is not supported yet",
+                item.path.display()
+            ));
+        }
+        let origin = self.current_place();
+        self.open_file(&item.path)?;
+        let index = self.active_document.ok_or("no active document")?;
+        let document = &mut self.documents[index];
+        let offset = document
+            .text
+            .line_to_char(item.line.min(document.text.len_lines().saturating_sub(1)))
+            .map(|start| start + item.column)
+            .unwrap_or(0)
+            .min(document.text.len_chars());
+        let target = Place {
+            path: item.path.clone(),
+            offset,
+        };
+        document.selections.set_single(Selection::caret(offset));
+        if let Some(origin) = origin
+            && origin != target
+        {
+            self.remember(origin);
+            self.navigation.forward.clear();
+        }
+        self.navigation.choices = None;
+        self.status.clear();
+        Ok(())
+    }
+
+    /// Back (`forward == false`) or Forward in the navigation history.
+    pub fn navigate_history(&mut self, forward: bool) -> Result<Place, String> {
+        let current = self.current_place();
+        let (from, to) = if forward {
+            (&mut self.navigation.forward, &mut self.navigation.back)
+        } else {
+            (&mut self.navigation.back, &mut self.navigation.forward)
+        };
+        // Skip entries that equal the current place (e.g. after a manual jump back).
+        let place = loop {
+            let place = from.pop().ok_or(if forward {
+                "Nothing to go forward to"
+            } else {
+                "Nothing to go back to"
+            })?;
+            if Some(&place) != current.as_ref() {
+                break place;
+            }
+        };
+        if let Some(current) = current {
+            to.push(current);
+        }
+        if let Err(error) = self.show_place(&place) {
+            // The file is gone: drop the entry rather than getting stuck on it.
+            return Err(format!("{}: {error}", place.path.display()));
+        }
+        Ok(place)
+    }
+
+    /// Sends a navigation request for the caret of the active document.
+    pub fn request_navigation(&mut self, kind: NavigationKind) -> Result<u64, String> {
+        let origin = self.current_place().ok_or("no active document")?;
+        let index = self.active_document.ok_or("no active document")?;
+        let document = &self.documents[index];
+        let (line, character) = document
+            .text
+            .lsp_position(origin.offset)
+            .map_err(|error| error.to_string())?;
+        let (start, end) = ops::word_at(&document.text, origin.offset);
+        let symbol = document.text.slice(start, end).unwrap_or_default();
+        let absolute = self
+            .project
+            .as_ref()
+            .ok_or("no project is open")?
+            .root()
+            .join(&document.path);
+        let extra = if kind.feature() == Feature::References {
+            json!({"context": {"includeDeclaration": kind == NavigationKind::ShowUsages}})
+        } else {
+            json!({})
+        };
+        if let Some(pending) = self.navigation.pending.take() {
+            self.lsp.cancel_request(&pending.handle);
+        }
+        let handle = self
+            .lsp
+            .request(&absolute, kind.feature(), line, character, extra)
+            .map_err(|error| error.to_string())?;
+        let id = handle.id;
+        self.navigation.pending = Some(Pending {
+            kind,
+            handle,
+            symbol,
+            origin,
+        });
+        Ok(id)
+    }
+
+    /// Applies a navigation answer that arrived since the last poll.
+    pub fn poll_navigation(&mut self) {
+        let Some(pending) = &self.navigation.pending else {
+            return;
+        };
+        let Some(result) = self.lsp.take_response(&pending.handle) else {
+            return;
+        };
+        let Some(pending) = self.navigation.pending.take() else {
+            return;
+        };
+        match result {
+            Ok(value) => {
+                let locations = parse_locations(&value);
+                self.apply_navigation(pending.kind, &pending.symbol, &pending.origin, &locations);
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+    }
+
+    /// Turns server locations into items: project-relative paths, character
+    /// columns, and each line's text.
+    pub(crate) fn navigation_items(&self, locations: &[LspLocation]) -> Vec<NavigationItem> {
+        let root = self.canonical_root();
+        let mut files: HashMap<PathBuf, Option<Vec<String>>> = HashMap::new();
+        locations
+            .iter()
+            .take(USAGE_LIMIT)
+            .map(|location| {
+                let relative = root
+                    .as_deref()
+                    .and_then(|root| location.path.strip_prefix(root).ok())
+                    .map(Path::to_path_buf);
+                let open = relative
+                    .as_ref()
+                    .and_then(|relative| self.documents.iter().find(|d| &d.path == relative));
+                let line_text = match open {
+                    Some(document) => document
+                        .text
+                        .line(location.start_line)
+                        .unwrap_or_default()
+                        .trim_end_matches(['\r', '\n'])
+                        .to_owned(),
+                    None => files
+                        .entry(location.path.clone())
+                        .or_insert_with(|| read_lines(&location.path))
+                        .as_ref()
+                        .and_then(|lines| lines.get(location.start_line).cloned())
+                        .unwrap_or_default(),
+                };
+                let column = |utf16: usize| utf16_to_char(&line_text, utf16);
+                let end_column = if location.end_line == location.start_line {
+                    column(location.end_character)
+                } else {
+                    line_text.chars().count()
+                };
+                NavigationItem {
+                    external: relative.is_none(),
+                    path: relative.unwrap_or_else(|| location.path.clone()),
+                    line: location.start_line,
+                    column: column(location.start_character),
+                    end_column,
+                    line_text,
+                }
+            })
             .collect()
     }
 
-    /// Opens the Switcher, or cycles it when already open.
-    pub fn switcher_advance(&mut self, backward: bool) {
-        if let Some(switcher) = &mut self.navigation.switcher {
-            switcher.cycle(backward);
-        } else {
-            self.navigation.switcher = Switcher::open(self.switcher_entries(), backward);
-        }
-    }
-
-    /// Records the active document's caret as a recent location.
-    pub fn record_caret_location(&mut self) {
-        let Some(document) = self
-            .active_document
-            .and_then(|index| self.documents.get(index))
-        else {
-            return;
-        };
-        let Ok(line) = document
-            .text
-            .char_to_line_column(document.selections.primary().head)
-            .map(|(line, _)| line)
-        else {
-            return;
-        };
-        let preview = document.text.line(line).unwrap_or_default();
-        let (path, preview) = (document.path.clone(), preview.trim().to_owned());
-        self.navigation.note_location(&path, line, &preview);
-    }
-
-    /// Indexes more files for Go to Class / Symbol within `budget`.
-    pub fn refresh_symbol_index(&mut self, budget: Duration) {
-        let Some(project) = &self.project else {
-            return;
-        };
-        let open: Vec<(PathBuf, String)> = self
-            .documents
-            .iter()
-            .map(|document| (document.path.clone(), document.text.text()))
-            .collect();
-        let root = project.root().to_owned();
-        self.navigation.index_complete =
-            self.navigation
-                .index
-                .refresh(&root, &self.files, &open, budget);
-    }
-
-    /// Starts (or restarts) a `workspace/symbol` request for `query` through
-    /// a running language server; a no-op without one.
-    pub fn request_server_symbols(&mut self, query: &str) {
-        let server = &mut self.navigation.server;
-        if query.is_empty() {
-            server.clear();
+    pub(crate) fn apply_navigation(
+        &mut self,
+        kind: NavigationKind,
+        symbol: &str,
+        origin: &Place,
+        locations: &[LspLocation],
+    ) {
+        let items = self.navigation_items(locations);
+        let truncated = locations.len() > items.len();
+        if items.is_empty() {
+            self.status = kind.not_found().into();
             return;
         }
-        if server.answered.as_deref() == Some(query)
-            || server
-                .request
-                .as_ref()
-                .is_some_and(|(_, asked)| asked == query)
-        {
-            return;
-        }
-        let (Some(project), Some(active)) = (
-            &self.project,
-            self.active_document.and_then(|i| self.documents.get(i)),
-        ) else {
-            return;
+        let list = |title: String| NavigationList {
+            kind,
+            title,
+            items: items.clone(),
+            truncated,
         };
-        let anchor = project.root().join(&active.path);
-        if let Some((handle, _)) = server.request.take() {
-            self.lsp.cancel_workspace_symbols(&handle);
+        match kind {
+            NavigationKind::FindUsages => {
+                self.navigation.usages = Some(list(format!("Usages of {symbol}")));
+                self.navigation.usages_selected = true;
+                self.tool_windows.show(crate::ToolWindow::Find);
+                self.status = format!("Found {} usages of {symbol}", items.len());
+            }
+            NavigationKind::ShowUsages => {
+                self.navigation.choices = Some(list(format!("Usages of {symbol}")));
+            }
+            _ if items.len() == 1 => {
+                let item = &items[0];
+                // Go to Declaration on the declaration itself shows its usages,
+                // like the reference IDE.
+                let on_origin = kind == NavigationKind::Declaration
+                    && item.path == origin.path
+                    && self
+                        .documents
+                        .iter()
+                        .find(|document| document.path == origin.path)
+                        .and_then(|document| document.text.line_to_char(item.line))
+                        .is_some_and(|start| {
+                            (start + item.column..=start + item.end_column).contains(&origin.offset)
+                        });
+                if on_origin {
+                    if let Err(error) = self.request_navigation(NavigationKind::ShowUsages) {
+                        self.status = error;
+                    }
+                } else if let Err(error) = self.navigate_to(item) {
+                    self.status = error;
+                }
+            }
+            NavigationKind::Implementation => {
+                self.navigation.choices = Some(list(format!("Choose Implementation of {symbol}")));
+            }
+            _ => {
+                self.navigation.choices = Some(list(format!("Choose Declaration of {symbol}")));
+            }
         }
-        if let Ok(handle) = self.lsp.request_workspace_symbols(&anchor, query) {
-            self.navigation.server.request = Some((handle, query.to_owned()));
-        }
-    }
-
-    /// Collects an arrived `workspace/symbol` answer.
-    pub fn poll_server_symbols(&mut self) {
-        let Some((handle, query)) = self.navigation.server.request.clone() else {
-            return;
-        };
-        let Some(answer) = self.lsp.take_workspace_symbols(&handle) else {
-            return;
-        };
-        let root = self
-            .project
-            .as_ref()
-            .map(|project| project.root().to_owned());
-        let server = &mut self.navigation.server;
-        server.request = None;
-        server.answered = Some(query);
-        server.results = answer
-            .map(|hits| {
-                hits.into_iter()
-                    .map(|hit| server_entry(hit, root.as_deref()))
-                    .collect()
-            })
-            .unwrap_or_default();
     }
 }
 
-fn server_entry(hit: WorkspaceSymbolHit, root: Option<&Path>) -> SymbolEntry {
-    let path = root
-        .and_then(|root| hit.path.strip_prefix(root).ok())
-        .map(Path::to_owned)
-        .unwrap_or(hit.path);
-    SymbolEntry {
-        name: hit.name,
-        kind: lsp_kind(hit.kind),
-        path,
-        line: hit.line,
-        container: hit.container,
+fn read_lines(path: &Path) -> Option<Vec<String>> {
+    if std::fs::metadata(path).ok()?.len() > PREVIEW_FILE_LIMIT {
+        return None;
     }
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(text.lines().map(str::to_owned).collect())
 }
 
-// --------------------------------------------------------------- commands
+fn utf16_to_char(line: &str, utf16: usize) -> usize {
+    let mut units = 0;
+    for (index, c) in line.chars().enumerate() {
+        if units >= utf16 {
+            return index;
+        }
+        units += c.len_utf16();
+    }
+    line.chars().count()
+}
 
 pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
-    for (id, label, tab) in [
+    let lsp_ready = |state: &IdeState| state.active_has_language_server();
+    for (id, label, shortcut, kind) in [
         (
-            "navigate.searchEverywhere",
-            "Search Everywhere",
-            SearchTab::All,
+            "navigate.declaration",
+            "Go to Declaration or Usages",
+            "⌘B",
+            NavigationKind::Declaration,
         ),
-        ("navigate.gotoClass", "Go to Class", SearchTab::Classes),
-        ("navigate.gotoFile", "Go to File", SearchTab::Files),
-        ("navigate.gotoSymbol", "Go to Symbol", SearchTab::Symbols),
-        ("navigate.findAction", "Find Action", SearchTab::Actions),
+        (
+            "navigate.typeDeclaration",
+            "Go to Type Declaration",
+            "⇧⌘B",
+            NavigationKind::TypeDeclaration,
+        ),
+        (
+            "navigate.implementation",
+            "Go to Implementation(s)",
+            "⌥⌘B",
+            NavigationKind::Implementation,
+        ),
+        (
+            "navigate.findUsages",
+            "Find Usages",
+            "⌥F7",
+            NavigationKind::FindUsages,
+        ),
+        (
+            "navigate.showUsages",
+            "Show Usages",
+            "⌥⌘F7",
+            NavigationKind::ShowUsages,
+        ),
     ] {
         registry
             .register(Command::new(
-                spec(id, label, "Navigate", None, r#"{"tab":"string?"}"#),
-                |_| true,
-                move |state: &mut IdeState, params| {
-                    let tab = match params.get("tab").and_then(Value::as_str) {
-                        Some(name) => SearchTab::parse(name).ok_or_else(|| {
-                            CommandError::InvalidParams(format!("unknown search tab `{name}`"))
-                        })?,
-                        None => tab,
-                    };
-                    state.navigation.request = Some(NavigationRequest::SearchEverywhere(tab));
-                    Ok(json!({"tab": tab.id()}))
+                spec(id, label, "Navigate", Some(shortcut), "{}"),
+                lsp_ready,
+                move |state: &mut IdeState, _| {
+                    let id = state
+                        .request_navigation(kind)
+                        .map_err(CommandError::Failed)?;
+                    Ok(json!({"requestId": id}))
                 },
             ))
             .expect("unique built-in id");
@@ -766,82 +455,76 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     registry
         .register(Command::new(
             spec(
-                "navigate.recentFiles",
-                "Recent Files",
+                "navigate.declarationAt",
+                "Go to Declaration at Position",
                 "Navigate",
                 None,
-                "{}",
+                r#"{"line":0,"column":0}"#,
             ),
-            |_| true,
-            |state: &mut IdeState, _| {
-                state.navigation.request = Some(NavigationRequest::RecentFiles);
-                Ok(Value::Null)
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec(
-                "navigate.recentLocations",
-                "Recent Locations",
-                "Navigate",
-                None,
-                "{}",
-            ),
-            |_| true,
-            |state: &mut IdeState, _| {
-                state.navigation.request = Some(NavigationRequest::RecentLocations);
-                Ok(Value::Null)
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec(
-                "navigate.switcher",
-                "Switcher",
-                "Navigate",
-                None,
-                r#"{"backward":"bool?"}"#,
-            ),
-            |state: &IdeState| !state.documents.is_empty() || state.project.is_some(),
+            lsp_ready,
             |state: &mut IdeState, params| {
-                let backward = params
-                    .get("backward")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                state.switcher_advance(backward);
-                Ok(json!({"selected": state.navigation.switcher.as_ref().map(|s| s.selected)}))
+                let line = usize_param(&params, "line")?;
+                let column = usize_param(&params, "column")?;
+                let index = state
+                    .active_document
+                    .ok_or_else(|| CommandError::Failed("no active document".into()))?;
+                let document = &mut state.documents[index];
+                let start = document
+                    .text
+                    .line_to_char(line)
+                    .ok_or_else(|| CommandError::InvalidParams(format!("no line {line}")))?;
+                let offset = (start + column).min(document.text.len_chars());
+                document.selections.set_single(Selection::caret(offset));
+                let id = state
+                    .request_navigation(NavigationKind::Declaration)
+                    .map_err(CommandError::Failed)?;
+                Ok(json!({"requestId": id}))
             },
         ))
         .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec(
-                "navigate.switcherCommit",
-                "Switch to Selected Entry",
-                "Navigate",
-                None,
-                "{}",
-            ),
-            |state: &IdeState| state.navigation.switcher.is_some(),
-            |state: &mut IdeState, _| {
-                let Some(switcher) = state.navigation.switcher.take() else {
-                    return Ok(Value::Null);
-                };
-                match switcher.selected_entry() {
-                    SwitcherEntry::File(path) => {
-                        let index = state
-                            .documents
-                            .iter()
-                            .position(|document| &document.path == path)
-                            .ok_or_else(|| CommandError::Failed("file is no longer open".into()))?;
-                        state
-                            .activate_document(index)
-                            .map_err(CommandError::Failed)?;
+    for (id, label, shortcut, forward) in [
+        ("navigate.back", "Back", "⌘[", false),
+        ("navigate.forward", "Forward", "⌘]", true),
+    ] {
+        registry
+            .register(Command::new(
+                spec(id, label, "Navigate", Some(shortcut), "{}"),
+                move |state: &IdeState| {
+                    if forward {
+                        state.navigation.can_go_forward()
+                    } else {
+                        state.navigation.can_go_back()
                     }
-                    SwitcherEntry::ToolWindow(window) => state.tool_windows.show(*window),
-                }
+                },
+                move |state: &mut IdeState, _| {
+                    let place = state
+                        .navigate_history(forward)
+                        .map_err(CommandError::Failed)?;
+                    Ok(json!(place))
+                },
+            ))
+            .expect("unique built-in id");
+    }
+    registry
+        .register(Command::new(
+            spec(
+                "navigate.goto",
+                "Go to Location",
+                "Navigate",
+                None,
+                r#"{"path":"string","line":0,"column":0}"#,
+            ),
+            |state: &IdeState| state.project.is_some(),
+            |state: &mut IdeState, params| {
+                let item = NavigationItem {
+                    path: PathBuf::from(string_param(&params, "path")?),
+                    external: false,
+                    line: usize_param(&params, "line")?,
+                    column: usize_param(&params, "column")?,
+                    end_column: 0,
+                    line_text: String::new(),
+                };
+                state.navigate_to(&item).map_err(CommandError::Failed)?;
                 Ok(Value::Null)
             },
         ))
@@ -849,16 +532,21 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     registry
         .register(Command::new(
             spec(
-                "navigate.switcherCancel",
-                "Close Switcher",
+                "navigate.results",
+                "Navigation Results",
                 "Navigate",
                 None,
                 "{}",
             ),
-            |state: &IdeState| state.navigation.switcher.is_some(),
+            |_| true,
             |state: &mut IdeState, _| {
-                state.navigation.switcher = None;
-                Ok(Value::Null)
+                Ok(json!({
+                    "pending": state.navigation.is_pending(),
+                    "choices": state.navigation.choices,
+                    "usages": state.navigation.usages,
+                    "canGoBack": state.navigation.can_go_back(),
+                    "canGoForward": state.navigation.can_go_forward(),
+                }))
             },
         ))
         .expect("unique built-in id");
@@ -869,340 +557,137 @@ mod tests {
     use super::*;
     use crate::built_in_commands;
 
-    fn names<T: Clone>(ranked: &[Ranked<T>], name: impl Fn(&T) -> String) -> Vec<String> {
-        ranked.iter().map(|r| name(&r.item)).collect()
-    }
-
-    fn candidates(names: &[&str]) -> Vec<(String, String)> {
-        names
-            .iter()
-            .map(|n| ((*n).to_owned(), (*n).to_owned()))
-            .collect()
-    }
-
-    #[test]
-    fn ranking_prefers_exact_then_prefix_then_humps_then_inner() {
-        let ranked = rank(
-            "gn",
-            candidates(&["signName", "getName", "gn", "GNode", "longgn"]),
-            10,
-        );
-        let order = names(&ranked, |s| s.clone());
-        assert_eq!(order[0], "gn");
-        assert!(order.contains(&"getName".to_owned()));
-        // Fragments must start at a hump, so mid-word `gn` does not match.
-        assert!(!order.contains(&"signName".to_owned()));
-        assert!(!order.contains(&"longgn".to_owned()));
-    }
-
-    #[test]
-    fn camel_humps_match_class_names() {
-        let ranked = rank(
-            "MA",
-            candidates(&["MainActivity", "Mapper", "Dramatic", "MyApplication"]),
-            10,
-        );
-        let order = names(&ranked, |s| s.clone());
-        assert!(order.contains(&"MainActivity".to_owned()));
-        assert!(order.contains(&"MyApplication".to_owned()));
-        assert!(!order.contains(&"Dramatic".to_owned()));
-        assert_eq!(ranked[0].positions.first(), Some(&0));
-    }
-
-    #[test]
-    fn shorter_names_win_ties_and_empty_query_keeps_order() {
-        let ranked = rank("Act", candidates(&["ActivityManager", "Activity"]), 10);
-        assert_eq!(ranked[0].item, "Activity");
-        let all = rank("", candidates(&["b", "a"]), 10);
-        assert_eq!(names(&all, |s| s.clone()), ["b", "a"]);
-        assert_eq!(rank("x", candidates(&["a", "b"]), 10).len(), 0);
-        assert_eq!(rank("", candidates(&["a", "b", "c"]), 2).len(), 2);
-    }
-
-    #[test]
-    fn line_suffix_is_split_off() {
-        assert_eq!(split_line_suffix("Main:42"), ("Main", Some(42)));
-        assert_eq!(split_line_suffix("Main:0"), ("Main", Some(1)));
-        assert_eq!(split_line_suffix("Main:"), ("Main:", None));
-        assert_eq!(split_line_suffix("Main"), ("Main", None));
-    }
-
-    fn entry(path: &str) -> FileEntry {
-        FileEntry {
-            relative_path: path.into(),
-            is_dir: false,
-            is_symlink: false,
-        }
-    }
-
-    fn symbol(name: &str, kind: SymbolKind, path: &str, line: usize) -> SymbolEntry {
-        SymbolEntry {
-            name: name.into(),
-            kind,
-            path: path.into(),
-            line,
-            container: None,
-        }
-    }
-
-    fn action(id: &str, label: &str) -> ActionCandidate {
-        ActionCandidate {
-            id: id.into(),
-            label: label.into(),
-            category: "Test".into(),
-            shortcut: "Ctrl+S".into(),
-            enabled: true,
-        }
-    }
-
-    #[test]
-    fn providers_split_classes_symbols_files_and_actions() {
-        let files = [entry("src/MainActivity.java"), entry("README.md")];
-        let recent = [PathBuf::from("README.md")];
-        let indexed = [
-            symbol(
-                "MainActivity",
-                SymbolKind::Class,
-                "src/MainActivity.java",
-                0,
-            ),
-            symbol("onCreate", SymbolKind::Method, "src/MainActivity.java", 4),
-        ];
-        let server = [
-            symbol(
-                "MainActivity",
-                SymbolKind::Class,
-                "src/MainActivity.java",
-                0,
-            ),
-            symbol("mainLoop", SymbolKind::Function, "src/lib.rs", 9),
-        ];
-        let actions = [
-            action("editor.saveAll", "Save All"),
-            action("run.project", "Run"),
-        ];
-        let sources = SearchSources {
-            files: &files,
-            recent: &recent,
-            symbols: indexed.iter().collect(),
-            server_symbols: &server,
-            actions: &actions,
-        };
-        let classes = search(SearchTab::Classes, "MA", &sources);
-        assert_eq!(classes.len(), 1, "server duplicate is merged: {classes:?}");
-        let symbols = search(SearchTab::Symbols, "main", &sources);
-        assert_eq!(
-            names(&symbols, |hit| hit_name(hit).to_owned()),
-            ["mainLoop"],
-            "server symbols are included, classes are not"
-        );
-        assert_eq!(
-            search(SearchTab::Files, "mainact:30", &sources)[0].item,
-            Hit::File {
-                path: "src/MainActivity.java".into(),
-                line: Some(30)
-            }
-        );
-        assert_eq!(
-            search(SearchTab::Files, "", &sources)[0].item,
-            Hit::File {
-                path: "README.md".into(),
-                line: None
-            }
-        );
-        assert!(matches!(
-            search(SearchTab::Actions, "sa", &sources)[0].item,
-            Hit::Action(ref a) if a.id == "editor.saveAll"
-        ));
-        let all = search(SearchTab::All, "m", &sources);
-        assert!(all.iter().any(|r| matches!(r.item, Hit::Symbol(_))));
-        assert!(all.iter().any(|r| matches!(r.item, Hit::File { .. })));
-    }
-
-    #[test]
-    fn symbol_index_prefers_open_buffers_and_skips_unsupported_files() {
-        let root = std::env::temp_dir().join(format!("jetthing-nav-index-{}", std::process::id()));
+    fn project(
+        name: &str,
+    ) -> (
+        IdeState,
+        jetthing_command::CommandRegistry<IdeState>,
+        PathBuf,
+    ) {
+        let root = std::env::temp_dir().join(format!("jetthing-nav-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("a.rs"), "struct OnDisk;\n").unwrap();
-        std::fs::write(root.join("notes.txt"), "struct Nope;\n").unwrap();
-        let files = [entry("a.rs"), entry("notes.txt")];
-        let mut index = SymbolIndex::default();
-        assert!(index.refresh(&root, &files, &[], Duration::from_secs(5)));
-        let names: Vec<_> = index.all().map(|s| s.name.clone()).collect();
-        assert_eq!(names, ["OnDisk"]);
-        let open = [(PathBuf::from("a.rs"), "struct Edited;\n".to_owned())];
-        index.refresh(&root, &files, &open, Duration::from_secs(5));
-        let names: Vec<_> = index.all().map(|s| s.name.clone()).collect();
-        assert_eq!(names, ["Edited"]);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn recent_locations_merge_nearby_moves_and_cap() {
-        let mut nav = NavigationState::default();
-        nav.note_location(Path::new("a.rs"), 10, "x");
-        nav.note_location(Path::new("a.rs"), 12, "y");
-        assert_eq!(nav.locations.len(), 1);
-        assert_eq!(nav.locations[0].line, 12);
-        nav.note_location(Path::new("b.rs"), 1, "b");
-        nav.note_location(Path::new("a.rs"), 100, "far");
-        let order: Vec<_> = nav
-            .locations
-            .iter()
-            .map(|l| (l.path.clone(), l.line))
-            .collect();
-        assert_eq!(
-            order,
-            [
-                (PathBuf::from("a.rs"), 100),
-                (PathBuf::from("b.rs"), 1),
-                (PathBuf::from("a.rs"), 12)
-            ]
-        );
-        for line in 0..80 {
-            nav.note_location(Path::new("c.rs"), line * 10, "");
-        }
-        assert_eq!(nav.locations.len(), MAX_LOCATIONS);
-    }
-
-    #[test]
-    fn switcher_cycles_forward_and_backward_with_wraparound() {
-        let entries = vec![
-            SwitcherEntry::File("a".into()),
-            SwitcherEntry::File("b".into()),
-            SwitcherEntry::ToolWindow(ToolWindow::Project),
-        ];
-        let mut forward = Switcher::open(entries.clone(), false).unwrap();
-        assert_eq!(forward.selected, 1);
-        forward.cycle(false);
-        forward.cycle(false);
-        assert_eq!(forward.selected, 0);
-        let mut backward = Switcher::open(entries, true).unwrap();
-        assert_eq!(backward.selected, 2);
-        backward.cycle(true);
-        assert_eq!(backward.selected, 1);
-        assert!(Switcher::open(Vec::new(), false).is_none());
-    }
-
-    #[test]
-    fn switcher_command_orders_recent_files_and_commits_the_selection() {
-        let root = std::env::temp_dir().join(format!("jetthing-nav-switch-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        for name in ["a.txt", "b.txt", "c.txt"] {
-            std::fs::write(root.join(name), name).unwrap();
-        }
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.txt"), "fn greet() {}\ngreet();\n").unwrap();
+        std::fs::write(root.join("src/b.txt"), "// 𝔸\nlet x = greet();\n").unwrap();
         let commands = built_in_commands();
         let mut state = IdeState::default();
         commands
             .execute("project.open", &mut state, json!({"path": root}))
             .unwrap();
-        for name in ["a.txt", "b.txt", "c.txt", "a.txt"] {
-            commands
-                .execute("editor.openFile", &mut state, json!({"path": name}))
-                .unwrap();
+        commands
+            .execute("editor.openFile", &mut state, json!({"path": "src/a.txt"}))
+            .unwrap();
+        let root = root.canonicalize().unwrap();
+        (state, commands, root)
+    }
+
+    fn location(path: PathBuf, line: usize, start: usize, end: usize) -> LspLocation {
+        LspLocation {
+            path,
+            start_line: line,
+            start_character: start,
+            end_line: line,
+            end_character: end,
         }
-        // Recent Files ordering: newest first, no duplicates.
-        let recent: Vec<_> = state
-            .recent_files
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect();
-        assert_eq!(recent, ["a.txt", "c.txt", "b.txt"]);
-        // Ctrl+Tab lands on the previously used file, a second press on the one before.
-        commands
-            .execute("navigate.switcher", &mut state, Value::Null)
-            .unwrap();
-        let switcher = state.navigation.switcher.as_ref().unwrap();
-        assert_eq!(
-            switcher.selected_entry(),
-            &SwitcherEntry::File("c.txt".into())
-        );
-        commands
-            .execute("navigate.switcher", &mut state, Value::Null)
-            .unwrap();
-        assert_eq!(
-            state.navigation.switcher.as_ref().unwrap().selected_entry(),
-            &SwitcherEntry::File("b.txt".into())
-        );
-        commands
-            .execute("navigate.switcherCommit", &mut state, Value::Null)
-            .unwrap();
-        assert!(state.navigation.switcher.is_none());
-        let active = &state.documents[state.active_document.unwrap()];
-        assert_eq!(active.path, Path::new("b.txt"));
-        commands
-            .execute("navigate.switcher", &mut state, json!({"backward": true}))
-            .unwrap();
-        commands
-            .execute("navigate.switcherCancel", &mut state, Value::Null)
-            .unwrap();
-        assert!(state.navigation.switcher.is_none());
-        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn caret(state: &IdeState) -> Place {
+        state.current_place().unwrap()
     }
 
     #[test]
-    fn navigate_commands_request_the_matching_tab() {
-        let commands = built_in_commands();
-        let mut state = IdeState::default();
-        for (id, tab) in [
-            ("navigate.gotoClass", SearchTab::Classes),
-            ("navigate.gotoFile", SearchTab::Files),
-            ("navigate.gotoSymbol", SearchTab::Symbols),
-            ("navigate.findAction", SearchTab::Actions),
-            ("navigate.searchEverywhere", SearchTab::All),
-        ] {
-            commands.execute(id, &mut state, Value::Null).unwrap();
-            assert_eq!(
-                state.navigation.request.take(),
-                Some(NavigationRequest::SearchEverywhere(tab))
-            );
-        }
+    fn one_target_jumps_and_back_forward_walk_the_history() {
+        let (mut state, commands, root) = project("jump");
+        let origin = caret(&state);
+        // `greet` in b.txt line 1, after a surrogate pair on line 0.
+        let target = location(root.join("src/b.txt"), 1, 8, 13);
+        state.apply_navigation(NavigationKind::Declaration, "greet", &origin, &[target]);
+        let place = caret(&state);
+        assert_eq!(place.path, PathBuf::from("src/b.txt"));
+        // Line 0 is "// 𝔸\n" (5 chars, 6 UTF-16 units); column 8 of line 1.
+        assert_eq!(place.offset, 5 + 8);
+        assert!(state.navigation.can_go_back());
+        commands
+            .execute("navigate.back", &mut state, json!({}))
+            .unwrap();
+        assert_eq!(caret(&state), origin);
+        commands
+            .execute("navigate.forward", &mut state, json!({}))
+            .unwrap();
+        assert_eq!(caret(&state), place);
+        assert!(!commands.is_enabled("navigate.forward", &state));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn several_targets_become_choices_and_usages_fill_the_find_window() {
+        let (mut state, commands, root) = project("choices");
+        let origin = caret(&state);
+        let locations = [
+            location(root.join("src/b.txt"), 1, 8, 13),
+            location(root.join("src/a.txt"), 1, 0, 5),
+            location(PathBuf::from("/usr/lib/rust/lib.rs"), 0, 0, 1),
+        ];
+        state.apply_navigation(NavigationKind::Implementation, "greet", &origin, &locations);
+        let choices = state.navigation.choices.clone().unwrap();
+        assert_eq!(choices.title, "Choose Implementation of greet");
+        assert_eq!(
+            choices.items[0].line_text, "let x = greet();",
+            "read from disk"
+        );
+        assert_eq!(choices.items[0].column, 8);
+        assert_eq!(
+            choices.items[1].line_text, "greet();",
+            "read from the open document"
+        );
+        assert!(choices.items[2].external);
+        assert!(state.navigate_to(&choices.items[2]).is_err());
+        state.apply_navigation(
+            NavigationKind::FindUsages,
+            "greet",
+            &origin,
+            &locations[..2],
+        );
+        let usages = state.navigation.usages.as_ref().unwrap();
+        assert_eq!(usages.title, "Usages of greet");
+        assert_eq!(usages.items.len(), 2);
+        assert_eq!(
+            state.tool_windows.visible(crate::Anchor::Bottom),
+            Some(crate::ToolWindow::Find)
+        );
+        state.apply_navigation(NavigationKind::Declaration, "nothing", &origin, &[]);
+        assert_eq!(state.status, "Cannot find declaration to go to");
+        let results = commands
+            .execute("navigate.results", &mut state, json!({}))
+            .unwrap();
+        assert_eq!(results["usages"]["items"][1]["path"], "src/a.txt");
         commands
             .execute(
-                "navigate.searchEverywhere",
+                "navigate.goto",
                 &mut state,
-                json!({"tab": "symbols"}),
+                json!({"path": "src/b.txt", "line": 1, "column": 4}),
             )
             .unwrap();
-        assert_eq!(
-            state.navigation.request,
-            Some(NavigationRequest::SearchEverywhere(SearchTab::Symbols))
-        );
-        assert!(
-            commands
-                .execute(
-                    "navigate.searchEverywhere",
-                    &mut state,
-                    json!({"tab": "nope"})
-                )
-                .is_err()
-        );
-        assert_eq!(SearchTab::All.step(true), SearchTab::Actions);
-        assert_eq!(SearchTab::Actions.step(false), SearchTab::All);
+        assert_eq!(caret(&state).offset, 5 + 4);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn outlines_come_from_the_file_structure() {
-        let rust = outline(
-            Path::new("a.rs"),
-            "struct Greeter;\nfn greet() {}\nimpl Greeter { fn hello(&self) {} }\n",
+    fn navigation_commands_explain_a_missing_server() {
+        let (mut state, commands, root) = project("noserver");
+        // `.txt` has no language server: the commands are disabled.
+        assert!(!commands.is_enabled("navigate.declaration", &state));
+        assert!(
+            state
+                .request_navigation(NavigationKind::Declaration)
+                .unwrap_err()
+                .contains("no language server")
         );
         assert!(
-            rust.iter()
-                .any(|(n, k, _)| n == "Greeter" && is_class_like(*k))
+            commands
+                .execute("navigate.back", &mut state, json!({}))
+                .is_err()
         );
-        assert!(
-            rust.iter()
-                .any(|(n, k, l)| n == "hello" && *l == 2 && !is_class_like(*k))
-        );
-        let java = outline(
-            Path::new("A.java"),
-            "public class A {\n  void run() {}\n}\n",
-        );
-        assert!(java.iter().any(|(n, k, _)| n == "A" && is_class_like(*k)));
-        assert!(java.iter().any(|(n, _, l)| n == "run" && *l == 1));
-        assert!(outline(Path::new("n.txt"), "hello").is_empty());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

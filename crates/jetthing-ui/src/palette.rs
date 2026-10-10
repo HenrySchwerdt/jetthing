@@ -1,12 +1,12 @@
 //! "Search Everywhere" popup: Classes, Files, Symbols and Actions behind one field.
 //!
-//! What each tab lists and how it ranks is decided in `jetthing_core::navigation`;
+//! What each tab lists and how it ranks is decided in `jetthing_core::quick_nav`;
 //! this file only renders it and turns a chosen row into a command.
 
 use crate::icons::{self, Icon, TypeKind};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Rect, Sense, vec2};
-use jetthing_core::navigation::{
+use jetthing_core::quick_nav::{
     ActionCandidate, Hit, Ranked, SearchSources, SearchTab, SymbolEntry, file_name, search,
 };
 use jetthing_language::structure::SymbolKind;
@@ -80,7 +80,7 @@ fn items(app: &mut IdeApp) -> Vec<Ranked<Hit>> {
     } else {
         Vec::new()
     };
-    let navigation = &app.state.navigation;
+    let navigation = &app.state.quick_nav;
     let sources = SearchSources {
         files: &app.state.files,
         recent: &app.state.recent_files,

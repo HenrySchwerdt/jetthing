@@ -1,18 +1,18 @@
 //! The Switcher (Ctrl+Tab) popup and the glue that turns `navigate.*` requests
-//! into popups. Cycling, ordering and committing live in `jetthing_core::navigation`.
+//! into popups. Cycling, ordering and committing live in `jetthing_core::quick_nav`.
 
 use crate::icons::{self, Icon};
 use crate::{IdeApp, popups, theme};
 use eframe::egui::{self, Rect, Sense, vec2};
 use jetthing_core::ToolWindow;
-use jetthing_core::navigation::{NavigationRequest, SwitcherEntry, file_name};
+use jetthing_core::quick_nav::{NavigationRequest, SwitcherEntry, file_name};
 use serde_json::Value;
 
 /// Opens the popup a `navigate.*` command asked for and records the caret as a
 /// recent location. Runs once per frame, after input has been dispatched.
 pub fn frame(app: &mut IdeApp, ctx: &egui::Context) {
     app.state.record_caret_location();
-    match app.state.navigation.request.take() {
+    match app.state.quick_nav.request.take() {
         Some(NavigationRequest::SearchEverywhere(tab)) => app.palette.show_tab(tab),
         Some(NavigationRequest::RecentFiles) => app.open_dialog(popups::Dialog::Recent {
             query: String::new(),
@@ -21,14 +21,14 @@ pub fn frame(app: &mut IdeApp, ctx: &egui::Context) {
         }),
         Some(NavigationRequest::RecentLocations) => {
             app.open_dialog(popups::Dialog::RecentLocations {
-                selected: usize::from(app.state.navigation.locations.len() > 1),
+                selected: usize::from(app.state.quick_nav.locations.len() > 1),
             })
         }
         None => {}
     }
     // Held Ctrl was part of opening the Switcher: releasing it commits.
     let ctrl = ctx.input(|input| input.modifiers.ctrl);
-    if app.state.navigation.switcher.is_none() {
+    if app.state.quick_nav.switcher.is_none() {
         app.switcher_ctrl = None;
     } else if app.switcher_ctrl.is_none() {
         app.switcher_ctrl = Some(ctrl);
@@ -41,7 +41,7 @@ fn commit(app: &mut IdeApp, ctx: &egui::Context) {
     app.switcher_ctrl = None;
     let is_file = matches!(
         app.state
-            .navigation
+            .quick_nav
             .switcher
             .as_ref()
             .map(|s| s.selected_entry()),
@@ -67,11 +67,12 @@ fn window_icon(window: ToolWindow) -> Icon {
         ToolWindow::BuildVariants => Icon::Variants,
         ToolWindow::Structure => Icon::Structure,
         ToolWindow::Gradle | ToolWindow::Bazel => Icon::Model,
+        ToolWindow::AiChat => Icon::Ai,
     }
 }
 
 pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
-    let Some(switcher) = app.state.navigation.switcher.clone() else {
+    let Some(switcher) = app.state.quick_nav.switcher.clone() else {
         return;
     };
     let backward = |ctx: &egui::Context, key| {
@@ -88,7 +89,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     }
     let selected = app
         .state
-        .navigation
+        .quick_nav
         .switcher
         .as_ref()
         .map_or(switcher.selected, |s| s.selected);
@@ -173,7 +174,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 });
         });
     if let Some(index) = clicked
-        && let Some(state) = app.state.navigation.switcher.as_mut()
+        && let Some(state) = app.state.quick_nav.switcher.as_mut()
     {
         state.selected = index;
         commit(app, ctx);

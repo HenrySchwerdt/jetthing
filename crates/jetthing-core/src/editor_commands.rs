@@ -31,11 +31,17 @@ fn bool_param(params: &Value, name: &str) -> bool {
     params.get(name).and_then(Value::as_bool).unwrap_or(false)
 }
 
-fn find_options(params: &Value) -> FindOptions {
-    FindOptions {
+/// Find options from command parameters; an invalid regex is rejected here
+/// so every find/replace command reports it the same way.
+fn find_options(params: &Value, query: &str) -> Result<FindOptions, CommandError> {
+    let options = FindOptions {
         match_case: bool_param(params, "matchCase"),
         whole_words: bool_param(params, "wholeWords"),
-    }
+        regex: bool_param(params, "regex"),
+    };
+    ops::validate_query(query, options)
+        .map_err(|error| CommandError::InvalidParams(error.to_string()))?;
+    Ok(options)
 }
 
 /// Registers a parameterless action that edits the active document.
@@ -495,12 +501,12 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                     label,
                     "Editor",
                     Some(shortcut),
-                    r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?"}"#,
+                    r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?"}"#,
                 ),
                 |state: &IdeState| state.active_document.is_some(),
                 move |state: &mut IdeState, params| {
                     let query = string_param(&params, "query")?;
-                    let options = find_options(&params);
+                    let options = find_options(&params, &query)?;
                     state
                         .edit_active(|d| Ok(select_match(d, &query, options, backwards)))
                         .map_err(CommandError::Failed)
@@ -515,13 +521,13 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 "Replace Occurrence",
                 "Editor",
                 None,
-                r#"{"query":"string","replacement":"string","matchCase":"bool?","wholeWords":"bool?"}"#,
+                r#"{"query":"string","replacement":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?"}"#,
             ),
             |state: &IdeState| state.active_document.is_some(),
             |state: &mut IdeState, params| {
                 let query = string_param(&params, "query")?;
                 let replacement = string_param(&params, "replacement")?;
-                let options = find_options(&params);
+                let options = find_options(&params, &query)?;
                 state
                     .edit_active(|d| {
                         let primary = d.selections.primary();
@@ -529,17 +535,28 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                             .text
                             .slice(primary.start(), primary.end())
                             .map_err(text_error)?;
-                        let is_match = ops::find_all(&selected, &query, options)
-                            .first()
-                            .is_some_and(|&(s, e)| s == 0 && e == selected.chars().count());
-                        if is_match {
+                        // The selection is replaced only when it is exactly one match;
+                        // regex replacements expand `$1`/`${name}` for that match.
+                        let replaced = if options.regex {
+                            ops::regex_replacements(&d.text.text(), &query, options, &replacement)
+                                .map_err(text_error)?
+                                .into_iter()
+                                .find(|(s, e, _)| *s == primary.start() && *e == primary.end())
+                                .map(|(_, _, expanded)| expanded)
+                        } else {
+                            ops::find_all(&selected, &query, options)
+                                .first()
+                                .is_some_and(|&(s, e)| s == 0 && e == selected.chars().count())
+                                .then(|| replacement.clone())
+                        };
+                        if let Some(replaced) = replaced {
                             ops::replace_ranges(
                                 &mut d.text,
                                 &[(primary.start(), primary.end())],
-                                &replacement,
+                                &replaced,
                             )
                             .map_err(text_error)?;
-                            let caret = primary.start() + replacement.chars().count();
+                            let caret = primary.start() + replaced.chars().count();
                             d.selections.set_single(Selection::caret(caret));
                         }
                         Ok(select_match(d, &query, options, false))
@@ -555,21 +572,43 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 "Replace All",
                 "Editor",
                 None,
-                r#"{"query":"string","replacement":"string","matchCase":"bool?","wholeWords":"bool?"}"#,
+                r#"{"query":"string","replacement":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?"}"#,
             ),
             |state: &IdeState| state.active_document.is_some(),
             |state: &mut IdeState, params| {
                 let query = string_param(&params, "query")?;
                 let replacement = string_param(&params, "replacement")?;
-                let options = find_options(&params);
+                let options = find_options(&params, &query)?;
                 let count = state
                     .edit_active(|d| {
-                        let ranges = ops::find_all(&d.text.text(), &query, options);
-                        ops::replace_ranges(&mut d.text, &ranges, &replacement)
+                        let count = if options.regex {
+                            let changes = ops::regex_replacements(
+                                &d.text.text(),
+                                &query,
+                                options,
+                                &replacement,
+                            )
                             .map_err(text_error)?;
+                            let count = changes.len();
+                            d.text
+                                .edit_many(changes.into_iter().map(|(start, end, inserted)| {
+                                    jetthing_text::TextChange {
+                                        start_char: start,
+                                        end_char: end,
+                                        inserted,
+                                    }
+                                }))
+                                .map_err(text_error)?;
+                            count
+                        } else {
+                            let ranges = ops::find_all(&d.text.text(), &query, options);
+                            ops::replace_ranges(&mut d.text, &ranges, &replacement)
+                                .map_err(text_error)?;
+                            ranges.len()
+                        };
                         let len = d.text.len_chars();
                         d.selections.clamp(len);
-                        Ok(ranges.len())
+                        Ok(count)
                     })
                     .map_err(CommandError::Failed)?;
                 state.status = format!("{count} occurrences replaced");
@@ -669,6 +708,50 @@ mod tests {
         for dir in ["src", "src/main", "src/main/java"] {
             assert!(state.expanded_dirs.contains(Path::new(dir)), "{dir}");
         }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn regex_find_replace_and_replace_all_expand_groups() {
+        let (mut state, commands, root) = state_with("let a = 1;\nlet bb = 22;\n", "regex.kt");
+        let found = commands
+            .execute(
+                "editor.findNext",
+                &mut state,
+                json!({"query": r"let (\w+)", "regex": true}),
+            )
+            .unwrap();
+        assert_eq!(found["matches"], 2);
+        let params = json!({"query": r"let (\w+) = (\d+)", "replacement": "val $1: Int = $2", "regex": true});
+        commands
+            .execute("editor.gotoLine", &mut state, json!({"line": 1}))
+            .unwrap();
+        commands
+            .execute("editor.findNext", &mut state, params.clone())
+            .unwrap();
+        commands
+            .execute("editor.replace", &mut state, params.clone())
+            .unwrap();
+        assert_eq!(
+            state.documents[0].text.text(),
+            "val a: Int = 1;\nlet bb = 22;\n"
+        );
+        let all = commands
+            .execute("editor.replaceAll", &mut state, params)
+            .unwrap();
+        assert_eq!(all["replaced"], 1);
+        assert_eq!(
+            state.documents[0].text.text(),
+            "val a: Int = 1;\nval bb: Int = 22;\n"
+        );
+        let error = commands
+            .execute(
+                "editor.findNext",
+                &mut state,
+                json!({"query": "(", "regex": true}),
+            )
+            .unwrap_err();
+        assert!(matches!(error, CommandError::InvalidParams(_)), "{error}");
         let _ = std::fs::remove_dir_all(root);
     }
 

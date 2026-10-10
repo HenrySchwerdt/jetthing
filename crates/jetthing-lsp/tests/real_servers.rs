@@ -105,3 +105,26 @@ fn jdtls_completes_java_members() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+#[ignore = "requires kotlin-lsp on PATH and /home/user/samples/kotlin-app"]
+fn kotlin_lsp_completes_kotlin_members() {
+    let root = Path::new("/home/user/samples/kotlin-app");
+    if !installed("kotlin-lsp") || !root.is_dir() {
+        return;
+    }
+    let file = root.join("src/main/kotlin/Main.kt").canonicalize().unwrap();
+    let source = std::fs::read_to_string(&file)
+        .unwrap()
+        .replace("    \n}", "    greeter.\n}");
+    let mut manager = LspManager::default();
+    manager.set_project(Some(root));
+    manager.sync_document(&file, &source, 0).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(300);
+    let items = complete(&mut manager, &file, 6, 12, deadline);
+    let labels: Vec<_> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(
+        labels.iter().any(|label| label.starts_with("greeting")),
+        "{labels:?}"
+    );
+}

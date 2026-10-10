@@ -23,6 +23,15 @@ pub struct SnippetSession {
 }
 
 impl SnippetSession {
+    /// Moves every stop by `delta` chars (text was inserted before the snippet).
+    pub(crate) fn shift(&mut self, delta: isize) {
+        for range in self.stops.iter_mut().flatten() {
+            range.0 = range.0.saturating_add_signed(delta);
+            range.1 = range.1.saturating_add_signed(delta);
+        }
+        self.len = self.len.saturating_add_signed(delta);
+    }
+
     /// Ranges of every stop, for highlighting.
     pub fn ranges(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
         self.stops.iter().flatten().copied()

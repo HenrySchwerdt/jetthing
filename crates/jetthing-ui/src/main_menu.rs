@@ -149,7 +149,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) -> bool {
                                 ui.separator();
                             }
                             if id == "FileMenu" && ui.button("Plugins…").clicked() {
-                                app.plugins_window = Some(Default::default());
+                                app.dispatch("plugin.manager.open", Value::Null);
                                 ui.close();
                             }
                             for spec in extra {

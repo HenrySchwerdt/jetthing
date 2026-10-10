@@ -5,6 +5,9 @@
 //! [`ViewFrame`]. Plugins use [`ui`] to get it back, and the widgets below
 //! (which read colors from the installed workbench visuals) to look native.
 
+mod declarative;
+
+pub use declarative::render_node;
 pub use egui;
 pub use jetthing_plugin_api::ViewFrame;
 
@@ -29,6 +32,16 @@ pub fn render(frame: &mut ViewFrame<'_>, view: &mut dyn EguiView) -> bool {
             true
         }
         None => false,
+    }
+}
+
+/// Width for a text input: full width in vertical layouts; bounded in rows
+/// so the widgets after it stay visible.
+pub fn input_width(ui: &Ui, multiline: bool) -> f32 {
+    if !multiline && ui.layout().is_horizontal() {
+        (ui.available_width() * 0.6).clamp(120.0, 320.0)
+    } else {
+        f32::INFINITY
     }
 }
 

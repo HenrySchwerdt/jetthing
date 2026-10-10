@@ -540,7 +540,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
             }
         }
         Dialog::Recent { query, selected } => {
-            let entries: Vec<PathBuf> = jetthing_core::navigation::rank(
+            let entries: Vec<PathBuf> = jetthing_core::quick_nav::rank(
                 query,
                 app.state
                     .recent_files
@@ -631,7 +631,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
             }
         }
         Dialog::RecentLocations { selected } => {
-            let locations = app.state.navigation.locations.clone();
+            let locations = app.state.quick_nav.locations.clone();
             if !locations.is_empty() {
                 if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)) {
                     *selected = (*selected + 1) % locations.len();
@@ -740,7 +740,7 @@ fn file_structure(
     crate::structure_view::flatten(&items, 0, &mut rows);
     let rows: Vec<_> = rows
         .into_iter()
-        .filter(|(_, item)| jetthing_core::navigation::matches(query, &item.name))
+        .filter(|(_, item)| jetthing_core::quick_nav::matches(query, &item.name))
         .collect();
     if selected.is_none() {
         let current = crate::structure_view::item_at_caret(document, &items)

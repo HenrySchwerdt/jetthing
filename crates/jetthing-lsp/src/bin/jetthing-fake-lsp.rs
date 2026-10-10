@@ -8,10 +8,32 @@
 //! - `--publish <relative path>`: after `initialized`, publish one error for a
 //!   file below the workspace root that was never opened.
 //!
+//! Navigation works on words: definition is the word's first occurrence in
+//! the open documents (by URI), typeDefinition the same as a `LocationLink`,
+//! implementation every later occurrence and references all of them.
+//!
+//! Code actions: one preferred quick fix per diagnostic in the request
+//! context (replacing the marker with `fixed`), a refactoring that needs
+//! `codeAction/resolve` (inserting `// resolved` at the top) and a command
+//! (`fake.apply`) whose execution sends `workspace/applyEdit`.
+//!
 //! Completion returns a fixed Java-like member list. `textDocument/didOpen`
 //! and `didChange` publish one diagnostic per `@error`, `@warning`, `@weak`,
 //! `@hint` and `@unused` marker in the text, or one warning at 0:0 when the
 //! text has no markers.
+//! - `--incomplete`: mark completion lists `isIncomplete`.
+//! - `--importing <n>`: like jdtls importing a Gradle project, report a
+//!   "Building" progress from `initialized` on, answer the first `n`
+//!   completion requests with an empty list, and end the progress 300 ms
+//!   after the last of them.
+//!
+//! Completion lists start with an item `trigger<kind>` naming the request's
+//! `triggerKind`.
+//!
+//! Completion returns a fixed Java-like member list; resolve adds Markdown
+//! documentation and an import edit; hover and signature help return fixed
+//! answers. `textDocument/didOpen` and `didChange` publish one diagnostic
+//! per document.
 
 use jetthing_lsp::transport::{read_message, write_message};
 use serde_json::{Value, json};
@@ -28,12 +50,17 @@ fn main() {
             .cloned()
     };
     let progress = flag("--progress");
+    let incomplete = flag("--incomplete");
     let crash_file = value("--crash-once");
     let delay = value("--completion-delay-ms")
         .and_then(|ms| ms.parse().ok())
         .map(Duration::from_millis);
     let publish = value("--publish");
+    let mut importing: u32 = value("--importing")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
     let mut root = String::new();
+    let mut documents: std::collections::BTreeMap<String, String> = Default::default();
     let mut input = BufReader::new(stdin().lock());
     let mut output = stdout().lock();
     let mut send = |message: Value| {
@@ -66,8 +93,22 @@ fn main() {
                     "textDocumentSync": {"openClose": true, "change": 1, "save": {"includeText": false}},
                     "completionProvider": {"triggerCharacters": ["."], "resolveProvider": true},
                     "hoverProvider": true,
-                    "signatureHelpProvider": {"triggerCharacters": ["(", ","]}
+                    "signatureHelpProvider": {"triggerCharacters": ["(", ","]},
+                    "definitionProvider": true,
+                    "typeDefinitionProvider": true,
+                    "implementationProvider": true,
+                    "referencesProvider": true,
+                    "codeActionProvider": {"resolveProvider": true},
+                    "executeCommandProvider": {"commands": ["fake.apply"]}
                 },"serverInfo":{"name":"fake"}}}));
+            }
+            ("initialized", None) if importing > 0 => {
+                send(
+                    json!({"jsonrpc":"2.0","id":"p2","method":"window/workDoneProgress/create","params":{"token":"import"}}),
+                );
+                send(
+                    json!({"jsonrpc":"2.0","method":"$/progress","params":{"token":"import","value":{"kind":"begin","title":"Building","percentage":0}}}),
+                );
             }
             ("initialized", None) => {
                 if let Some(file) = &crash_file
@@ -96,6 +137,7 @@ fn main() {
                     .as_str()
                     .or_else(|| params["contentChanges"][0]["text"].as_str())
                     .unwrap_or_default();
+                documents.insert(uri.as_str().unwrap_or_default().to_owned(), text.to_owned());
                 let mut diagnostics = marker_diagnostics(text);
                 if diagnostics.is_empty() {
                     diagnostics.push(json!({"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},
@@ -116,18 +158,131 @@ fn main() {
                     }}),
                 );
             }
+            (
+                "textDocument/definition"
+                | "textDocument/typeDefinition"
+                | "textDocument/implementation"
+                | "textDocument/references",
+                Some(id),
+            ) => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
+                let character = params["position"]["character"].as_u64().unwrap_or(0) as usize;
+                let word = documents
+                    .get(uri)
+                    .and_then(|text| word_at(text, line, character))
+                    .unwrap_or_default();
+                let occurrences: Vec<Value> = documents
+                    .iter()
+                    .flat_map(|(uri, text)| occurrences(uri, text, &word))
+                    .collect();
+                let result = match method {
+                    _ if word.is_empty() => Value::Null,
+                    "textDocument/definition" => {
+                        occurrences.first().cloned().unwrap_or(Value::Null)
+                    }
+                    "textDocument/typeDefinition" => match occurrences.first() {
+                        Some(first) => {
+                            json!([{"targetUri": first["uri"], "targetRange": first["range"],
+                            "targetSelectionRange": first["range"]}])
+                        }
+                        None => Value::Null,
+                    },
+                    "textDocument/implementation" => {
+                        json!(occurrences.iter().skip(1).collect::<Vec<_>>())
+                    }
+                    _ => json!(occurrences),
+                };
+                send(json!({"jsonrpc":"2.0","id":id,"result":result}));
+            }
+            ("textDocument/codeAction", Some(id)) => {
+                let uri = params["textDocument"]["uri"].clone();
+                let mut actions: Vec<Value> = params["context"]["diagnostics"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|diagnostic| {
+                        json!({"title": format!("Fix {}", diagnostic["message"].as_str().unwrap_or("")),
+                            "kind": "quickfix", "isPreferred": true, "diagnostics": [diagnostic],
+                            "edit": {"changes": {uri.as_str().unwrap_or_default():
+                                [{"range": diagnostic["range"], "newText": "fixed"}]}}})
+                    })
+                    .collect();
+                actions.push(
+                    json!({"title": "Add header comment", "kind": "refactor.rewrite",
+                    "data": {"uri": uri}}),
+                );
+                actions.push(json!({"title": "Run fake command", "command": "fake.apply",
+                    "arguments": [uri]}));
+                send(json!({"jsonrpc":"2.0","id":id,"result":actions}));
+            }
+            ("codeAction/resolve", Some(id)) => {
+                let mut action = params.clone();
+                let uri = params["data"]["uri"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                action["edit"] = json!({"documentChanges": [{
+                    "textDocument": {"uri": uri, "version": null},
+                    "edits": [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
+                        "newText": "// resolved\n"}]}]});
+                send(json!({"jsonrpc":"2.0","id":id,"result":action}));
+            }
+            ("workspace/executeCommand", Some(id)) => {
+                let uri = params["arguments"][0]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                send(
+                    json!({"jsonrpc":"2.0","id":"apply1","method":"workspace/applyEdit","params":{
+                    "label": "Fake command",
+                    "edit": {"changes": {uri: [{"range": {"start": {"line": 0, "character": 0},
+                        "end": {"line": 0, "character": 0}}, "newText": "// applied\n"}]}}}}),
+                );
+                send(json!({"jsonrpc":"2.0","id":id,"result":null}));
+            }
+            ("textDocument/completion", Some(id)) if importing > 0 => {
+                send(json!({"jsonrpc":"2.0","id":id,"result":{"isIncomplete":false,"items":[]}}));
+                importing -= 1;
+                if importing == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    send(
+                        json!({"jsonrpc":"2.0","method":"$/progress","params":{"token":"import","value":{"kind":"end"}}}),
+                    );
+                }
+            }
             ("textDocument/completion", Some(id)) => {
                 if let Some(delay) = delay {
                     std::thread::sleep(delay);
                 }
+                let kind = params["context"]["triggerKind"].as_u64().unwrap_or(0);
                 send(
-                    json!({"jsonrpc":"2.0","id":id,"result":{"isIncomplete":false,"items":[
+                    json!({"jsonrpc":"2.0","id":id,"result":{"isIncomplete":incomplete,"items":[
+                        {"label":format!("trigger{kind}"),"kind":1,"sortText":"9"},
                         {"label":"greeting","kind":2,"detail":"String","labelDetails":{"detail":"(String name)","description":"String"},"sortText":"0"},
                         {"label":"getRequiredField","kind":2,"detail":"Field","sortText":"1"},
                         {"label":"getClass","kind":2,"detail":"Class<?>","sortText":"2"},
                         {"label":"hashCode","kind":2,"detail":"int","sortText":"3"}
                     ]}}),
                 );
+            }
+            ("completionItem/resolve", Some(id)) => {
+                let mut item = params.clone();
+                item["documentation"] = json!({"kind": "markdown",
+                    "value": format!("**{}**\n\nReturns a `String`.", params["label"].as_str().unwrap_or(""))});
+                item["additionalTextEdits"] = json!([{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"import fake.Greeting;\n"}]);
+                send(json!({"jsonrpc":"2.0","id":id,"result":item}));
+            }
+            ("textDocument/hover", Some(id)) => {
+                send(
+                    json!({"jsonrpc":"2.0","id":id,"result":{"contents":{"kind":"markdown",
+                    "value":"```java\nString greeting(String name)\n```\nGreets *name*."}}}),
+                );
+            }
+            ("textDocument/signatureHelp", Some(id)) => {
+                send(json!({"jsonrpc":"2.0","id":id,"result":{"signatures":[
+                    {"label":"greeting(String name, int times)","parameters":[{"label":"String name"},{"label":[22,31]}]}
+                ],"activeSignature":0,"activeParameter":1}}));
             }
             ("shutdown", Some(id)) => send(json!({"jsonrpc":"2.0","id":id,"result":null})),
             ("exit", None) => std::process::exit(0),
@@ -172,4 +327,56 @@ fn marker_diagnostics(text: &str) -> Vec<Value> {
         }
     }
     diagnostics
+}
+
+/// The identifier at a UTF-16 position.
+fn word_at(text: &str, line: usize, character: usize) -> Option<String> {
+    let content = text.lines().nth(line)?;
+    let chars: Vec<char> = content.chars().collect();
+    let mut units = 0;
+    let mut index = chars.len();
+    for (i, c) in chars.iter().enumerate() {
+        if units >= character {
+            index = i;
+            break;
+        }
+        units += c.len_utf16();
+    }
+    let is_word = |c: &char| c.is_alphanumeric() || *c == '_';
+    let start = chars[..index]
+        .iter()
+        .rposition(|c| !is_word(c))
+        .map_or(0, |p| p + 1);
+    let end = chars[index..]
+        .iter()
+        .position(|c| !is_word(c))
+        .map_or(chars.len(), |p| index + p);
+    (start < end).then(|| chars[start..end].iter().collect())
+}
+
+/// Whole-word occurrences of `word` as LSP locations.
+fn occurrences(uri: &str, text: &str, word: &str) -> Vec<Value> {
+    let mut found = Vec::new();
+    if word.is_empty() {
+        return found;
+    }
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    for (line, content) in text.lines().enumerate() {
+        let mut from = 0;
+        while let Some(offset) = content[from..].find(word) {
+            let byte = from + offset;
+            let end = byte + word.len();
+            let before = content[..byte].chars().next_back();
+            let after = content[end..].chars().next();
+            if !before.is_some_and(is_word) && !after.is_some_and(is_word) {
+                let start: usize = content[..byte].chars().map(char::len_utf16).sum();
+                let stop = start + word.chars().map(char::len_utf16).sum::<usize>();
+                found.push(json!({"uri": uri, "range": {
+                    "start": {"line": line, "character": start},
+                    "end": {"line": line, "character": stop}}}));
+            }
+            from = end;
+        }
+    }
+    found
 }

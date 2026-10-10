@@ -565,20 +565,11 @@ pub(crate) fn right_stripe_windows(app: &IdeApp) -> Vec<(ToolWindow, Icon)> {
     windows
 }
 
-/// Right tool window stripe. Without right-anchored tool windows it is a narrow
-/// gutter so the editor island keeps its rounded edge. Plugin tool windows join
-/// this stripe (`plugin_ui::right_side`).
+/// Right tool window stripe: the project's right-anchored tool windows (Gradle,
+/// Bazel, Device Manager) and AI Chat, which is always offered. Plugin tool
+/// windows join this stripe (`plugin_ui::right_side`).
 pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
     let windows = right_stripe_windows(app);
-    if windows.is_empty() {
-        egui::SidePanel::right("right_stripe")
-            .exact_width(6.0)
-            .resizable(false)
-            .show_separator_line(false)
-            .frame(chrome_frame())
-            .show(ctx, |_| {});
-        return;
-    }
     egui::SidePanel::right("right_stripe")
         .exact_width(STRIPE_WIDTH)
         .resizable(false)
@@ -589,6 +580,7 @@ pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
             for (window, icon) in windows {
                 stripe_button(app, ui, window, icon);
             }
+            stripe_button(app, ui, ToolWindow::AiChat, Icon::Ai);
         });
 }
 
@@ -673,8 +665,11 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    crate::plugin_ui::status_widgets(app, ui, &font);
-                    let secondary = *theme::TEXT_SECONDARY;
+                    crate::plugin_ui::status_widgets(app, ui, &font, None);
+                    if app.state.project.is_some() {
+                        crate::ai_chat::status_widget(app, ui, font.clone());
+                    }
+                    let secondary = theme::TEXT_SECONDARY;
                     crate::lsp_status::status_widget(app, ui, font.clone());
                     crate::toolchain_status::status_widget(app, ui, font.clone());
                     let active = app

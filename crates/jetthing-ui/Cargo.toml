@@ -9,6 +9,8 @@ eframe.workspace = true
 egui.workspace = true
 jetthing-android = { path = "../jetthing-android" }
 jetthing-actions = { path = "../jetthing-actions" }
+pulldown-cmark.workspace = true
+jetthing-ai = { path = "../jetthing-ai" }
 jetthing-bazel = { path = "../jetthing-bazel" }
 jetthing-command = { path = "../jetthing-command" }
 jetthing-control = { path = "../jetthing-control" }
