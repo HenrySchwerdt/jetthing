@@ -31,6 +31,7 @@ mod git_log;
 pub mod keymap_commands;
 mod line_changes;
 mod lsp_commands;
+mod markdown_commands;
 mod new_class;
 mod plugin_host;
 mod problems;
@@ -90,6 +91,8 @@ pub struct IdeState {
     pub files: Vec<FileEntry>,
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
+    /// Markdown editor layout per file (Editor / Split / Preview).
+    pub markdown_layouts: std::collections::HashMap<std::path::PathBuf, jetthing_markdown::Layout>,
     pub plugin_host: PluginHostState,
     /// Pinned tabs, closed-tab history and the tab limit.
     pub tabs: tabs::EditorTabs,
@@ -753,6 +756,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_logcat::register(&mut registry);
     build_commands::register(&mut registry);
     editor_commands::register(&mut registry);
+    markdown_commands::register(&mut registry);
     disk_sync::register(&mut registry);
     tabs::register(&mut registry);
     project_commands::register(&mut registry);

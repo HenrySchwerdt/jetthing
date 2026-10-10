@@ -7,6 +7,8 @@ license.workspace = true
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
+egui_extras = { version = "0.33", default-features = false, features = ["file", "image"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 jetthing-android = { path = "../jetthing-android" }
 jetthing-actions = { path = "../jetthing-actions" }
 jetthing-command = { path = "../jetthing-command" }
@@ -16,6 +18,7 @@ jetthing-git = { path = "../jetthing-git" }
 jetthing-keymap = { path = "../jetthing-keymap" }
 jetthing-language = { path = "../jetthing-language" }
 jetthing-lsp = { path = "../jetthing-lsp" }
+jetthing-markdown = { path = "../jetthing-markdown" }
 jetthing-plugins = { path = "../jetthing-plugins" }
 jetthing-runner = { path = "../jetthing-runner" }
 jetthing-settings = { path = "../jetthing-settings" }

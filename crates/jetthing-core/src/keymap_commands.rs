@@ -140,6 +140,8 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     editor("EditorToggleColumnMode", "editor.toggleColumnMode"),
     editor("EditorJoinLines", "editor.joinLines"),
     editor("EditorToggleCase", "editor.toggleCase"),
+    editor("Markdown.Styling.CreateLink", "markdown.link"),
+    menu("Markdown.InsertEmptyTable", "markdown.insertTable"),
     editor("EditorSplitLine", "editor.splitLine"),
     editor("EditorStartNewLineBefore", "editor.startNewLineBefore"),
     menu("$Copy", "editor.copy"),
