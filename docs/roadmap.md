@@ -20,12 +20,29 @@
 - [x] Viewport-native editor that shapes and paints only visible lines
 - [x] Multi-cursor selections, atomic edits, and coalesced primary typing transactions
 - [x] Tree-sitter Rust parsing, syntax highlighting, and parse diagnostics
-- [ ] Incremental Tree-sitter edit notifications and multi-language grammars
+- [x] Data-driven Tree-sitter language registry (20 grammars) with bundled highlight queries
+- [x] IntelliJ editor color schemes (Islands Dark) resolved by text-attribute key
+- [ ] Incremental Tree-sitter edit notifications, viewport-bounded highlighting, injections
+- [ ] Tree-sitter folding, Expand/Shrink Selection, Structure view and File Structure popup
 - [x] Integrated native PTY terminal with shell input and command dispatch
-- [ ] ANSI terminal grid, hyperlinks, selection, and multiple sessions
+- [x] Interactive ANSI terminal grid, direct shell keys, selection/copy, scrollback and resize
+- [ ] Terminal hyperlinks, mouse reporting and multiple sessions
 - [x] Cancellable background project text search with streamed result navigation
 - [x] Detected Cargo/Gradle/Maven/npm/Go builds with streamed output and cancellation
 - [ ] UI automation/control socket and screenshot tests
+- [x] New UI "Islands Dark" workbench: merged toolbar, stripe, islands, breadcrumbs status bar
+- [x] One-tool-window-per-anchor model with typed `toolwindow.*` commands
+- [x] Search Everywhere (Double Shift) over actions and files with fuzzy ranking
+- [x] Collapsible, sorted project tree with VCS file colors
+- [x] Run widget (`run.project`) next to Build, with OpenGL fallback renderer
+- [x] Release packaging (`cargo xtask dist`) and CI/release workflows
+- [ ] Light theme, settings dialog, and bundled icon set beyond the core actions
+- [x] Editor actions: duplicate/delete/comment/move lines, pairing, smart Enter, word moves
+- [x] Find/Replace in file, Go to Line, Recent Files, Go to File
+- [x] Project tree New/Rename/Delete, commit with message and file selection
+- [x] Workspace restore (`.jetthing/workspace.json`), autosave on focus loss
+- [x] Check for Updates with verified self-update from GitHub releases
+- [x] Versioned release pipeline (0.0.2) publishing on every version bump
 
 ## M2 — language intelligence
 
@@ -34,6 +51,8 @@ navigation, formatting, cancellation, and persistent caches. First verified inte
 Rust via rust-analyzer.
 
 - [x] JSON-RPC/LSP process transport and initialization
+- [x] Multi-language server registry (provider trait, PATH/`lsp.toml` discovery), lazy start per
+      workspace root, crash restart with backoff, `$/progress` status widget, missing-server notices
 - [x] Rust document open/change synchronization and published diagnostics
 - [x] Completion request transport and result modeling
 - [x] Completion popup, UTF-16 caret integration, and transactional insertion
@@ -57,4 +76,6 @@ Use installed SDK, ADB, emulator, and Gradle; do not depend on Android Studio.
 ## Next task
 
 Add incremental Tree-sitter edit notifications and expand the editor interaction model
-with vertical movement, clipboard operations, find/replace, indentation, and IME input.
+with clipboard operations, find/replace, and IME input (vertical movement, smart Home/End
+and auto-indent on Enter landed with the workbench restyle). Add a UI control socket so
+the screenshot walkthrough in `docs/parity/evidence/` becomes an automated test.

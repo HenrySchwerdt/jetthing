@@ -3,8 +3,9 @@
 Every Markdown file in this directory except `README.md` and the generated
 `dashboard.md` is an **area**. `cargo run -p xtask -- parity` parses all areas and
 regenerates `dashboard.md` and the summary block in the top-level `README.md`;
-`cargo run -p xtask -- parity --check` fails when either is stale or when any area is
-malformed. `cargo test -p xtask` also validates the committed inventory.
+`cargo run -p xtask -- parity --check` fails when any area is malformed or an ID is
+reused. Feature PRs should not commit the generated files, so parallel PRs that add rows
+do not conflict; they are regenerated on main. `cargo test -p xtask` also validates the committed inventory.
 
 ## Tables
 

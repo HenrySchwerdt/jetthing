@@ -1,23 +1,22 @@
+//! Tree-sitter language platform: a data-driven registry of grammar crates and
+//! their bundled queries, a generic highlight engine, and IntelliJ color
+//! schemes. No language has its own code path here.
+
+mod captures;
+pub mod highlight;
+pub mod registry;
+pub mod scheme;
+
+pub use captures::capture_key;
+pub use highlight::{HighlightLayer, HighlightSpan, QueryError};
+pub use registry::{LANGUAGES, LanguageSpec};
+pub use scheme::{ColorScheme, EffectType, FontStyle, Rgba, TextAttributes};
+
 use std::path::Path;
 use tree_sitter::{Node, Parser};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SyntaxKind {
-    Keyword,
-    String,
-    Comment,
-    Number,
-    Type,
-    Function,
-    Macro,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SyntaxSpan {
-    pub start_byte: usize,
-    pub end_byte: usize,
-    pub kind: SyntaxKind,
-}
+/// Maximum number of syntax diagnostics reported per file.
+const MAX_DIAGNOSTICS: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -28,44 +27,43 @@ pub struct Diagnostic {
 
 #[derive(Debug, Clone, Default)]
 pub struct LanguageAnalysis {
+    /// Display name of the detected language.
     pub language: Option<&'static str>,
-    pub spans: Vec<SyntaxSpan>,
+    /// Syntax highlighting from the grammar's highlight query.
+    pub highlights: HighlightLayer,
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// Parses and highlights `source`, detecting the language from `path`.
+/// Unknown languages and grammar failures yield plain-text analysis.
 pub fn analyze(path: &Path, source: &str) -> LanguageAnalysis {
-    match path.extension().and_then(|value| value.to_str()) {
-        Some("rs") => analyze_rust(source),
-        _ => LanguageAnalysis::default(),
-    }
-}
-
-fn analyze_rust(source: &str) -> LanguageAnalysis {
-    let mut parser = Parser::new();
-    if parser
-        .set_language(&tree_sitter_rust::LANGUAGE.into())
-        .is_err()
-    {
-        return LanguageAnalysis::default();
-    }
-    let Some(tree) = parser.parse(source, None) else {
+    let Some(spec) = registry::detect(path, source) else {
         return LanguageAnalysis::default();
     };
     let mut result = LanguageAnalysis {
-        language: Some("Rust"),
+        language: Some(spec.name),
         ..Default::default()
     };
-    collect(tree.root_node(), source, &mut result);
-    result
-        .spans
-        .sort_by_key(|span| (span.start_byte, span.end_byte));
+    let mut parser = Parser::new();
+    if parser.set_language(&spec.grammar()).is_err() {
+        return result;
+    }
+    let Some(tree) = parser.parse(source, None) else {
+        return result;
+    };
+    result.highlights =
+        highlight::highlight(spec, &tree, source, 0..source.len()).unwrap_or_default();
+    collect_diagnostics(tree.root_node(), &mut result.diagnostics);
     result
 }
 
-fn collect(node: Node<'_>, source: &str, result: &mut LanguageAnalysis) {
+fn collect_diagnostics(node: Node<'_>, diagnostics: &mut Vec<Diagnostic>) {
+    if diagnostics.len() >= MAX_DIAGNOSTICS || !node.has_error() {
+        return;
+    }
     if node.is_error() || node.is_missing() {
         let point = node.start_position();
-        result.diagnostics.push(Diagnostic {
+        diagnostics.push(Diagnostic {
             message: if node.is_missing() {
                 format!("expected {}", node.kind())
             } else {
@@ -74,113 +72,49 @@ fn collect(node: Node<'_>, source: &str, result: &mut LanguageAnalysis) {
             row: point.row + 1,
             column: point.column + 1,
         });
-    }
-    if let Some(kind) = classify(node, source) {
-        result.spans.push(SyntaxSpan {
-            start_byte: node.start_byte(),
-            end_byte: node.end_byte(),
-            kind,
-        });
-        return;
+        if node.is_missing() {
+            return;
+        }
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect(child, source, result);
+        collect_diagnostics(child, diagnostics);
     }
-}
-
-fn classify(node: Node<'_>, source: &str) -> Option<SyntaxKind> {
-    let kind = node.kind();
-    if kind.contains("comment") {
-        return Some(SyntaxKind::Comment);
-    }
-    if kind.contains("string") || kind == "char_literal" {
-        return Some(SyntaxKind::String);
-    }
-    if kind.contains("integer") || kind.contains("float") {
-        return Some(SyntaxKind::Number);
-    }
-    if matches!(kind, "primitive_type" | "type_identifier") {
-        return Some(SyntaxKind::Type);
-    }
-    if kind == "identifier" {
-        let parent = node.parent().map(|p| p.kind());
-        if matches!(parent, Some("function_item" | "call_expression")) {
-            return Some(SyntaxKind::Function);
-        }
-        if matches!(parent, Some("macro_invocation")) {
-            return Some(SyntaxKind::Macro);
-        }
-    }
-    if !node.is_named() {
-        let token = source.get(node.byte_range()).unwrap_or_default();
-        if matches!(
-            token,
-            "as" | "async"
-                | "await"
-                | "break"
-                | "const"
-                | "continue"
-                | "crate"
-                | "dyn"
-                | "else"
-                | "enum"
-                | "extern"
-                | "false"
-                | "fn"
-                | "for"
-                | "if"
-                | "impl"
-                | "in"
-                | "let"
-                | "loop"
-                | "match"
-                | "mod"
-                | "move"
-                | "mut"
-                | "pub"
-                | "ref"
-                | "return"
-                | "self"
-                | "Self"
-                | "static"
-                | "struct"
-                | "super"
-                | "trait"
-                | "true"
-                | "type"
-                | "unsafe"
-                | "use"
-                | "where"
-                | "while"
-        ) {
-            return Some(SyntaxKind::Keyword);
-        }
-    }
-    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Returns the attribute key highlighting the first occurrence of `needle`.
+    fn key_of(analysis: &LanguageAnalysis, source: &str, needle: &str) -> Option<&'static str> {
+        let start = source.find(needle)?;
+        analysis
+            .highlights
+            .spans()
+            .iter()
+            .find(|span| span.start_byte <= start && start < span.end_byte)
+            .map(|span| span.key)
+    }
+
     #[test]
     fn rust_analysis_returns_highlights_without_diagnostics() {
-        let analysis = analyze(Path::new("lib.rs"), "pub fn answer() -> u32 { 42 }\n");
+        let source = "/// Docs\npub fn answer() -> u32 { 42 }\n";
+        let analysis = analyze(Path::new("lib.rs"), source);
         assert_eq!(analysis.language, Some("Rust"));
         assert!(analysis.diagnostics.is_empty());
-        assert!(
-            analysis
-                .spans
-                .iter()
-                .any(|span| span.kind == SyntaxKind::Keyword)
+        assert_eq!(key_of(&analysis, source, "pub"), Some("DEFAULT_KEYWORD"));
+        assert_eq!(key_of(&analysis, source, "42"), Some("DEFAULT_NUMBER"));
+        assert_eq!(
+            key_of(&analysis, source, "answer"),
+            Some("DEFAULT_FUNCTION_DECLARATION")
         );
-        assert!(
-            analysis
-                .spans
-                .iter()
-                .any(|span| span.kind == SyntaxKind::Number)
+        assert_eq!(
+            key_of(&analysis, source, "/// Docs"),
+            Some("DEFAULT_DOC_COMMENT")
         );
     }
+
     #[test]
     fn rust_analysis_reports_parse_errors() {
         assert!(
@@ -189,8 +123,182 @@ mod tests {
                 .is_empty()
         );
     }
+
     #[test]
     fn unknown_files_remain_plain_text() {
-        assert!(analyze(Path::new("notes.txt"), "hello").language.is_none());
+        let analysis = analyze(Path::new("notes.txt"), "hello");
+        assert!(analysis.language.is_none());
+        assert!(analysis.highlights.is_empty());
+    }
+
+    #[test]
+    fn java_tokens_resolve_to_islands_dark_colors() {
+        let source = "package com.example;\n\n/** App. */\npublic class App {\n    // greet\n    public String greeting(String name) { return \"Hello, \" + name + 1; }\n    void run() { greeting(\"x\"); }\n}\n";
+        let analysis = analyze(Path::new("App.java"), source);
+        assert_eq!(analysis.language, Some("Java"));
+        let scheme = ColorScheme::islands_dark();
+        let color = |needle: &str| {
+            key_of(&analysis, source, needle).map(|key| scheme.attributes(key).foreground)
+        };
+        assert_eq!(color("package"), Some(Rgba::parse("cf8e6d")));
+        assert_eq!(color("public class"), Some(Rgba::parse("cf8e6d")));
+        assert_eq!(color("\"Hello"), Some(Rgba::parse("6aab73")));
+        assert_eq!(color("// greet"), Some(Rgba::parse("7a7e85")));
+        assert_eq!(color("/** App"), Some(Rgba::parse("5f826b")));
+        assert_eq!(color("greeting(String"), Some(Rgba::parse("56a8f5")));
+        assert_eq!(color("1;"), Some(Rgba::parse("2aacb8")));
+        // Calls and type references use the plain identifier color, as in IntelliJ.
+        assert_eq!(color("greeting(\"x"), Some(Rgba::parse("bcbec4")));
+        assert_ne!(key_of(&analysis, source, "String"), Some("DEFAULT_KEYWORD"));
+        // Class declarations and type uses are not function declarations.
+        assert_eq!(color("App {"), Some(Rgba::parse("bcbec4")));
+        assert_eq!(color("String name)"), Some(Rgba::parse("bcbec4")));
+        let errors = analyze(Path::new("Broken.java"), "class { void }");
+        assert!(!errors.diagnostics.is_empty());
+        assert_eq!(
+            scheme.attributes("ERRORS_ATTRIBUTES").effect,
+            Some((EffectType::WaveUnderline, Rgba::parse("fa6675")))
+        );
+    }
+
+    #[test]
+    fn scene_04_languages_highlight() {
+        let cases: &[(&str, &str, &str, &str)] = &[
+            (
+                "Main.kt",
+                "fun main() { val x = \"hi\" }\n",
+                "fun",
+                "DEFAULT_KEYWORD",
+            ),
+            (
+                "Main.kt",
+                "fun main() { val x = \"hi\" }\n",
+                "\"hi\"",
+                "DEFAULT_STRING",
+            ),
+            (
+                "Main.kt",
+                "fun main() { val x = \"hi\" }\n",
+                "main",
+                "DEFAULT_FUNCTION_DECLARATION",
+            ),
+            (
+                "AndroidManifest.xml",
+                "<manifest package=\"a\"/>\n",
+                "manifest",
+                "XML_TAG_NAME",
+            ),
+            (
+                "AndroidManifest.xml",
+                "<manifest package=\"a\"/>\n",
+                "\"a\"",
+                "DEFAULT_STRING",
+            ),
+            (
+                "BUILD.bazel",
+                "# c\njava_binary(name = \"app\", srcs = [\"A.java\"])\n",
+                "\"app\"",
+                "DEFAULT_STRING",
+            ),
+            (
+                "BUILD.bazel",
+                "# c\njava_binary(name = \"app\")\n",
+                "# c",
+                "DEFAULT_LINE_COMMENT",
+            ),
+            (
+                "defs.bzl",
+                "def rule_impl(ctx):\n    return None\n",
+                "def",
+                "DEFAULT_KEYWORD",
+            ),
+            (
+                "Cargo.toml",
+                "[package]\nname = \"x\"\n",
+                "\"x\"",
+                "DEFAULT_STRING",
+            ),
+            ("a.json", "{\"k\": 1}", "1", "DEFAULT_NUMBER"),
+            ("a.yaml", "k: true\n", "true", "DEFAULT_KEYWORD"),
+            ("a.py", "import os\n", "import", "DEFAULT_KEYWORD"),
+            ("a.py", "x = None\n", "None", "DEFAULT_KEYWORD"),
+            ("lib.rs", "fn f(x: u32) {}\n", "u32", "DEFAULT_KEYWORD"),
+            ("A.java", "class A { int x; }\n", "int", "DEFAULT_KEYWORD"),
+            (
+                "Main.kt",
+                "package a\nfun f(s: String) {}\n",
+                "String",
+                "DEFAULT_CLASS_REFERENCE",
+            ),
+            (
+                "Main.kt",
+                "package a\nfun f(s: String) {}\n",
+                "package",
+                "DEFAULT_KEYWORD",
+            ),
+            (
+                "Main.kt",
+                "class A { override fun g() {} }\n",
+                "g()",
+                "DEFAULT_FUNCTION_DECLARATION",
+            ),
+            ("a.go", "package main\n", "package", "DEFAULT_KEYWORD"),
+            ("a.ts", "const x: number = 1;\n", "const", "DEFAULT_KEYWORD"),
+            (
+                "a.cpp",
+                "int main() { return 0; }\n",
+                "return",
+                "DEFAULT_KEYWORD",
+            ),
+            (
+                "a.sh",
+                "if true; then echo hi; fi\n",
+                "if",
+                "DEFAULT_KEYWORD",
+            ),
+            (
+                "a.html",
+                "<div class=\"x\"></div>\n",
+                "div",
+                "HTML_TAG_NAME",
+            ),
+            (
+                "a.css",
+                "a { color: red; }\n",
+                "color",
+                "DEFAULT_INSTANCE_FIELD",
+            ),
+        ];
+        for (path, source, needle, expected) in cases {
+            let analysis = analyze(Path::new(path), source);
+            assert!(analysis.language.is_some(), "{path} not detected");
+            assert_eq!(
+                key_of(&analysis, source, needle),
+                Some(*expected),
+                "{path}: `{needle}` in {:?}",
+                analysis.highlights
+            );
+        }
+    }
+
+    #[test]
+    fn highlights_never_split_or_overlap() {
+        for spec in LANGUAGES {
+            let path = format!("x.{}", spec.extensions.first().copied().unwrap_or("txt"));
+            let source = "fn x() { \"ä\" } // ü\n<a b=\"c\">ä</a> # 1.5e3\n";
+            let analysis = analyze(Path::new(&path), source);
+            let mut last = 0;
+            for span in analysis.highlights.spans() {
+                assert!(
+                    span.start_byte >= last && span.start_byte < span.end_byte,
+                    "{path}"
+                );
+                assert!(
+                    source.is_char_boundary(span.start_byte)
+                        && source.is_char_boundary(span.end_byte)
+                );
+                last = span.end_byte;
+            }
+        }
     }
 }

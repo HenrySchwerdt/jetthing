@@ -1,0 +1,200 @@
+{
+ "meta": {
+  "source": "https://github.com/JetBrains/intellij-community",
+  "tag": "idea/262.10968.63",
+  "build": "262.10968.SNAPSHOT",
+  "license": "Apache-2.0 (derived data)"
+ },
+ "toolWindows": [
+  {
+   "id": "Bookmarks",
+   "anchor": "left",
+   "secondary": true,
+   "sideTool": false,
+   "canCloseContents": false,
+   "doNotActivateOnStart": false,
+   "icon": "ToolWindowBookmarks",
+   "source": "platform/bookmarks/resources/intellij.platform.bookmarks.xml"
+  },
+  {
+   "id": "Project",
+   "anchor": "left",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": false,
+   "doNotActivateOnStart": false,
+   "icon": "ToolWindowProject",
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "Problems View",
+   "anchor": "bottom",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": true,
+   "doNotActivateOnStart": false,
+   "icon": "ToolWindowProblemsEmpty",
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "UI Theme Color Picker",
+   "anchor": "right",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": false,
+   "doNotActivateOnStart": true,
+   "icon": "ToolWindowPalette",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "Notifications",
+   "anchor": "right",
+   "secondary": true,
+   "sideTool": false,
+   "canCloseContents": false,
+   "doNotActivateOnStart": false,
+   "icon": "Notifications",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "Backup and Sync History",
+   "anchor": "left",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": false,
+   "doNotActivateOnStart": false,
+   "icon": "SettingSync",
+   "source": "platform/settings-sync-core/resources/intellij.settingsSync.core.xml"
+  },
+  {
+   "id": "Statistics Event Log",
+   "anchor": "bottom",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": true,
+   "doNotActivateOnStart": false,
+   "icon": null,
+   "source": "platform/statistics/devkit/resources/intellij.platform.statistics.devkit.xml"
+  },
+  {
+   "id": "Structure",
+   "anchor": "left",
+   "secondary": true,
+   "sideTool": false,
+   "canCloseContents": false,
+   "doNotActivateOnStart": false,
+   "icon": "ToolWindowStructure",
+   "source": "platform/structure-view-impl/resources/intellij.platform.structureView.xml"
+  },
+  {
+   "id": "TODO",
+   "anchor": "bottom",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": true,
+   "doNotActivateOnStart": false,
+   "icon": "ToolWindowTodo",
+   "source": "platform/todo/resources/intellij.platform.todo.xml"
+  },
+  {
+   "id": "Commit",
+   "anchor": "left",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": false,
+   "doNotActivateOnStart": false,
+   "icon": "ToolWindowCommit",
+   "source": "platform/vcs-impl/resources/META-INF/VcsExtensions.xml"
+  },
+  {
+   "id": "Version Control",
+   "anchor": "bottom",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": true,
+   "doNotActivateOnStart": false,
+   "icon": "ToolWindowChanges",
+   "source": "platform/vcs-impl/resources/META-INF/VcsExtensions.xml"
+  },
+  {
+   "id": "Ant",
+   "anchor": "right",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": false,
+   "doNotActivateOnStart": false,
+   "icon": "ToolWindowAnt",
+   "source": "plugins/ant/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "Commander",
+   "anchor": "right",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": false,
+   "doNotActivateOnStart": false,
+   "icon": "ToolWindowCommander",
+   "source": "plugins/commander/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "Coverage",
+   "anchor": "right",
+   "secondary": true,
+   "sideTool": false,
+   "canCloseContents": true,
+   "doNotActivateOnStart": true,
+   "icon": "ToolWindowCoverage",
+   "source": "plugins/coverage-common/resources/intellij.platform.coverage.xml"
+  },
+  {
+   "id": "Pull Requests",
+   "anchor": "left",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": true,
+   "doNotActivateOnStart": true,
+   "icon": "PullRequestsToolWindow",
+   "source": "plugins/github/github-core/resources/intellij.vcs.github.xml"
+  },
+  {
+   "id": "Merge Requests",
+   "anchor": "left",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": true,
+   "doNotActivateOnStart": true,
+   "icon": "GitLabToolWindow",
+   "source": "plugins/gitlab/gitlab-core/resources/intellij.vcs.gitlab.xml"
+  },
+  {
+   "id": "Gradle",
+   "anchor": "right",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": false,
+   "doNotActivateOnStart": false,
+   "icon": "ToolWindowGradle",
+   "source": "plugins/gradle/plugin-resources/intellij.gradle.xml"
+  },
+  {
+   "id": "Learn",
+   "anchor": "left",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": true,
+   "doNotActivateOnStart": false,
+   "icon": "Learn",
+   "source": "plugins/ide-features-trainer/res/META-INF/plugin.xml"
+  },
+  {
+   "id": "Terminal",
+   "anchor": "bottom",
+   "secondary": false,
+   "sideTool": false,
+   "canCloseContents": true,
+   "doNotActivateOnStart": false,
+   "icon": "OpenTerminal_13x13",
+   "source": "plugins/terminal/resources/META-INF/terminal.xml"
+  }
+ ]
+}

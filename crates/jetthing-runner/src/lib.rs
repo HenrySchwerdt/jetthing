@@ -54,6 +54,8 @@ impl TaskPlan {
             ("Cargo Build", "cargo", vec!["build"])
         } else if root.join("gradlew").is_file() {
             ("Gradle Build", "./gradlew", vec!["build"])
+        } else if root.join("build.gradle.kts").is_file() || root.join("build.gradle").is_file() {
+            ("Gradle Build", "gradle", vec!["build"])
         } else if root.join("mvnw").is_file() {
             ("Maven Verify", "./mvnw", vec!["verify"])
         } else if root.join("pom.xml").is_file() {
@@ -65,12 +67,48 @@ impl TaskPlan {
         } else {
             return Err(RunnerError::NoBuildSystem(root.to_owned()));
         };
-        Ok(Self {
-            name: plan.0.into(),
-            program: plan.1.into(),
-            args: plan.2.into_iter().map(Into::into).collect(),
+        Ok(Self::from_parts(plan, root))
+    }
+
+    /// Detects the default "run application" task for a project root.
+    pub fn detect_run(root: &Path) -> Result<Self, RunnerError> {
+        let plan = if root.join("Cargo.toml").is_file() {
+            let manifest = std::fs::read_to_string(root.join("Cargo.toml"))
+                .ok()
+                .and_then(|source| source.parse::<toml::Value>().ok());
+            let binary = root.join("src/main.rs").is_file()
+                || root.join("src/bin").is_dir()
+                || manifest
+                    .as_ref()
+                    .and_then(|manifest| manifest.get("bin"))
+                    .and_then(toml::Value::as_array)
+                    .is_some_and(|bins| !bins.is_empty());
+            if binary {
+                ("Cargo Run", "cargo", vec!["run"])
+            } else {
+                ("Cargo Test", "cargo", vec!["test"])
+            }
+        } else if root.join("gradlew").is_file() {
+            ("Gradle Run", "./gradlew", vec!["run"])
+        } else if root.join("build.gradle.kts").is_file() || root.join("build.gradle").is_file() {
+            ("Gradle Run", "gradle", vec!["run"])
+        } else if root.join("package.json").is_file() {
+            ("npm Start", "npm", vec!["start"])
+        } else if root.join("go.mod").is_file() {
+            ("Go Run", "go", vec!["run", "."])
+        } else {
+            return Err(RunnerError::NoBuildSystem(root.to_owned()));
+        };
+        Ok(Self::from_parts(plan, root))
+    }
+
+    fn from_parts((name, program, args): (&str, &str, Vec<&str>), root: &Path) -> Self {
+        Self {
+            name: name.into(),
+            program: program.into(),
+            args: args.into_iter().map(Into::into).collect(),
             cwd: root.to_owned(),
-        })
+        }
     }
 }
 
@@ -213,6 +251,19 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    fn detects_gradle_build_files_and_prefers_existing_wrapper() {
+        let root =
+            std::env::temp_dir().join(format!("jetthing-gradle-detect-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("build.gradle.kts"), "plugins { application }").unwrap();
+        assert_eq!(TaskPlan::detect_build(&root).unwrap().program, "gradle");
+        assert_eq!(TaskPlan::detect_run(&root).unwrap().args, ["run"]);
+        std::fs::write(root.join("gradlew"), "").unwrap();
+        assert_eq!(TaskPlan::detect_build(&root).unwrap().program, "./gradlew");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn streams_real_process_output_and_exit_code() {
         let mut service = TaskService::default();
         service
@@ -272,6 +323,14 @@ mod tests {
         let plan = TaskPlan::detect_build(&root).unwrap();
         assert_eq!(plan.program, "cargo");
         assert_eq!(plan.args, ["build"]);
+        let run = TaskPlan::detect_run(&root).unwrap();
+        assert_eq!(
+            (run.name.as_str(), run.args.as_slice()),
+            ("Cargo Test", &["test".to_owned()][..])
+        );
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        assert_eq!(TaskPlan::detect_run(&root).unwrap().args, ["run"]);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

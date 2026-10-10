@@ -1,7 +1,7 @@
 use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
 use jetthing_git::RepositoryStatus;
 use jetthing_language::{LanguageAnalysis, analyze};
-use jetthing_lsp::{LspDiagnostic, LspService, ServerState};
+use jetthing_lsp::{LspDiagnostic, LspManager};
 use jetthing_plugins::PluginManifest;
 use jetthing_project::{FileEntry, Project};
 use jetthing_runner::{TaskPlan, TaskService, TaskState};
@@ -9,7 +9,19 @@ use jetthing_search::{SearchEvent, SearchService, TextMatch};
 use jetthing_terminal::TerminalSession;
 use jetthing_text::{Selection, SelectionSet, TextDocument};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+mod editor_commands;
+mod lsp_commands;
+mod project_commands;
+mod terminal_commands;
+mod toolwindow;
+mod update_commands;
+pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
+pub use update_commands::{
+    CURRENT_VERSION, UpdateState, installable_executable as update_installable,
+};
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -27,47 +39,75 @@ pub struct IdeState {
     pub active_document: Option<usize>,
     pub plugins: Vec<PluginManifest>,
     pub terminal: Option<TerminalSession>,
-    pub terminal_visible: bool,
     pub search: SearchService,
     pub search_results: Vec<TextMatch>,
     pub search_query: String,
-    pub search_visible: bool,
     pub search_files_scanned: usize,
     pub search_truncated: bool,
     pub git: Option<RepositoryStatus>,
-    pub git_visible: bool,
     pub runner: TaskService,
-    pub build_visible: bool,
-    pub lsp: Option<LspService>,
-    pub lsp_error: Option<String>,
-    pub problems_visible: bool,
+    /// Language servers of the open project, started lazily per language.
+    pub lsp: LspManager,
+    pub tool_windows: ToolWindowLayout,
+    /// Project-relative directories expanded in the Project tool window.
+    pub expanded_dirs: BTreeSet<PathBuf>,
+    /// Most recently used files, newest first (Recent Files, ⌘E).
+    pub recent_files: Vec<PathBuf>,
+    pub updates: jetthing_update::UpdateService,
+    pub update_state: UpdateState,
+    /// Whether the update balloon is showing.
+    pub update_notification: bool,
+    update_silent: bool,
+    /// Original install path, retained when the running binary is renamed.
+    update_executable: Option<PathBuf>,
     pub status: String,
 }
 
 impl IdeState {
     pub fn open_project(&mut self, path: &Path) -> Result<(), String> {
         let project = Project::open(path).map_err(|e| e.to_string())?;
+        self.prepare_project_switch()?;
+        self.install_project(project)
+    }
+
+    pub(crate) fn prepare_project_switch(&mut self) -> Result<(), String> {
+        if self.project.is_some() {
+            if self.runner.is_running() {
+                return Err("Stop the running task before opening another project.".into());
+            }
+            self.save_all()?;
+            self.save_workspace()?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn install_project(&mut self, project: Project) -> Result<(), String> {
         self.files = project.entries(20_000);
         self.documents.clear();
         self.active_document = None;
         self.search.cancel();
         self.search_results.clear();
+        self.search_query.clear();
+        self.search_files_scanned = 0;
+        self.search_truncated = false;
+        self.terminal = None;
+        self.runner = TaskService::default();
+        self.plugins.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
-        self.lsp = None;
-        self.lsp_error = None;
-        if project.root().join("Cargo.toml").is_file() {
-            match LspService::start_rust_analyzer(project.root()) {
-                Ok(service) => self.lsp = Some(service),
-                Err(error) => self.lsp_error = Some(error.to_string()),
-            }
-        }
+        self.lsp.set_project(Some(project.root()));
+        self.expanded_dirs.clear();
+        self.recent_files.clear();
+        self.tool_windows = ToolWindowLayout::default();
+        self.tool_windows.show(ToolWindow::Project);
         self.status = format!("Opened {}", project.root().display());
         self.project = Some(project);
+        self.restore_workspace();
         Ok(())
     }
     pub fn open_file(&mut self, path: &Path) -> Result<(), String> {
         if let Some(index) = self.documents.iter().position(|d| d.path == path) {
             self.active_document = Some(index);
+            self.touch_recent(path);
             return Ok(());
         }
         let project = self.project.as_ref().ok_or("no project is open")?;
@@ -79,13 +119,9 @@ impl IdeState {
             selections: SelectionSet::default(),
         });
         self.active_document = Some(self.documents.len() - 1);
-        if let Some(lsp) = &mut self.lsp {
-            let absolute = project.root().join(path);
-            if let Err(error) = lsp.open_document(&absolute, &text, 0) {
-                self.lsp_error = Some(error.to_string());
-            }
-        }
+        self.touch_recent(path);
         self.status = format!("Opened {}", path.display());
+        self.sync_document_lsp(path, &text, 0);
         Ok(())
     }
     pub fn save(&mut self, index: usize) -> Result<(), String> {
@@ -100,6 +136,81 @@ impl IdeState {
         document.text.mark_saved();
         self.status = format!("Saved {}", document.path.display());
         Ok(())
+    }
+
+    /// Closes a tab. Like the reference IDE, modified content is saved first
+    /// rather than discarded.
+    pub fn close_document(&mut self, index: usize) -> Result<(), String> {
+        let document = self.documents.get(index).ok_or("document does not exist")?;
+        if document.text.is_dirty() {
+            self.save(index)?;
+        }
+        let document = self.documents.remove(index);
+        self.active_document = match self.active_document {
+            _ if self.documents.is_empty() => None,
+            Some(active) if active > index => Some(active - 1),
+            Some(active) if active == index => Some(index.min(self.documents.len() - 1)),
+            other => other,
+        };
+        self.lsp.clear_completions();
+        if let Some(project) = &self.project {
+            let _ = self
+                .lsp
+                .close_document(&project.root().join(&document.path));
+        }
+        self.status = format!("Closed {}", document.path.display());
+        Ok(())
+    }
+
+    pub fn activate_document(&mut self, index: usize) -> Result<(), String> {
+        if index >= self.documents.len() {
+            return Err("document does not exist".into());
+        }
+        self.active_document = Some(index);
+        let path = self.documents[index].path.clone();
+        self.touch_recent(&path);
+        self.lsp.clear_completions();
+        Ok(())
+    }
+
+    /// Moves `path` to the front of the recent-files list.
+    pub fn touch_recent(&mut self, path: &Path) {
+        self.recent_files.retain(|recent| recent != path);
+        self.recent_files.insert(0, path.to_owned());
+        self.recent_files.truncate(50);
+    }
+
+    /// Expands or collapses a directory in the Project tool window.
+    /// Returns whether the directory is expanded afterwards.
+    pub fn toggle_directory(&mut self, path: &Path) -> Result<bool, String> {
+        if !self
+            .files
+            .iter()
+            .any(|e| e.is_dir && e.relative_path == path)
+        {
+            return Err(format!("{} is not a project directory", path.display()));
+        }
+        if self.expanded_dirs.remove(path) {
+            Ok(false)
+        } else {
+            self.expanded_dirs.insert(path.to_owned());
+            Ok(true)
+        }
+    }
+
+    /// Entries visible in the Project tree: every ancestor directory is expanded.
+    pub fn visible_files(&self) -> Vec<&FileEntry> {
+        self.files
+            .iter()
+            .filter(|entry| {
+                entry
+                    .relative_path
+                    .ancestors()
+                    .skip(1)
+                    .filter(|ancestor| !ancestor.as_os_str().is_empty())
+                    .all(|ancestor| self.expanded_dirs.contains(ancestor))
+            })
+            .collect()
     }
 
     pub fn undo_active(&mut self) -> bool {
@@ -140,7 +251,11 @@ impl IdeState {
     }
 
     pub fn open_terminal(&mut self) -> Result<(), String> {
-        if self.terminal.is_none() {
+        if self
+            .terminal
+            .as_ref()
+            .is_none_or(|terminal| terminal.is_exited())
+        {
             let cwd = self
                 .project
                 .as_ref()
@@ -148,7 +263,7 @@ impl IdeState {
                 .unwrap_or_else(|| Path::new("."));
             self.terminal = Some(TerminalSession::spawn_shell(cwd).map_err(|e| e.to_string())?);
         }
-        self.terminal_visible = true;
+        self.tool_windows.show(ToolWindow::Terminal);
         self.status = "Terminal ready".into();
         Ok(())
     }
@@ -168,7 +283,7 @@ impl IdeState {
         self.search_files_scanned = 0;
         self.search_truncated = false;
         self.search_query = query.clone();
-        self.search_visible = true;
+        self.tool_windows.show(ToolWindow::Find);
         let job = self
             .search
             .start(project.root().to_owned(), files, query)
@@ -236,7 +351,17 @@ impl IdeState {
         let plan = TaskPlan::detect_build(root).map_err(|error| error.to_string())?;
         let name = plan.name.clone();
         self.runner.start(plan).map_err(|error| error.to_string())?;
-        self.build_visible = true;
+        self.tool_windows.show(ToolWindow::Build);
+        self.status = format!("Running {name}");
+        Ok(())
+    }
+
+    pub fn start_run(&mut self) -> Result<(), String> {
+        let root = self.project.as_ref().ok_or("no project is open")?.root();
+        let plan = TaskPlan::detect_run(root).map_err(|error| error.to_string())?;
+        let name = plan.name.clone();
+        self.runner.start(plan).map_err(|error| error.to_string())?;
+        self.tool_windows.show(ToolWindow::Build);
         self.status = format!("Running {name}");
         Ok(())
     }
@@ -248,34 +373,52 @@ impl IdeState {
             return;
         }
         if was_running && !self.runner.is_running() {
+            let name = self
+                .runner
+                .plan()
+                .map(|plan| plan.name.clone())
+                .unwrap_or_else(|| "Task".into());
             self.status = match self.runner.state() {
-                TaskState::Exited(0) => "Build finished successfully".into(),
-                TaskState::Exited(code) => format!("Build failed with exit code {code}"),
-                TaskState::Cancelled => "Build cancelled".into(),
+                TaskState::Exited(0) => format!("{name} finished successfully"),
+                TaskState::Exited(code) => format!("{name} failed with exit code {code}"),
+                TaskState::Cancelled => format!("{name} cancelled"),
                 _ => self.status.clone(),
             };
         }
     }
 
+    /// Pumps the language servers and re-opens documents on restarted servers.
     pub fn poll_lsp(&mut self) {
-        if let Some(lsp) = &mut self.lsp
-            && let Err(error) = lsp.poll()
-        {
-            self.lsp_error = Some(error.to_string());
+        let restarted = self.lsp.poll();
+        let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
+            return;
+        };
+        for absolute in restarted {
+            let Some(document) = self
+                .documents
+                .iter()
+                .find(|document| root.join(&document.path) == absolute)
+            else {
+                continue;
+            };
+            let version = document.text.revision().min(i32::MAX as u64) as i32;
+            let _ = self
+                .lsp
+                .sync_document(&absolute, &document.text.text(), version);
         }
     }
 
+    /// Opens or updates a document on its language server, starting the
+    /// server on first use. A missing server raises a notice, not an error.
     pub fn sync_document_lsp(&mut self, relative_path: &Path, text: &str, version: i32) {
         let Some(project) = &self.project else {
             return;
         };
-        let Some(lsp) = &mut self.lsp else {
-            return;
-        };
-        lsp.clear_completions();
-        if let Err(error) = lsp.change_document(&project.root().join(relative_path), text, version)
-        {
-            self.lsp_error = Some(error.to_string());
+        self.lsp.clear_completions();
+        let absolute = project.root().join(relative_path);
+        match self.lsp.sync_document(&absolute, text, version) {
+            Ok(()) | Err(jetthing_lsp::LspError::ServerNotFound { .. }) => {}
+            Err(error) => self.status = error.to_string(),
         }
     }
 
@@ -315,10 +458,28 @@ impl IdeState {
             .root()
             .join(&document.path);
         self.lsp
-            .as_mut()
-            .ok_or("language server is not running")?
             .request_completion(&absolute, line, character)
             .map_err(|e| e.to_string())
+    }
+
+    /// Runs an edit on the active document and refreshes analysis/LSP if it changed.
+    pub fn edit_active<T>(
+        &mut self,
+        edit: impl FnOnce(&mut Document) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let index = self.active_document.ok_or("no active document")?;
+        let document = self
+            .documents
+            .get_mut(index)
+            .ok_or("active document does not exist")?;
+        let revision = document.text.revision();
+        let result = edit(document)?;
+        if document.text.revision() != revision {
+            document.analysis = analyze(&document.path, &document.text.text());
+            self.sync_active_lsp();
+            self.lsp.clear_completions();
+        }
+        Ok(result)
     }
 
     pub fn insert_active_text(&mut self, position: usize, text: &str) -> Result<(), String> {
@@ -336,9 +497,7 @@ impl IdeState {
             .selections
             .set_single(Selection::caret(position + text.chars().count()));
         self.sync_active_lsp();
-        if let Some(lsp) = &mut self.lsp {
-            lsp.clear_completions();
-        }
+        self.lsp.clear_completions();
         Ok(())
     }
 
@@ -352,17 +511,12 @@ impl IdeState {
         let Some(project) = &self.project else {
             return Vec::new();
         };
-        let Some(lsp) = &self.lsp else {
-            return Vec::new();
-        };
-        lsp.diagnostics()
-            .get(&project.root().join(&document.path))
-            .cloned()
-            .unwrap_or_default()
+        self.lsp
+            .diagnostics_for(&project.root().join(&document.path))
     }
 }
 
-fn spec(
+pub(crate) fn spec(
     id: &str,
     label: &str,
     category: &str,
@@ -377,7 +531,7 @@ fn spec(
         params: params.into(),
     }
 }
-fn string_param(params: &Value, name: &str) -> Result<String, CommandError> {
+pub(crate) fn string_param(params: &Value, name: &str) -> Result<String, CommandError> {
     params
         .get(name)
         .and_then(Value::as_str)
@@ -385,7 +539,7 @@ fn string_param(params: &Value, name: &str) -> Result<String, CommandError> {
         .ok_or_else(|| CommandError::InvalidParams(format!("expected string field `{name}`")))
 }
 
-fn string_array_param(params: &Value, name: &str) -> Result<Vec<String>, CommandError> {
+pub(crate) fn string_array_param(params: &Value, name: &str) -> Result<Vec<String>, CommandError> {
     params
         .get(name)
         .map(|value| {
@@ -406,7 +560,13 @@ fn string_array_param(params: &Value, name: &str) -> Result<Vec<String>, Command
         .map(|value| value.unwrap_or_default())
 }
 
-fn usize_param(params: &Value, name: &str) -> Result<usize, CommandError> {
+fn tool_window_param(params: &Value) -> Result<ToolWindow, CommandError> {
+    let id = string_param(params, "id")?;
+    ToolWindow::parse(&id)
+        .ok_or_else(|| CommandError::InvalidParams(format!("unknown tool window `{id}`")))
+}
+
+pub(crate) fn usize_param(params: &Value, name: &str) -> Result<usize, CommandError> {
     params
         .get(name)
         .and_then(Value::as_u64)
@@ -418,6 +578,11 @@ fn usize_param(params: &Value, name: &str) -> Result<usize, CommandError> {
 
 pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
+    editor_commands::register(&mut registry);
+    project_commands::register(&mut registry);
+    update_commands::register(&mut registry);
+    terminal_commands::register(&mut registry);
+    lsp_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(
@@ -433,30 +598,6 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .open_project(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"root": state.project.as_ref().unwrap().root()}))
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec(
-                "language.complete",
-                "Code Completion",
-                "Code",
-                Some("⌃Space"),
-                "{}",
-            ),
-            |state: &IdeState| {
-                state.active_document.is_some()
-                    && state
-                        .lsp
-                        .as_ref()
-                        .is_some_and(|lsp| lsp.state() == ServerState::Ready)
-            },
-            |state: &mut IdeState, _| {
-                let id = state
-                    .request_active_completion()
-                    .map_err(CommandError::Failed)?;
-                Ok(json!({"requestId": id}))
             },
         ))
         .expect("unique built-in id");
@@ -482,44 +623,20 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
         .expect("unique built-in id");
     registry
         .register(Command::new(
-            spec(
-                "language.completion",
-                "Request Completion",
-                "Code",
-                None,
-                r#"{"path":"string","line":0,"character":0}"#,
-            ),
-            |state: &IdeState| {
-                state
-                    .lsp
-                    .as_ref()
-                    .is_some_and(|lsp| lsp.state() == ServerState::Ready)
-            },
-            |state: &mut IdeState, params| {
-                let relative = string_param(&params, "path")?;
-                let line = usize_param(&params, "line")?;
-                let character = usize_param(&params, "character")?;
-                let root = state
-                    .project
-                    .as_ref()
-                    .ok_or_else(|| CommandError::Disabled("language.completion".into()))?
-                    .root();
-                let id = state
-                    .lsp
-                    .as_mut()
-                    .ok_or_else(|| CommandError::Disabled("language.completion".into()))?
-                    .request_completion(&root.join(relative), line, character)
-                    .map_err(|error| CommandError::Failed(error.to_string()))?;
-                Ok(json!({"requestId": id}))
+            spec("build.project", "Build Project", "Build", Some("⌘F9"), "{}"),
+            |state: &IdeState| state.project.is_some() && !state.runner.is_running(),
+            |state: &mut IdeState, _| {
+                state.start_build().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
             },
         ))
         .expect("unique built-in id");
     registry
         .register(Command::new(
-            spec("build.project", "Build Project", "Build", Some("⌘F9"), "{}"),
+            spec("run.project", "Run", "Run", Some("⌃R"), "{}"),
             |state: &IdeState| state.project.is_some() && !state.runner.is_running(),
             |state: &mut IdeState, _| {
-                state.start_build().map_err(CommandError::Failed)?;
+                state.start_run().map_err(CommandError::Failed)?;
                 Ok(Value::Null)
             },
         ))
@@ -552,7 +669,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                         cwd,
                     })
                     .map_err(|error| CommandError::Failed(error.to_string()))?;
-                state.build_visible = true;
+                state.tool_windows.show(ToolWindow::Build);
                 Ok(Value::Null)
             },
         ))
@@ -669,9 +786,9 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 if state.terminal.is_none() {
                     state.open_terminal().map_err(CommandError::Failed)?;
                 } else {
-                    state.terminal_visible = !state.terminal_visible;
+                    state.tool_windows.toggle(ToolWindow::Terminal);
                 }
-                Ok(json!({"visible": state.terminal_visible}))
+                Ok(json!({"visible": state.tool_windows.is_visible(ToolWindow::Terminal)}))
             },
         ))
         .expect("unique built-in id");
@@ -781,6 +898,128 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
         .expect("unique built-in id");
     registry
         .register(Command::new(
+            spec(
+                "toolwindow.toggle",
+                "Toggle Tool Window",
+                "Window",
+                None,
+                r#"{"id":"project|commit|find|build|problems|terminal"}"#,
+            ),
+            |_| true,
+            |state: &mut IdeState, params| {
+                let window = tool_window_param(&params)?;
+                if window == ToolWindow::Terminal && state.terminal.is_none() {
+                    state.open_terminal().map_err(CommandError::Failed)?;
+                    return Ok(json!({"visible": true}));
+                }
+                if window == ToolWindow::Commit && !state.tool_windows.is_visible(window) {
+                    let _ = state.refresh_git();
+                }
+                Ok(json!({"visible": state.tool_windows.toggle(window)}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "toolwindow.hideAll",
+                "Hide All Tool Windows",
+                "Window",
+                Some("⇧⌘F12"),
+                "{}",
+            ),
+            |_| true,
+            |state: &mut IdeState, _| {
+                state.tool_windows.hide_all();
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    for window in ToolWindow::ALL {
+        let id = format!("toolwindow.activate.{}", window.id());
+        registry
+            .register(Command::new(
+                spec(
+                    &id,
+                    &format!("{} Tool Window", window.title()),
+                    "Window",
+                    Some(window.shortcut()),
+                    "{}",
+                ),
+                |_| true,
+                move |state: &mut IdeState, _| {
+                    if window == ToolWindow::Terminal {
+                        state.open_terminal().map_err(CommandError::Failed)?;
+                    }
+                    if window == ToolWindow::Commit {
+                        let _ = state.refresh_git();
+                    }
+                    state.tool_windows.show(window);
+                    Ok(Value::Null)
+                },
+            ))
+            .expect("unique built-in id");
+    }
+    registry
+        .register(Command::new(
+            spec(
+                "editor.close",
+                "Close Tab",
+                "Editor",
+                Some("⌘W"),
+                r#"{"index":"number?"}"#,
+            ),
+            |s: &IdeState| s.active_document.is_some(),
+            |state: &mut IdeState, params| {
+                let index = match params.get("index") {
+                    Some(_) => usize_param(&params, "index")?,
+                    None => state
+                        .active_document
+                        .ok_or_else(|| CommandError::Disabled("editor.close".into()))?,
+                };
+                state.close_document(index).map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "editor.activate",
+                "Select Tab",
+                "Editor",
+                None,
+                r#"{"index":"number"}"#,
+            ),
+            |s: &IdeState| !s.documents.is_empty(),
+            |state: &mut IdeState, params| {
+                state
+                    .activate_document(usize_param(&params, "index")?)
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "project.toggleDirectory",
+                "Expand/Collapse Directory",
+                "Project",
+                None,
+                r#"{"path":"string"}"#,
+            ),
+            |s: &IdeState| s.project.is_some(),
+            |state: &mut IdeState, params| {
+                let expanded = state
+                    .toggle_directory(Path::new(&string_param(&params, "path")?))
+                    .map_err(CommandError::Failed)?;
+                Ok(json!({"expanded": expanded}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
             spec("plugin.refresh", "Refresh Plugins", "Plugins", None, "{}"),
             |_| true,
             |state: &mut IdeState, _| {
@@ -817,6 +1056,82 @@ mod tests {
             .execute("project.open", &mut state, json!({"path": root}))
             .unwrap();
         assert!(state.project.is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn switching_projects_saves_documents_and_restores_the_previous_workspace() {
+        let root = std::env::temp_dir().join(format!("jetthing-switch-{}", std::process::id()));
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join("notes.txt"), "before").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": first}))
+            .unwrap();
+        state.open_file(Path::new("notes.txt")).unwrap();
+        state.documents[0].text.edit(0, 6, "after").unwrap();
+        state.search_query = "old query".into();
+        commands
+            .execute("project.open", &mut state, json!({"path": second}))
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(first.join("notes.txt")).unwrap(),
+            "after"
+        );
+        assert!(state.documents.is_empty());
+        assert!(state.search_query.is_empty());
+        commands
+            .execute("project.open", &mut state, json!({"path": first}))
+            .unwrap();
+        assert_eq!(state.documents[0].text.text(), "after");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_project_open_preserves_the_current_editor() {
+        let root =
+            std::env::temp_dir().join(format!("jetthing-switch-error-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("notes.txt"), "before").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        state.open_project(&root).unwrap();
+        state.open_file(Path::new("notes.txt")).unwrap();
+        state.documents[0].text.edit(0, 6, "unsaved").unwrap();
+        assert!(
+            commands
+                .execute(
+                    "project.open",
+                    &mut state,
+                    json!({"path": root.join("missing")})
+                )
+                .is_err()
+        );
+        assert_eq!(state.documents[0].text.text(), "unsaved");
+        assert!(state.documents[0].text.is_dirty());
+        assert_eq!(
+            std::fs::read_to_string(root.join("notes.txt")).unwrap(),
+            "before"
+        );
+        // A failed save also prevents discarding the old project.
+        std::fs::remove_file(root.join("notes.txt")).unwrap();
+        std::fs::create_dir(root.join("notes.txt")).unwrap();
+        let next = root.join("next");
+        std::fs::create_dir(&next).unwrap();
+        assert!(
+            commands
+                .execute("project.open", &mut state, json!({"path": next}))
+                .is_err()
+        );
+        assert_eq!(
+            state.project.as_ref().unwrap().root(),
+            root.canonicalize().unwrap()
+        );
+        assert!(state.documents[0].text.is_dirty());
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -873,5 +1188,106 @@ mod tests {
         assert_eq!(state.documents[0].selections.primary().head, 9);
         assert!(state.documents[0].text.can_undo());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_tree_starts_collapsed_and_expands_by_command() {
+        let root = std::env::temp_dir().join(format!("jetthing-core-tree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src/nested")).unwrap();
+        std::fs::write(root.join("src/nested/deep.rs"), "").unwrap();
+        std::fs::write(root.join("README.md"), "").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        let visible = |state: &IdeState| {
+            state
+                .visible_files()
+                .into_iter()
+                .map(|entry| entry.relative_path.to_string_lossy().replace('\\', "/"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(visible(&state), ["src", "README.md"]);
+        commands
+            .execute(
+                "project.toggleDirectory",
+                &mut state,
+                json!({"path": "src"}),
+            )
+            .unwrap();
+        assert_eq!(visible(&state), ["src", "src/nested", "README.md"]);
+        assert!(
+            commands
+                .execute(
+                    "project.toggleDirectory",
+                    &mut state,
+                    json!({"path": "README.md"})
+                )
+                .is_err()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn closing_a_tab_saves_and_keeps_a_sensible_active_tab() {
+        let root = std::env::temp_dir().join(format!("jetthing-core-close-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "a").unwrap();
+        std::fs::write(root.join("b.txt"), "b").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        for path in ["a.txt", "b.txt"] {
+            commands
+                .execute("editor.openFile", &mut state, json!({"path": path}))
+                .unwrap();
+        }
+        commands
+            .execute(
+                "editor.insertText",
+                &mut state,
+                json!({"position": 1, "text": "!"}),
+            )
+            .unwrap();
+        commands
+            .execute("editor.close", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(root.join("b.txt")).unwrap(), "b!");
+        assert_eq!(state.documents.len(), 1);
+        assert_eq!(state.active_document, Some(0));
+        commands
+            .execute("editor.close", &mut state, json!({"index": 0}))
+            .unwrap();
+        assert_eq!(state.active_document, None);
+        assert!(
+            commands
+                .execute("editor.close", &mut state, Value::Null)
+                .is_err()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tool_window_commands_keep_one_window_per_anchor() {
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("toolwindow.toggle", &mut state, json!({"id": "problems"}))
+            .unwrap();
+        commands
+            .execute("toolwindow.activate.find", &mut state, Value::Null)
+            .unwrap();
+        assert!(state.tool_windows.is_visible(ToolWindow::Find));
+        assert!(!state.tool_windows.is_visible(ToolWindow::Problems));
+        assert!(
+            commands
+                .execute("toolwindow.toggle", &mut state, json!({"id": "bogus"}))
+                .is_err()
+        );
     }
 }
