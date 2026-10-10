@@ -1,5 +1,6 @@
 //! "Missing toolchain" editor notification: a bar above the editor when the
-//! open file's language lacks its SDK or language server, with Set up.
+//! open file's language lacks its SDK, build tool or language server (or,
+//! with no editor open, when the project does), with Set up.
 
 use crate::{IdeApp, icons::Icon, theme};
 use eframe::egui::{self, Color32, RichText};
@@ -10,15 +11,16 @@ const BACKGROUND: Color32 = Color32::from_rgb(0x44, 0x32, 0x1D);
 const BORDER: Color32 = Color32::from_rgb(0x69, 0x48, 0x20);
 
 pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
-    let Some(path) = app
+    let path = app
         .state
         .active_document
         .and_then(|index| app.state.documents.get(index))
-        .map(|document| document.path.clone())
-    else {
-        return;
+        .map(|document| document.path.clone());
+    let banner = match &path {
+        Some(path) => app.state.toolchains.banner_for(path),
+        None => app.state.toolchains.project_banner(),
     };
-    let Some(banner) = app.state.toolchains.banner_for(&path) else {
+    let Some(banner) = banner else {
         return;
     };
     let mut action = None;

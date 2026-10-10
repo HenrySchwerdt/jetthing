@@ -145,6 +145,33 @@ Walkthrough (same clean machine as above, language-server balloon dismissed firs
 Core test: `banner_lists_missing_components_for_the_project_language` (text, setup order,
 other languages unaffected, `usePath` shrinking the list, dismiss).
 
+## Slice 2b: one-click Java setup on a clean machine (Gradle, sync, completion)
+
+User report on 0.0.3: Gradle was not set up and there was no completion. The chain now runs
+end to end. It was verified on Xvfb (glow, 2026-10-10) with `PATH` stripped of `java`,
+`javac`, `jdtls` and `gradle`, no `JAVA_HOME`, an empty `JETTHING_TOOLCHAINS_DIR`, and a
+scratch copy of `samples/java-gradle` with `gradlew`, `gradlew.bat` and `gradle/wrapper`
+removed, so Gradle itself has to be installed:
+
+1. `toolchains/java-07-clean-project-bar.png`: right after the project opens, with no editor
+   yet, the bar reads *Java project: JDK, Gradle and the Java language server are missing*
+   with **Set up** / **Dismiss**.
+2. `toolchains/java-08-clean-setup-progress.png`: one **Set up** installs jdtls, the JDK and
+   Gradle. The bar shows *Setting up…* and the status bar shows *Installing jdtls 1.61.0… (+2)*
+   with a progress bar. Installed: Temurin 21.0.12.1+1, jdtls 1.61.0, Gradle 9.8.1 (from
+   services.gradle.org, checked against the published `.sha256`).
+3. `toolchains/java-09-clean-gradle-synced.png`: when the last install finishes, Gradle sync
+   starts on its own with the managed Gradle and JDK (*sync finished, BUILD SUCCESSFUL*). The
+   Gradle tool window lists the task groups, and the run widget has the new `java-gradle [run]`
+   configuration selected (`java-gradle [test]` was created too).
+4. `toolchains/java-10-clean-completion.png`: jdtls restarted from the managed install. After
+   its import, typing `app.` opens the completion popup with `greeting(String name)`,
+   `main(String[] args)` and the postfix templates.
+
+With `gradlew` present, the bar lists only the JDK and the Java language server
+(`detects_project_requirements_from_markers`); `gradlew` then gets the managed JDK through the
+same task environment. That variant was not recorded on Xvfb.
+
 ## Pending (next slices)
 
 - More catalog entries (rustup toolchains, Android SDK, kotlin-lsp, Node, Python, Go, ...);

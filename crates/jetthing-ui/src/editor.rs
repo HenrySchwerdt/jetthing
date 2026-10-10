@@ -66,6 +66,8 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 return;
             }
             if app.state.active_document.is_none() {
+                // Offer toolchain setup as soon as the project opens.
+                crate::toolchain_banner::show(app, ui);
                 empty_state(ui);
                 app.caret_screen_pos = None;
                 return;

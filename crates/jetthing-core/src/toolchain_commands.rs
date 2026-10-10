@@ -38,7 +38,7 @@ pub struct ToolchainBanner {
     pub language: String,
     /// Missing component ids (requirements included), in setup order.
     pub components: Vec<String>,
-    /// "Java project: JDK and Eclipse JDT Language Server are missing".
+    /// "Java project: JDK, Gradle and the Java language server are missing".
     pub text: String,
     /// Whether a setup of these components is running.
     pub busy: bool,
@@ -94,12 +94,29 @@ impl ToolchainState {
 
     /// The bar to show above an editor for `path`, if its language lacks tools.
     pub fn banner_for(&self, path: &Path) -> Option<ToolchainBanner> {
-        let (requirement, components) = self.missing.iter().find(|(requirement, _)| {
+        let found = self.missing.iter().find(|(requirement, _)| {
             requirement.applies_to(path) && !self.dismissed.contains(requirement.language)
         })?;
+        self.banner(found)
+    }
+
+    /// The bar shown while no editor is open: the first language of the project
+    /// that lacks tools, so setup is offered as soon as the project opens.
+    pub fn project_banner(&self) -> Option<ToolchainBanner> {
+        let found = self
+            .missing
+            .iter()
+            .find(|(requirement, _)| !self.dismissed.contains(requirement.language))?;
+        self.banner(found)
+    }
+
+    fn banner(
+        &self,
+        (requirement, components): &(ProjectRequirement, Vec<String>),
+    ) -> Option<ToolchainBanner> {
         let names: Vec<String> = components
             .iter()
-            .map(|id| self.component_name(id))
+            .map(|id| self.banner_name(id, requirement.language))
             .collect();
         let list = match names.as_slice() {
             [one] => one.clone(),
@@ -145,6 +162,18 @@ impl ToolchainState {
         Some((text, job.fraction()))
     }
 
+    /// Component name in the bar: language servers read "the Java language server".
+    fn banner_name(&self, id: &str, language: &str) -> String {
+        let server = self.toolchains.catalog().get(id).is_some_and(|provider| {
+            provider.spec().kind == jetthing_toolchains::ComponentKind::LanguageServer
+        });
+        if server {
+            format!("the {language} language server")
+        } else {
+            self.component_name(id)
+        }
+    }
+
     fn component_name(&self, id: &str) -> String {
         self.toolchains
             .catalog()
@@ -163,6 +192,13 @@ impl IdeState {
         let resolver =
             crate::toolchain_lsp::ToolchainServerResolver::new(self.toolchains.toolchains.clone());
         self.lsp.set_resolver(Some(std::sync::Arc::new(resolver)));
+        self.sync_tool_environment();
+    }
+
+    /// Makes JDKs and build tools that are not on `PATH` (Jetthing-managed or
+    /// configured in `toolchains.toml`) available to builds, runs and tests.
+    pub(crate) fn sync_tool_environment(&self) {
+        jetthing_runner::set_tool_environment(tool_environment(&self.toolchains.toolchains));
     }
 
     /// Installs `components` and whatever they require that cannot be found.
@@ -229,6 +265,9 @@ impl IdeState {
                 };
             }
         }
+        if installed_any {
+            self.sync_tool_environment();
+        }
         // Language servers that were missing can start now; wait until the
         // whole setup (e.g. jdtls and its JDK) has finished.
         if installed_any
@@ -238,6 +277,18 @@ impl IdeState {
             let status = std::mem::take(&mut self.status);
             self.restart_language_servers();
             self.status = status;
+        }
+        // A Gradle project imports itself once its JDK (and Gradle) are there.
+        if installed_any
+            && !self.toolchains.service.is_busy()
+            && self.is_gradle_project()
+            && !self.runner.is_running()
+        {
+            let status = std::mem::take(&mut self.status);
+            match self.start_gradle_sync() {
+                Ok(()) => self.status = format!("{status}; syncing Gradle project…"),
+                Err(error) => self.status = format!("{status}; Gradle sync: {error}"),
+            }
         }
     }
 
@@ -263,6 +314,33 @@ impl IdeState {
         self.status = format!("Setting up {component}…");
         Ok(job)
     }
+}
+
+/// Build-side environment for the located JDK and Gradle: their `bin`
+/// directories and `JAVA_HOME`, for tools that were not found on `PATH`.
+pub(crate) fn tool_environment(toolchains: &Toolchains) -> jetthing_runner::ToolEnvironment {
+    use jetthing_toolchains::LocateSource;
+    let mut environment = jetthing_runner::ToolEnvironment::default();
+    for id in ["jdk", "gradle"] {
+        let Some(located) = toolchains.locate(id) else {
+            continue;
+        };
+        if matches!(
+            located.source,
+            LocateSource::Path | LocateSource::HomeEnv(_)
+        ) {
+            continue;
+        }
+        if let Some(bin) = located.executable.parent() {
+            environment.path_dirs.push(bin.to_owned());
+        }
+        if id == "jdk" && std::env::var_os("JAVA_HOME").is_none() {
+            environment
+                .vars
+                .push(("JAVA_HOME".into(), located.home.display().to_string()));
+        }
+    }
+    environment
 }
 
 fn located_json(located: &jetthing_toolchains::Located) -> Value {
@@ -950,6 +1028,7 @@ mod tests {
         for spec in [
             jetthing_toolchains::providers::jdtls::spec(),
             jetthing_toolchains::providers::jdk::spec(),
+            jetthing_toolchains::providers::gradle::spec(),
         ] {
             catalog.register(Arc::new(StaticProvider {
                 spec,
@@ -978,11 +1057,17 @@ mod tests {
                 json!({"path": "src/App.java"}),
             )
             .unwrap();
+        // No wrapper: the project also needs Gradle.
         assert_eq!(
             banner["text"],
-            "Java project: JDK and Eclipse JDT Language Server are missing"
+            "Java project: JDK, Gradle and the Java language server are missing"
         );
-        assert_eq!(banner["components"], json!(["jdk", "jdtls"]));
+        assert_eq!(banner["components"], json!(["jdk", "gradle", "jdtls"]));
+        // The same bar is offered while no editor is open.
+        assert_eq!(
+            state.toolchains.project_banner().map(|banner| banner.text),
+            Some(banner["text"].as_str().unwrap().to_owned())
+        );
         assert_eq!(banner["busy"], false);
         let other = commands
             .execute("toolchain.banner", &mut state, json!({"path": "README.md"}))
@@ -1009,8 +1094,17 @@ mod tests {
             .unwrap();
         assert_eq!(
             banner["text"],
-            "Java project: Eclipse JDT Language Server is missing"
+            "Java project: Gradle and the Java language server are missing"
         );
+        // A configured JDK is handed to builds (bin on PATH, JAVA_HOME).
+        let environment = tool_environment(&state.toolchains.toolchains);
+        assert_eq!(environment.path_dirs, [jdk.join("bin")]);
+        if std::env::var_os("JAVA_HOME").is_none() {
+            assert_eq!(
+                environment.vars,
+                [("JAVA_HOME".to_owned(), jdk.display().to_string())]
+            );
+        }
 
         commands
             .execute(

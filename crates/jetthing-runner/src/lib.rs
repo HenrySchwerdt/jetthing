@@ -9,6 +9,7 @@ pub mod console;
 pub mod events;
 pub mod run_config;
 pub mod test_results;
+pub mod tool_env;
 
 pub use build_system::{BuildSystem, BuildSystemKind, BuildSystemRegistry, find_program};
 pub use console::{ConsoleBuffer, ConsoleLine};
@@ -17,6 +18,7 @@ pub use run_config::{RunConfiguration, RunManager, RunTarget};
 pub use test_results::{
     ConsoleTestParser, TestCase, TestCounts, TestId, TestOutcome, TestResults, TestSuite,
 };
+pub use tool_env::{ToolEnvironment, set_tool_environment, tool_environment};
 
 use std::{
     io::Read,
@@ -237,6 +239,8 @@ impl TaskService {
 
     fn spawn(&self, plan: &TaskPlan) -> Result<ActiveTask, RunnerError> {
         let mut command = Command::new(&plan.program);
+        // Managed JDK/Gradle first on PATH and JAVA_HOME, unless the plan sets them.
+        tool_env::tool_environment().apply(&mut command, &plan.env);
         command
             .args(&plan.args)
             .current_dir(&plan.cwd)
