@@ -10,9 +10,9 @@ egui.workspace = true
 jetthing-command = { path = "../jetthing-command" }
 jetthing-core = { path = "../jetthing-core" }
 jetthing-git = { path = "../jetthing-git" }
-jetthing-keymap = { path = "../jetthing-keymap" }
 jetthing-language = { path = "../jetthing-language" }
 jetthing-lsp = { path = "../jetthing-lsp" }
 jetthing-runner = { path = "../jetthing-runner" }
 jetthing-text = { path = "../jetthing-text" }
+jetthing-terminal = { path = "../jetthing-terminal" }
 serde_json.workspace = true

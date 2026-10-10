@@ -1,0 +1,2536 @@
+{
+ "meta": {
+  "source": "https://github.com/JetBrains/intellij-community",
+  "tag": "idea/262.10968.63",
+  "build": "262.10968.SNAPSHOT",
+  "license": "Apache-2.0 (derived data)"
+ },
+ "configurables": [
+  {
+   "id": "application.passwordSafe",
+   "parentId": "preferences.general",
+   "groupId": null,
+   "displayName": "Passwords",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/credential-store-impl/resources/intellij.platform.credentialStore.impl.xml"
+  },
+  {
+   "id": "RunToolbarSettingsConfigurableProvider",
+   "parentId": null,
+   "groupId": "build",
+   "displayName": "Run Widget",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/execution-impl/resources/META-INF/PlatformExecutionActions.xml"
+  },
+  {
+   "id": "application.elevation",
+   "parentId": "preferences.general",
+   "groupId": null,
+   "displayName": "Process Elevation",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/execution-process-elevation/resources/intellij.execution.process.elevation.xml"
+  },
+  {
+   "id": "build.tools",
+   "parentId": null,
+   "groupId": "build",
+   "displayName": "Build Tools",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/external-system-impl/resources/META-INF/ExternalSystemExtensions.xml"
+  },
+  {
+   "id": "ijent.dashboard",
+   "parentId": null,
+   "groupId": "build",
+   "displayName": "Environment Dashboard",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/ijent/ui/resources/intellij.platform.ijent.community.ui.xml"
+  },
+  {
+   "id": "editor.reader.mode",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "Reader Mode",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "inlay.hints",
+   "parentId": "editor",
+   "groupId": null,
+   "displayName": "Inlay Hints",
+   "level": "project",
+   "groupWeight": 1,
+   "nonDefaultProject": false,
+   "dynamic": true,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "preferences.editor",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "General",
+   "level": "application",
+   "groupWeight": 190,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "preferences.editor.code.editing",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "Code Editing",
+   "level": "application",
+   "groupWeight": 189,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "Console",
+   "parentId": "preferences.editor",
+   "groupId": null,
+   "displayName": "Console",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "preferences.sourceCode",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "Code Style",
+   "level": "project",
+   "groupWeight": 170,
+   "nonDefaultProject": false,
+   "dynamic": true,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "preferences.fileTypes",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "File Types",
+   "level": "application",
+   "groupWeight": 120,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "preferences.intentionPowerPack",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "Intentions",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "editing.templates",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "Live Templates",
+   "level": "application",
+   "groupWeight": 130,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "fileTemplates",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "File and Code Templates",
+   "level": "project",
+   "groupWeight": 150,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "preferences.externalTools",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "External Tools",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "reference.settingsdialog.IDE.editor.colors",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "Color Scheme",
+   "level": "application",
+   "groupWeight": 180,
+   "nonDefaultProject": false,
+   "dynamic": true,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "editor.preferences.import",
+   "parentId": "preferences.editor",
+   "groupId": null,
+   "displayName": "Auto Import",
+   "level": "project",
+   "groupWeight": 1,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "File.Encoding",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "File Encodings",
+   "level": "project",
+   "groupWeight": 140,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "reference.settings.ide.settings.file-colors",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "File Colors",
+   "level": "project",
+   "groupWeight": 112,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "com.intellij.minimap",
+   "parentId": "editor",
+   "groupId": null,
+   "displayName": "Minimap",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/MinimapExtensions.xml"
+  },
+  {
+   "id": "Runtime.Targets.Configurable",
+   "parentId": null,
+   "groupId": "build",
+   "displayName": "Run Targets",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExecutionExtensions.xml"
+  },
+  {
+   "id": "preferences.startup.tasks",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "Startup Tasks",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": true,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExecutionExtensions.xml"
+  },
+  {
+   "id": "diff.base",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "Diff & Merge",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "diff.external",
+   "parentId": "diff.base",
+   "groupId": null,
+   "displayName": "External Diff Tools",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "preferences.pathVariables",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "Path Variables",
+   "level": "project",
+   "groupWeight": -10,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "trusted.hosts",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "Trusted Locations",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "preferences.general",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "System Settings",
+   "level": "project",
+   "groupWeight": 120,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "preferences.lookFeel",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "Appearance",
+   "level": "application",
+   "groupWeight": 150,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "preferences.keymap",
+   "parentId": null,
+   "groupId": "root",
+   "displayName": "Keymap",
+   "level": "application",
+   "groupWeight": 65,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "reference.idesettings.quicklists",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "Quick Lists",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "preferences.customizations",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "Menus and Toolbars",
+   "level": "application",
+   "groupWeight": 130,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "reference.settings.ide.settings.notifications",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "Notifications",
+   "level": "application",
+   "groupWeight": 110,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "preferences.pluginManager",
+   "parentId": null,
+   "groupId": "root",
+   "displayName": "Plugins",
+   "level": "application",
+   "groupWeight": 55,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "consents",
+   "parentId": "preferences.general",
+   "groupId": null,
+   "displayName": "Data Sharing",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.date.format",
+   "parentId": "preferences.general",
+   "groupId": null,
+   "displayName": "Date Formats",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "http.proxy",
+   "parentId": "preferences.general",
+   "groupId": null,
+   "displayName": "HTTP Proxy",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "preferences.language.and.region",
+   "parentId": "preferences.general",
+   "groupId": null,
+   "displayName": "Language and Region",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "http.certificates",
+   "parentId": "preferences.general",
+   "groupId": null,
+   "displayName": "Server Certificates",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "preferences.externalDependencies",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "Required Plugins",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "preferences.updates",
+   "parentId": "preferences.general",
+   "groupId": null,
+   "displayName": "Updates",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "AppEditorFontConfigurable",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "Font",
+   "level": "application",
+   "groupWeight": 188,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "AppConsoleFontConfigurable$Provider",
+   "parentId": "editor.preferences.fonts.default",
+   "groupId": "editor",
+   "displayName": "Console Font",
+   "level": "application",
+   "groupWeight": 188,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.breadcrumbs",
+   "parentId": "preferences.editor",
+   "groupId": null,
+   "displayName": "Breadcrumbs",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.stickyLines",
+   "parentId": "preferences.editor",
+   "groupId": null,
+   "displayName": "Sticky Lines",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "reference.settings.ide.settings.web.browsers",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "Web Browsers and Preview",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "actions.on.save",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "Actions on Save",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "advanced.settings",
+   "parentId": null,
+   "groupId": "root",
+   "displayName": "Advanced Settings",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "PresentationAssistantConfigurable",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "Presentation Assistant",
+   "level": "application",
+   "groupWeight": -15,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "Errors",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "Inspections",
+   "level": "project",
+   "groupWeight": 160,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformLangPlugin.xml"
+  },
+  {
+   "id": "project.scopes",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "Scopes",
+   "level": "project",
+   "groupWeight": 111,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/platform-resources/src/META-INF/PlatformLangPlugin.xml"
+  },
+  {
+   "id": "RemoteServers",
+   "parentId": null,
+   "groupId": "build",
+   "displayName": "Clouds",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/remote-servers/impl/resources/intellij.platform.remoteServers.impl.xml"
+  },
+  {
+   "id": "settings.sync",
+   "parentId": null,
+   "groupId": "root",
+   "displayName": "Backup and Sync",
+   "level": "application",
+   "groupWeight": 5,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/settings-sync-core/resources/intellij.settingsSync.core.xml"
+  },
+  {
+   "id": "preferences.toDoOptions",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "TODO",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/todo/resources/intellij.platform.todo.xml"
+  },
+  {
+   "id": "project.propVCSSupport.Mappings",
+   "parentId": null,
+   "groupId": "root",
+   "displayName": "Version Control",
+   "level": "project",
+   "groupWeight": 45,
+   "nonDefaultProject": false,
+   "dynamic": true,
+   "source": "platform/vcs-impl/resources/META-INF/VcsExtensions.xml"
+  },
+  {
+   "id": "vcs.log",
+   "parentId": "project.propVCSSupport.Mappings",
+   "groupId": null,
+   "displayName": "Log",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "platform/vcs-log/impl/resources/intellij.platform.vcs.log.impl.xml"
+  },
+  {
+   "id": "project.propDebugger",
+   "parentId": null,
+   "groupId": "build",
+   "displayName": "Debugger",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": true,
+   "source": "platform/xdebugger-impl/ui/resources/intellij.platform.debugger.impl.ui.xml"
+  },
+  {
+   "id": "database.data.csv.formats",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "CSV Formats",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "grid/impl/resources/intellij.grid.impl.xml"
+  },
+  {
+   "id": "database.data.views.appearance",
+   "parentId": null,
+   "groupId": "appearance",
+   "displayName": "Data Editor and Viewer",
+   "level": "application",
+   "groupWeight": 100,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "grid/impl/resources/intellij.grid.impl.xml"
+  },
+  {
+   "id": "Template Data Languages",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "Template Data Languages",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": true,
+   "dynamic": false,
+   "source": "idea/customization/min/resources/intellij.platform.customization.min.xml"
+  },
+  {
+   "id": "CaptureConfigurable",
+   "parentId": "project.propDebugger",
+   "groupId": null,
+   "displayName": "Async Stack Traces",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/debugger/impl/resources/META-INF/java-debugger.xml"
+  },
+  {
+   "id": "project.propCompiler",
+   "parentId": null,
+   "groupId": "build",
+   "displayName": "Compiler",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "reference.projectsettings.compiler.excludes",
+   "parentId": "project.propCompiler",
+   "groupId": null,
+   "displayName": "Excludes",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "reference.projectsettings.compiler.javacompiler",
+   "parentId": "project.propCompiler",
+   "groupId": null,
+   "displayName": "Java Compiler",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "reference.projectsettings.compiler.annotationProcessors",
+   "parentId": "project.propCompiler",
+   "groupId": null,
+   "displayName": "Annotation Processors",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "project.validation",
+   "parentId": "project.propCompiler",
+   "groupId": null,
+   "displayName": "Validation",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "reference.projectsettings.compiler.rmicompiler",
+   "parentId": "project.propCompiler",
+   "groupId": null,
+   "displayName": "RMI Compiler",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "reference.projectsettings.compiler.compilercache",
+   "parentId": "project.propCompiler",
+   "groupId": null,
+   "displayName": "Compiler Cache",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "jvm.logging",
+   "parentId": "language",
+   "groupId": null,
+   "displayName": "JVM Logging",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "RemoteRepositoriesConfigurable",
+   "parentId": null,
+   "groupId": "build",
+   "displayName": "Remote Jar Repositories",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "promo.database",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "Database",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-promo/resources/META-INF/community-integration.xml"
+  },
+  {
+   "id": "promo.kubernetes",
+   "parentId": null,
+   "groupId": "build",
+   "displayName": "Kubernetes",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-promo/resources/META-INF/community-integration.xml"
+  },
+  {
+   "id": "promo.javascript",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "JavaScript",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-promo/resources/META-INF/community-integration.xml"
+  },
+  {
+   "id": "promo.typescript",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "TypeScript",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-promo/resources/META-INF/community-integration.xml"
+  },
+  {
+   "id": "promo.swagger",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "OpenAPI Specifications",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-promo/resources/META-INF/community-integration.xml"
+  },
+  {
+   "id": "promo.profiler",
+   "parentId": null,
+   "groupId": "build",
+   "displayName": "Java Profiler",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "java/java-promo/resources/META-INF/community-integration.xml"
+  },
+  {
+   "id": "settings.json.schema",
+   "parentId": null,
+   "groupId": "preferences.externalResources",
+   "displayName": "JSON Schema Mappings",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": true,
+   "dynamic": false,
+   "source": "json/backend/resources/intellij.json.backend.xml"
+  },
+  {
+   "id": "settings.json.schema.catalog",
+   "parentId": null,
+   "groupId": "preferences.externalResources",
+   "displayName": "Remote JSON Schemas",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": true,
+   "dynamic": false,
+   "source": "json/backend/resources/intellij.json.backend.xml"
+  },
+  {
+   "id": "IntelliLang.Configuration",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "Language Injections",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": true,
+   "dynamic": true,
+   "source": "plugins/IntelliLang/backend/resources/intellij.platform.langInjection.backend.xml"
+  },
+  {
+   "id": "copyright",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "Copyright",
+   "level": "project",
+   "groupWeight": 110,
+   "nonDefaultProject": false,
+   "dynamic": true,
+   "source": "plugins/copyright/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "coverage",
+   "parentId": null,
+   "groupId": "build",
+   "displayName": "Coverage",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/coverage-common/resources/intellij.platform.coverage.xml"
+  },
+  {
+   "id": "DotEnv.SettingsForm",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "DotEnv",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/env-files-support/src/main/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "vcs.Git",
+   "parentId": "project.propVCSSupport.Mappings",
+   "groupId": null,
+   "displayName": "Git",
+   "level": "project",
+   "groupWeight": -500,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/git4idea/backend/resources/intellij.vcs.git.backend.xml"
+  },
+  {
+   "id": "GithubSettingsConfigurable",
+   "parentId": "project.propVCSSupport.Mappings",
+   "groupId": null,
+   "displayName": "GitHub",
+   "level": "project",
+   "groupWeight": -500,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/github/github-core/resources/intellij.vcs.github.xml"
+  },
+  {
+   "id": "GitLabSettingsConfigurable",
+   "parentId": "project.propVCSSupport.Mappings",
+   "groupId": null,
+   "displayName": "GitLab",
+   "level": "project",
+   "groupWeight": -500,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/gitlab/gitlab-core/resources/intellij.vcs.gitlab.xml"
+  },
+  {
+   "id": "reference.settingsdialog.project.gradle",
+   "parentId": null,
+   "groupId": "build.tools",
+   "displayName": "Gradle",
+   "level": "project",
+   "groupWeight": 110,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/gradle/plugin-resources/intellij.gradle.xml"
+  },
+  {
+   "id": "reference.settings.ide.settings.spelling",
+   "parentId": "proofread",
+   "groupId": null,
+   "displayName": "Spelling",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/grazie/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "proofread",
+   "parentId": "editor",
+   "groupId": null,
+   "displayName": "Natural Languages",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/grazie/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "reference.settingsdialog.project.grazie",
+   "parentId": "proofread",
+   "groupId": null,
+   "displayName": "Grammar and Style",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/grazie/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "reference.settingsdialog.project.gant",
+   "parentId": null,
+   "groupId": "build.tools",
+   "displayName": "Gant",
+   "level": "project",
+   "groupWeight": 100,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/groovy/resources/META-INF/gant-support.xml"
+  },
+  {
+   "id": "Groovy compiler",
+   "parentId": "project.propCompiler",
+   "groupId": null,
+   "displayName": "Groovy Compiler",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/groovy/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "vcs.Mercurial",
+   "parentId": "project.propVCSSupport.Mappings",
+   "groupId": null,
+   "displayName": "Mercurial",
+   "level": "project",
+   "groupWeight": -500,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/hg4idea/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "FeaturesTrainerSettingsPanel",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "Features Trainer",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/ide-features-trainer/res/META-INF/plugin.xml"
+  },
+  {
+   "id": "org.intellij.featuresSuggester.FeatureSuggesterConfigurable",
+   "parentId": "tools",
+   "groupId": null,
+   "displayName": "Features Suggester",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/ide-features-trainer/res/META-INF/plugin.xml"
+  },
+  {
+   "id": "preferences.JavaFX",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "JavaFX",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/javaFX/resources/intellij.javaFX.xml"
+  },
+  {
+   "id": "preferences.language.Kotlin.scripting",
+   "parentId": "preferences.language.Kotlin",
+   "groupId": "language",
+   "displayName": "Kotlin Scripting",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/kotlin/base/scripting/scripting.k2/resources/intellij.kotlin.base.scripting.xml"
+  },
+  {
+   "id": "preferences.language.Kotlin",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "Kotlin",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/kotlin/plugin/common/resources/META-INF/kotlin-core.xml"
+  },
+  {
+   "id": "project.kotlinCompiler",
+   "parentId": "project.propCompiler",
+   "groupId": null,
+   "displayName": "Kotlin Compiler",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/kotlin/plugin/common/resources/META-INF/kotlin-core.xml"
+  },
+  {
+   "id": "ProjectSettingsPage",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "Lombok",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/lombok/src/main/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "lsp.servers",
+   "parentId": "tools",
+   "groupId": null,
+   "displayName": "LSP Servers",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/lsp.ui/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "Settings.Markdown",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "Markdown",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/markdown/core/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "MavenSettings",
+   "parentId": null,
+   "groupId": "build.tools",
+   "displayName": "Maven",
+   "level": "project",
+   "groupWeight": 120,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/maven/src/main/resources/intellij.maven.xml"
+  },
+  {
+   "id": "reference.settings.project.maven.importing",
+   "parentId": "MavenSettings",
+   "groupId": null,
+   "displayName": "Importing",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/maven/src/main/resources/intellij.maven.xml"
+  },
+  {
+   "id": "reference.settings.project.maven.ignored.files",
+   "parentId": "MavenSettings",
+   "groupId": null,
+   "displayName": "Ignored Files",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/maven/src/main/resources/intellij.maven.xml"
+  },
+  {
+   "id": "reference.settings.project.maven.runner",
+   "parentId": "MavenSettings",
+   "groupId": null,
+   "displayName": "Runner",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/maven/src/main/resources/intellij.maven.xml"
+  },
+  {
+   "id": "reference.settings.project.maven.testRunning",
+   "parentId": "MavenSettings",
+   "groupId": null,
+   "displayName": "Running Tests",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": true,
+   "dynamic": false,
+   "source": "plugins/maven/src/main/resources/intellij.maven.xml"
+  },
+  {
+   "id": "reference.settings.project.maven.repository.indices",
+   "parentId": "MavenSettings",
+   "groupId": null,
+   "displayName": "Repositories",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": true,
+   "dynamic": false,
+   "source": "plugins/maven/src/main/resources/intellij.maven.xml"
+  },
+  {
+   "id": "reference.settings.project.maven.archetype.catalogs",
+   "parentId": "MavenSettings",
+   "groupId": null,
+   "displayName": null,
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/maven/src/main/resources/intellij.maven.xml"
+  },
+  {
+   "id": "com.intellij.mcpserver.settings",
+   "parentId": "tools",
+   "groupId": null,
+   "displayName": "MCP Server",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": true,
+   "source": "plugins/mcp-server/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "com.intellij.mcpserver.settings.filter",
+   "parentId": "com.intellij.mcpserver.settings",
+   "groupId": null,
+   "displayName": "Exposed Tools",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": true,
+   "source": "plugins/mcp-server/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "Settings.Mermaid",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "Mermaid",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/mermaid/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "ics",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "Settings Repository",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/settings-repository/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "vcs.Subversion",
+   "parentId": "project.propVCSSupport.Mappings",
+   "groupId": null,
+   "displayName": "Subversion",
+   "level": "project",
+   "groupWeight": -500,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/svn4idea/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "vcs.Subversion.Presentation",
+   "parentId": "vcs.Subversion",
+   "groupId": null,
+   "displayName": "Presentation",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/svn4idea/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "vcs.Subversion.Network",
+   "parentId": "vcs.Subversion",
+   "groupId": null,
+   "displayName": "Network",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/svn4idea/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "vcs.Subversion.SSH",
+   "parentId": "vcs.Subversion",
+   "groupId": null,
+   "displayName": "SSH",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/svn4idea/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "tasks",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "Tasks",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/tasks/tasks-core/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "tasks.servers",
+   "parentId": "tasks",
+   "groupId": null,
+   "displayName": "Servers",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/tasks/tasks-core/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "terminal",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "Terminal",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/terminal/frontend/resources/intellij.terminal.frontend.xml"
+  },
+  {
+   "id": "reference.settingsdialog.textmate.bundles",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "TextMate Bundles",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/textmate/backend/resources/intellij.textmate.backend.xml"
+  },
+  {
+   "id": "project.propGUI",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "GUI Designer",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/ui-designer/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "xslt.associations",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "XSLT File Associations",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": true,
+   "dynamic": false,
+   "source": "plugins/xpath/xpath-lang/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "xpath.settings",
+   "parentId": null,
+   "groupId": "tools",
+   "displayName": "XPath Viewer",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/xpath/xpath-lang/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "settings.xslt",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "XSLT",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "plugins/xpath/xpath-lang/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "reference.idesettings.emmet",
+   "parentId": null,
+   "groupId": "editor",
+   "displayName": "Emmet",
+   "level": "application",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": true,
+   "source": "xml/emmet/backend/resources/intellij.xml.emmet.backend.xml"
+  },
+  {
+   "id": "preferences.externalResources",
+   "parentId": null,
+   "groupId": "language",
+   "displayName": "Schemas and DTDs",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "xml/impl/resources/intellij.xml.impl.xml"
+  },
+  {
+   "id": "xml.defaultSchemas",
+   "parentId": "preferences.externalResources",
+   "groupId": null,
+   "displayName": "Default XML Schemas",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "xml/impl/resources/intellij.xml.impl.xml"
+  },
+  {
+   "id": "xml.catalog",
+   "parentId": "preferences.externalResources",
+   "groupId": null,
+   "displayName": "XML Catalog",
+   "level": "project",
+   "groupWeight": 0,
+   "nonDefaultProject": false,
+   "dynamic": false,
+   "source": "xml/impl/resources/intellij.xml.impl.xml"
+  }
+ ],
+ "advancedSettings": [
+  {
+   "id": "show.line.bookmarks.in.popup",
+   "default": "true",
+   "enum": null,
+   "group": "Bookmarks",
+   "title": "Show only line bookmarks in popup",
+   "description": null,
+   "source": "platform/bookmarks/resources/intellij.platform.bookmarks.xml"
+  },
+  {
+   "id": "tasks.enable.bookmark.context.on.branch.switch",
+   "default": "true",
+   "enum": null,
+   "group": "Bookmarks",
+   "title": "Restore bookmark context on branch switching",
+   "description": null,
+   "source": "platform/bookmarks/resources/intellij.platform.bookmarks.xml"
+  },
+  {
+   "id": "enable.combined.diff.for.codereview",
+   "default": "false",
+   "enum": null,
+   "group": "Code Review Tools",
+   "title": "All-in-one Diff for Code Reviews",
+   "description": "If enabled, all changed files in code reviews are shown in a single scrollable Diff view",
+   "source": "platform/collaboration-tools/resources/intellij.platform.collaborationTools.xml"
+  },
+  {
+   "id": "show.review.threads.with.increased.margins",
+   "default": "true",
+   "enum": null,
+   "group": "Code Review Tools",
+   "title": "Keep increased margins for Diff threads",
+   "description": null,
+   "source": "platform/collaboration-tools/resources/intellij.platform.collaborationTools.xml"
+  },
+  {
+   "id": "terminal.show.application.title",
+   "default": "false",
+   "enum": null,
+   "group": "Terminal",
+   "title": "Show application title",
+   "description": null,
+   "source": "platform/execution-impl/resources/META-INF/PlatformExecutionActions.xml"
+  },
+  {
+   "id": "container.environments.env.var.shell.mode",
+   "default": "LOGIN_INTERACTIVE",
+   "enum": "LoginShellEnvVarModeProviderImpl$EnvVarShellMode",
+   "group": "Container Environments: WSL, Docker",
+   "title": "Shell mode for fetching environment variables",
+   "description": null,
+   "source": "platform/ijent/ui/resources/intellij.platform.ijent.community.ui.xml"
+  },
+  {
+   "id": "localHistory.daysToKeep",
+   "default": "5",
+   "enum": null,
+   "group": "IDE",
+   "title": "Duration of storing changes in Local History",
+   "description": "Do not use Local History as the primary version control system since it may become corrupted if the IDE hangs",
+   "source": "platform/lvcs-impl/resources/intellij.platform.lvcs.impl.xml"
+  },
+  {
+   "id": "welcome.screen.non.modal.enabled",
+   "default": "true",
+   "enum": null,
+   "group": "Welcome Screen",
+   "title": "Show the Welcome screen in non-modal mode",
+   "description": "If the checkbox is cleared, the Welcome screen is displayed as a separate modal dialog",
+   "source": "platform/non-modal-welcome-screen/resources/intellij.platform.ide.nonModalWelcomeScreen.xml"
+  },
+  {
+   "id": "project.view.show.scratches.and.consoles",
+   "default": "true",
+   "enum": null,
+   "group": "Project View",
+   "title": "Enable Scratches and Consoles in the Project view",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "floating.codeToolbar.hide",
+   "default": "false",
+   "enum": null,
+   "group": "Editor",
+   "title": "Hide floating toolbar for code editing",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "ide.ui.theme.custom.islands",
+   "default": "false",
+   "enum": null,
+   "group": "Appearance",
+   "title": "Enable Islands UI for custom themes",
+   "description": "Requires restart",
+   "source": "platform/platform-resources/src/META-INF/LangExtensions.xml"
+  },
+  {
+   "id": "ide.ui.native.file.chooser",
+   "default": "true",
+   "enum": null,
+   "group": "User Interface",
+   "title": "Use native file chooser dialog on Windows/macOS",
+   "description": "When enabled, the IDE will use an OS-specific file chooser dialog instead of the custom one for opening files/directories.",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "merge.main.menu",
+   "default": "true",
+   "enum": null,
+   "group": "User Interface",
+   "title": "Merge main menu with window title",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.always.show.tool.window.header.icons",
+   "default": "false",
+   "enum": null,
+   "group": "Tool Windows",
+   "title": "Always show tool window header icons",
+   "description": "If this option is disabled, tool window header icons are shown only on mouse hover or when the tool window is focused",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.tool.window.header.dnd",
+   "default": "true",
+   "enum": null,
+   "group": "Tool Windows",
+   "title": "Allow dragging tool windows by header to move to another location",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.show.fileType.icon.in.titleBar",
+   "default": "false",
+   "enum": null,
+   "group": "User Interface",
+   "title": "Show file type icon in IDE frame header",
+   "description": "On macOS, the icon can be used to drag a file to a different application",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.macos.disable.native.shortcut.symbols",
+   "default": "false",
+   "enum": null,
+   "group": "User Interface",
+   "title": "Use words instead of symbols for macOS keyboard shortcuts",
+   "description": "Change shortcut symbols ⎋, ⌫, ⌥, and others to Esc, Backspace, Option, etc",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.trigger.menu.actions.on.rmb.release",
+   "default": "true",
+   "enum": null,
+   "group": "User Interface",
+   "title": "Activate menu items on right mouse button release",
+   "description": "For macOS and Linux only",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.max.recent.projects",
+   "default": "50",
+   "enum": null,
+   "group": "IDE",
+   "title": "Maximum number of recent projects",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.max.recent.files",
+   "default": "50",
+   "enum": null,
+   "group": "IDE",
+   "title": "Maximum number of recent files",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.max.recent.locations",
+   "default": "25",
+   "enum": null,
+   "group": "IDE",
+   "title": "Maximum number of recent locations",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "bigger.font.in.project.view",
+   "default": "false",
+   "enum": null,
+   "group": "Project View",
+   "title": "Increase font size in Project view",
+   "description": "Requires IDE restart",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "temporary.configurations.limit",
+   "default": "5",
+   "enum": null,
+   "group": "Run/Debug",
+   "title": "Temporary configurations limit",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "confirm.rerun.with.termination",
+   "default": "true",
+   "enum": null,
+   "group": "Run/Debug",
+   "title": "Confirm rerun with process termination",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "start.run.configurations.pinned",
+   "default": "false",
+   "enum": null,
+   "group": "Run/Debug",
+   "title": "Make configurations pinned by default",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "max.recent.run.configurations",
+   "default": "5",
+   "enum": null,
+   "group": "Run/Debug",
+   "title": "Maximum number of recent run configurations",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "edit.source.on.enter.key.request.focus.in.editor",
+   "default": "true",
+   "enum": null,
+   "group": "Project View",
+   "title": "Move focus to editor when Enter is pressed",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.tree.collapse.recursively",
+   "default": "true",
+   "enum": null,
+   "group": "Project View",
+   "title": "When collapsing a node, also collapse all expanded nodes under it",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "project.view.do.not.autoscroll.to.libraries",
+   "default": "false",
+   "enum": null,
+   "group": "Project View",
+   "title": "When navigating to a library class, do not select it in the project tree",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.open.readme.md.on.startup",
+   "default": "true",
+   "enum": null,
+   "group": "Startup",
+   "title": "Open README.md file if there are no open files on project startup",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.undo.transparent.caret.movement",
+   "default": "false",
+   "enum": null,
+   "group": "Editor",
+   "title": "Use undo transparent caret movement",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.skip.copy.and.cut.for.empty.selection",
+   "default": "false",
+   "enum": null,
+   "group": "Editor",
+   "title": "Don't copy/cut the current line when invoking the Copy or Cut action with no selection",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.skip.selecting.line.after.copy.empty.selection",
+   "default": "false",
+   "enum": null,
+   "group": "Editor",
+   "title": "Don't select the copied line after invoking the Copy action with no selection",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.paste.line.copied.from.empty.selection",
+   "default": "ENTIRE_LINE_ABOVE_CARET",
+   "enum": "CopiedFromEmptySelectionPasteMode",
+   "group": "Editor",
+   "title": "When pasting a line copied with no selection",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.show.special.chars",
+   "default": "true",
+   "enum": null,
+   "group": "Editor",
+   "title": "Render special characters, such as control codes, using their Unicode name abbreviations",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.show.zoom.indicator",
+   "default": "true",
+   "enum": null,
+   "group": "Editor",
+   "title": "Show zoom indicator",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.cycle.scrolling",
+   "default": "true",
+   "enum": null,
+   "group": "User Interface",
+   "title": "Cyclic scrolling in lists and trees",
+   "description": "Select the last element when pressing Up on the first element, and vice versa",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.settings.move.mouse.on.default.button",
+   "default": "false",
+   "enum": null,
+   "group": "User Interface",
+   "title": "Position mouse cursor on default button in dialogs",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.suppress.double.click.handler",
+   "default": "false",
+   "enum": null,
+   "group": "User Interface",
+   "title": "Disable double modifier key shortcuts",
+   "description": "Shift-Shift for Search Everywhere, Ctrl-Ctrl for Run Anything",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.remember.last.search.scope",
+   "default": "false",
+   "enum": null,
+   "group": "Search Scopes in Find, Replace, Rename",
+   "title": "Keep last selected search scope",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.similar.usages.clustering.enable",
+   "default": "true",
+   "enum": null,
+   "group": "Find/Replace",
+   "title": "Enable similar usages clustering in Find Usages view",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.usages.page.size",
+   "default": "100",
+   "enum": null,
+   "group": "Find/Replace",
+   "title": "Maximum number of results to show in Find in Files/Show Usages preview",
+   "description": "Increasing this limit can significantly increase IDE memory usage",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.find.result.count.warning.limit",
+   "default": "1000",
+   "enum": null,
+   "group": "Find/Replace",
+   "title": "Limit at which the \"Too many results found\" warning is shown",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.tab.painting",
+   "default": "HORIZONTAL_LINE",
+   "enum": "TabCharacterPaintMode",
+   "group": "Editor",
+   "title": "Tab character rendering",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.distraction.free.margin",
+   "default": "-1",
+   "enum": null,
+   "group": "Editor",
+   "title": "Left margin in distraction free mode",
+   "description": "Specify -1 to use automatically calculated margin (centering the editor)",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.gutter.linenumber.font.size.delta",
+   "default": "-1",
+   "enum": null,
+   "group": "Editor",
+   "title": "Line number's font delta",
+   "description": "This value determines the increase or decrease in the editor line number font size compared to the editor's font size",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.soft.wrap.force.limit",
+   "default": "100000",
+   "enum": null,
+   "group": "Editor",
+   "title": "Force soft wrap in documents with lines longer than",
+   "description": "Increasing this limit will negatively affect editor performance",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.selection.expand-whitespaces",
+   "default": "true",
+   "enum": null,
+   "group": "Editor",
+   "title": "Select whitespace characters with 'Extend Selection'",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.open.inactive.splitter",
+   "default": "true",
+   "enum": null,
+   "group": "Editor Tabs",
+   "title": "When navigating to a file, prefer selecting existing tab in inactive split pane",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.reuse.not.modified.tabs",
+   "default": "false",
+   "enum": null,
+   "group": "Editor Tabs",
+   "title": "Open declaration source in the same tab",
+   "description": "When navigating to a method/class/variable declaration, the source file that contains the declaration will replace the current tab if there are no changes",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.open.tabs.in.main.window",
+   "default": "false",
+   "enum": null,
+   "group": "Editor Tabs",
+   "title": "Open declaration source called from a detached window in the main IDE window",
+   "description": "When navigating to a method/class/variable declaration from a tab in the detached window, new tabs will be opened in the main IDE window. Overrides 'Open declaration source in the same tab'.",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.comment.line.caret.down",
+   "default": "true",
+   "enum": null,
+   "group": "Editor",
+   "title": "Move caret down after Comment with Line Comment action",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.maximize.on.double.click",
+   "default": "true",
+   "enum": null,
+   "group": "Editor Tabs",
+   "title": "Perform 'Hide All Tool Windows' / 'Restore Windows' with double-click on editor tab",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.maximize.in.splits.on.double.click",
+   "default": "false",
+   "enum": null,
+   "group": "Editor Tabs",
+   "title": "Perform 'Maximize Editor' / 'Normalize Splits' with double-click on editor tab",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.normalize.splits",
+   "default": "false",
+   "enum": null,
+   "group": "Editor Tabs",
+   "title": "Equalize proportions in nested splits",
+   "description": "Adjust splitters to keep space equally distributed after split/unsplit.",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "editor.keep.pinned.tabs.on.left",
+   "default": "true",
+   "enum": null,
+   "group": "Editor Tabs",
+   "title": "Keep pinned tabs on the left",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "terminal.buffer.max.lines.count",
+   "default": "5000",
+   "enum": null,
+   "group": "Terminal",
+   "title": "Terminal scrollback buffer size",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "terminal.type.ahead",
+   "default": "true",
+   "enum": null,
+   "group": "Terminal",
+   "title": "Typeahead",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "terminal.type.ahead.latency.threshold",
+   "default": "100",
+   "enum": null,
+   "group": "Terminal",
+   "title": "Typeahead latency threshold",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "terminal.use.1.0.line.spacing.for.alternative.screen.buffer",
+   "default": "true",
+   "enum": null,
+   "group": "Terminal",
+   "title": "Use 1.0 line spacing for alternative screen buffer (mc, vim, nano, etc.)",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "terminal.fill.character.background.including.line.spacing",
+   "default": "false",
+   "enum": null,
+   "group": "Terminal",
+   "title": "Fill character background including line spacing",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "documentation.components.enable.inline.code.highlighting",
+   "default": "AS_DEFAULT_CODE",
+   "enum": "DocumentationSettings$InlineCodeHighlightingMode",
+   "group": "Documentation Components",
+   "title": "Basic syntax highlighting of inline code",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "documentation.components.enable.code.blocks.highlighting",
+   "default": "true",
+   "enum": null,
+   "group": "Documentation Components",
+   "title": "Basic syntax highlighting of multiline code blocks",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "documentation.components.enable.highlighting.of.links",
+   "default": "false",
+   "enum": null,
+   "group": "Documentation Components",
+   "title": "Syntax highlighting of links on code elements",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "documentation.components.enable.code.background",
+   "default": "true",
+   "enum": null,
+   "group": "Documentation Components",
+   "title": "Add background to inline and multiline code blocks",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "documentation.auto.show.in.modal.dialogs",
+   "default": "false",
+   "enum": null,
+   "group": "Documentation Components",
+   "title": "Show QuickDoc automatically during code completion in modal dialogs",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "search.everywhere.wait.for.contributors",
+   "default": "true",
+   "enum": null,
+   "group": "Search Everywhere",
+   "title": "Wait for all contributors to finish before showing results",
+   "description": "Enabling this option will stop the search items to change their position in the displayed search results. This process might cause a delay.",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "search.everywhere.show.results.notification",
+   "default": "true",
+   "enum": null,
+   "group": "Search Everywhere",
+   "title": "Show notifications above search results",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "search.everywhere.contributors.wait.timeout",
+   "default": "2000",
+   "enum": null,
+   "group": "Search Everywhere",
+   "title": "Contributors waiting timeout (ms)",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "search.everywhere.recent.at.top",
+   "default": "true",
+   "enum": null,
+   "group": "Search Everywhere",
+   "title": "Show recent files at the top of results list",
+   "description": "When enabled, recent files are always displayed at the top of the results list. Therefore, even if these files match the search pattern less precisely than other results, they will remain at the top.",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "ide.ui.non.modal.settings.window",
+   "default": "true",
+   "enum": null,
+   "group": "User Interface",
+   "title": "Show settings in a non-modal dialog",
+   "description": "Settings dialog stays open alongside the editor without blocking other IDE actions.",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "show.diff.as.editor.tab",
+   "default": "true",
+   "enum": null,
+   "group": "Version Control",
+   "title": "Open Diff as Editor Tab",
+   "description": "If enabled, Diff is shown in an editor tab instead of a separate window",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "enable.combined.diff",
+   "default": "false",
+   "enum": null,
+   "group": "Version Control",
+   "title": "All-in-One Diff",
+   "description": "If enabled, all changed files are shown in a single scrollable Diff view",
+   "source": "platform/platform-resources/src/META-INF/PlatformExtensions.xml"
+  },
+  {
+   "id": "promote.suggested.refactoring.in.editor",
+   "default": "false",
+   "enum": null,
+   "group": "Suggested refactoring",
+   "title": "Show a hint for suggested refactoring in the editor",
+   "description": null,
+   "source": "platform/platform-resources/src/META-INF/PlatformLangPlugin.xml"
+  },
+  {
+   "id": "se.text.search",
+   "default": "true",
+   "enum": null,
+   "group": "Search Everywhere",
+   "title": "Show text search results in Search Everywhere",
+   "description": "Show text search results in the \"All\" tab and display the \"Text\" tab in Search Everywhere",
+   "source": "platform/platform-resources/src/META-INF/SearchEverywhereCodeInsightContributors.xml"
+  },
+  {
+   "id": "vcs.annotations.preload",
+   "default": "false",
+   "enum": null,
+   "group": "Version Control",
+   "title": "Load file annotations from VCS when file is opened in editor",
+   "description": "This allows showing them faster on demand",
+   "source": "platform/vcs-impl/resources/META-INF/VcsExtensions.xml"
+  },
+  {
+   "id": "vcs.process.ignored",
+   "default": "true",
+   "enum": null,
+   "group": "Version Control",
+   "title": "Highlight ignored files",
+   "description": "Request the list of the ignored files from the VCS and show their status in the IDE",
+   "source": "platform/vcs-impl/resources/META-INF/VcsExtensions.xml"
+  },
+  {
+   "id": "vcs.commit.tool.window",
+   "default": "true",
+   "enum": null,
+   "group": "Version Control",
+   "title": "Enable Commit tool window",
+   "description": "Show the Local Changes and Shelf tabs in the separate Commit tool window",
+   "source": "platform/vcs-impl/resources/META-INF/VcsExtensions.xml"
+  },
+  {
+   "id": "vcs.non.modal.commit.toggle.ui",
+   "default": "false",
+   "enum": null,
+   "group": "Version Control",
+   "title": "Toggle commit controls",
+   "description": "Hide commit panel and checkboxes after commit is performed and allow toggling commit UI in Local Changes",
+   "source": "platform/vcs-impl/resources/META-INF/VcsExtensions.xml"
+  },
+  {
+   "id": "vcs.non.modal.commit.close.in.windowed.mode",
+   "default": "true",
+   "enum": null,
+   "group": "Version Control",
+   "title": "Automatically close the Commit tool window in Window/Float mode after committing",
+   "description": null,
+   "source": "platform/vcs-impl/resources/META-INF/VcsExtensions.xml"
+  },
+  {
+   "id": "vcs.push.all.with.commits",
+   "default": "false",
+   "enum": null,
+   "group": "Version Control",
+   "title": "Select all repositories with new commits for push",
+   "description": "Preselect all repositories with commits to be pushed by default",
+   "source": "platform/vcs-impl/resources/META-INF/VcsExtensions.xml"
+  },
+  {
+   "id": "vcs.allow.force.push.without.confirmation",
+   "default": "false",
+   "enum": null,
+   "group": "Version Control",
+   "title": "Do not show a warning when force pushing",
+   "description": "When force pushing to unprotected branches, no confirmation will be asked",
+   "source": "platform/vcs-impl/resources/META-INF/VcsExtensions.xml"
+  },
+  {
+   "id": "debugger.max.recent.expressions",
+   "default": "50",
+   "enum": null,
+   "group": "Debugger",
+   "title": "Maximum number of recent expressions",
+   "description": null,
+   "source": "platform/xdebugger-impl/resources/intellij.platform.debugger.impl.content.xml"
+  },
+  {
+   "id": "debugger.inlay.run.to.cursor",
+   "default": "true",
+   "enum": null,
+   "group": "Debugger",
+   "title": "Show inlay Run to Cursor popup",
+   "description": "Note, inlay Run to Cursor is implemented for the new UI only. In the classic UI, the click on line number will execute Run to Cursor.",
+   "source": "platform/xdebugger-impl/resources/intellij.platform.debugger.impl.content.xml"
+  },
+  {
+   "id": "compiler.automake.allow.when.app.running",
+   "default": "false",
+   "enum": null,
+   "group": "Compiler",
+   "title": "Allow auto-make to start even if developed application is currently running",
+   "description": "Automatically started make may eventually delete some classes that are required by the application",
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "compiler.lower.process.priority",
+   "default": "true",
+   "enum": null,
+   "group": "Compiler",
+   "title": "Run compilation with lower priority",
+   "description": "Run external JPS process with IDLE priority on Windows and nice level 10 on Linux/macOS",
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "compiler.unified.ic.implementation",
+   "default": "true",
+   "enum": null,
+   "group": "Compiler",
+   "title": "Enable unified Java/Kotlin incremental compilation implementation",
+   "description": "External JPS process will use new incremental compilation implementation that can handle both Java- and Kotlin-produced bytecode",
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "compiler.inMemoryLogger",
+   "default": "false",
+   "enum": null,
+   "group": "Compiler",
+   "title": "Collect a detailed debug log report in case of build failures",
+   "description": "Saves detailed logs of failed builds to assist in debugging and troubleshooting. Logs are stored alongside other build logs",
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "code.vision.java.minimal.usages",
+   "default": "0",
+   "enum": null,
+   "group": "Java",
+   "title": "Code Vision: Minimum usages required to show inlay hints",
+   "description": null,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "java.completion.qualifier.as.argument",
+   "default": "true",
+   "enum": null,
+   "group": "Java",
+   "title": "Enable completion for static methods, which uses qualifier as a first argument",
+   "description": null,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "java.sdkmanrc.watcher",
+   "default": "true",
+   "enum": null,
+   "group": "Java",
+   "title": "Configure JDK with external tool files on project opening ('.sdkmanrc', '.tool-versions', …)",
+   "description": null,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "java.show.irrelevant.templates.in.source.roots",
+   "default": "false",
+   "enum": null,
+   "group": "Java",
+   "title": "Show irrelevant New File templates in Java source roots",
+   "description": null,
+   "source": "java/java-backend/resources/META-INF/JavaPlugin.xml"
+  },
+  {
+   "id": "java.suggest.creating.java.sources.in.irrelevant.source.roots",
+   "default": "false",
+   "enum": null,
+   "group": "Java",
+   "title": "Suggest creating Java sources in irrelevant source roots",
+   "description": null,
+   "source": "java/java-impl/resources/intellij.java.impl.xml"
+  },
+  {
+   "id": "process.console.output.to.find.class.names",
+   "default": "true",
+   "enum": null,
+   "group": "JVM languages",
+   "title": "Process terminal output to find class names and highlight them",
+   "description": null,
+   "source": "jvm/jvm-analysis-impl/resources/intellij.jvm.analysis.impl.xml"
+  },
+  {
+   "id": "git.non.modal.commit",
+   "default": "false",
+   "enum": null,
+   "group": "Version Control",
+   "title": "Use modal commit interface for Git and Mercurial",
+   "description": null,
+   "source": "plugins/git-modal-commit/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "git.clone.recurse.submodules",
+   "default": "true",
+   "enum": null,
+   "group": "Version Control. Git",
+   "title": "Recursively clone submodules in the project",
+   "description": "When enabled, Checkout from Git calls 'git clone --recurse-submodules', i.e. clones the main repository with all submodules if there are any",
+   "source": "plugins/git4idea/backend/resources/intellij.vcs.git.backend.xml"
+  },
+  {
+   "id": "git.read.content.with",
+   "default": "FILTERS",
+   "enum": "GitTextConvMode",
+   "group": "Version Control. Git",
+   "title": "Apply content transformation when reading from Git",
+   "description": "Use '--filters' or '--textconv' flags for 'git cat-file' command when reading file content from Git",
+   "source": "plugins/git4idea/backend/resources/intellij.vcs.git.backend.xml"
+  },
+  {
+   "id": "git.use.push.force.with.lease",
+   "default": "true",
+   "enum": null,
+   "group": "Version Control. Git",
+   "title": "Use Safe Force Push",
+   "description": "Use '--force-with-lease' when calling force push from IDE instead of just '--force'",
+   "source": "plugins/git4idea/backend/resources/intellij.vcs.git.backend.xml"
+  },
+  {
+   "id": "git.update.incoming.outgoing.info",
+   "default": "true",
+   "enum": null,
+   "group": "Version Control. Git",
+   "title": "Check for incoming and outgoing commits",
+   "description": "Show incoming and outgoing commits for branches",
+   "source": "plugins/git4idea/backend/resources/intellij.vcs.git.backend.xml"
+  },
+  {
+   "id": "git.update.info.auto.open.enabled",
+   "default": "true",
+   "enum": null,
+   "group": "Version Control. Git",
+   "title": "Automatically open the 'Update Info' tab after updating the project",
+   "description": null,
+   "source": "plugins/git4idea/backend/resources/intellij.vcs.git.backend.xml"
+  },
+  {
+   "id": "git.commit.do.not.run.commit.hooks",
+   "default": "false",
+   "enum": null,
+   "group": "Version Control. Git",
+   "title": "Do not run Git commit hooks",
+   "description": "When enabled, commit always runs with '--no-verify' option",
+   "source": "plugins/git4idea/backend/resources/intellij.vcs.git.backend.xml"
+  },
+  {
+   "id": "git.use.schannel.on.windows",
+   "default": "false",
+   "enum": null,
+   "group": "Version Control. Git",
+   "title": "Use Windows certificate store",
+   "description": "Force Git to use Windows certificate store to verify SSL connections. Works for Git 2.14 and above.",
+   "source": "plugins/git4idea/backend/resources/intellij.vcs.git.backend.xml"
+  },
+  {
+   "id": "git.branch.cleanup.symbol",
+   "default": "-",
+   "enum": null,
+   "group": "Version Control. Git",
+   "title": "Branch name cleanup symbol",
+   "description": "Symbol that will be used instead prohibited symbols in Git branch names",
+   "source": "plugins/git4idea/backend/resources/intellij.vcs.git.backend.xml"
+  },
+  {
+   "id": "git.recent.projects.show.branch",
+   "default": "ALWAYS",
+   "enum": "RecentProjectsShowBranchMode",
+   "group": "Version Control. Git",
+   "title": "Show branch names in the list of recent projects",
+   "description": "Branch names will be shown on the Welcome screen and in the list of recent projects in the main menu",
+   "source": "plugins/git4idea/backend/resources/intellij.vcs.git.backend.xml"
+  },
+  {
+   "id": "git.search.everywhere.tab.enabled",
+   "default": "false",
+   "enum": null,
+   "group": "Version Control. Git",
+   "title": "Show Git tab in Search Everywhere",
+   "description": null,
+   "source": "plugins/git4idea/backend/resources/intellij.vcs.git.backend.xml"
+  },
+  {
+   "id": "github.aliases",
+   "default": "github.com",
+   "enum": null,
+   "group": "GitHub",
+   "title": "GitHub host aliases",
+   "description": "Comma separated list of aliases for github.com",
+   "source": "plugins/github/github-core/resources/intellij.vcs.github.xml"
+  },
+  {
+   "id": "gradle.run.using.gradle",
+   "default": "true",
+   "enum": null,
+   "group": "Build Tools. Gradle",
+   "title": "Run using Gradle",
+   "description": "By default, the IDE uses Gradle to build the project and run tasks. If disabled, application configurations will run using the IDE.",
+   "source": "plugins/gradle/plugin-resources/intellij.gradle.xml"
+  },
+  {
+   "id": "gradle.download.sources",
+   "default": "true",
+   "enum": null,
+   "group": "Build Tools. Gradle",
+   "title": "Download sources",
+   "description": "Download sources for project dependencies during the project import. A project sync is required to download the sources after selecting this option.",
+   "source": "plugins/gradle/plugin-resources/intellij.gradle.xml"
+  },
+  {
+   "id": "gradle.attach.scripts.dependencies.sources",
+   "default": "false",
+   "enum": null,
+   "group": "Build Tools. Gradle",
+   "title": "Attach scripts dependencies sources",
+   "description": "Attach sources for build scripts dependencies during the project import. A project sync is required to attach the sources after selecting this option.",
+   "source": "plugins/gradle/plugin-resources/intellij.gradle.xml"
+  },
+  {
+   "id": "decompiler.max.direct.nodes.count",
+   "default": "20000",
+   "enum": null,
+   "group": "Java Bytecode Decompiler",
+   "title": "Max count of direct nodes",
+   "description": null,
+   "source": "plugins/java-decompiler/plugin/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "decompiler.max.variable.nodes.count",
+   "default": "30000",
+   "enum": null,
+   "group": "Java Bytecode Decompiler",
+   "title": "Max count of variable nodes",
+   "description": null,
+   "source": "plugins/java-decompiler/plugin/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "kotlin.compiler.ref.index",
+   "default": "true",
+   "enum": null,
+   "group": "Kotlin",
+   "title": "Compiler reference index",
+   "description": "Enables find usages using references from compiler indices",
+   "source": "plugins/kotlin/compiler-reference-index/resources/intellij.kotlin.compilerReferenceIndex.xml"
+  },
+  {
+   "id": "kotlin.enable.autoconfiguration",
+   "default": "true",
+   "enum": null,
+   "group": "Kotlin",
+   "title": "Enable Kotlin autoconfiguration",
+   "description": null,
+   "source": "plugins/kotlin/plugin/common/resources/META-INF/kotlin-core.xml"
+  },
+  {
+   "id": "markdown.hide.floating.toolbar",
+   "default": "false",
+   "enum": null,
+   "group": "Markdown",
+   "title": "Hide floating toolbar",
+   "description": null,
+   "source": "plugins/markdown/core/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "markdown.squash.multiple.dashes.in.header.anchors",
+   "default": "false",
+   "enum": null,
+   "group": "Markdown",
+   "title": "Squash multiple dashes in header anchors",
+   "description": null,
+   "source": "plugins/markdown/core/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "mermaid.additional.code.fence.pattern.regex",
+   "default": "",
+   "enum": null,
+   "group": "Mermaid",
+   "title": null,
+   "description": null,
+   "source": "plugins/mermaid/markdown/resources/intellij.mermaid.markdown.xml"
+  },
+  {
+   "id": "searcheverywhere.ml.sort.action",
+   "default": "true",
+   "enum": null,
+   "group": "Search Everywhere",
+   "title": "Sort results in the Actions tab based on machine learning",
+   "description": null,
+   "source": "plugins/search-everywhere-ml/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "searcheverywhere.ml.sort.files",
+   "default": "true",
+   "enum": null,
+   "group": "Search Everywhere",
+   "title": "Sort results in the Files tab based on machine learning",
+   "description": null,
+   "source": "plugins/search-everywhere-ml/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "searcheverywhere.ml.sort.classes",
+   "default": "true",
+   "enum": null,
+   "group": "Search Everywhere",
+   "title": "Sort results in the Classes tab based on machine learning",
+   "description": null,
+   "source": "plugins/search-everywhere-ml/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "searcheverywhere.ml.sort.all",
+   "default": "false",
+   "enum": null,
+   "group": "Search Everywhere",
+   "title": "Sort results in the All tab based on machine learning",
+   "description": null,
+   "source": "plugins/search-everywhere-ml/resources/META-INF/plugin.xml"
+  },
+  {
+   "id": "searcheverywhere.ml.typos.enable",
+   "default": "true",
+   "enum": null,
+   "group": "Search Everywhere",
+   "title": "Enable typo-tolerant search in the Search Everywhere Action tab",
+   "description": null,
+   "source": "plugins/search-everywhere-ml/typos/resources/intellij.searchEverywhereMl.typos.xml"
+  },
+  {
+   "id": "terminal.character.encoding",
+   "default": "UTF-8",
+   "enum": null,
+   "group": "Terminal",
+   "title": "Terminal character encoding",
+   "description": null,
+   "source": "plugins/terminal/resources/META-INF/terminal.xml"
+  },
+  {
+   "id": "new.terminal.output.capacity.kb",
+   "default": "1024",
+   "enum": null,
+   "group": "Terminal",
+   "title": "New terminal output capacity",
+   "description": null,
+   "source": "plugins/terminal/resources/META-INF/terminal.xml"
+  },
+  {
+   "id": "terminal.shift.enter.sends.esc.cr",
+   "default": "true",
+   "enum": null,
+   "group": "Terminal",
+   "title": "Send Esc+CR on Shift+Enter",
+   "description": "Enables sending Esc+Carriage Return on Shift+Enter, allowing CLI applications to distinguish Shift+Enter from Enter.",
+   "source": "plugins/terminal/resources/META-INF/terminal.xml"
+  }
+ ]
+}

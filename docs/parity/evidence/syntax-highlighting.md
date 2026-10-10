@@ -1,0 +1,66 @@
+# Syntax highlighting and color schemes (scene 04)
+
+Captured 2026-10-10 on Linux under Xvfb (`:99`, 1600x1000x24, openbox) with
+`JETTHING_RENDERER=glow JETTHING_NO_UPDATE_CHECK=1`, debug build of
+`claude/tree-sitter-highlighting`. Screenshots: `import -window root`, then
+`convert -strip -colors 256`.
+
+Reference: `docs/parity/evidence/reference/intellij-community/java-gradle/04-editor-project-tree.png`
+(IntelliJ IDEA Community 2025.2.6.3) and
+`docs/parity/evidence/reference/android-studio/04-editor-project-tree.png`
+(Android Studio 2026.2.1), from PR #40. Before this change every one of these files rendered as
+single-colour text (`docs/parity/evidence/jetthing/*/04-editor-project-tree.png`, PR #40).
+
+## How highlighting works
+
+- `jetthing-language::registry` lists every language as data: grammar crate, file extensions,
+  file names, shebang interpreters and the queries the crate ships (`HIGHLIGHTS_QUERY`,
+  `INJECTIONS_QUERY`, `LOCALS_QUERY`, `TAGS_QUERY`).
+- `jetthing-language::highlight` runs the highlight query over the syntax tree with
+  `tree_sitter::QueryCursor` (byte-range bounded) and resolves overlaps with the
+  `tree-sitter-highlight` rules: the last matching pattern wins for a node, and inner captures
+  override outer ones. The output is a `HighlightLayer`. LSP semantic tokens can later be stacked
+  on top with `HighlightLayer::overlay`.
+- Capture names (`keyword`, `function.method`, `type.builtin`, …) map to IntelliJ text-attribute
+  keys (`DEFAULT_KEYWORD`, `DEFAULT_FUNCTION_CALL`, …). The lookup is hierarchical, and a language
+  can override single captures as data (XML/HTML tag keys). Generic structural refinements turn a
+  declared function name into `DEFAULT_FUNCTION_DECLARATION`, `/** */` and `///` comments into
+  `DEFAULT_DOC_COMMENT`, numeric constants into `DEFAULT_NUMBER`, capitalised `type.builtin`
+  (`String`) into a class reference, and quotes into part of the string.
+- `jetthing-language::scheme` loads the bundled IntelliJ schemes from
+  `docs/spec/data/color-schemes.json`. It follows the scheme lineage
+  (Default → Darcula → Islands Dark), resolves `inherit` references and falls back to `DEFAULT_*`
+  keys. The editor resolves every key through Islands Dark.
+
+## Languages
+
+Rust, Java, Kotlin (`tree-sitter-kotlin-sg`), XML, JSON, TOML, YAML, Markdown (block grammar),
+Starlark (`BUILD`, `BUILD.bazel`, `WORKSPACE`, `MODULE.bazel`, `*.bzl`), Python, JavaScript/JSX,
+TypeScript, TSX, Go, C, C++, Bash (including `gradlew` and shebangs), HTML, CSS and Properties.
+
+The only query that Jetthing owns is `crates/jetthing-language/queries/kotlin/highlights.scm`. It
+is appended to the upstream Kotlin query and fills two upstream gaps: there is no `package`
+keyword capture, and function names after modifiers are missed.
+
+## Scenes
+
+| File | Reference scene | Matches | Still differs |
+|---|---|---|---|
+| `syntax-highlighting/04-java-app.png` | IntelliJ java-gradle 04 | keywords (`package`, `public`, `class`, `void`, `new`, `for`, `return`) orange `#CF8E6D`; strings green `#6AAB73`; method declarations `greeting`/`main` blue `#56A8F5`; class names, type uses and calls in the identifier colour, as in IntelliJ | `System.out` (static field, purple italic) and `List.of` (static call, italic) need semantic information (LSP layer); no inlay hints, gutter icons or folding yet |
+| `syntax-highlighting/04-kotlin-main-activity.png` | Android Studio 04 (same file content) | `package`/`import`/`class`/`override`/`fun`/`private`/`super` orange; `onCreate`/`greet` declarations blue; strings green; `String` and other types plain | `R.layout`/`R.id` qualifiers show purple (all navigation suffixes are captured as properties) where Android Studio draws only the resource field in purple italic with an underline; `$name` template entries are not coloured separately; imports are not folded |
+| `syntax-highlighting/a04-xml-layout.png` | Android Studio a04 (code view) | tag names and `<`/`/>` delimiters `#D5B778` (`XML_TAG_NAME`, `XML_TAG`); attribute values green including quotes; comments grey; `&amp;` entity | `xmlns:`/`android:` prefixes are not coloured separately; the prolog version is coloured as a number |
+| `syntax-highlighting/04b-build-bazel.png` | Jetthing PR #40 `bazel/04b` (was plain text) | Starlark detected from `BUILD.bazel`; strings, comments, punctuation | IntelliJ Bazel plugin keyword-argument colours are not reproduced |
+
+## Tests
+
+- `registry::tests`: detection by extension, exact file name (Bazel files, `Cargo.lock`, `gradlew`),
+  shebang (`env -S`), aliases, uniqueness.
+- `highlight::tests`: every bundled query compiles and maps captures; overlap resolution; layer
+  overlay and range clipping.
+- `scheme::tests`: Islands Dark and Light values from `docs/spec/themes.md` (keyword, string,
+  number, comments, doc comment italic, constants, `XML_TAG_NAME`, `inherit` of
+  `DEFAULT_FUNCTION_CALL`, errors wave underline `#FA6675`, editor colors).
+- `tests::java_tokens_resolve_to_islands_dark_colors`: Java keywords, strings, comments, doc
+  comments, declarations vs. calls and syntax errors resolve to the spec colours (issue #9
+  acceptance).
+- `tests::scene_04_languages_highlight`: one or more tokens per language.

@@ -1,49 +1,206 @@
-use eframe::egui::{self, Color32, RichText};
-use jetthing_command::CommandRegistry;
-use jetthing_core::{Document, IdeState, built_in_commands};
-use jetthing_git::ChangeKind;
-use jetthing_language::{LanguageAnalysis, SyntaxKind};
-use jetthing_lsp::ServerState;
-use jetthing_runner::{OutputStream, TaskState};
-use jetthing_text::Selection;
+//! Native workbench shell.
+//!
+//! Layout follows the observable structure of the New UI "Islands" workbench:
+//! a merged main toolbar, a tool window stripe, rounded editor/tool window
+//! islands and a status bar with navigation breadcrumbs. Every user action is
+//! dispatched through the typed command registry.
+
+mod chrome;
+mod editor;
+mod findbar;
+mod icons;
+mod keys;
+mod lsp_status;
+mod notifications;
+mod palette;
+mod popups;
+mod syntax;
+mod terminal_ui;
+mod theme;
+mod toolwindows;
+mod welcome;
+mod widgets;
+
+use eframe::egui;
+use jetthing_command::{CommandRegistry, CommandSpec};
+use jetthing_core::{Anchor, IdeState, ToolWindow, built_in_commands};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-mod keymap_dispatch;
+pub use theme::install as install_theme;
 
 pub struct IdeApp {
     state: IdeState,
     commands: CommandRegistry<IdeState>,
-    palette_open: bool,
-    palette_query: String,
-    terminal_input: String,
+    palette: palette::Palette,
+    terminal_selection: Option<(terminal_ui::GridPoint, terminal_ui::GridPoint)>,
     search_input: String,
-    keymap: keymap_dispatch::KeymapDispatcher,
+    tree_selection: Option<PathBuf>,
+    completion_selected: usize,
+    caret_screen_pos: Option<egui::Pos2>,
+    run_label: Option<String>,
+    last_shift_release: Option<Instant>,
+    shift_tainted: bool,
+    last_bottom: Option<ToolWindow>,
+    find: findbar::FindBar,
+    /// Text of the last whole-line copy, so pasting it inserts a line.
+    clipboard_line: Option<String>,
+    dialog: Option<popups::Dialog>,
+    dialog_focus: bool,
+    commit_message: String,
+    /// Commit checkbox overrides; by default tracked changes are included and
+    /// unversioned files are not.
+    commit_overrides: std::collections::HashMap<PathBuf, bool>,
+    window_focused: bool,
 }
 
 impl IdeApp {
-    pub fn new(project: Option<PathBuf>) -> Self {
+    /// Opens `project` (if any) and then each of `files`, relative to the project root
+    /// or absolute inside it.
+    pub fn new(project: Option<PathBuf>, files: Vec<PathBuf>) -> Self {
         let commands = built_in_commands();
         let mut state = IdeState::default();
         if let Some(path) = project {
-            let _ = commands.execute("project.open", &mut state, json!({"path": path}));
+            if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
+            {
+                state.status = error.to_string();
+            }
             let _ = commands.execute("plugin.refresh", &mut state, Value::Null);
         }
+        for file in files {
+            let relative = state
+                .project
+                .as_ref()
+                .and_then(|project| {
+                    let absolute = file.canonicalize().ok()?;
+                    absolute
+                        .strip_prefix(project.root())
+                        .ok()
+                        .map(Path::to_path_buf)
+                })
+                .unwrap_or(file);
+            if let Err(error) =
+                commands.execute("editor.openFile", &mut state, json!({"path": relative}))
+            {
+                state.status = error.to_string();
+            }
+        }
+        if std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none() {
+            let _ = commands.execute("app.checkForUpdates", &mut state, json!({"silent": true}));
+        }
+        let run_label = state.project.as_ref().and_then(|project| {
+            jetthing_runner::TaskPlan::detect_run(project.root())
+                .or_else(|_| jetthing_runner::TaskPlan::detect_build(project.root()))
+                .ok()
+                .map(|plan| plan.name)
+        });
         Self {
             state,
             commands,
-            palette_open: false,
-            palette_query: String::new(),
-            terminal_input: String::new(),
+            palette: palette::Palette::default(),
+            terminal_selection: None,
             search_input: String::new(),
-            keymap: keymap_dispatch::KeymapDispatcher::default(),
+            tree_selection: None,
+            completion_selected: 0,
+            caret_screen_pos: None,
+            run_label,
+            last_shift_release: None,
+            shift_tainted: false,
+            last_bottom: None,
+            find: findbar::FindBar::default(),
+            clipboard_line: None,
+            dialog: None,
+            dialog_focus: false,
+            commit_message: String::new(),
+            commit_overrides: std::collections::HashMap::new(),
+            window_focused: true,
         }
     }
+
     fn dispatch(&mut self, id: &str, params: Value) {
         if let Err(error) = self.commands.execute(id, &mut self.state, params) {
             self.state.status = error.to_string();
         }
     }
+
+    fn open_dialog(&mut self, dialog: popups::Dialog) {
+        self.dialog = Some(dialog);
+        self.dialog_focus = true;
+    }
+
+    fn open_project_dialog(&mut self) {
+        self.open_dialog(popups::Dialog::OpenProject {
+            path: String::new(),
+            error: None,
+        });
+    }
+
+    fn new_project_dialog(&mut self) {
+        self.open_dialog(popups::Dialog::NewProject {
+            name: "untitled".into(),
+            parent: std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .unwrap_or_else(|_| ".".into()),
+            kind: "java-gradle-kotlin".into(),
+            group: "org.example".into(),
+            error: None,
+        });
+    }
+
+    fn open_project_path(&mut self, path: &str, ctx: &egui::Context) -> Result<(), String> {
+        self.commands
+            .execute(
+                "project.open",
+                &mut self.state,
+                json!({"path": path.trim()}),
+            )
+            .map_err(|error| error.to_string())?;
+        self.project_opened(ctx);
+        Ok(())
+    }
+
+    fn project_opened(&mut self, ctx: &egui::Context) {
+        self.dispatch("plugin.refresh", Value::Null);
+        self.tree_selection = None;
+        self.commit_overrides.clear();
+        self.commit_message.clear();
+        self.search_input.clear();
+        self.terminal_selection = None;
+        self.find = findbar::FindBar::default();
+        self.run_label = self.state.project.as_ref().and_then(|project| {
+            jetthing_runner::TaskPlan::detect_run(project.root())
+                .or_else(|_| jetthing_runner::TaskPlan::detect_build(project.root()))
+                .ok()
+                .map(|plan| plan.name)
+        });
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+            "{} – Jetthing",
+            self.project_name()
+        )));
+    }
+
+    fn editor_focused(&self, ctx: &egui::Context) -> bool {
+        ctx.memory(|memory| memory.has_focus(editor::editor_id()))
+    }
+
+    fn primary_selection_text(&self) -> Option<String> {
+        let document = self.state.documents.get(self.state.active_document?)?;
+        let primary = document.selections.primary();
+        document.text.slice(primary.start(), primary.end()).ok()
+    }
+
+    /// Saves modified files silently (autosave); nothing to save is not an error.
+    fn autosave(&mut self) {
+        if self.state.documents.iter().any(|d| d.text.is_dirty()) {
+            self.dispatch("editor.saveAll", Value::Null);
+        }
+    }
+
+    fn toggle_tool_window(&mut self, window: ToolWindow) {
+        self.dispatch("toolwindow.toggle", json!({"id": window.id()}));
+    }
+
     fn file_name(path: &Path) -> String {
         path.file_name()
             .and_then(|n| n.to_str())
@@ -51,804 +208,380 @@ impl IdeApp {
             .to_owned()
     }
 
-    fn highlighted_line_job(
-        text: &str,
-        line_start_byte: usize,
-        analysis: &LanguageAnalysis,
-    ) -> egui::text::LayoutJob {
-        let mut job = egui::text::LayoutJob::default();
-        let base = egui::TextFormat {
-            font_id: egui::FontId::monospace(14.0),
-            color: Color32::from_rgb(205, 210, 220),
-            ..Default::default()
-        };
-        let line_end_byte = line_start_byte + text.len();
-        let mut cursor = line_start_byte;
-        for span in analysis
-            .spans
-            .iter()
-            .filter(|span| span.start_byte < line_end_byte && span.end_byte > line_start_byte)
-        {
-            let start = span.start_byte.max(line_start_byte);
-            let end = span.end_byte.min(line_end_byte);
-            if start < cursor || end < start {
-                continue;
-            }
-            job.append(
-                &text[cursor - line_start_byte..start - line_start_byte],
-                0.0,
-                base.clone(),
-            );
-            let color = match span.kind {
-                SyntaxKind::Keyword => Color32::from_rgb(207, 142, 255),
-                SyntaxKind::String => Color32::from_rgb(167, 212, 142),
-                SyntaxKind::Comment => Color32::from_rgb(106, 153, 85),
-                SyntaxKind::Number => Color32::from_rgb(104, 151, 187),
-                SyntaxKind::Type => Color32::from_rgb(86, 182, 194),
-                SyntaxKind::Function => Color32::from_rgb(220, 220, 170),
-                SyntaxKind::Macro => Color32::from_rgb(255, 198, 109),
-            };
-            job.append(
-                &text[start - line_start_byte..end - line_start_byte],
-                0.0,
-                egui::TextFormat {
-                    color,
-                    ..base.clone()
-                },
-            );
-            cursor = end;
-        }
-        job.append(&text[cursor - line_start_byte..], 0.0, base);
-        job
+    fn project_name(&self) -> String {
+        self.state
+            .project
+            .as_ref()
+            .map(|project| Self::file_name(project.root()))
+            .unwrap_or_else(|| "No project".into())
     }
 
-    fn editor_surface(ui: &mut egui::Ui, document: &mut Document) -> Result<bool, String> {
-        let row_height = 20.0;
-        let gutter_width = 52.0;
-        let char_width =
-            ui.fonts_mut(|fonts| fonts.glyph_width(&egui::FontId::monospace(14.0), 'm'));
-        let line_count = document.text.len_lines();
-        let output = egui::ScrollArea::both()
-            .auto_shrink([false, false])
-            .show_viewport(ui, |ui, viewport| {
-                let content_size = egui::vec2(
-                    ui.available_width().max(1600.0),
-                    line_count as f32 * row_height,
-                );
-                let (rect, response) =
-                    ui.allocate_exact_size(content_size, egui::Sense::click_and_drag());
-                if response.clicked() || response.drag_started() {
-                    response.request_focus();
-                }
-                let position_to_offset = |position: egui::Pos2| {
-                    let line = (((position.y - rect.top()) / row_height).floor().max(0.0) as usize)
-                        .min(line_count.saturating_sub(1));
-                    let line_text = document.text.line(line).unwrap_or_default();
-                    let content = line_text.trim_end_matches(['\r', '\n']);
-                    let column = (((position.x - rect.left() - gutter_width) / char_width)
-                        .round()
-                        .max(0.0) as usize)
-                        .min(content.chars().count());
-                    document.text.line_to_char(line).unwrap_or(0) + column
-                };
-                if response.clicked()
-                    && let Some(position) = response.interact_pointer_pos()
-                {
-                    let offset = position_to_offset(position);
-                    let modifiers = ui.input(|input| input.modifiers);
-                    if modifiers.alt {
-                        document.selections.add(Selection::caret(offset));
-                    } else if modifiers.shift {
-                        let anchor = document.selections.primary().anchor;
-                        document.selections.set_single(Selection {
-                            anchor,
-                            head: offset,
-                        });
-                    } else {
-                        document.selections.set_single(Selection::caret(offset));
-                    }
-                }
-                if response.drag_started()
-                    && let Some(position) = response.interact_pointer_pos()
-                {
-                    document
-                        .selections
-                        .set_single(Selection::caret(position_to_offset(position)));
-                }
-                if response.dragged()
-                    && let Some(position) = response.interact_pointer_pos()
-                {
-                    let offset = position_to_offset(position);
-                    let anchor = document.selections.primary().anchor;
-                    document.selections.set_single(Selection {
-                        anchor,
-                        head: offset,
-                    });
-                }
-
-                let first_line =
-                    ((viewport.top() / row_height).floor().max(0.0) as usize).min(line_count);
-                let last_line =
-                    ((viewport.bottom() / row_height).ceil() as usize + 1).min(line_count);
-                for line in first_line..last_line {
-                    let y = rect.top() + line as f32 * row_height;
-                    let line_start = document.text.line_to_char(line).unwrap_or(0);
-                    let line_text = document.text.line(line).unwrap_or_default();
-                    let content = line_text.trim_end_matches(['\r', '\n']);
-                    let line_end = line_start + content.chars().count();
-                    ui.painter().text(
-                        egui::pos2(rect.left() + 6.0, y + 2.0),
-                        egui::Align2::LEFT_TOP,
-                        format!("{}", line + 1),
-                        egui::FontId::monospace(13.0),
-                        Color32::from_rgb(95, 101, 115),
-                    );
-                    for selection in document.selections.selections() {
-                        let start = selection.start().max(line_start).min(line_end);
-                        let end = selection.end().max(line_start).min(line_end);
-                        if start < end {
-                            let x1 = rect.left()
-                                + gutter_width
-                                + (start - line_start) as f32 * char_width;
-                            let x2 =
-                                rect.left() + gutter_width + (end - line_start) as f32 * char_width;
-                            ui.painter().rect_filled(
-                                egui::Rect::from_min_max(
-                                    egui::pos2(x1, y),
-                                    egui::pos2(x2, y + row_height),
-                                ),
-                                0.0,
-                                Color32::from_rgba_unmultiplied(65, 105, 160, 120),
-                            );
-                        }
-                    }
-                    let line_start_byte = document.text.line_to_byte(line).unwrap_or(0);
-                    let job =
-                        Self::highlighted_line_job(content, line_start_byte, &document.analysis);
-                    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-                    ui.painter().galley(
-                        egui::pos2(rect.left() + gutter_width, y + 2.0),
-                        galley,
-                        Color32::WHITE,
-                    );
-                    if response.has_focus() {
-                        for selection in document.selections.selections() {
-                            if selection.head >= line_start && selection.head <= line_end {
-                                let x = rect.left()
-                                    + gutter_width
-                                    + (selection.head - line_start) as f32 * char_width;
-                                ui.painter().line_segment(
-                                    [egui::pos2(x, y + 1.0), egui::pos2(x, y + row_height - 1.0)],
-                                    egui::Stroke::new(1.5_f32, Color32::from_rgb(220, 225, 235)),
-                                );
-                            }
-                        }
-                    }
-                }
-                response
-            });
-
-        let response = output.inner;
-        if !response.has_focus() {
-            return Ok(false);
+    /// Commands that can run without parameters (all declared fields optional).
+    fn parameterless(spec: &CommandSpec) -> bool {
+        match serde_json::from_str::<Value>(&spec.params) {
+            Ok(Value::Object(fields)) => fields
+                .values()
+                .all(|value| value.as_str().is_some_and(|kind| kind.ends_with('?'))),
+            _ => false,
         }
-        let events = ui.input(|input| input.events.clone());
-        let initial_revision = document.text.revision();
-        for event in events {
-            match event {
-                egui::Event::Text(text) if !text.is_empty() => {
-                    document
-                        .selections
-                        .insert(&mut document.text, &text)
-                        .map_err(|error| error.to_string())?;
-                }
-                egui::Event::Key {
-                    key: egui::Key::Enter,
-                    pressed: true,
-                    ..
-                } => {
-                    document
-                        .selections
-                        .insert(&mut document.text, "\n")
-                        .map_err(|error| error.to_string())?;
-                }
-                egui::Event::Key {
-                    key: egui::Key::Tab,
-                    pressed: true,
-                    ..
-                } => {
-                    document
-                        .selections
-                        .insert(&mut document.text, "    ")
-                        .map_err(|error| error.to_string())?;
-                }
-                egui::Event::Key {
-                    key: egui::Key::Backspace,
-                    pressed: true,
-                    ..
-                } => {
-                    document
-                        .selections
-                        .backspace(&mut document.text)
-                        .map_err(|error| error.to_string())?;
-                }
-                egui::Event::Key {
-                    key: egui::Key::Delete,
-                    pressed: true,
-                    ..
-                } => {
-                    document
-                        .selections
-                        .delete_forward(&mut document.text)
-                        .map_err(|error| error.to_string())?;
-                }
-                egui::Event::Key {
-                    key: egui::Key::A,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } if modifiers.command => {
-                    document.selections.set_single(Selection {
-                        anchor: 0,
-                        head: document.text.len_chars(),
-                    });
-                }
-                egui::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } if matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight) => {
-                    let current = document.selections.primary();
-                    let head = match key {
-                        egui::Key::ArrowLeft => current.head.saturating_sub(1),
-                        egui::Key::ArrowRight => (current.head + 1).min(document.text.len_chars()),
-                        _ => current.head,
-                    };
-                    let anchor = if modifiers.shift {
-                        current.anchor
-                    } else {
-                        head
-                    };
-                    document.selections.set_single(Selection { anchor, head });
-                }
-                _ => {}
+    }
+
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        use egui::{Key, Modifiers};
+        // Tool window activation uses ⌘N on macOS and Alt+N elsewhere.
+        let tool_modifier = if cfg!(target_os = "macos") {
+            Modifiers::COMMAND
+        } else {
+            Modifiers::ALT
+        };
+        let completion_open = !self.state.lsp.completions().is_empty();
+        let consumed_chord = std::cell::Cell::new(false);
+        // Exact modifier matching: egui's consume_key ignores extra Shift/Alt, which
+        // would let ⌘F swallow ⇧⌘F.
+        let consume = |modifiers: Modifiers, key: Key| {
+            let hit = ctx.input_mut(|input| {
+                let before = input.events.len();
+                input.events.retain(|event| {
+                    !matches!(
+                        event,
+                        egui::Event::Key { key: k, modifiers: m, pressed: true, .. }
+                            if *k == key && m.matches_exact(modifiers)
+                    )
+                });
+                input.events.len() != before
+            });
+            if hit && (modifiers.alt || modifiers.ctrl || modifiers.command) {
+                consumed_chord.set(true);
+            }
+            hit
+        };
+        if completion_open
+            && !self.palette.open
+            && self.dialog.is_none()
+            && self.editor_focused(ctx)
+        {
+            let count = self
+                .state
+                .lsp
+                .completions()
+                .len()
+                .min(editor::COMPLETION_LIMIT);
+            if consume(Modifiers::NONE, Key::ArrowDown) && count > 0 {
+                self.completion_selected = (self.completion_selected + 1) % count;
+            }
+            if consume(Modifiers::NONE, Key::ArrowUp) && count > 0 {
+                self.completion_selected = (self.completion_selected + count - 1) % count;
+            }
+            if consume(Modifiers::NONE, Key::Enter) || consume(Modifiers::NONE, Key::Tab) {
+                self.accept_completion(self.completion_selected);
             }
         }
-        Ok(document.text.revision() != initial_revision)
+        let mac = cfg!(target_os = "macos");
+        if ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
+            && self.dialog.is_none()
+            && !self.palette.open
+        {
+            if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::A) {
+                self.palette.show_tab(palette::Tab::Actions);
+            }
+            if consume(Modifiers::COMMAND, Key::O) {
+                self.open_project_dialog();
+            }
+            if consume(Modifiers::ALT, Key::F12) || consume(Modifiers::CTRL, Key::Backtick) {
+                self.toggle_tool_window(ToolWindow::Terminal);
+            }
+            self.detect_double_shift(ctx);
+            if consumed_chord.get() {
+                ctx.input_mut(|input| {
+                    input
+                        .events
+                        .retain(|event| !matches!(event, egui::Event::Text(_)))
+                });
+            }
+            return;
+        }
+        if consume(Modifiers::COMMAND, Key::O) {
+            self.open_project_dialog();
+        }
+        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::A) {
+            self.palette.show_tab(palette::Tab::Actions);
+        }
+        // Go to File: ⇧⌘O on macOS, Ctrl+Shift+N elsewhere.
+        if (mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::O))
+            || (!mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::N))
+        {
+            self.palette.show_tab(palette::Tab::Files);
+        }
+        if consume(Modifiers::COMMAND, Key::E) {
+            self.open_dialog(popups::Dialog::Recent {
+                query: String::new(),
+                selected: usize::from(self.state.recent_files.len() > 1),
+            });
+        }
+        if self.state.active_document.is_some() {
+            // Go to Line: ⌘L on macOS, Ctrl+G elsewhere.
+            if (mac && consume(Modifiers::COMMAND, Key::L))
+                || (!mac && consume(Modifiers::COMMAND, Key::G))
+            {
+                self.open_dialog(popups::Dialog::GotoLine {
+                    input: String::new(),
+                });
+            }
+            if consume(Modifiers::COMMAND, Key::F) {
+                let selection = self.primary_selection_text();
+                self.find.show(false, selection);
+            }
+            if consume(Modifiers::COMMAND, Key::R) {
+                let selection = self.primary_selection_text();
+                self.find.show(true, selection);
+            }
+            let next =
+                consume(Modifiers::NONE, Key::F3) || (mac && consume(Modifiers::COMMAND, Key::G));
+            let previous = consume(Modifiers::SHIFT, Key::F3)
+                || (mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::G));
+            if (next || previous) && !self.find.query.is_empty() {
+                let id = if next {
+                    "editor.findNext"
+                } else {
+                    "editor.findPrevious"
+                };
+                self.dispatch(id, self.find.params());
+            }
+        }
+        self.detect_double_shift(ctx);
+        if consume(Modifiers::CTRL, Key::Space) {
+            self.dispatch("language.complete", Value::Null);
+        }
+        if consume(Modifiers::NONE, Key::Escape) {
+            if self.dialog.is_some() {
+                self.dialog = None;
+            } else if self.palette.open {
+                self.palette.open = false;
+            } else if self.find.open
+                && (self.editor_focused(ctx) || ctx.memory(|m| m.has_focus(findbar::query_id())))
+            {
+                self.find.open = false;
+                ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
+            } else if !self.state.lsp.completions().is_empty() {
+                self.state.lsp.clear_completions();
+            } else if self.state.tool_windows.visible(Anchor::Bottom).is_some()
+                && !self.palette.open
+            {
+                // Escape returns focus to the editor; keep the tool window open.
+                ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
+            }
+        }
+        if consume(Modifiers::COMMAND, Key::S) {
+            self.autosave();
+        }
+        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z) {
+            self.dispatch("editor.redo", Value::Null);
+        }
+        if consume(Modifiers::COMMAND, Key::Z) {
+            self.dispatch("editor.undo", Value::Null);
+        }
+        let close_tab = consume(Modifiers::COMMAND, Key::W)
+            || consume(Modifiers::COMMAND, Key::F4)
+            || consume(Modifiers::CTRL, Key::F4);
+        if close_tab && self.state.active_document.is_some() {
+            self.dispatch("editor.close", Value::Null);
+        }
+        if consume(Modifiers::COMMAND, Key::F9) {
+            self.dispatch("build.project", Value::Null);
+        }
+        // Run: ⌃R on macOS, Shift+F10 elsewhere (Ctrl+R is Replace there).
+        if (mac && consume(Modifiers::CTRL, Key::R)) || consume(Modifiers::SHIFT, Key::F10) {
+            self.dispatch("run.project", Value::Null);
+        }
+        if consume(Modifiers::COMMAND, Key::F2) && self.state.runner.is_running() {
+            self.dispatch("run.cancel", Value::Null);
+        }
+        if consume(Modifiers::CTRL, Key::Backtick) || consume(Modifiers::ALT, Key::F12) {
+            self.toggle_tool_window(ToolWindow::Terminal);
+        }
+        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::F) {
+            self.dispatch("toolwindow.activate.find", Value::Null);
+            self.search_focus_requested(ctx);
+        }
+        if consume(Modifiers::COMMAND, Key::K) {
+            self.dispatch("toolwindow.activate.commit", Value::Null);
+        }
+        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::F12) {
+            self.dispatch("toolwindow.hideAll", Value::Null);
+        }
+        for (key, window) in [
+            (Key::Num1, ToolWindow::Project),
+            (Key::Num0, ToolWindow::Commit),
+            (Key::Num3, ToolWindow::Find),
+            (Key::Num4, ToolWindow::Build),
+            (Key::Num6, ToolWindow::Problems),
+        ] {
+            if consume(tool_modifier, key) {
+                self.toggle_tool_window(window);
+            }
+        }
+        // Some platforms also emit the chord's character as text (e.g. Alt+1 → "1");
+        // a consumed shortcut must not type into the focused field.
+        if consumed_chord.get() {
+            ctx.input_mut(|input| {
+                input
+                    .events
+                    .retain(|event| !matches!(event, egui::Event::Text(_)))
+            });
+        }
+    }
+
+    /// Activating a tool window moves keyboard focus into it; hiding it returns
+    /// focus to the editor.
+    fn follow_tool_window_focus(&mut self, ctx: &egui::Context) {
+        let bottom = self.state.tool_windows.visible(Anchor::Bottom);
+        if bottom == self.last_bottom {
+            return;
+        }
+        let target = match bottom {
+            Some(ToolWindow::Terminal) => Some(toolwindows::terminal_input_id()),
+            Some(ToolWindow::Find) => Some(toolwindows::find_input_id()),
+            None if self.state.active_document.is_some() => Some(editor::editor_id()),
+            _ => None,
+        };
+        if let Some(id) = target {
+            ctx.memory_mut(|memory| memory.request_focus(id));
+        }
+        self.last_bottom = bottom;
+    }
+
+    fn search_focus_requested(&self, ctx: &egui::Context) {
+        ctx.memory_mut(|memory| memory.request_focus(toolwindows::find_input_id()));
+    }
+
+    /// "Search Everywhere" opens on a quick double press of Shift alone.
+    fn detect_double_shift(&mut self, ctx: &egui::Context) {
+        // egui reports no key events for Shift itself, so any key or text event
+        // while Shift is held means it was used as a modifier.
+        let used_as_modifier = ctx.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key { pressed: true, .. } | egui::Event::Text(_)
+                )
+            })
+        });
+        if used_as_modifier {
+            self.shift_tainted = true;
+            self.last_shift_release = None;
+        }
+        let shift_down = ctx.input(|input| input.modifiers.shift_only());
+        let was_down = ctx.data(|data| {
+            data.get_temp::<bool>(egui::Id::new("shift_down"))
+                .unwrap_or(false)
+        });
+        ctx.data_mut(|data| data.insert_temp(egui::Id::new("shift_down"), shift_down));
+        if shift_down && !was_down {
+            self.shift_tainted = false;
+        }
+        if was_down && !shift_down && !self.shift_tainted {
+            let now = Instant::now();
+            if self
+                .last_shift_release
+                .is_some_and(|last| now.duration_since(last) < Duration::from_millis(400))
+            {
+                self.palette.show();
+                self.last_shift_release = None;
+            } else {
+                self.last_shift_release = Some(now);
+            }
+        }
+    }
+
+    fn accept_completion(&mut self, index: usize) {
+        let Some(item) = self.state.lsp.completions().get(index).cloned() else {
+            return;
+        };
+        let text = item.insert_text.unwrap_or(item.label);
+        self.dispatch(
+            "editor.insertText",
+            json!({"position": self.state.active_caret().unwrap_or(0), "text": text}),
+        );
+        self.state.lsp.clear_completions();
+        self.completion_selected = 0;
     }
 }
 
 impl eframe::App for IdeApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        theme::FRAME.to_normalized_gamma_f32()
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.state.poll_search();
         self.state.poll_runner();
         self.state.poll_lsp();
-        let contexts: &[jetthing_keymap::KeyContext] = if self.state.active_document.is_some() {
-            &[jetthing_keymap::KeyContext::Editor]
+        self.state.poll_updates();
+        if self.state.lsp.is_busy() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        } else if !self.state.lsp.servers().is_empty() {
+            // Diagnostics and server messages arrive without user input.
+            ctx.request_repaint_after(Duration::from_millis(500));
+        }
+        if self.state.search.is_running() || self.state.runner.is_running() {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
+        if let Some(terminal) = self.state.terminal.as_mut() {
+            terminal.poll();
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+        // Like the reference IDE, save all files when the window loses focus.
+        let focused = ctx.input(|input| input.focused);
+        if self.window_focused && !focused {
+            self.autosave();
+        }
+        self.window_focused = focused;
+        self.handle_shortcuts(ctx);
+        self.follow_tool_window_focus(ctx);
+
+        chrome::window_resize_handles(ctx);
+        chrome::main_toolbar(self, ctx);
+        chrome::status_bar(self, ctx);
+        if self.state.project.is_none() {
+            welcome::show(self, ctx);
         } else {
-            &[]
-        };
-        for id in self.keymap.process(ctx, &self.state.keymaps, contexts) {
-            if self.commands.is_enabled(&id, &self.state) {
-                self.dispatch(&id, Value::Null);
-            }
+            chrome::left_stripe(self, ctx);
+            chrome::right_stripe(ctx);
+            toolwindows::left(self, ctx);
+            toolwindows::bottom(self, ctx);
+            editor::central(self, ctx);
         }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::P)) {
-            self.palette_open = true;
+        editor::completion_popup(self, ctx);
+        palette::show(self, ctx);
+        popups::show(self, ctx);
+        notifications::show(self, ctx);
+        lsp_status::notices(self, ctx);
+        // Include operations started by controls in this frame, and keep
+        // polling even when their notification balloon is hidden.
+        if self.state.updates.is_busy() {
+            ctx.request_repaint_after(Duration::from_millis(200));
         }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Space)) {
-            self.dispatch("language.complete", Value::Null);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.state.project.is_some() {
+            self.autosave();
+            self.dispatch("workspace.save", Value::Null);
         }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-            && let Some(lsp) = self.state.lsp.as_mut()
-        {
-            lsp.clear_completions();
-        }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
-            self.dispatch("editor.save", Value::Null);
-        }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z)) {
-            self.dispatch("editor.undo", Value::Null);
-        }
-        if ctx.input_mut(|i| {
-            i.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::Z,
-            )
-        }) {
-            self.dispatch("editor.redo", Value::Null);
-        }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Backtick)) {
-            self.dispatch("terminal.toggle", Value::Null);
-        }
-        if ctx.input_mut(|i| {
-            i.consume_key(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::F,
-            )
-        }) {
-            self.state.search_visible = true;
-        }
-        egui::TopBottomPanel::top("toolbar")
-            .exact_height(42.0)
-            .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.heading(RichText::new("Jetthing").color(Color32::from_rgb(196, 143, 255)));
-                    ui.separator();
-                    if ui.button("⌘P  Search commands").clicked() {
-                        self.palette_open = true;
-                    }
-                    if ui.button("Terminal").clicked() {
-                        self.dispatch("terminal.toggle", Value::Null);
-                    }
-                    if ui.button("Find in Files").clicked() {
-                        self.state.search_visible = true;
-                    }
-                    if ui.button("Git").clicked() {
-                        self.state.git_visible = !self.state.git_visible;
-                    }
-                    if ui
-                        .add_enabled(!self.state.runner.is_running(), egui::Button::new("Build"))
-                        .clicked()
-                    {
-                        self.dispatch("build.project", Value::Null);
-                    }
-                    if ui.button("Problems").clicked() {
-                        self.state.problems_visible = !self.state.problems_visible;
-                    }
-                    ui.add_space(12.0);
-                    let root = self
-                        .state
-                        .project
-                        .as_ref()
-                        .map(|p| p.root().display().to_string())
-                        .unwrap_or_else(|| "No project".into());
-                    ui.label(root);
-                });
-            });
-        egui::TopBottomPanel::bottom("status")
-            .exact_height(24.0)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(&self.state.status);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!("{} plugins", self.state.plugins.len()));
-                        if let Some(document) = self
-                            .state
-                            .active_document
-                            .and_then(|index| self.state.documents.get(index))
-                        {
-                            if let Some(language) = document.analysis.language {
-                                ui.label(language);
-                            }
-                            let count = document.analysis.diagnostics.len();
-                            let count = count + self.state.active_lsp_diagnostics().len();
-                            ui.label(format!(
-                                "{} problem{}",
-                                count,
-                                if count == 1 { "" } else { "s" }
-                            ));
-                        }
-                        if let Some(lsp) = &self.state.lsp {
-                            ui.label(match lsp.state() {
-                                ServerState::Starting => "LSP starting",
-                                ServerState::Ready => "LSP ready",
-                                ServerState::Exited => "LSP exited",
-                            });
-                        }
-                    });
-                });
-            });
-        if self.state.search_visible {
-            egui::TopBottomPanel::bottom("project_search")
-                .default_height(260.0)
-                .min_height(120.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong("Find in Files");
-                        let input = ui.add(
-                            egui::TextEdit::singleline(&mut self.search_input)
-                                .desired_width(300.0)
-                                .hint_text("Search project text"),
-                        );
-                        let submit = ui.button("Search").clicked()
-                            || (input.lost_focus()
-                                && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                        if submit && !self.search_input.is_empty() {
-                            self.dispatch(
-                                "search.project",
-                                json!({"query": self.search_input.clone()}),
-                            );
-                        }
-                        if self.state.search.is_running() && ui.button("Cancel").clicked() {
-                            self.dispatch("search.cancel", Value::Null);
-                        }
-                        ui.label(if self.state.search.is_running() {
-                            format!("{} results…", self.state.search_results.len())
-                        } else {
-                            format!("{} results", self.state.search_results.len())
-                        });
-                        if ui.small_button("×").clicked() {
-                            self.state.search_visible = false;
-                        }
-                    });
-                    ui.separator();
-                    let results = self.state.search_results.clone();
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for result in results {
-                            let label = format!(
-                                "{}:{}:{}  {}",
-                                result.path.display(),
-                                result.line,
-                                result.column,
-                                result.preview
-                            );
-                            if ui.selectable_label(false, label).clicked() {
-                                self.dispatch("editor.openFile", json!({"path": result.path}));
-                            }
-                        }
-                    });
-                });
-        }
-        if self.state.problems_visible {
-            egui::TopBottomPanel::bottom("problems")
-                .default_height(210.0)
-                .min_height(100.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong("Problems");
-                        if ui.small_button("×").clicked() {
-                            self.state.problems_visible = false;
-                        }
-                    });
-                    ui.separator();
-                    if let Some(error) = &self.state.lsp_error {
-                        ui.colored_label(Color32::from_rgb(238, 135, 135), error);
-                    }
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        if let Some(document) = self
-                            .state
-                            .active_document
-                            .and_then(|index| self.state.documents.get(index))
-                        {
-                            for diagnostic in &document.analysis.diagnostics {
-                                ui.label(format!(
-                                    "{}:{}:{}  {}",
-                                    document.path.display(),
-                                    diagnostic.row,
-                                    diagnostic.column,
-                                    diagnostic.message
-                                ));
-                            }
-                        }
-                        for diagnostic in self.state.active_lsp_diagnostics() {
-                            let color = if diagnostic.severity == Some(1) {
-                                Color32::from_rgb(238, 135, 135)
-                            } else {
-                                Color32::from_rgb(224, 190, 100)
-                            };
-                            ui.colored_label(
-                                color,
-                                format!(
-                                    "{}:{}  {}",
-                                    diagnostic.start_line + 1,
-                                    diagnostic.start_character + 1,
-                                    diagnostic.message
-                                ),
-                            );
-                        }
-                    });
-                });
-        }
-        if self.state.build_visible {
-            egui::TopBottomPanel::bottom("build_output")
-                .default_height(230.0)
-                .min_height(100.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        let title = self
-                            .state
-                            .runner
-                            .plan()
-                            .map(|plan| plan.name.as_str())
-                            .unwrap_or("Build");
-                        ui.strong(title);
-                        let state = match self.state.runner.state() {
-                            TaskState::Idle => "idle".into(),
-                            TaskState::Running => "running…".into(),
-                            TaskState::Exited(code) => format!("finished ({code})"),
-                            TaskState::Cancelled => "cancelled".into(),
-                        };
-                        ui.label(state);
-                        if self.state.runner.is_running() && ui.button("Stop").clicked() {
-                            self.dispatch("run.cancel", Value::Null);
-                        }
-                        if ui.small_button("×").clicked() {
-                            self.state.build_visible = false;
-                        }
-                    });
-                    ui.separator();
-                    egui::ScrollArea::vertical()
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| {
-                            for chunk in self.state.runner.output() {
-                                let color = match chunk.stream {
-                                    OutputStream::Stdout => Color32::from_rgb(205, 210, 220),
-                                    OutputStream::Stderr => Color32::from_rgb(238, 135, 135),
-                                };
-                                ui.label(RichText::new(&chunk.text).monospace().color(color));
-                            }
-                        });
-                });
-        }
-        if self.state.terminal_visible {
-            egui::TopBottomPanel::bottom("terminal")
-                .default_height(240.0)
-                .min_height(100.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong("Terminal");
-                        if ui.small_button("×").clicked() {
-                            self.state.terminal_visible = false;
-                        }
-                        if self.state.terminal.as_ref().is_some_and(|t| t.is_exited()) {
-                            ui.colored_label(Color32::from_rgb(220, 110, 110), "process exited");
-                        }
-                    });
-                    ui.separator();
-                    let mut transcript = self
-                        .state
-                        .terminal
-                        .as_mut()
-                        .map(|terminal| terminal.poll().to_owned())
-                        .unwrap_or_default();
-                    egui::ScrollArea::vertical()
-                        .stick_to_bottom(true)
-                        .max_height(ui.available_height() - 30.0)
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::TextEdit::multiline(&mut transcript)
-                                    .font(egui::TextStyle::Monospace)
-                                    .desired_width(f32::INFINITY)
-                                    .interactive(false),
-                            );
-                        });
-                    let input = ui.add(
-                        egui::TextEdit::singleline(&mut self.terminal_input)
-                            .font(egui::TextStyle::Monospace)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("Type a command and press Enter"),
-                    );
-                    if input.lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                        && !self.terminal_input.is_empty()
-                    {
-                        let command = std::mem::take(&mut self.terminal_input) + "\r";
-                        self.dispatch("terminal.sendText", json!({"text": command}));
-                        input.request_focus();
-                    }
-                });
-        }
-        if self.state.git_visible {
-            egui::SidePanel::right("git")
-                .default_width(330.0)
-                .min_width(220.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.strong("Version Control");
-                        if ui.button("Refresh").clicked() {
-                            self.dispatch("git.refresh", Value::Null);
-                        }
-                        if ui.small_button("×").clicked() {
-                            self.state.git_visible = false;
-                        }
-                    });
-                    ui.separator();
-                    let Some(git) = self.state.git.clone() else {
-                        ui.label("The project is not a Git repository.");
-                        return;
-                    };
-                    ui.label(format!("Branch: {}", git.branch));
-                    ui.label(format!("{} changed files", git.changes.len()));
-                    ui.separator();
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for change in git.changes {
-                            ui.group(|ui| {
-                                ui.horizontal(|ui| {
-                                    let marker = match change.kind {
-                                        ChangeKind::Untracked => "?",
-                                        ChangeKind::Modified => "M",
-                                        ChangeKind::Added => "A",
-                                        ChangeKind::Deleted => "D",
-                                        ChangeKind::Renamed => "R",
-                                        ChangeKind::Conflicted => "!",
-                                    };
-                                    if ui
-                                        .selectable_label(
-                                            false,
-                                            format!("{marker} {}", change.path.display()),
-                                        )
-                                        .clicked()
-                                        && change.kind != ChangeKind::Deleted
-                                    {
-                                        self.dispatch(
-                                            "editor.openFile",
-                                            json!({"path": change.path.clone()}),
-                                        );
-                                    }
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if change.unstaged && ui.small_button("Stage").clicked()
-                                            {
-                                                self.dispatch(
-                                                    "git.stage",
-                                                    json!({"path": change.path.clone()}),
-                                                );
-                                            }
-                                            if change.staged && ui.small_button("Unstage").clicked()
-                                            {
-                                                self.dispatch(
-                                                    "git.unstage",
-                                                    json!({"path": change.path.clone()}),
-                                                );
-                                            }
-                                        },
-                                    );
-                                });
-                            });
-                        }
-                    });
-                });
-        }
-        egui::SidePanel::left("project")
-            .default_width(250.0)
-            .resizable(true)
-            .show(ctx, |ui| {
-                ui.heading("Project");
-                ui.separator();
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let entries = self.state.files.clone();
-                    for entry in entries {
-                        let depth = entry.relative_path.components().count().saturating_sub(1);
-                        ui.horizontal(|ui| {
-                            ui.add_space(depth as f32 * 10.0);
-                            let icon = if entry.is_dir { "▾" } else { "  " };
-                            let response = ui.selectable_label(
-                                false,
-                                format!("{icon} {}", Self::file_name(&entry.relative_path)),
-                            );
-                            if response.double_clicked() && !entry.is_dir {
-                                self.dispatch(
-                                    "editor.openFile",
-                                    json!({"path": entry.relative_path}),
-                                );
-                            }
-                        });
-                    }
-                });
-            });
-        let mut changed_document = None;
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                for index in 0..self.state.documents.len() {
-                    let doc = &self.state.documents[index];
-                    let title = format!(
-                        "{}{}",
-                        Self::file_name(&doc.path),
-                        if doc.text.is_dirty() { " •" } else { "" }
-                    );
-                    if ui
-                        .selectable_label(self.state.active_document == Some(index), title)
-                        .clicked()
-                    {
-                        self.state.active_document = Some(index);
-                        if let Some(lsp) = self.state.lsp.as_mut() {
-                            lsp.clear_completions();
-                        }
-                    }
-                }
-            });
-            ui.separator();
-            if let Some(index) = self.state.active_document {
-                let doc = &mut self.state.documents[index];
-                match Self::editor_surface(ui, doc) {
-                    Ok(true) => {
-                        let snapshot = doc.text.text();
-                        doc.analysis = jetthing_language::analyze(&doc.path, &snapshot);
-                        changed_document = Some((
-                            doc.path.clone(),
-                            snapshot,
-                            doc.text.revision().min(i32::MAX as u64) as i32,
-                        ));
-                    }
-                    Ok(false) => {}
-                    Err(error) => self.state.status = error,
-                }
-            } else {
-                ui.centered_and_justified(|ui| {
-                    ui.label("Double-click a file in the Project tool window");
-                });
-            }
-        });
-        if let Some((path, text, version)) = changed_document {
-            self.state.sync_document_lsp(&path, &text, version);
-        }
-        let completions = self
-            .state
-            .lsp
-            .as_ref()
-            .map(|lsp| lsp.completions().to_vec())
-            .unwrap_or_default();
-        if !completions.is_empty() {
-            egui::Window::new("Code Completion")
-                .collapsible(false)
-                .resizable(false)
-                .default_width(360.0)
-                .show(ctx, |ui| {
-                    for item in completions.iter().take(30) {
-                        let label = match item.detail.as_deref() {
-                            Some(detail) => format!("{}    {detail}", item.label),
-                            None => item.label.clone(),
-                        };
-                        if ui.selectable_label(false, label).clicked() {
-                            let text = item
-                                .insert_text
-                                .clone()
-                                .unwrap_or_else(|| item.label.clone());
-                            self.dispatch(
-                                "editor.insertText",
-                                json!({"position": self.state.active_caret().unwrap_or(0), "text": text}),
-                            );
-                        }
-                    }
-                });
-        }
-        if self.palette_open {
-            let mut open = true;
-            egui::Window::new("Search Everywhere")
-                .collapsible(false)
-                .resizable(false)
-                .default_width(520.0)
-                .open(&mut open)
-                .show(ctx, |ui| {
-                    let response = ui.text_edit_singleline(&mut self.palette_query);
-                    response.request_focus();
-                    let query = self.palette_query.to_lowercase();
-                    let specs = self.commands.specs();
-                    for command in specs
-                        .into_iter()
-                        .filter(|c| {
-                            query.is_empty()
-                                || c.label.to_lowercase().contains(&query)
-                                || c.id.to_lowercase().contains(&query)
-                        })
-                        .take(12)
-                    {
-                        let enabled = self.commands.is_enabled(&command.id, &self.state);
-                        if ui
-                            .add_enabled(
-                                enabled,
-                                egui::Button::new(format!(
-                                    "{}   {}",
-                                    command.label,
-                                    command.shortcut.unwrap_or_default()
-                                )),
-                            )
-                            .clicked()
-                        {
-                            self.dispatch(&command.id, Value::Null);
-                            self.palette_open = false;
-                        }
-                    }
-                });
-            self.palette_open &= open;
-        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parameterless_commands_are_detected_from_their_schema() {
+        let specs = built_in_commands().specs();
+        let find = |id: &str| specs.iter().find(|spec| spec.id == id).unwrap();
+        assert!(IdeApp::parameterless(find("editor.save")));
+        assert!(IdeApp::parameterless(find("editor.close")));
+        assert!(!IdeApp::parameterless(find("editor.openFile")));
+        assert!(!IdeApp::parameterless(find("toolwindow.toggle")));
     }
 }

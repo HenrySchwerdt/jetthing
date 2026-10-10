@@ -13,7 +13,9 @@ no crate below `jetthing-ui` imports UI types.
 - `jetthing-project`: safe project-root model, bounded file tree, UTF-8 document IO.
 - `jetthing-text`: revisioned rope storage, Unicode-safe multi-selection transactions,
   typing coalescence, and history.
-- `jetthing-language`: language-neutral analysis output with the first Tree-sitter Rust provider.
+- `jetthing-language`: data-driven Tree-sitter language registry (grammar crates plus their
+  bundled queries), a generic highlight engine producing `HighlightLayer`s keyed by IntelliJ
+  text-attribute keys, and the editor color-scheme model loaded from `docs/spec/data/`.
 - `jetthing-terminal`: native PTY process lifecycle, asynchronous output, input, and resizing.
 - `jetthing-search`: cancellable generation-based background text search with streamed,
   bounded results and binary/large-file exclusion.
@@ -21,14 +23,23 @@ no crate below `jetthing-ui` imports UI types.
   it delegates repository semantics to the installed Git executable.
 - `jetthing-runner`: detected build plans and cancellable child-process execution with
   streamed, separated stdout/stderr and explicit exit state.
-- `jetthing-lsp`: JSON-RPC framing, language-server lifecycle, document synchronization,
-  diagnostics, and completion transport; providers remain behind platform abstractions.
+- `jetthing-lsp`: JSON-RPC framing (`transport`), one server process with typed
+  request/response plumbing, cancellation, `$/progress` and diagnostics (`client`), the
+  server registry behind the `LanguageServerProvider` trait with PATH/`lsp.toml` discovery
+  (`registry`), and `LspManager`, which starts servers lazily per workspace root and
+  restarts crashed ones (`manager`). Uses `lsp-types`; no UI code. Popups live in
+  `jetthing-ui`. `jetthing-fake-lsp` is a scriptable test server.
 - `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,
   and validation. Executable/Wasm loading is deliberately not claimed yet.
-- `jetthing-core`: application state and built-in command handlers.
-- `jetthing-ui`: native shell, project tree, viewport-native highlighted editor, command palette,
-  resizable terminal tool window, and status surface.
-- `jetthing-app`: process startup and native window.
+- `jetthing-core`: application state, tool window layout model (one visible tool window
+  per anchor), and built-in command handlers.
+- `jetthing-ui`: native workbench shell split into `chrome` (main toolbar, stripe, status
+  bar, window controls), `toolwindows` (Project, Commit, Find, Build/Run, Problems,
+  Terminal), `editor` (tabs, viewport-native highlighted editor, completion popup),
+  `palette` (Search Everywhere), `theme` (Islands Dark tokens and fonts), and `icons`
+  (original 16×16 vector icons).
+- `jetthing-app`: process startup, native window (custom title bar on Windows/Linux),
+  and wgpu → OpenGL renderer fallback.
 - `jetthing-cli`: headless command discovery and execution.
 
 ## Command contract
