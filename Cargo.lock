@@ -2448,7 +2448,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jetthing-actions"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -2456,7 +2456,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-android"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "regex",
  "roxmltree",
@@ -2469,7 +2469,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-app"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "eframe",
  "jetthing-plugin-hello",
@@ -2478,7 +2478,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-cli"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "jetthing-command",
  "jetthing-control",
@@ -2488,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-command"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -2497,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-control"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "interprocess",
  "png",
@@ -2508,7 +2508,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-core"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "flate2",
  "jetthing-actions",
@@ -2535,7 +2535,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-git"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "similar",
  "thiserror 2.0.21",
@@ -2543,14 +2543,14 @@ dependencies = [
 
 [[package]]
 name = "jetthing-gradle"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "jetthing-runner",
 ]
 
 [[package]]
 name = "jetthing-keymap"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -2559,7 +2559,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-language"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "serde_json",
  "tree-sitter",
@@ -2587,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-lsp"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "lsp-types",
  "serde",
@@ -2600,7 +2600,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-plugin-api"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "jetthing-command",
  "serde",
@@ -2611,7 +2611,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-plugin-hello"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "jetthing-plugin-api",
  "jetthing-plugin-ui",
@@ -2619,7 +2619,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-plugin-ui"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "egui",
  "jetthing-plugin-api",
@@ -2627,7 +2627,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-plugins"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "jetthing-command",
  "jetthing-plugin-api",
@@ -2639,7 +2639,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-project"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "notify",
  "serde",
@@ -2649,7 +2649,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-runner"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "serde_json",
  "thiserror 2.0.21",
@@ -2658,7 +2658,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-search"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "globset",
  "regex",
@@ -2667,7 +2667,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-settings"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "jetthing-keymap",
  "serde",
@@ -2678,7 +2678,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-terminal"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "portable-pty",
  "thiserror 2.0.21",
@@ -2687,7 +2687,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-text"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "proptest",
  "ropey",
@@ -2696,7 +2696,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-toolchains"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "flate2",
  "lzma-rs",
@@ -2714,7 +2714,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-ui"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "eframe",
  "egui",
@@ -2738,7 +2738,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-update"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "flate2",
  "serde",
@@ -3348,7 +3348,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-http"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "eframe",
  "egui",
@@ -3362,7 +3362,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-http-core"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "base64 0.22.1",
  "cookie",
@@ -7086,7 +7086,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "flate2",
