@@ -231,10 +231,7 @@ impl IdeApp {
     }
 
     fn completion_visible(&self) -> bool {
-        self.state
-            .lsp
-            .as_ref()
-            .is_some_and(|lsp| !lsp.completions().is_empty())
+        !self.state.lsp.completions().is_empty()
     }
 
     fn shows_text(&self, text: &str) -> bool {
