@@ -27,6 +27,7 @@ mod notifications;
 mod palette;
 mod plugin_ui;
 mod popups;
+mod run_config_dialog;
 mod settings_dialog;
 mod syntax;
 mod terminal_ui;
@@ -719,6 +720,10 @@ impl eframe::App for IdeApp {
         popups::show(self, ctx);
         settings_dialog::show(self, ctx);
         android_sdk::show(self, ctx);
+        if let Some(focus) = self.state.edit_run_configurations.take() {
+            run_config_dialog::open(self, ctx, Some(focus.as_str()).filter(|f| !f.is_empty()));
+        }
+        run_config_dialog::show(self, ctx);
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
         about::show(self, ctx);

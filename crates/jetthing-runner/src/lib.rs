@@ -7,10 +7,12 @@
 pub mod build_system;
 pub mod console;
 pub mod events;
+pub mod run_config;
 
 pub use build_system::{BuildSystem, BuildSystemKind, BuildSystemRegistry, find_program};
 pub use console::{ConsoleBuffer, ConsoleLine};
 pub use events::{BuildEvents, BuildMessage, BuildStep, MessageKind, StepOutcome};
+pub use run_config::{RunConfiguration, RunManager, RunTarget};
 
 use std::{
     io::Read,

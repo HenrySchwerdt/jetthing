@@ -9,7 +9,8 @@ pub mod model;
 pub use model::{GradleModel, ProjectModel, TaskModel};
 
 use jetthing_runner::{
-    BuildSystem, BuildSystemKind, RunnerError, TaskKind, TaskPlan, build_system::require_program,
+    BuildSystem, BuildSystemKind, RunConfiguration, RunTarget, RunnerError, TaskKind, TaskPlan,
+    build_system::require_program,
 };
 use std::path::{Path, PathBuf};
 
@@ -321,6 +322,35 @@ impl BuildSystem for Gradle {
         };
         build.task_plan(TaskKind::Test, "Gradle Test", &[task.into()])
     }
+
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Gradle {
+            tasks,
+            options,
+            program_arguments,
+        } = &config.target
+        else {
+            return Err(RunnerError::NotRunnable(
+                "not a Gradle configuration".into(),
+            ));
+        };
+        let build = detected(root)?;
+        let mut args: Vec<String> = tasks
+            .iter()
+            .flat_map(|task| task.split_whitespace())
+            .map(str::to_owned)
+            .chain(options.iter().cloned())
+            .collect();
+        if !program_arguments.is_empty() {
+            // `run` and other JavaExec tasks receive program arguments via --args.
+            args.push(format!("--args={}", program_arguments.join(" ")));
+        }
+        build.task_plan(config.target.task_kind(), &config.name, &args)
+    }
 }
 
 fn detected(root: &Path) -> Result<GradleBuild, RunnerError> {
@@ -446,6 +476,28 @@ mod tests {
         assert_eq!(run.args, [":app:run", "--console=plain"]);
         assert_eq!(run.kind, TaskKind::Run);
         assert_eq!(Gradle.build_plan(&fixture.0).unwrap().args[0], "build");
+    }
+
+    #[test]
+    fn gradle_configuration_plan_passes_options_and_program_arguments() {
+        let fixture = Fixture::new("config");
+        fixture
+            .write("settings.gradle.kts", "")
+            .write("gradlew", "");
+        let config = RunConfiguration::new(
+            "App",
+            RunTarget::Gradle {
+                tasks: vec![":app:run".into()],
+                options: vec!["--offline".into()],
+                program_arguments: vec!["a".into(), "b".into()],
+            },
+        );
+        let plan = Gradle.configuration_plan(&fixture.0, &config).unwrap();
+        assert_eq!(
+            plan.args,
+            [":app:run", "--offline", "--args=a b", "--console=plain"]
+        );
+        assert_eq!(plan.kind, TaskKind::Run);
     }
 
     #[test]

@@ -7,7 +7,7 @@
 //! Richer integrations (the Gradle model, Bazel targets, Android deploy) live in
 //! their own crates and register additional or replacement providers.
 
-use crate::{RunnerError, TaskKind, TaskPlan};
+use crate::{RunConfiguration, RunTarget, RunnerError, TaskKind, TaskPlan};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -59,6 +59,19 @@ pub trait BuildSystem: Send + Sync {
 
     /// Plan that runs all tests.
     fn test_plan(&self, root: &Path) -> Result<TaskPlan, RunnerError>;
+
+    /// Plan for a run configuration whose type belongs to this provider.
+    fn configuration_plan(
+        &self,
+        _root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        Err(RunnerError::NotRunnable(format!(
+            "{} cannot run {} configurations",
+            self.kind().display_name(),
+            config.target.type_name()
+        )))
+    }
 }
 
 /// Ordered provider list; the first provider that detects a root wins.
@@ -108,6 +121,33 @@ impl BuildSystemRegistry {
             .iter()
             .find(|provider| provider.detect(root))
             .map(Box::as_ref)
+    }
+
+    /// Plans `config` with the provider registered for its type (shell commands are
+    /// planned directly). Works even when the project root is of another type.
+    pub fn plan_configuration(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        config
+            .validate()
+            .map_err(|error| RunnerError::NotRunnable(format!("{}: {error}", config.name)))?;
+        let Some(kind) = config.target.build_system() else {
+            return config.shell_plan(root);
+        };
+        let provider = self
+            .providers
+            .iter()
+            .find(|provider| provider.kind() == kind)
+            .ok_or_else(|| {
+                RunnerError::NotRunnable(format!(
+                    "no {} integration is registered",
+                    kind.display_name()
+                ))
+            })?;
+        let plan = provider.configuration_plan(root, config)?;
+        Ok(config.finish_plan(plan, root))
     }
 
     pub fn kinds(&self) -> Vec<BuildSystemKind> {
@@ -175,6 +215,20 @@ fn plan(
     Ok(TaskPlan::new(name, program, args.iter().copied(), root).with_kind(kind))
 }
 
+/// `base`, then `options`, then `--` and `program_arguments` when there are any.
+fn with_program_arguments(
+    mut base: Vec<String>,
+    options: &[String],
+    program_arguments: &[String],
+) -> Vec<String> {
+    base.extend(options.iter().cloned());
+    if !program_arguments.is_empty() {
+        base.push("--".into());
+        base.extend(program_arguments.iter().cloned());
+    }
+    base
+}
+
 pub struct Cargo;
 
 impl BuildSystem for Cargo {
@@ -199,6 +253,32 @@ impl BuildSystem for Cargo {
     fn test_plan(&self, root: &Path) -> Result<TaskPlan, RunnerError> {
         let cargo = require_program("cargo", "Install Rust with rustup (https://rustup.rs).")?;
         plan(TaskKind::Test, "Cargo Test", cargo, &["test"], root)
+    }
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Cargo {
+            command,
+            package,
+            bin,
+            options,
+            program_arguments,
+        } = &config.target
+        else {
+            return Err(RunnerError::NotRunnable("not a Cargo configuration".into()));
+        };
+        let cargo = require_program("cargo", "Install Rust with rustup (https://rustup.rs).")?;
+        let mut base = vec![command.clone()];
+        if let Some(package) = package.as_ref().filter(|p| !p.is_empty()) {
+            base.extend(["-p".into(), package.clone()]);
+        }
+        if let Some(bin) = bin.as_ref().filter(|b| !b.is_empty()) {
+            base.extend(["--bin".into(), bin.clone()]);
+        }
+        let args = with_program_arguments(base, options, program_arguments);
+        Ok(TaskPlan::new(&config.name, cargo, args, root))
     }
 }
 
@@ -345,6 +425,23 @@ impl BuildSystem for Npm {
         let npm = require_program("npm", "Install Node.js (https://nodejs.org) and npm.")?;
         plan(TaskKind::Test, "npm Test", npm, &["test"], root)
     }
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Npm {
+            script,
+            program_arguments,
+        } = &config.target
+        else {
+            return Err(RunnerError::NotRunnable("not an npm configuration".into()));
+        };
+        let npm = require_program("npm", "Install Node.js (https://nodejs.org) and npm.")?;
+        let base = vec!["run".into(), script.clone()];
+        let args = with_program_arguments(base, &[], program_arguments);
+        Ok(TaskPlan::new(&config.name, npm, args, root))
+    }
 }
 
 fn npm_script(root: &Path, name: &str) -> bool {
@@ -374,6 +471,25 @@ impl BuildSystem for Go {
     fn test_plan(&self, root: &Path) -> Result<TaskPlan, RunnerError> {
         let go = require_program("go", "Install Go (https://go.dev/dl) and add it to PATH.")?;
         plan(TaskKind::Test, "Go Test", go, &["test", "./..."], root)
+    }
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Go {
+            command,
+            package,
+            program_arguments,
+        } = &config.target
+        else {
+            return Err(RunnerError::NotRunnable("not a Go configuration".into()));
+        };
+        let go = require_program("go", "Install Go (https://go.dev/dl) and add it to PATH.")?;
+        let base = vec![command.clone(), package.clone()];
+        // `go run pkg args…` takes program arguments directly.
+        let args = base.into_iter().chain(program_arguments.iter().cloned());
+        Ok(TaskPlan::new(&config.name, go, args, root))
     }
 }
 
@@ -419,6 +535,47 @@ mod tests {
             Err(RunnerError::NotRunnable(_))
         ));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configurations_are_planned_by_their_provider() {
+        let registry = BuildSystemRegistry::default();
+        let root = Path::new("/w");
+        let shell = RunConfiguration::new(
+            "Echo",
+            RunTarget::Shell {
+                program: "echo".into(),
+                arguments: vec!["hi".into()],
+            },
+        );
+        let plan = registry.plan_configuration(root, &shell).unwrap();
+        assert_eq!((plan.program.as_str(), plan.kind), ("echo", TaskKind::Run));
+        if find_program("cargo").is_some() {
+            let cargo = RunConfiguration::new(
+                "Server",
+                RunTarget::Cargo {
+                    command: "run".into(),
+                    package: Some("server".into()),
+                    bin: None,
+                    options: vec!["--release".into()],
+                    program_arguments: vec!["--port".into(), "80".into()],
+                },
+            );
+            let plan = registry.plan_configuration(root, &cargo).unwrap();
+            assert_eq!(
+                plan.args,
+                ["run", "-p", "server", "--release", "--", "--port", "80"]
+            );
+            assert_eq!(plan.name, "Server");
+        }
+        let gradle = RunConfiguration::new("G", RunTarget::template("gradle").unwrap());
+        let error = registry.plan_configuration(root, &gradle).unwrap_err();
+        assert!(
+            error.to_string().contains("no Gradle integration"),
+            "{error}"
+        );
+        let invalid = RunConfiguration::new("", RunTarget::template("shell").unwrap());
+        assert!(registry.plan_configuration(root, &invalid).is_err());
     }
 
     #[test]

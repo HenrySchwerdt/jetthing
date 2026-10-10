@@ -57,6 +57,7 @@ pub enum Icon {
     Task,
     ExpandAll,
     CollapseAll,
+    Add,
 }
 
 impl Icon {
@@ -372,6 +373,10 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
             }
             painter.circle_stroke(center, g.len(4.0), stroke);
             painter.circle_stroke(center, g.len(1.6), stroke);
+        }
+        Icon::Add => {
+            line(&[(8.0, 3.0), (8.0, 13.0)]);
+            line(&[(3.0, 8.0), (13.0, 8.0)]);
         }
         Icon::ExpandAll => {
             line(&[(4.5, 4.0), (8.0, 7.5), (11.5, 4.0)]);

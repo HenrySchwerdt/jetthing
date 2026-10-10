@@ -342,6 +342,13 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         *theme::TEXT_DISABLED
     };
     let run_tip = match &detected {
+        _ if app.state.run_configurations.selected().is_some() => {
+            format!(
+                "Run '{}' ({})",
+                app.state.run_widget_label().unwrap_or_default(),
+                keys::display("⌃R")
+            )
+        }
         Some(build) if build.run_unavailable.is_some() => {
             format!(
                 "Run unavailable: {}",
@@ -360,20 +367,66 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
     } else if run.inner.clicked() {
         app.dispatch("run.project", Value::Null);
     }
-    if let Some(build) = detected {
+    if let Some(label) = app.state.run_widget_label() {
         let response = widgets::flat_widget(
             ui,
             None,
-            &build.run_label,
+            &label,
             egui::FontId::proportional(theme::UI_FONT_SIZE),
             *theme::TEXT_BRIGHT,
             true,
             28.0,
         );
         egui::Popup::menu(&response).show(|ui| {
-            ui.set_min_width(220.0);
+            ui.set_min_width(240.0);
+            let selected = app
+                .state
+                .run_configurations
+                .selected()
+                .map(|config| config.name.clone());
+            let names: Vec<(String, bool)> = app
+                .state
+                .run_configurations
+                .configurations()
+                .iter()
+                .map(|config| (config.name.clone(), config.temporary))
+                .collect();
+            for (name, temporary) in names {
+                let text = egui::RichText::new(&name).color(if temporary {
+                    theme::TEXT_SECONDARY
+                } else {
+                    theme::TEXT
+                });
+                if ui
+                    .add(egui::Button::selectable(
+                        selected.as_deref() == Some(name.as_str()),
+                        text,
+                    ))
+                    .clicked()
+                {
+                    app.dispatch("runConfig.select", json!({"name": name}));
+                    ui.close();
+                }
+            }
+            if let Some(build) = &detected
+                && selected.is_none()
+                && let Some(reason) = &build.run_unavailable
+            {
+                ui.label(
+                    egui::RichText::new(format!("Run unavailable: {reason}"))
+                        .color(theme::TEXT_INFO)
+                        .size(theme::UI_FONT_SIZE - 1.0),
+                );
+            }
+            if selected.is_some()
+                || detected
+                    .as_ref()
+                    .is_some_and(|b| b.run_unavailable.is_some())
+            {
+                ui.separator();
+            }
             for (id, label) in [
-                ("run.project", "Run"),
+                ("runConfig.edit", "Edit Configurations…"),
                 ("build.project", "Build Project"),
                 ("test.project", "Run All Tests"),
                 ("run.rerun", "Rerun Last Task"),
@@ -383,14 +436,6 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
                     app.dispatch(id, Value::Null);
                     ui.close();
                 }
-            }
-            if let Some(reason) = &build.run_unavailable {
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(format!("Run unavailable: {reason}"))
-                        .color(theme::TEXT_INFO)
-                        .size(theme::UI_FONT_SIZE - 1.0),
-                );
             }
         });
     }

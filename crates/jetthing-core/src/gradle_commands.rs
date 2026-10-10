@@ -3,7 +3,9 @@
 use crate::{IdeState, spec, string_param};
 use jetthing_command::{Command, CommandError, CommandRegistry};
 use jetthing_gradle::{GradleBuild, GradleModel};
-use jetthing_runner::{BuildSystemKind, RunnerError, TaskKind, TaskState};
+use jetthing_runner::{
+    BuildSystemKind, RunConfiguration, RunTarget, RunnerError, TaskKind, TaskState,
+};
 use serde_json::{Value, json};
 
 impl IdeState {
@@ -45,20 +47,28 @@ impl IdeState {
     /// (`:app:run`, `test --tests 'Foo*'` is passed token by token).
     pub fn run_gradle_task(&mut self, command: &str) -> Result<(), String> {
         let tokens: Vec<String> = command.split_whitespace().map(str::to_owned).collect();
-        let Some(first) = tokens.iter().find(|token| !token.starts_with('-')) else {
+        if tokens.iter().all(|token| token.starts_with('-')) {
             return Err("enter at least one Gradle task, e.g. :app:test".into());
-        };
-        let name = first.rsplit(':').next().unwrap_or(first);
-        let kind = match name {
-            "run" | "bootRun" => TaskKind::Run,
-            "test" | "check" => TaskKind::Test,
-            _ => TaskKind::Build,
-        };
-        let label = format!("Gradle {}", tokens.join(" "));
-        let plan = self
-            .gradle_build()
-            .and_then(|build| build.task_plan(kind, label.clone(), &tokens));
-        self.start_task(plan, &label, kind)
+        }
+        // Like the reference, running a task creates a temporary run configuration.
+        // Tokens keep their order so options such as `--tests Foo` stay together.
+        let name = format!("{} [{}]", self.project_name_for_config(), tokens.join(" "));
+        self.run_temporary(RunConfiguration::new(
+            name,
+            RunTarget::Gradle {
+                tasks: tokens,
+                options: Vec::new(),
+                program_arguments: Vec::new(),
+            },
+        ))
+    }
+
+    fn project_name_for_config(&self) -> String {
+        self.project
+            .as_ref()
+            .and_then(|project| project.root().file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Gradle".into())
     }
 
     /// Applies the result of a finished sync.

@@ -16,6 +16,7 @@ pub struct Workspace {
     pub left_tool_window: Option<String>,
     pub bottom_tool_window: Option<String>,
     pub right_tool_window: Option<String>,
+    pub selected_run_configuration: Option<String>,
     pub recent_files: Vec<PathBuf>,
 }
 
@@ -185,6 +186,11 @@ impl IdeState {
                 .visible(Anchor::Right)
                 .map(|window| window.id().to_owned()),
             recent_files: self.recent_files.clone(),
+            selected_run_configuration: self
+                .run_configurations
+                .selected()
+                .filter(|config| !config.temporary)
+                .map(|config| config.name.clone()),
         }
     }
 
@@ -233,6 +239,9 @@ impl IdeState {
             self.active_document = Some(index);
         }
         self.recent_files = recent;
+        if let Some(name) = &workspace.selected_run_configuration {
+            let _ = self.run_configurations.select(name);
+        }
         self.tool_windows.hide_all();
         for id in [
             &workspace.left_tool_window,

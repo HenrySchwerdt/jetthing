@@ -128,7 +128,11 @@ impl IdeState {
         self.start_task(plan, "Build", TaskKind::Build)
     }
 
+    /// Runs the selected run configuration, or the detected default target.
     pub fn start_run(&mut self) -> Result<(), String> {
+        if self.run_configurations.selected().is_some() {
+            return self.run_configuration(None);
+        }
         let plan = self.plan(TaskKind::Run);
         self.start_task(plan, "Run", TaskKind::Run)
     }
@@ -189,11 +193,14 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
         .register(Command::new(
             spec("run.project", "Run", "Run", Some("⌃R"), "{}"),
             |state: &IdeState| {
-                state.can_start()
-                    && state
-                        .detected_build
-                        .as_ref()
-                        .is_some_and(|build| build.run_unavailable.is_none())
+                let configured = state.run_configurations.selected().is_some();
+                state.project.is_some()
+                    && !state.runner.is_running()
+                    && (configured
+                        || state
+                            .detected_build
+                            .as_ref()
+                            .is_some_and(|build| build.run_unavailable.is_none()))
             },
             |state: &mut IdeState, _| {
                 state.start_run().map_err(CommandError::Failed)?;
