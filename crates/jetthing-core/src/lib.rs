@@ -23,6 +23,8 @@ pub mod diagnostics;
 mod disk_sync;
 mod annotations;
 mod branch_commands;
+mod android_manifest;
+mod android_resources;
 mod android_variants;
 mod editor_commands;
 pub mod keymap_commands;
@@ -737,6 +739,8 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_devices::register(&mut registry);
     android_deploy::register(&mut registry);
     android_variants::register(&mut registry);
+    android_resources::register(&mut registry);
+    android_manifest::register(&mut registry);
     android_logcat::register(&mut registry);
     build_commands::register(&mut registry);
     editor_commands::register(&mut registry);

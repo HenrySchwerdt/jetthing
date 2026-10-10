@@ -120,6 +120,7 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     editor("$Redo", "editor.redo"),
     editor("CodeCompletion", "language.complete"),
     editor("GotoNextError", "editor.nextProblem"),
+    editor("GotoDeclaration", "android.resources.gotoDeclaration"),
     editor("VcsShowNextChangeMarker", "vcs.nextChange"),
     editor("VcsShowPrevChangeMarker", "vcs.previousChange"),
     editor("Vcs.RollbackChangedLines", "vcs.rollbackChange"),

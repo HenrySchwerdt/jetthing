@@ -266,6 +266,12 @@ impl IdeApp {
             if binding.command.starts_with("diff.") && !diff_tab {
                 continue;
             }
+            // Go to Declaration only resolves Android resource references so far.
+            if binding.command.starts_with("android.resources.")
+                && self.state.android.project.is_none()
+            {
+                continue;
+            }
             let params = serde_json::from_str(binding.params).unwrap_or(Value::Null);
             if binding.command == "editor.close" && diff_tab {
                 self.dispatch("diff.close", Value::Null);

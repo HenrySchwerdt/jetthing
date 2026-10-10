@@ -32,6 +32,7 @@ mod keys;
 mod logcat_ui;
 mod lsp_status;
 mod main_menu;
+mod merged_manifest_ui;
 mod notifications;
 mod palette;
 mod plugin_ui;
@@ -666,6 +667,7 @@ impl eframe::App for IdeApp {
         popups::show(self, ctx);
         settings_dialog::show(self, ctx);
         android_sdk::show(self, ctx);
+        merged_manifest_ui::show(self, ctx);
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
         about::show(self, ctx);
