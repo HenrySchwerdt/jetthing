@@ -1,0 +1,16 @@
+{
+  "id": "20",
+  "title": "Problems tool window (syntax errors)",
+  "reference": "reference/intellij-community/java-gradle/20-problems.png",
+  "fixture": "rust-cargo",
+  "open": ["src/broken.rs"],
+  "steps": [
+    {"op": "wait", "until": "idle"},
+    {"op": "key", "chord": "Alt+6"},
+    {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/toolWindows/bottom", "equals": "problems"},
+    {"op": "assert", "pointer": "/activeTab", "equals": "src/broken.rs"},
+    {"op": "assert", "pointer": "/problems", "equals": 2},
+    {"op": "screenshot", "name": "20-problems.png"}
+  ]
+}

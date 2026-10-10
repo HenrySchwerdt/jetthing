@@ -1,0 +1,16 @@
+{
+  "id": "07",
+  "title": "Main menu (hamburger, Code submenu)",
+  "reference": "reference/intellij-community/java-gradle/07-main-menu.png",
+  "fixture": "java-gradle",
+  "open": ["src/main/java/com/example/App.java"],
+  "steps": [
+    {"op": "wait", "until": "idle"},
+    {"op": "click", "x": 18, "y": 20},
+    {"op": "wait", "until": "popup"},
+    {"op": "move", "x": 60, "y": 168},
+    {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/popups/menu", "equals": true},
+    {"op": "screenshot", "name": "07-main-menu.png"}
+  ]
+}
