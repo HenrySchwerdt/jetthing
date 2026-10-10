@@ -107,6 +107,27 @@ cargo test -p jetthing-core ai_vcs
   stripped. Diffs over 60 000 characters are cut and the prompt says so.
 - Uses the fast completion model. `12-commit-message-generated.png`.
 
+## Terminal: natural language → command (slice 6)
+
+```sh
+cargo test -p jetthing-ai shell
+cargo test -p jetthing-core ai_terminal
+```
+
+- The Terminal header has an AI toggle that opens a "Describe a command" bar. Enter asks
+  the fast model for exactly one single-line command for the detected OS and shell
+  (`SHELL`/`COMSPEC`), the working directory and, when file sharing is allowed, the last
+  30 visible terminal lines. Replies that are empty, multi-line or `UNSURE: …` are shown
+  as errors instead of commands.
+- Nothing runs without confirmation: **Run** (or ⌘⏎) types the command and Enter,
+  **Insert** types it without Enter, Cancel discards it. Commands that delete files,
+  use `sudo`/`su`, force-push/reset/clean, pipe downloads into a shell or write to
+  disks are flagged with a warning (`13-…`, `14-…`).
+- The bar has a constant height while open: an earlier version grew when a suggestion
+  appeared, which shrank the PTY to one or two rows so the output of a confirmed command
+  scrolled into scrollback and seemed lost. Found during the Xvfb walkthrough by tracing
+  the PTY bytes; the real-PTY test waits for the shell prompt like the IDE does.
+
 ## Evidence
 
 Linux, Xvfb 1600×1000, `JETTHING_RENDERER=glow`, 2026-10-10. Answers come from the
@@ -127,8 +148,10 @@ offline demo provider (`JETTHING_AI_MOCK=1`, labelled "mock-chat (demo)"); no
 | `ai/10-editor-ai-actions-menu.png` | editor context menu → AI Actions submenu |
 | `ai/11-refactor-auto-diff.png` | Suggest Refactoring answer opened the diff preview automatically |
 | `ai/12-commit-message-generated.png` | Commit window with a generated message and the AI button |
+| `ai/13-terminal-suggestion.png` | Terminal AI bar with a suggested command awaiting Run / Insert / Cancel |
+| `ai/14-terminal-confirmed-run.png` | output after Run |
 
 ## Gaps
 
-Alt+Enter intention integration, fixing failed tests, Explain Commit, terminal NL→command, agent mode, `@file`/`@symbol`,
+Alt+Enter intention integration, fixing failed tests, Explain Commit, agent mode, `@file`/`@symbol`,
 open-tabs/VCS context and OS keychain storage are follow-up slices.

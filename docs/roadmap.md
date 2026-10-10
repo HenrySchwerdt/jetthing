@@ -54,7 +54,7 @@
 - [x] Inline ghost-text completion with debounce, type-through, Tab / word accept
 - [x] AI actions (Explain, Refactor, Generate tests/docs, Find problems, Fix with AI on problems and failed builds)
 - [x] Commit message generation from the selected changes
-- [ ] Terminal NL→command
+- [x] Terminal natural language → command with confirmation
 - [ ] Agent mode with per-edit approval
 
 ## M2 — language intelligence

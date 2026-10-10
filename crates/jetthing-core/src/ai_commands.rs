@@ -56,6 +56,8 @@ pub struct AiState {
     pub(crate) auto_preview: Option<usize>,
     /// Commit message being generated for the Commit tool window.
     pub commit_draft: Option<crate::ai_vcs::CommitDraft>,
+    /// Natural-language terminal command suggestion awaiting confirmation.
+    pub shell: Option<crate::ai_terminal::ShellSuggestion>,
 }
 
 impl Default for AiState {
@@ -76,6 +78,7 @@ impl Default for AiState {
             inline_request: None,
             auto_preview: None,
             commit_draft: None,
+            shell: None,
         }
     }
 }
@@ -200,6 +203,7 @@ impl IdeState {
         self.ai.inline_request = None;
         self.ai.auto_preview = None;
         self.ai.commit_draft = None;
+        self.ai.shell = None;
         self.ai.chat = ChatSession::default();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
@@ -312,7 +316,7 @@ impl IdeState {
 
     pub fn poll_ai(&mut self) {
         for (id, update) in self.ai.service.poll() {
-            if self.ai_commit_update(id, &update) {
+            if self.ai_commit_update(id, &update) || self.ai_terminal_update(id, &update) {
                 continue;
             }
             if self.ai.inline_request.as_ref().is_some_and(|r| r.id == id) {
@@ -512,6 +516,10 @@ fn demo_reply(request: &ChatRequest) -> MockReply {
         .last()
         .map(|m| m.text())
         .unwrap_or_default();
+    if request.system == jetthing_ai::shell::SYSTEM_PROMPT {
+        // A fixed, read-only command: demo mode does not interpret the request.
+        return MockReply::text("ls -la");
+    }
     if request.system == jetthing_ai::commit::SYSTEM_PROMPT {
         let files = question.matches("diff --git").count();
         return MockReply::text(&format!(
@@ -783,6 +791,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     crate::ai_inline::register(registry);
     crate::ai_actions::register(registry);
     crate::ai_vcs::register(registry);
+    crate::ai_terminal::register(registry);
 }
 
 #[cfg(test)]

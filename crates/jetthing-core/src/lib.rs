@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 mod ai_actions;
 mod ai_commands;
 mod ai_inline;
+mod ai_terminal;
 mod ai_vcs;
 pub mod build_info;
 mod diagnostic_commands;
@@ -28,6 +29,7 @@ mod toolwindow;
 mod update_commands;
 pub use ai_commands::{AiState, ApplyPreview, CHAT_FILE as AI_CHAT_FILE, MOCK_ENV as AI_MOCK_ENV};
 pub use ai_inline::InlineSuggestion;
+pub use ai_terminal::{ShellSuggestion, ShellSuggestionState};
 pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{

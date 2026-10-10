@@ -44,6 +44,9 @@ impl Default for SetupForm {
 #[derive(Default)]
 pub struct AiChatUi {
     pub(crate) inline: crate::ai_inline::InlineUi,
+    pub(crate) terminal_open: bool,
+    pub(crate) terminal_input: String,
+    pub(crate) terminal_focus: bool,
     input: String,
     setup: SetupForm,
     last_visible: bool,

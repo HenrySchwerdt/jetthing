@@ -16,6 +16,7 @@ pub mod ollama;
 pub mod openai;
 pub mod service;
 pub mod settings;
+pub mod shell;
 pub mod sse;
 pub mod transport;
 mod types;
