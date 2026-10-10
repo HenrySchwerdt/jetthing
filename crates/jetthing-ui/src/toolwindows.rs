@@ -134,6 +134,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     let mut toggle = None;
     let mut open = None;
     let mut dialog = None;
+    let mut context_choice = None;
     // Like "Always Select Opened File": the selection follows the active
     // editor and the row scrolls into view when it is off-screen.
     let active = app
@@ -167,7 +168,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
         for row in range {
             if row == 0 {
                 let (rect, response) = list_row(ui, false);
-                tree_context_menu(&response, Path::new(""), true, &mut dialog, &mut open);
+                tree_context_menu(app, &response, Path::new(""), true, &mut context_choice);
                 let mut x = rect.left() + 12.0 + 16.0;
                 icons::paint(
                     ui.painter(),
@@ -273,7 +274,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
             if response.secondary_clicked() {
                 app.tree_selection = Some(path.clone());
             }
-            tree_context_menu(&response, path, *is_dir, &mut dialog, &mut open);
+            tree_context_menu(app, &response, path, *is_dir, &mut context_choice);
             if response.clicked() {
                 app.tree_selection = Some(path.clone());
                 let on_chevron = response
@@ -350,6 +351,10 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     if let Some(path) = open {
         app.dispatch("editor.openFile", json!({"path": path}));
     }
+    if let Some((action, target)) = context_choice {
+        let ctx = ui.ctx().clone();
+        app.run_context_action(&action, &target, &ctx);
+    }
 }
 
 /// Scroll offset that centres `row`, or `None` when it is already fully visible.
@@ -372,53 +377,22 @@ fn new_entry_parent(path: &Path, is_dir: bool) -> PathBuf {
 
 /// Right-click menu of a Project tree node.
 fn tree_context_menu(
+    app: &IdeApp,
     response: &egui::Response,
     path: &Path,
     is_dir: bool,
-    dialog: &mut Option<Dialog>,
-    open: &mut Option<PathBuf>,
+    chosen: &mut Option<(String, crate::context_menus::Target)>,
 ) {
-    let is_root = path.as_os_str().is_empty();
     response.context_menu(|ui| {
-        ui.set_min_width(220.0);
-        ui.menu_button("New", |ui| {
-            ui.set_min_width(160.0);
-            for (label, directory) in [("File", false), ("Directory", true)] {
-                if ui.button(label).clicked() {
-                    *dialog = Some(Dialog::NewEntry {
-                        parent: new_entry_parent(path, is_dir),
-                        directory,
-                        name: String::new(),
-                    });
-                    ui.close();
-                }
-            }
-        });
-        if !is_dir && ui.button("Open").clicked() {
-            *open = Some(path.to_owned());
-            ui.close();
-        }
-        if !is_root {
-            ui.separator();
-            if ui
-                .add(egui::Button::new("Rename…").shortcut_text(crate::keys::display("⇧F6")))
-                .clicked()
-            {
-                *dialog = Some(Dialog::Rename {
-                    path: path.to_owned(),
-                    name: IdeApp::file_name(path),
-                });
-                ui.close();
-            }
-            if ui
-                .add(egui::Button::new("Delete…").shortcut_text("Delete"))
-                .clicked()
-            {
-                *dialog = Some(Dialog::Delete {
-                    path: path.to_owned(),
-                });
-                ui.close();
-            }
+        let target = crate::context_menus::Target::Tree {
+            path: path.to_owned(),
+            is_dir,
+        };
+        let model = app.context_menu_model(&target);
+        let mut action = None;
+        crate::context_menus::show(ui, &model, &mut action);
+        if let Some(action) = action {
+            *chosen = Some((action, target));
         }
     });
 }

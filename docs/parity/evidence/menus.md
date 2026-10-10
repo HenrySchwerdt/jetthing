@@ -37,3 +37,26 @@ Reference: `reference/intellij-community/java-gradle/07-main-menu.png`. Jetthing
 - Jetthing-only commands (Refresh Plugins, Run, Stop, Refresh Git Status, terminal
   actions, update actions) are appended after a separator in their menu, because the
   reference has no matching action or registers it at runtime (Run).
+
+# Context menus (scene 19)
+
+Reference: `reference/intellij-community/java-gradle/19-project-context-menu.png`. Jetthing:
+`jetthing/menus/19-project-context-menu.png`, `tab-context-menu.png`,
+`editor-context-menu.png`.
+
+The menus are built from `ProjectViewPopupMenu`, `EditorTabPopupMenu` and
+`EditorPopupMenu`. Like the reference's popups, they show only the actions available
+for the clicked target, in reference order and grouping:
+
+- Project view (`Cargo.lock`): New ▸ | Copy Path/Reference… ▸, Edit Source (F4) |
+  Find in Files… | Rename… (Shift+F6) | Delete… (Delete). The project root has no
+  Rename, Delete or Edit Source. Escape closes the menu (scene 19b bug).
+- Editor tab: Close Tab (Ctrl+F4), Close Other Tabs, Close All Tabs, Close Tabs to the
+  Left/Right (disabled when there are none) | Copy Path/Reference… ▸.
+- Editor: Cut, Copy, Paste | Find in Files.
+
+Missing compared with the reference (scene 19): Cut/Copy/Paste of files, Find Usages,
+Analyze, Refactor, Bookmarks, Reformat Code, Optimize Imports, Override File Type,
+Run/Debug, Open in Right Split, Open In, Local History, Git, Repair IDE on File, Reload
+from Disk, Compare With. They appear automatically once their actions are implemented
+and mapped.

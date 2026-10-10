@@ -185,6 +185,18 @@ impl Catalog {
         self.expand(group, &mut stack)
     }
 
+    /// [`Catalog::menu`] of the shared catalog, computed once per group (the editor
+    /// context menu is rebuilt every frame).
+    pub fn shared_menu(group: &str) -> std::sync::Arc<Vec<MenuItem>> {
+        type Cache = std::sync::Mutex<BTreeMap<String, std::sync::Arc<Vec<MenuItem>>>>;
+        static MENUS: LazyLock<Cache> = LazyLock::new(Default::default);
+        let build = || std::sync::Arc::new(Catalog::shared().menu(group));
+        match MENUS.lock() {
+            Ok(mut menus) => menus.entry(group.to_owned()).or_insert_with(build).clone(),
+            Err(_) => build(),
+        }
+    }
+
     fn expand(&self, group: &str, stack: &mut Vec<String>) -> Vec<MenuItem> {
         let mut items = Vec::new();
         for child in self.children(group) {
@@ -235,7 +247,10 @@ impl Catalog {
 }
 
 /// Groups whose children the reference IDE fills at runtime from another group.
-const RUNTIME_GROUPS: [(&str, &str); 1] = [("NewElementInMenuGroup", "NewGroup")];
+const RUNTIME_GROUPS: [(&str, &str); 2] = [
+    ("NewElementInMenuGroup", "NewGroup"),
+    ("WeighingNewGroup", "NewGroup"),
+];
 
 /// Groups only visible in the reference IDE's internal mode.
 const INTERNAL_GROUPS: [&str; 5] = [
@@ -260,6 +275,45 @@ pub enum MenuItem {
     },
     /// A separator, optionally titled.
     Separator(Option<String>),
+}
+
+/// Keeps the actions for which `keep` returns true, dropping submenus that end up
+/// empty and collapsing separators (context menus hide unavailable actions).
+pub fn filter_menu(items: &[MenuItem], keep: &impl Fn(&str) -> bool) -> Vec<MenuItem> {
+    let mut seen = std::collections::BTreeSet::new();
+    filter_inner(items, keep, &mut seen)
+}
+
+fn filter_inner(
+    items: &[MenuItem],
+    keep: &impl Fn(&str) -> bool,
+    seen: &mut std::collections::BTreeSet<String>,
+) -> Vec<MenuItem> {
+    let mut out = Vec::new();
+    for item in items {
+        match item {
+            // An action listed twice in one menu (inline and in a submenu) is shown once.
+            MenuItem::Action { id, .. } if keep(id) && seen.insert(id.clone()) => {
+                out.push(item.clone())
+            }
+            MenuItem::Action { .. } => {}
+            MenuItem::Submenu { id, label, items } => {
+                let items = filter_inner(items, keep, seen);
+                if items
+                    .iter()
+                    .any(|item| !matches!(item, MenuItem::Separator(_)))
+                {
+                    out.push(MenuItem::Submenu {
+                        id: id.clone(),
+                        label: label.clone(),
+                        items,
+                    });
+                }
+            }
+            MenuItem::Separator(_) => out.push(item.clone()),
+        }
+    }
+    collapse_separators(out)
 }
 
 fn collapse_separators(items: Vec<MenuItem>) -> Vec<MenuItem> {
@@ -358,6 +412,36 @@ mod tests {
             }
         }
         check(&menu);
+    }
+
+    #[test]
+    fn filtered_menus_drop_empty_submenus_and_duplicates() {
+        let catalog = Catalog::bundled().unwrap();
+        let menu = catalog.menu("ProjectViewPopupMenu");
+        let keep = |id: &str| matches!(id, "NewFile" | "NewDir" | "RenameElement" | "CopyFileName");
+        let filtered = filter_menu(&menu, &keep);
+        let mut ids = Vec::new();
+        fn walk(items: &[MenuItem], ids: &mut Vec<String>) {
+            for item in items {
+                match item {
+                    MenuItem::Action { id, .. } => ids.push(id.clone()),
+                    MenuItem::Submenu { id, items, .. } => {
+                        ids.push(format!("{id}▸"));
+                        walk(items, ids);
+                    }
+                    MenuItem::Separator(_) => ids.push("---".into()),
+                }
+            }
+        }
+        walk(&filtered, &mut ids);
+        // New ▸ (File, Directory) comes first; Rename appears once although the
+        // Refactor submenu lists it too.
+        assert_eq!(ids[0], "WeighingNewGroup▸");
+        assert!(ids.contains(&"NewFile".to_owned()) && ids.contains(&"NewDir".to_owned()));
+        assert_eq!(ids.iter().filter(|id| *id == "RenameElement").count(), 1);
+        assert!(!ids.iter().any(|id| id == "RefactoringMenu▸"));
+        assert!(ids.contains(&"CopyReferencePopupGroup▸".to_owned()));
+        assert_ne!(ids.last().map(String::as_str), Some("---"));
     }
 
     #[test]

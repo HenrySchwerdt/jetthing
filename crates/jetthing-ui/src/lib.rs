@@ -11,6 +11,7 @@ mod android_view;
 mod chrome;
 mod completion_ui;
 mod console;
+mod context_menus;
 mod control;
 mod crash_notice;
 mod device_manager;
@@ -426,7 +427,12 @@ impl IdeApp {
         }
         self.detect_double_shift(ctx);
         if !terminal_focused && consume(Modifiers::NONE, Key::Escape) {
-            if self.state.about_open {
+            if egui::Popup::is_any_open(ctx) {
+                // Context menus and main-menu dropdowns close first.
+                egui::Popup::close_all(ctx);
+            } else if self.menu_bar_open {
+                self.menu_bar_open = false;
+            } else if self.state.about_open {
                 self.state.about_open = false;
             } else if self.dialog.is_some() {
                 self.dialog = None;
