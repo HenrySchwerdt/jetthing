@@ -752,21 +752,29 @@ fn build(app: &mut IdeApp, ui: &mut egui::Ui) {
             );
         }
     });
+    let lines = app.console.lines(app.state.runner.output());
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(12, 4))
         .show(ui, |ui| {
+            let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+            // Whole rows only: a view stuck to the bottom must not cut the
+            // first visible line in half under the status row.
+            let height = crate::console::whole_rows_height(ui.available_height(), row_height);
             egui::ScrollArea::both()
                 .auto_shrink([false, false])
+                .max_height(height)
                 .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    for chunk in app.state.runner.output() {
-                        for line in chunk.text.trim_end_matches('\n').split('\n') {
-                            let color = match chunk.stream {
-                                OutputStream::Stdout => theme::editor::TEXT,
-                                OutputStream::Stderr => console_stderr_color(line),
-                            };
-                            ui.label(RichText::new(line).monospace().color(color));
-                        }
+                .show_rows(ui, row_height, lines.len(), |ui, range| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for line in &lines[range] {
+                        let color = match line.stream {
+                            OutputStream::Stdout => theme::editor::TEXT,
+                            OutputStream::Stderr => console_stderr_color(&line.text),
+                        };
+                        ui.add(
+                            egui::Label::new(RichText::new(&line.text).monospace().color(color))
+                                .extend(),
+                        );
                     }
                 });
         });

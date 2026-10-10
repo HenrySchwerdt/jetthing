@@ -503,6 +503,32 @@ mod tests {
     }
 
     #[test]
+    fn undo_puts_the_caret_back_where_the_edit_happened() {
+        let (mut state, commands, root) = state_with("one\ntwo\nthree\nfour\n", "u.txt");
+        commands
+            .execute(
+                "editor.insertText",
+                &mut state,
+                json!({"position": 8, "text": "new line\n"}),
+            )
+            .unwrap();
+        // The caret wanders off before undoing.
+        commands
+            .execute("editor.gotoLine", &mut state, json!({"line": 1}))
+            .unwrap();
+        commands
+            .execute("editor.undo", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(state.documents[0].text.text(), "one\ntwo\nthree\nfour\n");
+        assert_eq!(state.documents[0].selections.primary().head, 8);
+        commands
+            .execute("editor.redo", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(state.documents[0].selections.primary().head, 17);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn comment_prefix_depends_on_language() {
         assert_eq!(line_comment_prefix(Path::new("a.rs")), "//");
         assert_eq!(line_comment_prefix(Path::new("Cargo.toml")), "#");
