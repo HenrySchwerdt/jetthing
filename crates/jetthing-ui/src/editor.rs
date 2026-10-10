@@ -81,7 +81,15 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let navigable = app.state.active_has_language_server();
             let mut text_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
             let doc = &mut app.state.documents[index];
-            let surface = editor_surface(&mut text_ui, doc, &problems, &highlights, navigable);
+            let rename = app
+                .state
+                .refactor
+                .rename
+                .as_ref()
+                .filter(|session| session.path == doc.path && !session.dialog)
+                .map(|session| (session.occurrences.as_slice(), session.name.as_str()));
+            let surface =
+                editor_surface(&mut text_ui, doc, &problems, &highlights, rename, navigable);
             let counts = jetthing_core::ProblemCounts::of(&problems);
             match problems_ui::inspection_widget(ui, text_rect.right_top(), counts) {
                 Some(problems_ui::WidgetAction::Next) => {
@@ -412,6 +420,7 @@ fn editor_surface(
     document: &mut Document,
     problems: &[jetthing_core::Problem],
     highlights: &[(usize, usize)],
+    rename: Option<(&[(usize, usize)], &str)>,
     navigable: bool,
 ) -> Result<EditorOutput, String> {
     let mut requests = Vec::new();
@@ -672,6 +681,29 @@ fn editor_surface(
                     Color32::WHITE,
                 );
 
+                // Rename preview: the occurrences show the name being typed.
+                if let Some((occurrences, name)) = rename {
+                    let name_width = name.chars().count();
+                    for &(start, end) in occurrences {
+                        if start < line_start || end > line_end {
+                            continue;
+                        }
+                        let x1 = rect.left() + text_left + (start - line_start) as f32 * char_width;
+                        let columns = (end - start).max(name_width);
+                        let area = Rect::from_min_size(
+                            egui::pos2(x1, y + 1.0),
+                            vec2(columns as f32 * char_width, ROW_HEIGHT - 2.0),
+                        );
+                        painter.rect_filled(area, 3.0, theme::editor::RENAME_OCCURRENCE);
+                        painter.text(
+                            egui::pos2(x1, y + ROW_HEIGHT / 2.0),
+                            egui::Align2::LEFT_CENTER,
+                            name,
+                            font.clone(),
+                            theme::TEXT_BRIGHT,
+                        );
+                    }
+                }
                 let column_x = |column: usize| rect.left() + text_left + column as f32 * char_width;
                 problems_ui::paint_line(
                     &painter,

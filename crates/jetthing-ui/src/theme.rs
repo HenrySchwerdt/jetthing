@@ -92,6 +92,7 @@ pub mod editor {
     pub const SELECTION: Color32 = hex(0x214283); // SELECTION_BACKGROUND
     pub const BACKGROUND_PANEL: Color32 = hex(0x212326); // Editor.SearchField.background
     pub const SEARCH_RESULT: Color32 = hex(0x114957); // TEXT_SEARCH_RESULT_ATTRIBUTES
+    pub const RENAME_OCCURRENCE: Color32 = hex(0x2D4B73); // TEMPLATE_VARIABLE_ATTRIBUTES
     pub const MATCHED_BRACE: Color32 = hex(0x43454A); // MATCHED_BRACE_ATTRIBUTES
     pub const INDENT_GUIDE: Color32 = hex(0x323438); // INDENT_GUIDE
     pub const ERROR_EFFECT: Color32 = hex(0xFA6675); // ERRORS_ATTRIBUTES.EFFECT_COLOR

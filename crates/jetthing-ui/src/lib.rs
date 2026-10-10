@@ -18,6 +18,7 @@ mod notifications;
 mod palette;
 mod popups;
 mod problems_ui;
+mod refactor_ui;
 mod syntax;
 mod terminal_ui;
 mod theme;
@@ -589,6 +590,7 @@ impl eframe::App for IdeApp {
         editor::completion_popup(self, ctx);
         navigation_ui::choices_popup(self, ctx);
         intentions_ui::popup(self, ctx);
+        refactor_ui::popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
         notifications::show(self, ctx);
