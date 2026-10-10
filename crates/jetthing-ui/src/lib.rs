@@ -6,6 +6,7 @@
 //! dispatched through the typed command registry.
 
 mod chrome;
+mod context_menus;
 mod control;
 mod editor;
 mod findbar;
@@ -322,7 +323,12 @@ impl IdeApp {
         }
         self.detect_double_shift(ctx);
         if !terminal_focused && consume(Modifiers::NONE, Key::Escape) {
-            if self.dialog.is_some() {
+            if egui::Popup::is_any_open(ctx) {
+                // Context menus and main-menu dropdowns close first.
+                egui::Popup::close_all(ctx);
+            } else if self.menu_bar_open {
+                self.menu_bar_open = false;
+            } else if self.dialog.is_some() {
                 self.dialog = None;
             } else if self.palette.open {
                 self.palette.open = false;

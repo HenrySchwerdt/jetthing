@@ -22,6 +22,8 @@ pub enum EditorRequest {
     Copy,
     Cut,
     Paste(String),
+    /// An entry of the editor context menu (`EditorPopupMenu`).
+    ContextAction(String),
 }
 
 pub struct EditorOutput {
@@ -58,8 +60,9 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             } else {
                 Vec::new()
             };
+            let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
             let doc = &mut app.state.documents[index];
-            match editor_surface(ui, doc, &diagnostics, &highlights) {
+            match editor_surface(ui, doc, &diagnostics, &highlights, &context_model) {
                 Ok(EditorOutput {
                     changed,
                     caret_pos,
@@ -88,7 +91,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
     }
 }
 
-fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: EditorRequest) {
+pub(crate) fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: EditorRequest) {
     match request {
         EditorRequest::Command(id, params) => app.dispatch(id, params),
         EditorRequest::Copy | EditorRequest::Cut => {
@@ -106,6 +109,9 @@ fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: EditorRequest)
                 }
                 Err(error) => app.state.status = error.to_string(),
             }
+        }
+        EditorRequest::ContextAction(action) => {
+            app.run_context_action(&action, &crate::context_menus::Target::Editor, ctx)
         }
         EditorRequest::Paste(text) => {
             let whole_line = app.clipboard_line.as_deref() == Some(text.as_str());
@@ -153,6 +159,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     let mut x = bar.left() + 6.0;
     let mut activate = None;
     let mut close = None;
+    let mut tab_action = None;
     let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
     for index in 0..app.state.documents.len() {
         let doc = &app.state.documents[index];
@@ -222,6 +229,15 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
                 .circle_filled(layout.modified_dot, 2.5, theme::MODIFIED);
         }
         let response = response.on_hover_text(doc.path.display().to_string());
+        response.context_menu(|ui| {
+            let target = crate::context_menus::Target::Tab(index);
+            let model = app.context_menu_model(&target);
+            let mut chosen = None;
+            crate::context_menus::show(ui, &model, &mut chosen);
+            if let Some(action) = chosen {
+                tab_action = Some((action, target));
+            }
+        });
         if response.clicked() {
             if pointer_on_close {
                 close = Some(index);
@@ -233,7 +249,10 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             close = Some(index);
         }
     }
-    if let Some(index) = close {
+    if let Some((action, target)) = tab_action {
+        let ctx = ui.ctx().clone();
+        app.run_context_action(&action, &target, &ctx);
+    } else if let Some(index) = close {
         app.dispatch("editor.close", json!({"index": index}));
     } else if let Some(index) = activate {
         app.dispatch("editor.activate", json!({"index": index}));
@@ -373,6 +392,7 @@ fn editor_surface(
     document: &mut Document,
     lsp_diagnostics: &[jetthing_lsp::LspDiagnostic],
     highlights: &[(usize, usize)],
+    context_model: &crate::context_menus::Model,
 ) -> Result<EditorOutput, String> {
     let mut requests = Vec::new();
     let font = theme::editor_font(ui.style());
@@ -481,50 +501,14 @@ fn editor_surface(
                     .set_single(Selection::caret(position_to_offset(position)));
             }
             response.context_menu(|ui| {
-                ui.set_min_width(220.0);
-                for (label, shortcut, request) in [
-                    ("Cut", "⌘X", EditorRequest::Cut),
-                    ("Copy", "⌘C", EditorRequest::Copy),
-                ] {
-                    if ui
-                        .add(egui::Button::new(label).shortcut_text(crate::keys::display(shortcut)))
-                        .clicked()
-                    {
-                        requests.push(request);
-                        ui.close();
-                    }
-                }
-                if ui
-                    .add(egui::Button::new("Paste").shortcut_text(crate::keys::display("⌘V")))
-                    .clicked()
-                {
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-                    ui.close();
-                }
-                ui.separator();
-                for (label, shortcut, id) in [
-                    ("Comment with Line Comment", "⌘/", "editor.commentLine"),
-                    ("Duplicate Line or Selection", "⌘D", "editor.duplicate"),
-                    ("Delete Line", "⌘⌫", "editor.deleteLine"),
-                    ("Move Line Up", "⌥⇧↑", "editor.moveLineUp"),
-                    ("Move Line Down", "⌥⇧↓", "editor.moveLineDown"),
-                ] {
-                    if ui
-                        .add(egui::Button::new(label).shortcut_text(crate::keys::display(shortcut)))
-                        .clicked()
-                    {
-                        requests.push(EditorRequest::Command(id, Value::Null));
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                if ui
-                    .add(egui::Button::new("Select All").shortcut_text(crate::keys::display("⌘A")))
-                    .clicked()
-                {
-                    requests.push(EditorRequest::Command("editor.selectAll", Value::Null));
-                    ui.close();
+                let mut chosen = None;
+                crate::context_menus::show(ui, context_model, &mut chosen);
+                match chosen.as_deref() {
+                    // Copy/Cut also fill the system clipboard.
+                    Some("$Copy") => requests.push(EditorRequest::Copy),
+                    Some("$Cut") => requests.push(EditorRequest::Cut),
+                    Some(action) => requests.push(EditorRequest::ContextAction(action.to_owned())),
+                    None => {}
                 }
             });
             if response.dragged()

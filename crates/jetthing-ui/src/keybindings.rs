@@ -44,7 +44,7 @@ pub fn ui_action(action: &str) -> Option<UiAction> {
         "Replace" => UiAction::Replace,
         "FindNext" => UiAction::FindNext,
         "FindPrevious" => UiAction::FindPrevious,
-        "FindInPath" => UiAction::FindInPath,
+        "FindInPath" | "FindSelectionInPath" => UiAction::FindInPath,
         "SaveAll" => UiAction::SaveAll,
         "NewProject" => UiAction::NewProject,
         "OpenFile" => UiAction::OpenProject,
@@ -272,6 +272,9 @@ impl IdeApp {
 
     /// Whether a menu item for `action` is enabled.
     pub(crate) fn menu_action_enabled(&self, action: &str) -> bool {
+        if action == "$Paste" {
+            return self.state.active_document.is_some();
+        }
         if let Some(ui) = ui_action(action) {
             return self.ui_action_available(ui);
         }
@@ -281,6 +284,21 @@ impl IdeApp {
 
     /// Runs `action` from a menu (any scope).
     pub(crate) fn run_menu_action(&mut self, action: &str, ctx: &egui::Context) {
+        // Clipboard actions go through the editor so the system clipboard is updated.
+        match action {
+            "$Copy" => {
+                return crate::editor::handle_request(
+                    self,
+                    ctx,
+                    crate::editor::EditorRequest::Copy,
+                );
+            }
+            "$Cut" => {
+                return crate::editor::handle_request(self, ctx, crate::editor::EditorRequest::Cut);
+            }
+            "$Paste" => return ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste),
+            _ => {}
+        }
         if let Some(ui) = ui_action(action) {
             self.run_ui_action(ui, ctx);
         } else if let Some(binding) = command_for_action(action) {

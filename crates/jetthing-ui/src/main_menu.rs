@@ -97,7 +97,7 @@ pub(crate) fn main_menu_items() -> Vec<MenuItem> {
             })
             .collect()
     }
-    strip(Catalog::shared().menu("MainMenu"))
+    strip(Catalog::shared_menu("MainMenu").as_ref().clone())
 }
 
 /// The hamburger button; when clicked, the menu titles expand inline in the main
