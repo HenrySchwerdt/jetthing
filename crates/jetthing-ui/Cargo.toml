@@ -13,6 +13,7 @@ jetthing-core = { path = "../jetthing-core" }
 jetthing-git = { path = "../jetthing-git" }
 jetthing-language = { path = "../jetthing-language" }
 jetthing-lsp = { path = "../jetthing-lsp" }
+jetthing-menu = { path = "../jetthing-menu" }
 jetthing-runner = { path = "../jetthing-runner" }
 jetthing-text = { path = "../jetthing-text" }
 jetthing-terminal = { path = "../jetthing-terminal" }

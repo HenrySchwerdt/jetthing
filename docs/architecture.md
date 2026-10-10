@@ -10,6 +10,11 @@ no crate below `jetthing-ui` imports UI types.
 
 - `jetthing-command`: typed command metadata, JSON parameters/results, discovery,
   validation, execution, and structured errors.
+- `jetthing-menu`: UI-independent action system. Loads the reference action catalog and
+  groups (`docs/spec/data/actions.json`), resolves menus/toolbars (popup vs inline groups,
+  separators, dynamic groups), binds implemented action ids to parameterless commands or
+  workbench intents, looks up shortcuts in the bundled keymaps, and presents each menu
+  level with enabled/visible predicates. Unbound actions are presented disabled.
 - `jetthing-project`: safe project-root model, bounded file tree, UTF-8 document IO.
 - `jetthing-text`: revisioned rope storage, Unicode-safe multi-selection transactions,
   typing coalescence, and history.

@@ -2,9 +2,8 @@
 
 use crate::icons::{self, Icon};
 use crate::widgets::{self, chrome_frame};
-use crate::{IdeApp, keys, theme};
+use crate::{IdeApp, action_menu, keys, theme};
 use eframe::egui::{self, Color32, Rect, Sense, vec2};
-use jetthing_command::CommandSpec;
 use jetthing_core::{Anchor, ToolWindow};
 use serde_json::{Value, json};
 
@@ -15,61 +14,6 @@ pub const STRIPE_WIDTH: f32 = 40.0;
 /// Whether the window draws its own title bar (no OS decorations).
 pub fn custom_title_bar() -> bool {
     !cfg!(target_os = "macos")
-}
-
-/// One main-menu entry: the command categories it lists, plus commands the
-/// reference IDE files under this menu although their category is elsewhere.
-struct Menu {
-    title: &'static str,
-    categories: &'static [&'static str],
-    include: &'static [&'static str],
-}
-
-const fn menu(
-    title: &'static str,
-    categories: &'static [&'static str],
-    include: &'static [&'static str],
-) -> Menu {
-    Menu {
-        title,
-        categories,
-        include,
-    }
-}
-
-const MENUS: [Menu; 9] = [
-    menu("File", &["Project", "Plugins"], &[]),
-    menu("Edit", &["Editor"], &[]),
-    menu("View", &["Window"], &[]),
-    menu("Navigate", &["Navigate", "Search"], &[]),
-    menu(
-        "Code",
-        &["Code"],
-        &[
-            "editor.commentLine",
-            "editor.moveLineUp",
-            "editor.moveLineDown",
-        ],
-    ),
-    menu("Build", &["Build"], &[]),
-    menu("Run", &["Run"], &[]),
-    menu("Git", &["Git"], &[]),
-    menu("Help", &["Help"], &[]),
-];
-
-/// Parameterless commands shown in `menu`, in registry order. A command that
-/// another menu includes explicitly is not repeated under its category.
-fn menu_commands<'a>(menu: &Menu, specs: &'a [CommandSpec]) -> Vec<&'a CommandSpec> {
-    specs
-        .iter()
-        .filter(|spec| IdeApp::parameterless(spec))
-        .filter(|spec| {
-            let id = spec.id.as_str();
-            menu.include.contains(&id)
-                || (menu.categories.contains(&spec.category.as_str())
-                    && !MENUS.iter().any(|other| other.include.contains(&id)))
-        })
-        .collect()
 }
 
 pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
@@ -125,44 +69,7 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
     let response = icons::button(ui, Icon::MainMenu, "Main Menu");
     egui::Popup::menu(&response).show(|ui| {
         ui.set_min_width(180.0);
-        let specs = app.commands.specs();
-        for menu in &MENUS {
-            ui.menu_button(menu.title, |ui| {
-                ui.set_min_width(240.0);
-                if menu.title == "File" && ui.button("New Project…").clicked() {
-                    app.new_project_dialog();
-                    ui.close();
-                }
-                if menu.title == "File"
-                    && ui
-                        .add(egui::Button::new("Open Project…").shortcut_text(keys::display("⌘O")))
-                        .clicked()
-                {
-                    app.open_project_dialog();
-                    ui.close();
-                }
-                for spec in menu_commands(menu, &specs) {
-                    let enabled = app.commands.is_enabled(&spec.id, &app.state);
-                    let button = egui::Button::new(&spec.label)
-                        .shortcut_text(keys::display(spec.shortcut.as_deref().unwrap_or_default()));
-                    if ui.add_enabled(enabled, button).clicked() {
-                        app.dispatch(&spec.id, Value::Null);
-                        ui.close();
-                    }
-                }
-            });
-        }
-        ui.separator();
-        if ui
-            .add(egui::Button::new("Find Action…").shortcut_text(keys::display("⇧⌘A")))
-            .clicked()
-        {
-            app.palette.show();
-            ui.close();
-        }
-        if ui.button("Exit").clicked() {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-        }
+        action_menu::show(app, ui);
     });
 }
 
@@ -752,51 +659,5 @@ mod tests {
         assert_eq!(line_ending("a\nb"), "LF");
         assert_eq!(indentation("fn a() {\n\tb\n}"), "Tab");
         assert_eq!(indentation("fn a() {\n    b\n}"), "4 spaces");
-    }
-
-    #[test]
-    fn every_menu_has_items_and_code_lists_code_actions() {
-        let specs = jetthing_core::built_in_commands().specs();
-        for menu in &MENUS {
-            let items = menu_commands(menu, &specs);
-            assert!(
-                !items.is_empty() || menu.title == "File",
-                "{} menu is empty",
-                menu.title
-            );
-        }
-        let code: Vec<&str> = menu_commands(&MENUS[4], &specs)
-            .iter()
-            .map(|spec| spec.id.as_str())
-            .collect();
-        assert!(code.contains(&"language.complete"), "{code:?}");
-        assert!(code.contains(&"editor.commentLine"), "{code:?}");
-        let edit = menu_commands(&MENUS[1], &specs);
-        assert!(edit.iter().all(|spec| spec.id != "editor.commentLine"));
-    }
-
-    #[test]
-    fn menu_shortcuts_are_unique_on_every_platform() {
-        let specs = jetthing_core::built_in_commands().specs();
-        let mut mac = std::collections::HashMap::new();
-        let mut others = std::collections::HashMap::new();
-        for menu in &MENUS {
-            for spec in menu_commands(menu, &specs) {
-                let Some(shortcut) = spec.shortcut.as_deref().filter(|s| !s.is_empty()) else {
-                    continue;
-                };
-                if let Some(previous) = mac.insert(shortcut.to_owned(), &spec.id) {
-                    panic!("{previous} and {} share {shortcut}", spec.id);
-                }
-                let linux = keys::for_windows_linux(shortcut);
-                if let Some(previous) = others.insert(linux.clone(), &spec.id) {
-                    panic!("{previous} and {} share {linux}", spec.id);
-                }
-            }
-        }
-        assert_eq!(
-            others.get("Ctrl+S").map(|id| id.as_str()),
-            Some("editor.saveAll")
-        );
     }
 }
