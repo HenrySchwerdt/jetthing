@@ -3,7 +3,7 @@
 use crate::{IdeState, spec, string_param, usize_param};
 use jetthing_command::{Command, CommandError, CommandRegistry};
 use jetthing_text::ops::{self, FindOptions};
-use jetthing_text::{Selection, TextError};
+use jetthing_text::{Selection, TextError, multicaret, transform};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -95,6 +95,140 @@ fn select_match(
     json!({"matches": matches.len(), "index": index})
 }
 
+/// Caret and selection actions (PLATFORM-EDIT-007..012). They never edit text.
+fn register_multicaret(registry: &mut CommandRegistry<IdeState>) {
+    action(
+        registry,
+        "editor.selectNextOccurrence",
+        "Add Selection for Next Occurrence",
+        Some("⌃G"),
+        |d| {
+            multicaret::select_next_occurrence(&d.text, &mut d.selections);
+            Ok(())
+        },
+    );
+    action(
+        registry,
+        "editor.unselectOccurrence",
+        "Unselect Occurrence",
+        Some("⌃⇧G"),
+        |d| {
+            multicaret::unselect_occurrence(&mut d.selections);
+            Ok(())
+        },
+    );
+    action(
+        registry,
+        "editor.selectAllOccurrences",
+        "Select All Occurrences",
+        Some("⌃⌘G"),
+        |d| {
+            multicaret::select_all_occurrences(&d.text, &mut d.selections);
+            Ok(())
+        },
+    );
+    action(
+        registry,
+        "editor.cloneCaretAbove",
+        "Clone Caret Above",
+        None,
+        |d| {
+            multicaret::clone_caret(&d.text, &mut d.selections, true);
+            Ok(())
+        },
+    );
+    action(
+        registry,
+        "editor.cloneCaretBelow",
+        "Clone Caret Below",
+        None,
+        |d| {
+            multicaret::clone_caret(&d.text, &mut d.selections, false);
+            Ok(())
+        },
+    );
+    action(
+        registry,
+        "editor.addCaretsToLineEnds",
+        "Add Carets to Ends of Selected Lines",
+        Some("⌥⇧G"),
+        |d| {
+            multicaret::carets_at_line_ends(&d.text, &mut d.selections);
+            Ok(())
+        },
+    );
+    registry
+        .register(Command::new(
+            spec(
+                "editor.toggleColumnMode",
+                "Column Selection Mode",
+                "Editor",
+                Some("⇧⌘8"),
+                r#"{"enabled":"bool?"}"#,
+            ),
+            |state: &IdeState| state.active_document.is_some(),
+            |state: &mut IdeState, params| {
+                let enabled = state
+                    .edit_active(|d| {
+                        let enabled = params
+                            .get("enabled")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(!d.selections.column_mode());
+                        d.selections.set_column_mode(enabled);
+                        Ok(enabled)
+                    })
+                    .map_err(CommandError::Failed)?;
+                Ok(json!({"columnMode": enabled}))
+            },
+        ))
+        .expect("unique built-in id");
+}
+
+/// Line and text transformations (PLATFORM-EDIT-040/041/043/044).
+fn register_transforms(registry: &mut CommandRegistry<IdeState>) {
+    action(
+        registry,
+        "editor.joinLines",
+        "Join Lines",
+        Some("⌃⇧J"),
+        |d| {
+            let prefix = line_comment_prefix(&d.path);
+            transform::join_lines(&mut d.text, &mut d.selections, Some(prefix))
+        },
+    );
+    action(
+        registry,
+        "editor.toggleCase",
+        "Toggle Case",
+        Some("⇧⌘U"),
+        |d| transform::toggle_case(&mut d.text, &mut d.selections),
+    );
+    action(registry, "editor.sortLines", "Sort Lines", None, |d| {
+        transform::sort_lines(&mut d.text, &mut d.selections)
+    });
+    action(
+        registry,
+        "editor.reverseLines",
+        "Reverse Lines",
+        None,
+        |d| transform::reverse_lines(&mut d.text, &mut d.selections),
+    );
+    action(
+        registry,
+        "editor.splitLine",
+        "Split Line",
+        Some("⌘↩"),
+        |d| transform::split_line(&mut d.text, &mut d.selections),
+    );
+    action(
+        registry,
+        "editor.startNewLineBefore",
+        "Start New Line Before Current",
+        Some("⌥⌘↩"),
+        |d| transform::start_new_line_before(&mut d.text, &mut d.selections),
+    );
+}
+
 pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     action(
         registry,
@@ -158,6 +292,9 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             Ok(())
         },
     );
+
+    register_multicaret(registry);
+    register_transforms(registry);
 
     registry
         .register(Command::new(
@@ -394,6 +531,42 @@ mod tests {
             .execute("editor.copy", &mut state, Value::Null)
             .unwrap();
         assert_eq!(copied, json!({"text": "b = 2\n", "wholeLine": true}));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn multicaret_and_transform_actions_run_through_the_registry() {
+        let (mut state, commands, root) = state_with("val a = a\n    // x\n    // y\n", "m.kt");
+        let run =
+            |state: &mut IdeState, id: &str| commands.execute(id, state, Value::Null).unwrap();
+        commands
+            .execute(
+                "editor.gotoLine",
+                &mut state,
+                json!({"line": 1, "column": 5}),
+            )
+            .unwrap();
+        run(&mut state, "editor.selectNextOccurrence");
+        run(&mut state, "editor.selectNextOccurrence");
+        assert_eq!(state.documents[0].selections.selections().len(), 2);
+        run(&mut state, "editor.unselectOccurrence");
+        assert_eq!(state.documents[0].selections.selections().len(), 1);
+        run(&mut state, "editor.selectAllOccurrences");
+        run(&mut state, "editor.toggleCase");
+        assert_eq!(
+            state.documents[0].text.text(),
+            "val A = A\n    // x\n    // y\n"
+        );
+        commands
+            .execute("editor.gotoLine", &mut state, json!({"line": 2}))
+            .unwrap();
+        run(&mut state, "editor.joinLines");
+        assert_eq!(state.documents[0].text.text(), "val A = A\n    // x y\n");
+        run(&mut state, "editor.cloneCaretAbove");
+        assert_eq!(state.documents[0].selections.selections().len(), 2);
+        let mode = run(&mut state, "editor.toggleColumnMode");
+        assert_eq!(mode, json!({"columnMode": true}));
+        assert!(state.documents[0].selections.column_mode());
         std::fs::remove_dir_all(root).unwrap();
     }
 

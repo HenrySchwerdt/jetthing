@@ -1,5 +1,6 @@
 //! Editor island: tabs, viewport-native text surface, and completion popup.
 
+use crate::editor_keys;
 use crate::icons::{self, Icon};
 use crate::problems_ui;
 use crate::widgets::island_frame;
@@ -459,6 +460,15 @@ fn editor_surface(
                     .min(content.chars().count());
                 document.text.line_to_char(line).unwrap_or(0) + column
             };
+            // Line/column under the pointer; the column may lie past the line end.
+            let position_to_point = |position: egui::Pos2| jetthing_text::multicaret::BlockPoint {
+                line: (((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize)
+                    .min(line_count.saturating_sub(1)),
+                column: ((position.x - rect.left() - text_left) / char_width)
+                    .round()
+                    .max(0.0) as usize,
+            };
+            let block_drag_id = editor_id().with("block_drag_anchor");
             if response.clicked()
                 && let Some(position) = response.interact_pointer_pos()
             {
@@ -476,8 +486,8 @@ fn editor_surface(
                         "navigate.declaration"
                     };
                     requests.push(EditorRequest::Command(id, Value::Null));
-                } else if modifiers.alt {
-                    document.selections.add(Selection::caret(offset));
+                } else if modifiers.alt && modifiers.shift {
+                    editor_keys::toggle_caret(&mut document.selections, offset);
                 } else if modifiers.shift {
                     let anchor = document.selections.primary().anchor;
                     document.selections.set_single(Selection {
@@ -508,8 +518,16 @@ fn editor_surface(
                 });
             }
             if response.drag_started()
-                && let Some(position) = response.interact_pointer_pos()
+                && let Some(position) = ui
+                    .input(|input| input.pointer.press_origin())
+                    .or(response.interact_pointer_pos())
             {
+                // Alt-drag, middle-drag or column mode: rectangular selection.
+                let block = ui.input(|input| input.modifiers.alt)
+                    || response.dragged_by(egui::PointerButton::Middle)
+                    || document.selections.column_mode();
+                let anchor = block.then(|| position_to_point(position));
+                ui.data_mut(|data| data.insert_temp(block_drag_id, anchor));
                 document
                     .selections
                     .set_single(Selection::caret(position_to_offset(position)));
@@ -561,7 +579,19 @@ fn editor_surface(
                     ui.close();
                 }
             });
+            let block_anchor: Option<jetthing_text::multicaret::BlockPoint> =
+                ui.data(|data| data.get_temp(block_drag_id)).flatten();
             if response.dragged()
+                && let Some(position) = response.interact_pointer_pos()
+                && let Some(anchor) = block_anchor
+            {
+                editor_keys::drag_block(
+                    &document.text,
+                    &mut document.selections,
+                    anchor,
+                    position_to_point(position),
+                );
+            } else if response.dragged()
                 && let Some(position) = response.interact_pointer_pos()
             {
                 let offset = position_to_offset(position);
@@ -771,6 +801,8 @@ fn editor_surface(
     let page = (ui.available_height() / ROW_HEIGHT).max(1.0) as isize;
     let mac = cfg!(target_os = "macos");
     let text_error = |error: jetthing_text::TextError| error.to_string();
+    let command = |id: &'static str| EditorRequest::Command(id, Value::Null);
+    let clone_armed = editor_keys::clone_gesture_armed(ui.ctx(), response.id, mac);
     for event in events {
         let (key, modifiers) = match event {
             egui::Event::Text(text) if !text.is_empty() => {
@@ -809,12 +841,29 @@ fn editor_surface(
             } => (key, modifiers),
             _ => continue,
         };
+        if let Some(id) = editor_keys::action_for(key, modifiers, mac) {
+            requests.push(command(id));
+            continue;
+        }
+        if clone_armed && matches!(key, egui::Key::ArrowUp | egui::Key::ArrowDown) {
+            requests.push(command(if key == egui::Key::ArrowUp {
+                "editor.cloneCaretAbove"
+            } else {
+                "editor.cloneCaretBelow"
+            }));
+            continue;
+        }
+        if document.selections.column_mode()
+            && let Some((lines, columns)) = editor_keys::column_delta(key, modifiers)
+        {
+            editor_keys::extend_block(document, lines, columns);
+            continue;
+        }
         let head = document.selections.primary().head;
         let len = document.text.len_chars();
         let extend = modifiers.shift;
         // Word-wise movement: ⌥ on macOS, Ctrl elsewhere.
         let word = if mac { modifiers.alt } else { modifiers.ctrl };
-        let command = |id: &'static str| EditorRequest::Command(id, Value::Null);
         match key {
             egui::Key::D if modifiers.command => requests.push(command("editor.duplicate")),
             egui::Key::Y if modifiers.command && !mac => {
@@ -894,32 +943,30 @@ fn editor_surface(
                 });
             }
             egui::Key::ArrowLeft if word => {
-                move_primary(document, ops::word_left(&document.text, head), extend)
+                editor_keys::move_carets(document, extend, |d, s| ops::word_left(&d.text, s.head))
             }
             egui::Key::ArrowRight if word => {
-                move_primary(document, ops::word_right(&document.text, head), extend)
+                editor_keys::move_carets(document, extend, |d, s| ops::word_right(&d.text, s.head))
             }
-            egui::Key::ArrowLeft => {
-                let target = if !extend && !document.selections.primary().is_caret() {
-                    document.selections.primary().start()
+            egui::Key::ArrowLeft => editor_keys::move_carets(document, extend, |_, s| {
+                if !extend && !s.is_caret() {
+                    s.start()
                 } else {
-                    head.saturating_sub(1)
-                };
-                move_primary(document, target, extend);
-            }
-            egui::Key::ArrowRight => {
-                let target = if !extend && !document.selections.primary().is_caret() {
-                    document.selections.primary().end()
+                    s.head.saturating_sub(1)
+                }
+            }),
+            egui::Key::ArrowRight => editor_keys::move_carets(document, extend, |_, s| {
+                if !extend && !s.is_caret() {
+                    s.end()
                 } else {
-                    (head + 1).min(len)
-                };
-                move_primary(document, target, extend);
-            }
+                    (s.head + 1).min(len)
+                }
+            }),
             egui::Key::ArrowUp => {
-                move_primary(document, vertical_target(document, head, -1), extend)
+                editor_keys::move_carets(document, extend, |d, s| vertical_target(d, s.head, -1))
             }
             egui::Key::ArrowDown => {
-                move_primary(document, vertical_target(document, head, 1), extend)
+                editor_keys::move_carets(document, extend, |d, s| vertical_target(d, s.head, 1))
             }
             egui::Key::PageUp => {
                 move_primary(document, vertical_target(document, head, -page), extend)
@@ -927,37 +974,29 @@ fn editor_surface(
             egui::Key::PageDown => {
                 move_primary(document, vertical_target(document, head, page), extend)
             }
-            egui::Key::Home => {
-                let target = if modifiers.command {
-                    0
+            egui::Key::Home if modifiers.command => move_primary(document, 0, extend),
+            egui::Key::Home => editor_keys::move_carets(document, extend, |d, s| {
+                let line = d.text.char_to_line(s.head);
+                let start = d.text.line_to_char(line).unwrap_or(0);
+                let indent = d
+                    .text
+                    .line(line)
+                    .unwrap_or_default()
+                    .chars()
+                    .take_while(|c| c.is_whitespace() && *c != '\n')
+                    .count();
+                // Smart home: toggle between first non-blank character and column 0.
+                if s.head == start + indent {
+                    start
                 } else {
-                    let line = document.text.char_to_line(head);
-                    let start = document.text.line_to_char(line).unwrap_or(0);
-                    let indent = document
-                        .text
-                        .line(line)
-                        .unwrap_or_default()
-                        .chars()
-                        .take_while(|c| c.is_whitespace() && *c != '\n')
-                        .count();
-                    // Smart home: toggle between first non-blank character and column 0.
-                    if head == start + indent {
-                        start
-                    } else {
-                        start + indent
-                    }
-                };
-                move_primary(document, target, extend);
-            }
-            egui::Key::End => {
-                let target = if modifiers.command {
-                    len
-                } else {
-                    let line = document.text.char_to_line(head);
-                    document.text.line_to_char(line).unwrap_or(0) + line_length(document, line)
-                };
-                move_primary(document, target, extend);
-            }
+                    start + indent
+                }
+            }),
+            egui::Key::End if modifiers.command => move_primary(document, len, extend),
+            egui::Key::End => editor_keys::move_carets(document, extend, |d, s| {
+                let line = d.text.char_to_line(s.head);
+                d.text.line_to_char(line).unwrap_or(0) + line_length(d, line)
+            }),
             egui::Key::Escape if document.selections.selections().len() > 1 => {
                 let primary = document.selections.primary();
                 document
