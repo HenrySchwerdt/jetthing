@@ -537,9 +537,23 @@ impl TextDocument {
     }
 
     pub fn undo(&mut self) -> bool {
-        let Some(transaction) = self.undo.pop() else {
-            return false;
-        };
+        self.undo_carets().is_some()
+    }
+
+    pub fn redo(&mut self) -> bool {
+        self.redo_carets().is_some()
+    }
+
+    /// Undoes the last transaction and returns where carets belong afterwards:
+    /// one per edit, after the restored text (where the caret was before a
+    /// deletion, where typing started for an insertion).
+    pub fn undo_carets(&mut self) -> Option<Vec<usize>> {
+        let transaction = self.undo.pop()?;
+        let carets = transaction
+            .edits
+            .iter()
+            .map(|edit| edit.original_start + edit.deleted.chars().count())
+            .collect();
         for edit in transaction.edits.iter().rev() {
             self.apply(
                 edit.applied_start,
@@ -550,13 +564,17 @@ impl TextDocument {
         self.current_state = transaction.before_state;
         self.redo.push(transaction);
         self.revision = self.revision.saturating_add(1);
-        true
+        Some(carets)
     }
 
-    pub fn redo(&mut self) -> bool {
-        let Some(transaction) = self.redo.pop() else {
-            return false;
-        };
+    /// Redoes the next transaction; carets go after each re-applied edit.
+    pub fn redo_carets(&mut self) -> Option<Vec<usize>> {
+        let transaction = self.redo.pop()?;
+        let carets = transaction
+            .edits
+            .iter()
+            .map(|edit| edit.applied_start + edit.inserted.chars().count())
+            .collect();
         for edit in transaction.edits.iter().rev() {
             self.apply(
                 edit.original_start,
@@ -567,7 +585,7 @@ impl TextDocument {
         self.current_state = transaction.after_state;
         self.undo.push(transaction);
         self.revision = self.revision.saturating_add(1);
-        true
+        Some(carets)
     }
 
     fn validate_range(&self, start: usize, end: usize) -> Result<(), TextError> {
@@ -611,6 +629,34 @@ impl TextDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn undo_and_redo_report_carets_at_the_change() {
+        let mut doc = TextDocument::new("fn a() {}\nfn b() {}\n");
+        doc.type_text(10, "let").unwrap();
+        doc.type_text(13, " x").unwrap();
+        assert_eq!(doc.undo_carets(), Some(vec![10]), "where typing started");
+        assert_eq!(doc.redo_carets(), Some(vec![15]), "after the re-typed text");
+        doc.edit(0, 3, "").unwrap();
+        assert_eq!(doc.undo_carets(), Some(vec![3]), "after restored text");
+        doc.edit_many([
+            TextChange {
+                start_char: 0,
+                end_char: 0,
+                inserted: "// ".into(),
+            },
+            TextChange {
+                start_char: 10,
+                end_char: 10,
+                inserted: "// ".into(),
+            },
+        ])
+        .unwrap();
+        assert_eq!(doc.undo_carets(), Some(vec![0, 10]), "one caret per edit");
+        assert_eq!(doc.redo_carets(), Some(vec![3, 16]));
+        let mut empty = TextDocument::new("");
+        assert_eq!(empty.undo_carets(), None);
+    }
     use proptest::prelude::*;
 
     #[test]

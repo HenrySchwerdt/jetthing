@@ -10,6 +10,7 @@ mod android_sdk;
 mod android_view;
 mod chrome;
 mod completion_ui;
+mod console;
 mod control;
 mod crash_notice;
 mod device_manager;
@@ -93,6 +94,8 @@ pub struct IdeApp {
     /// Registry generation the contributed commands were synced at.
     plugin_generation: u64,
     plugins_window: Option<plugin_ui::PluginsWindow>,
+    /// Build/Run output converted to display lines.
+    console: console::ConsoleView,
 }
 
 impl IdeApp {
@@ -204,6 +207,7 @@ impl IdeApp {
             plugin_commands: Vec::new(),
             plugin_generation: u64::MAX,
             plugins_window: None,
+            console: console::ConsoleView::default(),
         }
     }
 
@@ -359,6 +363,9 @@ impl IdeApp {
             }
             hit
         };
+        if popup_owns_keyboard(ctx) {
+            return;
+        }
         if completion_open
             && !self.palette.open
             && self.dialog.is_none()
@@ -513,6 +520,30 @@ impl IdeApp {
     }
 }
 
+/// An open menu (main menu, context menu, toolbar widget popup) owns the
+/// keyboard, as in the reference IDE: Escape closes it, and no workbench
+/// shortcut fires underneath it. Returns whether a popup was open.
+fn popup_owns_keyboard(ctx: &egui::Context) -> bool {
+    if !egui::Popup::is_any_open(ctx) {
+        return false;
+    }
+    let escape = ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    if escape {
+        egui::Popup::close_all(ctx);
+    }
+    // Chords pressed while a menu is open must not reach the workbench either.
+    ctx.input_mut(|input| {
+        input.events.retain(|event| {
+            !matches!(
+                event,
+                egui::Event::Key { modifiers, pressed: true, .. }
+                    if modifiers.alt || modifiers.ctrl || modifiers.command
+            )
+        })
+    });
+    true
+}
+
 impl eframe::App for IdeApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         theme::FRAME.to_normalized_gamma_f32()
@@ -637,6 +668,39 @@ impl eframe::App for IdeApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escape_closes_an_open_menu_and_shortcuts_do_not_run_under_it() {
+        let ctx = egui::Context::default();
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let menu = egui::Id::new("tree_context_menu");
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::Popup::open_id(ctx, menu)
+        });
+        assert!(egui::Popup::is_any_open(&ctx));
+        let input = egui::RawInput {
+            events: vec![
+                key(egui::Key::Num6, egui::Modifiers::ALT),
+                key(egui::Key::Escape, egui::Modifiers::NONE),
+            ],
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            assert!(popup_owns_keyboard(ctx));
+            let left = ctx.input(|input| input.events.len());
+            assert_eq!(left, 0, "Alt+6 and Escape were consumed by the menu");
+        });
+        assert!(!egui::Popup::is_any_open(&ctx));
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            assert!(!popup_owns_keyboard(ctx), "no menu, shortcuts run normally");
+        });
+    }
 
     #[test]
     fn parameterless_commands_are_detected_from_their_schema() {

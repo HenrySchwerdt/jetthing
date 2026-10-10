@@ -308,10 +308,20 @@ impl IdeState {
         else {
             return false;
         };
-        if !document.text.undo() {
+        let Some(carets) = document.text.undo_carets() else {
             return false;
+        };
+        // Put the caret where the change happened, not where it last was.
+        let len = document.text.len_chars();
+        let carets: Vec<Selection> = carets
+            .into_iter()
+            .map(|caret| Selection::caret(caret.min(len)))
+            .collect();
+        if carets.is_empty() {
+            document.selections.clamp(len);
+        } else {
+            document.selections.set_all(carets);
         }
-        document.selections.clamp(document.text.len_chars());
         true
     }
 
@@ -322,10 +332,20 @@ impl IdeState {
         else {
             return false;
         };
-        if !document.text.redo() {
+        let Some(carets) = document.text.redo_carets() else {
             return false;
+        };
+        // Put the caret where the change happened, not where it last was.
+        let len = document.text.len_chars();
+        let carets: Vec<Selection> = carets
+            .into_iter()
+            .map(|caret| Selection::caret(caret.min(len)))
+            .collect();
+        if carets.is_empty() {
+            document.selections.clamp(len);
+        } else {
+            document.selections.set_all(carets);
         }
-        document.selections.clamp(document.text.len_chars());
         true
     }
 
