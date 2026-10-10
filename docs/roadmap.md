@@ -53,6 +53,7 @@
 - [x] `--version` and Help → About with embedded build info (commit, date, target)
 - [x] Log file per OS, crash reports with backtrace, crash notice on next start
 - [x] Release notes from conventional commits (`cargo xtask changelog`)
+- [x] First-run "Customize Jetthing": theme, keymap, settings import
 - [x] Versioned release pipeline (0.0.2) publishing on every version bump
 
 ## M2 — language intelligence

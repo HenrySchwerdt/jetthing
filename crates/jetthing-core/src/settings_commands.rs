@@ -57,7 +57,7 @@ impl IdeState {
     }
 
     /// Saves the settings and updates state derived from them (the keymap).
-    fn persist_settings(&mut self) -> Result<(), CommandError> {
+    pub(crate) fn persist_settings(&mut self) -> Result<(), CommandError> {
         self.refresh_keymap();
         self.settings
             .store

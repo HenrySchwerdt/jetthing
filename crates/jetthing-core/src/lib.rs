@@ -27,6 +27,7 @@ mod diagnostic_commands;
 pub mod diagnostics;
 mod disk_sync;
 mod editor_commands;
+pub mod first_run;
 mod git_log;
 pub mod keymap_commands;
 mod line_changes;
@@ -149,6 +150,10 @@ pub struct IdeState {
     pub about_open: bool,
     /// Unseen crash report from a previous session (`app.dismissCrashReport`).
     pub crash_report: Option<PathBuf>,
+    /// Whether the first-run "Customize Jetthing" wizard is showing.
+    pub first_run_open: bool,
+    /// Config directory the first-run marker is written to.
+    first_run_dir: Option<PathBuf>,
     update_silent: bool,
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
@@ -756,6 +761,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     terminal_commands::register(&mut registry);
     settings_commands::register(&mut registry);
     keymap_commands::register(&mut registry);
+    first_run::register(&mut registry);
     lsp_commands::register(&mut registry);
     vcs::register(&mut registry);
     plugin_host::register(&mut registry);
