@@ -797,9 +797,6 @@ fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("No file is open").color(theme::TEXT_SECONDARY));
         });
-        if let Some(error) = &app.state.lsp_error {
-            ui.label(RichText::new(error).color(theme::TEXT_INFO));
-        }
         return;
     };
     let path = app.state.documents[index].path.clone();
