@@ -81,6 +81,7 @@ that declares an `[app]` view on its own with `jetthing --app <plugin-id>`. See
 ```bash
 cargo run -p xtask -- dist               # archive in dist/ (the self-updater's format)
 cargo run -p xtask -- dist --installer   # + .msi / .dmg / .deb for the host OS
+cargo run -p xtask -- changelog          # release notes since the last v* tag, from conventional commits
 ```
 
 `.github/workflows/release.yml` builds and smoke-tests the archives and installers for
