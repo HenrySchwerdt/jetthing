@@ -153,6 +153,10 @@ fn json_tokens(job: &mut LayoutJob, text: &str, pal: &Palette, font: FontId) {
     }
 }
 
+/// egui temp-data key holding the workspace's secret variable names, so
+/// completion never previews their values.
+pub const SECRET_KEYS_ID: &str = "nexus-secret-keys";
+
 /// Single-line field with template highlighting. Returns the response.
 pub fn template_field(
     ui: &mut Ui,
@@ -169,14 +173,128 @@ pub fn template_field(
         job.wrap.max_width = wrap;
         ui.fonts_mut(|f| f.layout_job(job))
     };
-    ui.add(
-        TextEdit::singleline(text)
-            .id(id)
-            .hint_text(RichText::new(hint).color(pal.faint))
-            .desired_width(width)
-            .frame(false)
-            .layouter(&mut layouter),
-    )
+    // Keys for an open completion popup are taken before the field sees them.
+    let popup_id = id.with("completion");
+    let open: bool = ui.data(|d| d.get_temp(popup_id.with("open")).unwrap_or(false));
+    let (down, up, accept, dismiss) = if open {
+        ui.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                    || i.consume_key(egui::Modifiers::NONE, egui::Key::Tab),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+            )
+        })
+    } else {
+        (false, false, false, false)
+    };
+    let output = TextEdit::singleline(text)
+        .id(id)
+        .hint_text(RichText::new(hint).color(pal.faint))
+        .desired_width(width)
+        .frame(false)
+        // While the popup is open Tab accepts a suggestion instead of moving focus.
+        .lock_focus(open)
+        .layouter(&mut layouter)
+        .show(ui);
+    let mut response = output.response.clone();
+    let mut still_open = false;
+    if response.has_focus()
+        && !dismiss
+        && let Some(range) = output.cursor_range
+        && let Some(ctx) = crate::complete::context_at(text, range.primary.index)
+    {
+        let mut items = crate::complete::items(&ctx, vars);
+        let secrets: Option<Arc<std::collections::HashSet<String>>> =
+            ui.data(|d| d.get_temp(egui::Id::new(SECRET_KEYS_ID)));
+        if let Some(secrets) = secrets {
+            for item in &mut items {
+                if secrets.contains(&item.label) {
+                    item.detail = "••••••".into();
+                }
+            }
+        }
+        if !items.is_empty() {
+            still_open = true;
+            let sel_id = popup_id.with("sel");
+            let mut sel: usize = ui.data(|d| d.get_temp(sel_id).unwrap_or(0));
+            sel = sel.min(items.len() - 1);
+            if down {
+                sel = (sel + 1) % items.len();
+            }
+            if up {
+                sel = (sel + items.len() - 1) % items.len();
+            }
+            let mut chosen = accept.then_some(sel);
+            let area = egui::Area::new(popup_id.with("area"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(response.rect.left_bottom() + vec2(-6.0, 6.0))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::new()
+                        .fill(pal.raised)
+                        .stroke(pal.hairline())
+                        .corner_radius(CornerRadius::same(8))
+                        .inner_margin(egui::Margin::same(4))
+                        .shadow(egui::Shadow {
+                            offset: [0, 4],
+                            blur: 14,
+                            spread: 0,
+                            color: Color32::from_black_alpha(80),
+                        })
+                        .show(ui, |ui| {
+                            for (i, item) in items.iter().enumerate() {
+                                let (rect, row) =
+                                    ui.allocate_exact_size(vec2(340.0, 24.0), Sense::click());
+                                if i == sel || row.hovered() {
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        CornerRadius::same(5),
+                                        if i == sel { pal.selection } else { pal.hover },
+                                    );
+                                }
+                                let color = if ctx.tag { pal.purple } else { pal.accent };
+                                ui.painter().text(
+                                    pos2(rect.left() + 8.0, rect.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    &item.label,
+                                    mono(12.5),
+                                    color,
+                                );
+                                ui.painter().text(
+                                    pos2(rect.right() - 8.0, rect.center().y),
+                                    egui::Align2::RIGHT_CENTER,
+                                    &item.detail,
+                                    FontId::proportional(11.5),
+                                    pal.weak,
+                                );
+                                if row.clicked() {
+                                    chosen = Some(i);
+                                }
+                            }
+                        });
+                });
+            let _ = area;
+            ui.data_mut(|d| d.insert_temp(sel_id, sel));
+            if let Some(i) = chosen {
+                let (new_text, cursor) =
+                    crate::complete::apply(text, &ctx, range.primary.index, &items[i]);
+                *text = new_text;
+                let mut state = output.state.clone();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::one(
+                        egui::text::CCursor::new(cursor),
+                    )));
+                state.store(ui.ctx(), id);
+                ui.memory_mut(|m| m.request_focus(id));
+                response.mark_changed();
+                still_open = false;
+            }
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(popup_id.with("open"), still_open));
+    response
 }
 
 /// Multi-line code editor with JSON or plain highlighting.

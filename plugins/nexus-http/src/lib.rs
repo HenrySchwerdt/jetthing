@@ -5,6 +5,7 @@
 //! colors. The engine lives in `nexus-http-core`; [`state::NexusState`] is the
 //! UI-independent controller.
 
+pub mod complete;
 pub mod oauth;
 pub mod state;
 pub mod theme;
@@ -211,6 +212,17 @@ impl NexusApp {
                 .request_repaint_after(std::time::Duration::from_millis(50));
         }
         self.shortcuts(ui);
+        let secrets: std::collections::HashSet<String> =
+            std::iter::once(&self.state.workspace.base_environment)
+                .chain(&self.state.workspace.environments)
+                .flat_map(|e| e.secrets.iter().cloned())
+                .collect();
+        ui.data_mut(|d| {
+            d.insert_temp(
+                egui::Id::new(widgets::SECRET_KEYS_ID),
+                std::sync::Arc::new(secrets),
+            )
+        });
         let pal = Palette::of(ui);
         let full = ui.available_rect_before_wrap();
         ui.painter().rect_filled(full, 0.0, pal.frame);
