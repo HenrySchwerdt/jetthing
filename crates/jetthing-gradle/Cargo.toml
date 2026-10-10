@@ -6,3 +6,5 @@ license.workspace = true
 
 [dependencies]
 jetthing-runner = { path = "../jetthing-runner" }
+serde.workspace = true
+serde_json.workspace = true

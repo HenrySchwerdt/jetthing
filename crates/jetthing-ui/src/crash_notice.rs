@@ -18,7 +18,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     };
     let mut action = None;
     egui::Area::new(egui::Id::new("crash_notice"))
-        .order(egui::Order::Foreground)
+        .order(crate::notifications::BALLOON_ORDER)
         .fixed_pos(egui::pos2(
             screen.right() - width - 16.0,
             screen.bottom() - 150.0 - lift - crate::chrome::STATUS_BAR_HEIGHT,

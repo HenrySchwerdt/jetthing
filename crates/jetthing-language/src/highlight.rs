@@ -9,7 +9,9 @@
 //! semantic tokens) are combined with [`HighlightLayer::overlay`].
 
 use crate::captures;
+use crate::injection;
 use crate::registry::{LANGUAGES, LanguageSpec};
+use jetthing_text::ByteEdit;
 use std::ops::Range;
 use std::sync::OnceLock;
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
@@ -69,6 +71,103 @@ impl HighlightLayer {
                 end_byte: span.end_byte.min(range.end),
                 key: span.key,
             })
+    }
+
+    /// Shifts spans across a buffer edit. Spans overlapping the replaced bytes
+    /// are cut around them; the caller re-highlights the edited range. Returns
+    /// the post-edit extent of any cut span: its key was computed from text
+    /// the edit changed (e.g. a comment that lost its `/*`), so it is stale.
+    pub fn apply_edit(&mut self, edit: &ByteEdit) -> Option<Range<usize>> {
+        let shift = |offset: usize| {
+            offset
+                .saturating_add(edit.new_end_byte)
+                .saturating_sub(edit.old_end_byte)
+        };
+        // Spans are sorted and disjoint: [first, last) overlap the replaced bytes.
+        let first = self
+            .spans
+            .partition_point(|span| span.end_byte <= edit.start_byte);
+        let last = self
+            .spans
+            .partition_point(|span| span.start_byte < edit.old_end_byte)
+            .max(first);
+        let mut pieces = Vec::new();
+        let mut stale: Option<Range<usize>> = None;
+        for span in &self.spans[first..last] {
+            let start = span.start_byte.min(edit.start_byte);
+            let end = shift(span.end_byte).max(edit.new_end_byte);
+            stale = Some(stale.map_or(start..end, |range| {
+                range.start.min(start)..range.end.max(end)
+            }));
+            if span.start_byte < edit.start_byte {
+                pieces.push(HighlightSpan {
+                    start_byte: span.start_byte,
+                    end_byte: edit.start_byte,
+                    key: span.key,
+                });
+            }
+            if span.end_byte > edit.old_end_byte {
+                pieces.push(HighlightSpan {
+                    start_byte: edit.new_end_byte,
+                    end_byte: shift(span.end_byte),
+                    key: span.key,
+                });
+            }
+        }
+        for span in &mut self.spans[last..] {
+            span.start_byte = shift(span.start_byte);
+            span.end_byte = shift(span.end_byte);
+        }
+        self.spans.splice(first..last, pieces);
+        stale
+    }
+
+    /// Grows `range` to fully cover the spans crossing its boundaries.
+    pub fn covering(&self, range: Range<usize>) -> Range<usize> {
+        let first = self
+            .spans
+            .partition_point(|span| span.end_byte <= range.start);
+        let last = self
+            .spans
+            .partition_point(|span| span.start_byte < range.end);
+        if first >= last {
+            return range;
+        }
+        range.start.min(self.spans[first].start_byte)..range.end.max(self.spans[last - 1].end_byte)
+    }
+
+    /// Replaces everything inside `range` with `replacement` (already clipped
+    /// to `range`), keeping spans outside it.
+    pub fn splice(&mut self, range: Range<usize>, replacement: HighlightLayer) {
+        let first = self
+            .spans
+            .partition_point(|span| span.end_byte <= range.start);
+        let last = self
+            .spans
+            .partition_point(|span| span.start_byte < range.end)
+            .max(first);
+        let mut window: Vec<HighlightSpan> = Vec::with_capacity(replacement.spans.len() + 4);
+        // Keep the neighbours so adjacent equal keys merge across the seams.
+        let lead = first.saturating_sub(1);
+        window.extend(self.spans[lead..first].iter().cloned());
+        if let Some(head) = self.spans[first..last].first()
+            && head.start_byte < range.start
+        {
+            push_merged(&mut window, head.start_byte..range.start, head.key);
+        }
+        for span in replacement.spans {
+            push_merged(&mut window, span.start_byte..span.end_byte, span.key);
+        }
+        if let Some(tail) = self.spans[first..last].last()
+            && tail.end_byte > range.end
+        {
+            push_merged(&mut window, range.end..tail.end_byte, tail.key);
+        }
+        let trail = (last + 1).min(self.spans.len());
+        for span in &self.spans[last..trail] {
+            push_merged(&mut window, span.start_byte..span.end_byte, span.key);
+        }
+        self.spans.splice(lead..trail, window);
     }
 
     /// Returns a new layer where `top` replaces this layer wherever it has a span.
@@ -201,16 +300,99 @@ struct RawCapture {
     punctuation: bool,
 }
 
-/// Highlights the bytes in `range` of `source`, which `tree` was parsed from.
+/// Highlights the bytes in `range` of `source`, which `tree` was parsed from,
+/// including injected languages.
 pub fn highlight(
     spec: &'static LanguageSpec,
     tree: &Tree,
     source: &str,
     range: Range<usize>,
 ) -> Result<HighlightLayer, QueryError> {
+    highlight_at_depth(spec, tree, source, range, 0)
+}
+
+fn highlight_at_depth(
+    spec: &'static LanguageSpec,
+    tree: &Tree,
+    source: &str,
+    range: Range<usize>,
+    depth: usize,
+) -> Result<HighlightLayer, QueryError> {
+    let raw = collect(spec, tree, source, range.clone())?;
+    let mut layer = flatten(raw, range.clone());
+    if depth >= injection::MAX_DEPTH {
+        return Ok(layer);
+    }
+    for injection in injection::injections(spec, tree, source, range.clone()) {
+        let extent = injection.extent();
+        let clip = range.start.max(extent.start)..range.end.min(extent.end);
+        if clip.start >= clip.end {
+            continue;
+        }
+        let Some(injected) = injection.parse(source) else {
+            continue;
+        };
+        // Injected languages without highlight queries contribute nothing.
+        if let Ok(injected) = highlight_at_depth(injection.spec, &injected, source, clip, depth + 1)
+        {
+            layer = layer.overlay(&injected);
+        }
+    }
+    Ok(layer)
+}
+
+/// Like [`highlight`], but first grows `range` until it covers every capture
+/// and injected region intersecting it, so captures whose key depends on
+/// their whole node (e.g. a comment turned into a doc comment) are recomputed
+/// entirely. Returns the grown range and its highlights; used for incremental
+/// re-highlighting.
+pub fn highlight_covering(
+    spec: &'static LanguageSpec,
+    tree: &Tree,
+    source: &str,
+    mut range: Range<usize>,
+) -> Result<(Range<usize>, HighlightLayer), QueryError> {
+    loop {
+        let raw = collect(spec, tree, source, range.clone())?;
+        let grow = |acc: Range<usize>, other: Range<usize>| {
+            if other.start < acc.end && other.end > acc.start {
+                acc.start.min(other.start)..acc.end.max(other.end)
+            } else {
+                acc
+            }
+        };
+        let mut covered = raw.iter().fold(range.clone(), |acc, capture| {
+            grow(acc, capture.range.clone())
+        });
+        // An injection that merely touches the range may have gained or lost
+        // text at that edge, which changes its whole injected parse.
+        let touching = range.start.saturating_sub(1)..(range.end + 1).min(source.len());
+        covered = injection::injections(spec, tree, source, touching)
+            .iter()
+            .fold(covered, |acc, injection| {
+                let extent = injection.extent();
+                if extent.start <= acc.end && extent.end >= acc.start {
+                    acc.start.min(extent.start)..acc.end.max(extent.end)
+                } else {
+                    acc
+                }
+            });
+        if covered == range {
+            return Ok((range.clone(), highlight(spec, tree, source, range)?));
+        }
+        range = covered;
+    }
+}
+
+fn collect(
+    spec: &'static LanguageSpec,
+    tree: &Tree,
+    source: &str,
+    range: Range<usize>,
+) -> Result<Vec<RawCapture>, QueryError> {
     let compiled = compiled(spec)?;
     let mut cursor = QueryCursor::new();
-    cursor.set_byte_range(range.clone());
+    cursor.set_byte_range(range);
     let mut raw: Vec<RawCapture> = Vec::new();
     let mut captures = cursor.captures(&compiled.query, tree.root_node(), source.as_bytes());
     while let Some((query_match, index)) = captures.next() {
@@ -228,12 +410,14 @@ pub fn highlight(
             punctuation: compiled.punctuation[capture.index as usize],
         });
     }
-    Ok(flatten(raw, range))
+    Ok(raw)
 }
 
 /// Resolves captured ranges into non-overlapping spans: the latest pattern
 /// wins for identical ranges and inner ranges override enclosing ones.
 fn flatten(mut raw: Vec<RawCapture>, clip: Range<usize>) -> HighlightLayer {
+    // Matches intersecting the range may carry captures outside it.
+    raw.retain(|capture| capture.range.start < clip.end && capture.range.end > clip.start);
     raw.sort_by(|a, b| {
         a.range
             .start
@@ -245,10 +429,12 @@ fn flatten(mut raw: Vec<RawCapture>, clip: Range<usize>) -> HighlightLayer {
     let mut spans = Vec::new();
     let mut stack: Vec<RawCapture> = Vec::new();
     let mut pos = clip.start;
+    let clip_end = clip.end;
     let emit_until = |target: usize,
                       stack: &mut Vec<RawCapture>,
                       pos: &mut usize,
                       spans: &mut Vec<HighlightSpan>| {
+        let target = target.min(clip_end);
         while let Some(top) = stack.last() {
             let end = top.range.end.min(target);
             if end > *pos {
