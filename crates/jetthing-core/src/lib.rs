@@ -62,11 +62,24 @@ pub struct IdeState {
 impl IdeState {
     pub fn open_project(&mut self, path: &Path) -> Result<(), String> {
         let project = Project::open(path).map_err(|e| e.to_string())?;
+        if self.project.is_some() {
+            if self.runner.is_running() {
+                return Err("Stop the running task before opening another project.".into());
+            }
+            self.save_all()?;
+            self.save_workspace()?;
+        }
         self.files = project.entries(20_000);
         self.documents.clear();
         self.active_document = None;
         self.search.cancel();
         self.search_results.clear();
+        self.search_query.clear();
+        self.search_files_scanned = 0;
+        self.search_truncated = false;
+        self.terminal = None;
+        self.runner = TaskService::default();
+        self.plugins.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
         self.lsp = None;
         self.lsp_error = None;
@@ -1091,6 +1104,82 @@ mod tests {
             .execute("project.open", &mut state, json!({"path": root}))
             .unwrap();
         assert!(state.project.is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn switching_projects_saves_documents_and_restores_the_previous_workspace() {
+        let root = std::env::temp_dir().join(format!("jetthing-switch-{}", std::process::id()));
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join("notes.txt"), "before").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": first}))
+            .unwrap();
+        state.open_file(Path::new("notes.txt")).unwrap();
+        state.documents[0].text.edit(0, 6, "after").unwrap();
+        state.search_query = "old query".into();
+        commands
+            .execute("project.open", &mut state, json!({"path": second}))
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(first.join("notes.txt")).unwrap(),
+            "after"
+        );
+        assert!(state.documents.is_empty());
+        assert!(state.search_query.is_empty());
+        commands
+            .execute("project.open", &mut state, json!({"path": first}))
+            .unwrap();
+        assert_eq!(state.documents[0].text.text(), "after");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_project_open_preserves_the_current_editor() {
+        let root =
+            std::env::temp_dir().join(format!("jetthing-switch-error-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("notes.txt"), "before").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        state.open_project(&root).unwrap();
+        state.open_file(Path::new("notes.txt")).unwrap();
+        state.documents[0].text.edit(0, 6, "unsaved").unwrap();
+        assert!(
+            commands
+                .execute(
+                    "project.open",
+                    &mut state,
+                    json!({"path": root.join("missing")})
+                )
+                .is_err()
+        );
+        assert_eq!(state.documents[0].text.text(), "unsaved");
+        assert!(state.documents[0].text.is_dirty());
+        assert_eq!(
+            std::fs::read_to_string(root.join("notes.txt")).unwrap(),
+            "before"
+        );
+        // A failed save also prevents discarding the old project.
+        std::fs::remove_file(root.join("notes.txt")).unwrap();
+        std::fs::create_dir(root.join("notes.txt")).unwrap();
+        let next = root.join("next");
+        std::fs::create_dir(&next).unwrap();
+        assert!(
+            commands
+                .execute("project.open", &mut state, json!({"path": next}))
+                .is_err()
+        );
+        assert_eq!(
+            state.project.as_ref().unwrap().root(),
+            root.canonicalize().unwrap()
+        );
+        assert!(state.documents[0].text.is_dirty());
         std::fs::remove_dir_all(root).unwrap();
     }
 

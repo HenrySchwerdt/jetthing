@@ -15,6 +15,7 @@ mod palette;
 mod popups;
 mod theme;
 mod toolwindows;
+mod welcome;
 mod widgets;
 
 use eframe::egui;
@@ -125,6 +126,41 @@ impl IdeApp {
         self.dialog_focus = true;
     }
 
+    fn open_project_dialog(&mut self) {
+        self.open_dialog(popups::Dialog::OpenProject {
+            path: String::new(),
+            error: None,
+        });
+    }
+
+    fn open_project_path(&mut self, path: &str, ctx: &egui::Context) -> Result<(), String> {
+        self.commands
+            .execute(
+                "project.open",
+                &mut self.state,
+                json!({"path": path.trim()}),
+            )
+            .map_err(|error| error.to_string())?;
+        self.dispatch("plugin.refresh", Value::Null);
+        self.tree_selection = None;
+        self.commit_overrides.clear();
+        self.commit_message.clear();
+        self.search_input.clear();
+        self.terminal_input.clear();
+        self.find = findbar::FindBar::default();
+        self.run_label = self.state.project.as_ref().and_then(|project| {
+            jetthing_runner::TaskPlan::detect_run(project.root())
+                .or_else(|_| jetthing_runner::TaskPlan::detect_build(project.root()))
+                .ok()
+                .map(|plan| plan.name)
+        });
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+            "{} – Jetthing",
+            self.project_name()
+        )));
+        Ok(())
+    }
+
     fn editor_focused(&self, ctx: &egui::Context) -> bool {
         ctx.memory(|memory| memory.has_focus(editor::editor_id()))
     }
@@ -204,7 +240,11 @@ impl IdeApp {
             }
             hit
         };
-        if completion_open && !self.palette.open {
+        if completion_open
+            && !self.palette.open
+            && self.dialog.is_none()
+            && self.editor_focused(ctx)
+        {
             let count = self
                 .state
                 .lsp
@@ -222,6 +262,9 @@ impl IdeApp {
             }
         }
         let mac = cfg!(target_os = "macos");
+        if consume(Modifiers::COMMAND, Key::O) {
+            self.open_project_dialog();
+        }
         if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::A) {
             self.palette.show_tab(palette::Tab::Actions);
         }
@@ -463,11 +506,15 @@ impl eframe::App for IdeApp {
         chrome::window_resize_handles(ctx);
         chrome::main_toolbar(self, ctx);
         chrome::status_bar(self, ctx);
-        chrome::left_stripe(self, ctx);
-        chrome::right_stripe(ctx);
-        toolwindows::left(self, ctx);
-        toolwindows::bottom(self, ctx);
-        editor::central(self, ctx);
+        if self.state.project.is_none() {
+            welcome::show(self, ctx);
+        } else {
+            chrome::left_stripe(self, ctx);
+            chrome::right_stripe(ctx);
+            toolwindows::left(self, ctx);
+            toolwindows::bottom(self, ctx);
+            editor::central(self, ctx);
+        }
         editor::completion_popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);

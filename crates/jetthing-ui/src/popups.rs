@@ -8,6 +8,10 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 
 pub enum Dialog {
+    OpenProject {
+        path: String,
+        error: Option<String>,
+    },
     NewEntry {
         parent: PathBuf,
         directory: bool,
@@ -79,16 +83,18 @@ fn title(ui: &mut egui::Ui, text: &str) {
 }
 
 fn name_field(ui: &mut egui::Ui, text: &mut String, focus: bool) -> (bool, bool) {
+    // TextEdit consumes Enter itself; capture submission before drawing it.
+    let submit = ui.memory(|memory| memory.has_focus(input_id()))
+        && ui.input(|input| input.key_pressed(egui::Key::Enter));
     let response = ui.add(
         egui::TextEdit::singleline(text)
             .id(input_id())
             .desired_width(f32::INFINITY)
             .margin(egui::Margin::symmetric(6, 5)),
     );
-    if focus || !response.has_focus() {
+    if focus {
         response.request_focus();
     }
-    let submit = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
     (submit, response.changed())
 }
 
@@ -100,6 +106,46 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     let mut keep = true;
     let mut error = None;
     match &mut dialog {
+        Dialog::OpenProject {
+            path,
+            error: open_error,
+        } => {
+            let mut submit = false;
+            popup_frame(ctx, "dialog_open_project", 520.0, |ui| {
+                title(ui, "Open Project");
+                ui.label("Project directory");
+                let changed;
+                (submit, changed) = name_field(ui, path, focus);
+                if changed {
+                    *open_error = None;
+                }
+                ui.label(
+                    RichText::new("Enter the full path to an existing folder.")
+                        .color(theme::TEXT_INFO),
+                );
+                if let Some(message) = open_error.as_ref() {
+                    ui.label(RichText::new(message).color(theme::ERROR));
+                }
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(!path.trim().is_empty(), egui::Button::new("Open"))
+                        .clicked()
+                    {
+                        submit = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        keep = false;
+                    }
+                });
+            });
+            if submit && keep && !path.trim().is_empty() {
+                match app.open_project_path(path, ctx) {
+                    Ok(()) => keep = false,
+                    Err(message) => *open_error = Some(message),
+                }
+            }
+        }
         Dialog::NewEntry {
             parent,
             directory,
@@ -339,6 +385,34 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focused_name_field_submits_on_enter() {
+        let ctx = egui::Context::default();
+        let mut text = String::from("/project");
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                name_field(ui, &mut text, true);
+            });
+        });
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let mut submitted = false;
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                submitted = name_field(ui, &mut text, false).0;
+            });
+        });
+        assert!(submitted);
+    }
 
     #[test]
     fn parses_line_and_column() {

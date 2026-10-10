@@ -87,6 +87,14 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
         for (menu, categories) in MENUS {
             ui.menu_button(menu, |ui| {
                 ui.set_min_width(240.0);
+                if menu == "File"
+                    && ui
+                        .add(egui::Button::new("Open Project…").shortcut_text(keys::display("⌘O")))
+                        .clicked()
+                {
+                    app.open_project_dialog();
+                    ui.close();
+                }
                 for spec in specs.iter().filter(|spec| {
                     categories.contains(&spec.category.as_str()) && IdeApp::parameterless(spec)
                 }) {
@@ -162,6 +170,10 @@ fn project_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         if let Some(root) = &root {
             ui.label(egui::RichText::new(root).color(theme::TEXT_SECONDARY));
             ui.separator();
+        }
+        if ui.button("Open Project…").clicked() {
+            app.open_project_dialog();
+            ui.close();
         }
         if ui.button("Refresh Plugins").clicked() {
             app.dispatch("plugin.refresh", Value::Null);
