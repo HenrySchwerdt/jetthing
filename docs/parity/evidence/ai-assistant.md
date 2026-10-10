@@ -90,6 +90,23 @@ cargo test -p jetthing-core ai_actions
   kotlinc, gcc/clang formats) is resolved to a project file, opened and attached so the
   fix can be applied (`09-…`).
 
+## Commit message generation (slice 4)
+
+```sh
+cargo test -p jetthing-git diffs_selected_paths
+cargo test -p jetthing-ai commit
+cargo test -p jetthing-core ai_vcs
+```
+
+- The Commit window's action row has an AI button (reference scene 12 shows an
+  AI-generate icon next to the message field). It sends the diff of exactly the files
+  selected for commit — working tree against `HEAD`, untracked files as additions,
+  binary files summarized, staged content when there is no commit yet — plus the branch
+  and the last 10 subjects so the message follows the repository's convention.
+- The message streams into the field (Stop cancels); fences, quotes and labels are
+  stripped. Diffs over 60 000 characters are cut and the prompt says so.
+- Uses the fast completion model. `12-commit-message-generated.png`.
+
 ## Evidence
 
 Linux, Xvfb 1600×1000, `JETTHING_RENDERER=glow`, 2026-10-10. Answers come from the
@@ -109,9 +126,9 @@ offline demo provider (`JETTHING_AI_MOCK=1`, labelled "mock-chat (demo)"); no
 | `ai/09-fix-build-with-ai.png` | failed `cargo build` with "Fix with AI" link; chat with Build output + main.rs chips |
 | `ai/10-editor-ai-actions-menu.png` | editor context menu → AI Actions submenu |
 | `ai/11-refactor-auto-diff.png` | Suggest Refactoring answer opened the diff preview automatically |
+| `ai/12-commit-message-generated.png` | Commit window with a generated message and the AI button |
 
 ## Gaps
 
-Alt+Enter intention integration, fixing failed tests,
-commit message generation, terminal NL→command, agent mode, `@file`/`@symbol`,
+Alt+Enter intention integration, fixing failed tests, Explain Commit, terminal NL→command, agent mode, `@file`/`@symbol`,
 open-tabs/VCS context and OS keychain storage are follow-up slices.

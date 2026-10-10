@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 mod ai_actions;
 mod ai_commands;
 mod ai_inline;
+mod ai_vcs;
 pub mod build_info;
 mod diagnostic_commands;
 pub mod diagnostics;

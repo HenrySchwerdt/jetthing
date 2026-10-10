@@ -7,6 +7,7 @@
 pub mod actions;
 pub mod anthropic;
 pub mod chat;
+pub mod commit;
 pub mod completion;
 pub mod diff;
 pub mod markdown;

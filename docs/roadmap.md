@@ -53,7 +53,8 @@
 - [x] AI Chat tool window with streaming Markdown, context chips, slash commands, Apply with diff preview
 - [x] Inline ghost-text completion with debounce, type-through, Tab / word accept
 - [x] AI actions (Explain, Refactor, Generate tests/docs, Find problems, Fix with AI on problems and failed builds)
-- [ ] Commit message generation, terminal NL→command
+- [x] Commit message generation from the selected changes
+- [ ] Terminal NL→command
 - [ ] Agent mode with per-edit approval
 
 ## M2 — language intelligence

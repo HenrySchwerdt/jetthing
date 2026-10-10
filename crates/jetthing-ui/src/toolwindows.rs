@@ -602,6 +602,9 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     ))
                     .color(theme::TEXT_INFO),
                 );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::ai_vcs::commit_message_button(app, ui, &selected);
+                });
             });
         });
     if commit_now && !app.commit_message.trim().is_empty() && !selected.is_empty() {

@@ -54,6 +54,8 @@ pub struct AiState {
     pub(crate) inline_request: Option<crate::ai_inline::InlineRequest>,
     /// Assistant turn of an editing AI action whose diff preview opens when done.
     pub(crate) auto_preview: Option<usize>,
+    /// Commit message being generated for the Commit tool window.
+    pub commit_draft: Option<crate::ai_vcs::CommitDraft>,
 }
 
 impl Default for AiState {
@@ -73,6 +75,7 @@ impl Default for AiState {
             inline: None,
             inline_request: None,
             auto_preview: None,
+            commit_draft: None,
         }
     }
 }
@@ -196,6 +199,7 @@ impl IdeState {
         self.ai.inline = None;
         self.ai.inline_request = None;
         self.ai.auto_preview = None;
+        self.ai.commit_draft = None;
         self.ai.chat = ChatSession::default();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
@@ -308,6 +312,9 @@ impl IdeState {
 
     pub fn poll_ai(&mut self) {
         for (id, update) in self.ai.service.poll() {
+            if self.ai_commit_update(id, &update) {
+                continue;
+            }
             if self.ai.inline_request.as_ref().is_some_and(|r| r.id == id) {
                 if let AiUpdate::Finished(result) = update {
                     self.ai_inline_finished(result);
@@ -505,6 +512,13 @@ fn demo_reply(request: &ChatRequest) -> MockReply {
         .last()
         .map(|m| m.text())
         .unwrap_or_default();
+    if request.system == jetthing_ai::commit::SYSTEM_PROMPT {
+        let files = question.matches("diff --git").count();
+        return MockReply::text(&format!(
+            "chore: demo commit message\n\nDemo mode describes {files} changed file(s) without \
+             analysing them; configure a provider for real messages."
+        ));
+    }
     if request.role == jetthing_ai::ModelRole::Completion {
         // Generic placeholder code; demo mode never analyses the file.
         let before = question.split("<cursor/>").next().unwrap_or_default();
@@ -768,6 +782,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     }
     crate::ai_inline::register(registry);
     crate::ai_actions::register(registry);
+    crate::ai_vcs::register(registry);
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ mod about;
 mod ai_actions;
 mod ai_chat;
 mod ai_inline;
+mod ai_vcs;
 mod chrome;
 mod control;
 mod crash_notice;
