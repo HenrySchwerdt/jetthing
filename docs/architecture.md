@@ -13,7 +13,9 @@ no crate below `jetthing-ui` imports UI types.
 - `jetthing-project`: safe project-root model, bounded file tree, UTF-8 document IO.
 - `jetthing-text`: revisioned rope storage, Unicode-safe multi-selection transactions,
   typing coalescence, and history.
-- `jetthing-language`: language-neutral analysis output with the first Tree-sitter Rust provider.
+- `jetthing-language`: data-driven Tree-sitter language registry (grammar crates plus their
+  bundled queries), a generic highlight engine producing `HighlightLayer`s keyed by IntelliJ
+  text-attribute keys, and the editor color-scheme model loaded from `docs/spec/data/`.
 - `jetthing-terminal`: native PTY process lifecycle, asynchronous output, input, and resizing.
 - `jetthing-search`: cancellable generation-based background text search with streamed,
   bounded results and binary/large-file exclusion.

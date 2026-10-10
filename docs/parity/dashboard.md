@@ -9,4 +9,4 @@ Generated from `docs/parity/*.md`.
 | Partial | 17 |
 | Implemented | 6 |
 | Verified | 0 |
-| **Total** | **33** |
+| **Total** | **34** |

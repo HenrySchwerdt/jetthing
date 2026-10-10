@@ -20,7 +20,10 @@
 - [x] Viewport-native editor that shapes and paints only visible lines
 - [x] Multi-cursor selections, atomic edits, and coalesced primary typing transactions
 - [x] Tree-sitter Rust parsing, syntax highlighting, and parse diagnostics
-- [ ] Incremental Tree-sitter edit notifications and multi-language grammars
+- [x] Data-driven Tree-sitter language registry (20 grammars) with bundled highlight queries
+- [x] IntelliJ editor color schemes (Islands Dark) resolved by text-attribute key
+- [ ] Incremental Tree-sitter edit notifications, viewport-bounded highlighting, injections
+- [ ] Tree-sitter folding, Expand/Shrink Selection, Structure view and File Structure popup
 - [x] Integrated native PTY terminal with shell input and command dispatch
 - [x] Interactive ANSI terminal grid, direct shell keys, selection/copy, scrollback and resize
 - [ ] Terminal hyperlinks, mouse reporting and multiple sessions
