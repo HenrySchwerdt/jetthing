@@ -50,6 +50,7 @@ See `docs/parity/evidence/ui-control-socket.md` for the protocol.
 
 ```bash
 cargo run -p xtask -- dist     # release build staged in dist/jetthing-<version>-<os>-<arch>/
+cargo run -p xtask -- changelog # release notes since the last v* tag, from conventional commits
 ```
 
 Every push to `main` runs `.github/workflows/release.yml`: it builds Linux, macOS and

@@ -1,3 +1,4 @@
+mod changelog;
 mod parity;
 mod scenes;
 
@@ -8,8 +9,7 @@ use std::{
     process::Command,
 };
 
-const USAGE: &str =
-    "usage: cargo xtask parity [--check] | dist | scenes [--only 01,05] [--out DIR] [--release]";
+const USAGE: &str = "usage: cargo xtask parity [--check] | dist | changelog [--from REF] [--to REF] [--version X.Y.Z] [--output FILE] | scenes [--only 01,05] [--out DIR] [--release]";
 
 fn workspace_root() -> PathBuf {
     // Prefer the current directory when it holds the inventory (normal `cargo run`
@@ -36,6 +36,7 @@ fn main() -> Result<()> {
             parity(check)
         }
         Some("dist") => dist(),
+        Some("changelog") => changelog::run(changelog::Options::parse(args.into_iter().skip(1))?),
         Some("scenes") => scenes::run(args.into_iter().skip(1)),
         _ => bail!(USAGE),
     }
