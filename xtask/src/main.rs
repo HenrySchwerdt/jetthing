@@ -36,7 +36,7 @@ fn main() -> Result<()> {
             parity(check)
         }
         Some("dist") => dist(),
-        Some("scenes") => scenes::run(args),
+        Some("scenes") => scenes::run(args.into_iter().skip(1)),
         _ => bail!(USAGE),
     }
 }
