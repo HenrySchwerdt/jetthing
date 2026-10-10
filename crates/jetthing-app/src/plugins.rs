@@ -5,9 +5,12 @@
 use jetthing_ui::{PluginFactory, PluginSet};
 use std::rc::Rc;
 
+#[allow(clippy::vec_init_then_push)] // pushes depend on enabled features
 pub fn bundled() -> Vec<PluginFactory> {
     #[allow(unused_mut)]
     let mut plugins: Vec<PluginFactory> = Vec::new();
+    #[cfg(feature = "mongo-raabit")]
+    plugins.push(Rc::new(|| Box::new(mongo_raabit::MongoRaabitPlugin::new())));
     #[cfg(feature = "example-plugins")]
     plugins.push(Rc::new(|| {
         Box::new(jetthing_plugin_hello::HelloPlugin::new())

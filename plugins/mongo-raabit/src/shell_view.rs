@@ -1,4 +1,4 @@
-//! Shell tab (IntelliShell equivalent): script editor with completion, console output
+//! Shell mode of the Query tab (IntelliShell equivalent): script editor with completion, console output
 //! and a result tree. Uses the installed mongosh, or the built-in evaluator.
 
 use crate::app::{MongoRaabit, TabId};

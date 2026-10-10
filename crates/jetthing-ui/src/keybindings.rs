@@ -11,6 +11,7 @@ use jetthing_core::ToolWindow;
 use jetthing_core::keymap_commands::{BindingScope, command_for_action};
 use jetthing_keymap::{KeyStroke, Lookup, Modifier, Modifiers, Notation, Shortcut};
 use serde_json::Value;
+use std::path::PathBuf;
 
 /// Actions that open workbench popups rather than run engine commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +31,8 @@ pub enum UiAction {
     OpenProject,
     NewFile,
     NewDirectory,
+    NewJavaClass,
+    NewKotlinFile,
     Push,
     Exit,
 }
@@ -51,6 +54,8 @@ pub fn ui_action(action: &str) -> Option<UiAction> {
         "OpenFile" => UiAction::OpenProject,
         "NewFile" => UiAction::NewFile,
         "NewDir" => UiAction::NewDirectory,
+        "NewClass" => UiAction::NewJavaClass,
+        "Kotlin.NewFile" => UiAction::NewKotlinFile,
         "Vcs.Push" => UiAction::Push,
         "Exit" => UiAction::Exit,
         _ => return None,
@@ -164,12 +169,33 @@ impl IdeApp {
             .unwrap_or_else(|| crate::keys::display(spec.shortcut.as_deref().unwrap_or_default()))
     }
 
+    /// Directory (project-relative) that New entries go into: the selected directory,
+    /// or the parent of the selected file, like the Project view's New group.
+    fn new_entry_parent(&self) -> Option<PathBuf> {
+        let root = self.state.project.as_ref()?.root().to_owned();
+        Some(
+            self.tree_selection
+                .as_ref()
+                .map(|path| {
+                    if root.join(path).is_dir() {
+                        path.clone()
+                    } else {
+                        path.parent().map(Into::into).unwrap_or_default()
+                    }
+                })
+                .unwrap_or_default(),
+        )
+    }
+
     fn ui_action_available(&self, action: UiAction) -> bool {
         let document = self.state.active_document.is_some();
         match action {
             UiAction::GotoLine | UiAction::Find | UiAction::Replace => document,
             UiAction::FindNext | UiAction::FindPrevious => document && !self.find.query.is_empty(),
-            UiAction::NewFile | UiAction::NewDirectory => self.state.project.is_some(),
+            UiAction::NewFile
+            | UiAction::NewDirectory
+            | UiAction::NewJavaClass
+            | UiAction::NewKotlinFile => self.state.project.is_some(),
             UiAction::Push => self.state.git.is_some(),
             _ => true,
         }
@@ -207,24 +233,22 @@ impl IdeApp {
             UiAction::NewProject => self.new_project_dialog(),
             UiAction::OpenProject => self.open_project_dialog(),
             UiAction::NewFile | UiAction::NewDirectory => {
-                if let Some(root) = self.state.project.as_ref().map(|p| p.root().to_owned()) {
-                    // New entries go next to the selection, like the Project view's New.
-                    let parent = self
-                        .tree_selection
-                        .as_ref()
-                        .map(|path| {
-                            let absolute = root.join(path);
-                            if absolute.is_dir() {
-                                path.clone()
-                            } else {
-                                path.parent().map(Into::into).unwrap_or_default()
-                            }
-                        })
-                        .unwrap_or_default();
+                if let Some(parent) = self.new_entry_parent() {
                     self.open_dialog(popups::Dialog::NewEntry {
                         parent,
                         directory: action == UiAction::NewDirectory,
                         name: String::new(),
+                    });
+                }
+            }
+            UiAction::NewJavaClass | UiAction::NewKotlinFile => {
+                if let Some(dir) = self.new_entry_parent() {
+                    self.open_dialog(popups::Dialog::NewClass {
+                        dir,
+                        kotlin: action == UiAction::NewKotlinFile,
+                        name: String::new(),
+                        kind: 0,
+                        error: None,
                     });
                 }
             }

@@ -1,9 +1,10 @@
 //! Aggregation Editor: stage list, stage editor with operator templates, per-stage
 //! input/output preview and full pipeline runs.
 
-use crate::app::{Load, MongoRaabit, ResultView, TabId};
+use crate::app::{Load, MongoRaabit, ResultView, TabId, TabKind};
 use crate::icons::{self, Icon};
 use crate::results;
+use crate::stage_builder::{self, Mode, Suggestions};
 use crate::style::{self, Palette};
 use crate::tools::RunResult;
 use crate::values;
@@ -12,6 +13,7 @@ use egui::{CornerRadius, FontId, RichText, Sense, Stroke, Ui, vec2};
 use mongo_raabit_core::aggregate::{RunOptions, STAGE_OPERATORS, Stage, stage_operator};
 use mongo_raabit_core::bson::Document;
 use mongo_raabit_core::codegen::{CodeRequest, Operation};
+use mongo_raabit_core::stage_form;
 
 enum Action {
     Preview,
@@ -27,6 +29,7 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
         .and_then(|s| app.session(s))
         .map(|s| s.profile.name.clone())
         .unwrap_or_default();
+    let collections = lookup_collections(app, tab_id);
     let Some(tab) = app.aggregation_tab_mut(tab_id) else {
         return;
     };
@@ -110,7 +113,7 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
                     let width = ui.available_width() - 28.0;
                     ui.set_width(width);
                     ui.set_height(body_height - 16.0);
-                    ui.vertical(|ui| stage_editor(ui, &p, tab, &mut actions));
+                    ui.vertical(|ui| stage_editor(ui, &p, tab, &collections, &mut actions));
                 });
         },
     );
@@ -129,6 +132,20 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
     if code.is_some() {
         open_code(app, tab_id);
     }
+}
+
+/// Collection names of the tab's database, from the loaded tree (for `$lookup`).
+fn lookup_collections(app: &MongoRaabit, tab_id: TabId) -> Vec<String> {
+    let Some(TabKind::Aggregation(tab)) = app.tabs.iter().find(|t| t.id == tab_id).map(|t| &t.kind)
+    else {
+        return Vec::new();
+    };
+    app.session(tab.session)
+        .and_then(|s| s.databases.ready())
+        .and_then(|dbs| dbs.iter().find(|d| d.info.name == tab.db))
+        .and_then(|d| d.collections.ready())
+        .map(|colls| colls.iter().map(|c| c.info.name.clone()).collect())
+        .unwrap_or_default()
 }
 
 fn open_code(app: &mut MongoRaabit, tab_id: TabId) {
@@ -316,24 +333,58 @@ fn stage_list(
         });
     ui.add_space(4.0);
     let mut add = None;
-    egui::ComboBox::from_id_salt(("raabit-add-stage", tab.db.as_str(), tab.collection.as_str()))
-        .selected_text(RichText::new("+  Add stage").color(p.accent_text))
-        .width(ui.available_width())
-        .height(420.0)
-        .show_ui(ui, |ui| {
-            for op in STAGE_OPERATORS {
-                let label = format!("{:<16} {}", op.name, op.description);
-                if ui
-                    .selectable_label(false, RichText::new(label).font(FontId::monospace(12.0)))
-                    .clicked()
-                {
-                    add = Some(op.name);
-                }
+    let add_button = ui.add_sized(
+        vec2(ui.available_width(), 26.0),
+        egui::Button::new(RichText::new("+  Add stage").color(p.accent_text)),
+    );
+    egui::Popup::menu(&add_button).show(|ui| {
+        ui.set_min_width(260.0);
+        for (name, label, description) in stage_builder::FRIENDLY_STAGES {
+            let mut job = egui::text::LayoutJob::default();
+            job.append(
+                label,
+                0.0,
+                egui::TextFormat::simple(FontId::proportional(13.0), p.text_strong),
+            );
+            job.append(
+                &format!("\n{description}"),
+                0.0,
+                egui::TextFormat::simple(FontId::proportional(11.5), p.text_info),
+            );
+            if ui.selectable_label(false, job).clicked() {
+                add = Some(*name);
             }
+        }
+        ui.separator();
+        ui.menu_button("More stages…", |ui| {
+            ui.set_min_width(320.0);
+            egui::ScrollArea::vertical()
+                .max_height(380.0)
+                .show(ui, |ui| {
+                    for op in STAGE_OPERATORS {
+                        if stage_builder::FRIENDLY_STAGES
+                            .iter()
+                            .any(|(name, _, _)| *name == op.name)
+                        {
+                            continue;
+                        }
+                        let label = format!("{:<16} {}", op.name, op.description);
+                        if ui
+                            .selectable_label(
+                                false,
+                                RichText::new(label).font(FontId::monospace(12.0)),
+                            )
+                            .clicked()
+                        {
+                            add = Some(op.name);
+                        }
+                    }
+                });
         });
+    });
     if let Some(name) = add {
         let at = (tab.selected + 1).min(tab.pipeline.stages.len());
-        tab.pipeline.stages.insert(at, Stage::new(name));
+        tab.insert_stage(at, Stage::new(name));
         tab.selected = at;
         actions.push(Action::Preview);
     }
@@ -348,13 +399,13 @@ fn stage_list(
     if let Some((i, delta)) = move_by {
         let to = i as isize + delta;
         if to >= 0 && (to as usize) < tab.pipeline.stages.len() {
-            tab.pipeline.move_stage(i, to as usize);
+            tab.move_stage(i, to as usize);
             tab.selected = to as usize;
             actions.push(Action::Preview);
         }
     }
     if let Some(i) = remove {
-        tab.pipeline.stages.remove(i);
+        tab.remove_stage(i);
         tab.selected = tab
             .selected
             .min(tab.pipeline.stages.len().saturating_sub(1));
@@ -366,8 +417,13 @@ fn stage_editor(
     ui: &mut Ui,
     p: &Palette,
     tab: &mut crate::tools::AggregationTab,
+    collections: &[String],
     actions: &mut Vec<Action>,
 ) {
+    let fields = match &tab.preview {
+        Load::Ready(preview) => stage_builder::field_paths(&preview.input),
+        _ => Vec::new(),
+    };
     let Some(stage) = tab.pipeline.stages.get_mut(tab.selected) else {
         widgets::caption(ui, "Add a stage to start building the pipeline.");
         return;
@@ -399,16 +455,89 @@ fn stage_editor(
         }
     });
     ui.add_space(6.0);
-    let editor_height = (ui.available_height() * 0.36).clamp(110.0, 260.0);
+    let form_id = ui.make_persistent_id(("raabit-stage-form", index));
+    let formable = stage_form::has_form(&stage.operator);
+    let mut mode = if formable
+        && !tab.stage_code.contains(&index)
+        && stage_builder::form_available(ui, form_id, stage)
+    {
+        Mode::Form
+    } else {
+        Mode::Code
+    };
+    if formable {
+        ui.horizontal(|ui| {
+            if widgets::segmented(
+                ui,
+                &mut mode,
+                &[
+                    (Mode::Form, Icon::Edit, "Form"),
+                    (Mode::Code, Icon::Code, "Code"),
+                ],
+            ) {
+                match mode {
+                    Mode::Form if stage_builder::form_available(ui, form_id, stage) => {
+                        tab.stage_code.remove(&index);
+                        tab.form_hint = None;
+                    }
+                    Mode::Form => {
+                        tab.stage_code.insert(index);
+                        tab.form_hint = Some(index);
+                        mode = Mode::Code;
+                    }
+                    Mode::Code => {
+                        tab.stage_code.insert(index);
+                        tab.form_hint = None;
+                    }
+                }
+            }
+            if mode == Mode::Form {
+                widgets::caption(
+                    ui,
+                    "Pick fields and values; the stage code is written for you.",
+                );
+            }
+        });
+        if tab.form_hint == Some(index) && mode == Mode::Code {
+            ui.horizontal(|ui| {
+                icons::icon(ui, Icon::Warning, p.warning);
+                ui.label(
+                    RichText::new(
+                        "This stage uses features the form cannot show; edit it in Code.",
+                    )
+                    .color(p.warning),
+                );
+            });
+        }
+        ui.add_space(4.0);
+    }
+    let editor_height = if mode == Mode::Form {
+        (ui.available_height() * 0.45).clamp(140.0, 340.0)
+    } else {
+        (ui.available_height() * 0.36).clamp(110.0, 260.0)
+    };
     egui::ScrollArea::vertical()
-        .id_salt(("raabit-stage-body", index))
+        .id_salt(("raabit-stage-body", index, mode == Mode::Form))
         .max_height(editor_height)
         .show(ui, |ui| {
-            if widgets::code_editor(ui, &mut stage.body, 7, ("raabit-stage-editor", index))
+            if mode == Mode::Form {
+                let suggest = Suggestions {
+                    fields: &fields,
+                    collections,
+                };
+                if stage_builder::stage_form(ui, stage, suggest, form_id) == Some(true)
+                    && stage.to_document().is_ok()
+                {
+                    actions.push(Action::Preview);
+                }
+            } else if widgets::code_editor(ui, &mut stage.body, 7, ("raabit-stage-editor", index))
                 .changed()
-                && stage.to_document().is_ok()
             {
-                actions.push(Action::Preview);
+                // Typing in the editor keeps the stage in Code mode.
+                tab.stage_code.insert(index);
+                if stage.to_document().is_ok() {
+                    actions.push(Action::Preview);
+                }
             }
         });
     if let Some(err) = &tab.stage_error {
