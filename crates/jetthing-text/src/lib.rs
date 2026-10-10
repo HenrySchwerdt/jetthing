@@ -221,6 +221,8 @@ pub enum TextError {
     },
     #[error("text changes overlap or are not ordered")]
     OverlappingChanges,
+    #[error("invalid regular expression: {0}")]
+    InvalidPattern(String),
 }
 
 /// Revisioned UTF-8 text storage. All public offsets are Unicode scalar-value

@@ -2691,6 +2691,7 @@ name = "jetthing-text"
 version = "0.0.3"
 dependencies = [
  "proptest",
+ "regex",
  "ropey",
  "thiserror 2.0.21",
 ]
