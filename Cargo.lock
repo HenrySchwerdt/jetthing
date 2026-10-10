@@ -2383,6 +2383,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jetthing-bazel"
+version = "0.0.2"
+dependencies = [
+ "jetthing-runner",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jetthing-cli"
 version = "0.0.2"
 dependencies = [
@@ -2418,6 +2427,7 @@ version = "0.0.2"
 dependencies = [
  "flate2",
  "jetthing-android",
+ "jetthing-bazel",
  "jetthing-command",
  "jetthing-git",
  "jetthing-gradle",
@@ -2613,6 +2623,7 @@ dependencies = [
  "eframe",
  "egui",
  "jetthing-android",
+ "jetthing-bazel",
  "jetthing-command",
  "jetthing-control",
  "jetthing-core",

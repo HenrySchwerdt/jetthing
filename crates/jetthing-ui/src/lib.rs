@@ -8,6 +8,7 @@
 mod about;
 mod android_sdk;
 mod android_view;
+mod bazel_window;
 mod build_window;
 mod chrome;
 mod control;
@@ -713,6 +714,7 @@ impl eframe::App for IdeApp {
             toolwindows::left(self, ctx);
             device_manager::right(self, ctx);
             gradle_window::show(self, ctx);
+            bazel_window::show(self, ctx);
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }

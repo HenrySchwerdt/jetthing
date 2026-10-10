@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 mod android_commands;
 mod android_devices;
 mod android_logcat;
+mod bazel_commands;
 mod build_commands;
 pub mod build_info;
 mod diagnostic_commands;
@@ -92,6 +93,9 @@ pub struct IdeState {
     /// Gradle model from the last sync (cached in `.jetthing/gradle/model.json`).
     pub gradle_model: Option<jetthing_gradle::GradleModel>,
     pub gradle_error: Option<String>,
+    /// Bazel targets from the last sync (cached in `.jetthing/bazel/targets.json`).
+    pub bazel_targets: Option<jetthing_bazel::BazelTargets>,
+    pub bazel_error: Option<String>,
     /// Run/Debug configurations of the open project and the run widget selection.
     pub run_configurations: jetthing_runner::RunManager,
     /// Pending request to show the Run/Debug Configurations dialog (focused name).
@@ -178,6 +182,7 @@ impl IdeState {
         self.vcs_stale = false;
         self.detect_build();
         self.load_gradle_model();
+        self.load_bazel_targets();
         self.load_run_configurations();
         self.restore_workspace();
         Ok(())
@@ -641,6 +646,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_commands::register(&mut registry);
     android_devices::register(&mut registry);
     android_logcat::register(&mut registry);
+    bazel_commands::register(&mut registry);
     build_commands::register(&mut registry);
     editor_commands::register(&mut registry);
     disk_sync::register(&mut registry);

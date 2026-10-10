@@ -654,6 +654,9 @@ pub(crate) fn right_stripe_windows(app: &IdeApp) -> Vec<(ToolWindow, Icon)> {
     if app.state.is_gradle_project() || app.state.tool_windows.is_visible(ToolWindow::Gradle) {
         windows.push((ToolWindow::Gradle, Icon::Model));
     }
+    if app.state.is_bazel_project() || app.state.tool_windows.is_visible(ToolWindow::Bazel) {
+        windows.push((ToolWindow::Bazel, Icon::Model));
+    }
     if app.state.android.project.is_some()
         || app.state.tool_windows.is_visible(ToolWindow::DeviceManager)
     {

@@ -483,7 +483,7 @@ impl BuildSystem for Bazel {
     }
     fn run_plan(&self, _root: &Path) -> Result<TaskPlan, RunnerError> {
         Err(RunnerError::NotRunnable(
-            "Bazel runs a specific target; create a run configuration with a target such as //:app"
+            "Bazel runs a specific target: pick one in the Bazel tool window or create a run configuration with a target such as //:app"
                 .into(),
         ))
     }
@@ -492,7 +492,8 @@ impl BuildSystem for Bazel {
             TaskKind::Test,
             "Bazel Test",
             Self::program()?,
-            &["test", "//..."],
+            // Keep going so one broken package does not hide every other result.
+            &["test", "--keep_going", "//..."],
             root,
         )
     }

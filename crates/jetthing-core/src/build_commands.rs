@@ -154,7 +154,11 @@ impl IdeState {
                 .plan()
                 .is_some_and(|plan| plan.kind == TaskKind::Sync)
             {
-                self.finish_gradle_sync();
+                if self.is_bazel_project() {
+                    self.finish_bazel_sync();
+                } else {
+                    self.finish_gradle_sync();
+                }
                 if matches!(self.runner.state(), TaskState::Exited(0)) {
                     return;
                 }

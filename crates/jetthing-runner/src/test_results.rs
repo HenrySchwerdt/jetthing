@@ -210,19 +210,23 @@ impl TestResults {
                         "system-out" | "system-err" if case.is_some() && !empty => {
                             text_target = Some(TextTarget::Output);
                         }
+                        "system-out" | "system-err" if !empty => {
+                            // Suite-level output (Bazel's test.log) belongs to its case.
+                            text_target = Some(TextTarget::SuiteOutput);
+                        }
                         _ => {}
                     }
                 }
                 Event::Text(text) => {
-                    if let (Some(target), Some((_, _, current))) = (text_target, case.as_mut()) {
+                    if let Some(target) = text_target {
                         let text = text.unescape().map_err(|error| error.to_string())?;
-                        append(target, current, &text);
+                        results.append_text(target, case.as_mut().map(|(_, _, c)| c), &text);
                     }
                 }
                 Event::CData(data) => {
-                    if let (Some(target), Some((_, _, current))) = (text_target, case.as_mut()) {
+                    if let Some(target) = text_target {
                         let text = data.decode().map_err(|error| error.to_string())?;
-                        append(target, current, &text);
+                        results.append_text(target, case.as_mut().map(|(_, _, c)| c), &text);
                     }
                 }
                 Event::End(end) => match end.local_name().as_ref() {
@@ -292,12 +296,39 @@ impl TestResults {
                 .map_err(|error| error.to_string())
                 .and_then(|xml| Self::parse_junit(&xml))
             {
-                Ok(parsed) => results.merge(parsed),
+                Ok(mut parsed) => {
+                    // Bazel names suites after the target; use the full label instead.
+                    if let Some(label) = bazel_label(&testlogs, &path) {
+                        let target = label.rsplit(':').next().unwrap_or(&label).to_owned();
+                        for suite in &mut parsed.suites {
+                            // The single case is named after the target (`lib/x_test`).
+                            for case in &mut suite.cases {
+                                if case.name == suite.name {
+                                    case.name = target.clone();
+                                }
+                            }
+                            suite.name = label.clone();
+                        }
+                    }
+                    results.merge(parsed)
+                }
                 Err(error) => errors.push((path, error)),
             }
         }
         (results, errors)
     }
+}
+
+/// `bazel-testlogs/lib/greeter_test/test.xml` → `//lib:greeter_test`.
+fn bazel_label(testlogs: &Path, report: &Path) -> Option<String> {
+    let relative = report.strip_prefix(testlogs).ok()?;
+    let target_dir = relative.parent()?;
+    let name = target_dir.file_name()?.to_string_lossy();
+    let package = target_dir
+        .parent()
+        .map(|dir| dir.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    Some(format!("//{package}:{name}"))
 }
 
 fn is_junit_report(path: &Path) -> bool {
@@ -318,6 +349,21 @@ fn is_junit_report(path: &Path) -> bool {
 enum TextTarget {
     Details,
     Output,
+    SuiteOutput,
+}
+
+impl TestResults {
+    fn append_text(&mut self, target: TextTarget, case: Option<&mut TestCase>, text: &str) {
+        match (target, case) {
+            (TextTarget::SuiteOutput, _) => {
+                if let Some(last) = self.suites.last_mut().and_then(|s| s.cases.last_mut()) {
+                    last.output.push_str(text.trim_start_matches('\n'));
+                }
+            }
+            (target, Some(case)) => append(target, case, text),
+            (_, None) => {}
+        }
+    }
 }
 
 fn append(target: TextTarget, case: &mut TestCase, text: &str) {
@@ -327,7 +373,7 @@ fn append(target: TextTarget, case: &mut TestCase, text: &str) {
                 details.push_str(text);
             }
         }
-        TextTarget::Output => case.output.push_str(text),
+        TextTarget::Output | TextTarget::SuiteOutput => case.output.push_str(text),
     }
 }
 
@@ -411,6 +457,50 @@ impl ConsoleTestParser {
                 details.push('\n');
             }
             return;
+        }
+        // Bazel summary: `//:app_test   (cached) PASSED in 0.0s` / `FAILED in 0.1s`.
+        if (line.starts_with("//") || line.starts_with('@'))
+            && let Some((label, status)) = line.split_once(char::is_whitespace)
+        {
+            let status = status.trim().trim_start_matches("(cached)").trim();
+            let outcome = if status.starts_with("PASSED") {
+                Some(TestOutcome::Passed)
+            } else if status.starts_with("FAILED") || status.starts_with("TIMEOUT") {
+                Some(TestOutcome::Failed {
+                    message: status.split(" in ").next().unwrap_or(status).to_owned(),
+                    details: String::new(),
+                })
+            } else if status.starts_with("NO STATUS") || status.starts_with("SKIPPED") {
+                Some(TestOutcome::Skipped)
+            } else {
+                None
+            };
+            if let Some(outcome) = outcome {
+                let duration = status
+                    .rsplit_once(" in ")
+                    .and_then(|(_, time)| time.strip_suffix('s'))
+                    .and_then(|secs| secs.parse::<f64>().ok())
+                    .filter(|secs| secs.is_finite() && *secs >= 0.0)
+                    .map(Duration::from_secs_f64);
+                let name = label.rsplit(':').next().unwrap_or(label).to_owned();
+                // Do not downgrade a richer report already merged for this target.
+                let known = results
+                    .suites
+                    .iter()
+                    .any(|suite| suite.name == label && suite.cases.iter().any(|c| c.name == name));
+                if !known {
+                    results.push(
+                        label,
+                        TestCase {
+                            name,
+                            duration,
+                            outcome,
+                            output: String::new(),
+                        },
+                    );
+                }
+                return;
+            }
         }
         // go test -v: `--- PASS: TestAdd (0.00s)` then `ok  	example.com/pkg	0.003s`
         let trimmed = line.trim_start();
@@ -550,6 +640,31 @@ mod tests {
     }
 
     #[test]
+    fn bazel_reports_use_labels_and_suite_output() {
+        let root = std::env::temp_dir().join(format!("jetthing-bazel-logs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("bazel-testlogs/lib/greeter_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("test.xml"),
+            r#"<testsuites><testsuite name="lib/greeter_test" tests="1"><testcase name="lib/greeter_test" status="run" time="0"><error message="exited with error code 1"></error></testcase>
+      <system-out>
+<![CDATA[expected 2, got 3]]>
+      </system-out></testsuite></testsuites>"#,
+        )
+        .unwrap();
+        let (results, errors) = TestResults::collect_reports(&root, SystemTime::UNIX_EPOCH);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(results.suites()[0].name, "//lib:greeter_test");
+        assert!(
+            results.suites()[0].cases[0]
+                .output
+                .contains("expected 2, got 3")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn libtest_console_output_with_failure_details() {
         let mut results = TestResults::default();
         let mut parser = ConsoleTestParser::default();
@@ -586,6 +701,28 @@ mod tests {
         assert!(message.contains("panicked at src/lib.rs:12:9"), "{message}");
         assert!(details.contains("assertion `left == right` failed"));
         assert_eq!(results.suites()[1].name, "(top level)");
+    }
+
+    #[test]
+    fn bazel_summary_lines_include_cached_results() {
+        let mut results = TestResults::default();
+        let mut parser = ConsoleTestParser::default();
+        for line in [
+            "//:app_test                                                     (cached) PASSED in 0.0s",
+            "//lib:flaky_test                                                FAILED in 0.2s",
+            "  /root/.cache/bazel/.../testlogs/lib/flaky_test/test.log",
+            "Executed 1 out of 2 tests: 1 test passes and 1 fails locally.",
+        ] {
+            parser.on_line(line, &mut results);
+        }
+        assert_eq!(results.suites()[0].name, "//:app_test");
+        assert_eq!(results.suites()[0].cases[0].name, "app_test");
+        assert_eq!(results.counts().failed, 1);
+        assert_eq!(results.failed_tests()[0].suite, "//lib:flaky_test");
+        assert_eq!(
+            results.suites()[1].cases[0].duration,
+            Some(Duration::from_millis(200))
+        );
     }
 
     #[test]

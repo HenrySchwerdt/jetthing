@@ -23,10 +23,11 @@ pub enum ToolWindow {
     DeviceManager,
     Logcat,
     Gradle,
+    Bazel,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 9] = [
+    pub const ALL: [ToolWindow; 10] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Find,
@@ -36,6 +37,7 @@ impl ToolWindow {
         ToolWindow::DeviceManager,
         ToolWindow::Logcat,
         ToolWindow::Gradle,
+        ToolWindow::Bazel,
     ];
 
     pub fn id(self) -> &'static str {
@@ -49,6 +51,7 @@ impl ToolWindow {
             ToolWindow::DeviceManager => "deviceManager",
             ToolWindow::Logcat => "logcat",
             ToolWindow::Gradle => "gradle",
+            ToolWindow::Bazel => "bazel",
         }
     }
 
@@ -63,6 +66,7 @@ impl ToolWindow {
             ToolWindow::DeviceManager => "Device Manager",
             ToolWindow::Logcat => "Logcat",
             ToolWindow::Gradle => "Gradle",
+            ToolWindow::Bazel => "Bazel",
         }
     }
 
@@ -77,7 +81,10 @@ impl ToolWindow {
             ToolWindow::Problems => "⌘6",
             ToolWindow::Terminal => "⌥F12",
             // Unbound by default, like the reference IDE.
-            ToolWindow::DeviceManager | ToolWindow::Logcat | ToolWindow::Gradle => "",
+            ToolWindow::DeviceManager
+            | ToolWindow::Logcat
+            | ToolWindow::Gradle
+            | ToolWindow::Bazel => "",
         }
     }
 
@@ -89,7 +96,7 @@ impl ToolWindow {
             | ToolWindow::Problems
             | ToolWindow::Terminal
             | ToolWindow::Logcat => Anchor::Bottom,
-            ToolWindow::DeviceManager | ToolWindow::Gradle => Anchor::Right,
+            ToolWindow::DeviceManager | ToolWindow::Gradle | ToolWindow::Bazel => Anchor::Right,
         }
     }
 
