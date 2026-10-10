@@ -30,6 +30,7 @@ mod syntax;
 mod terminal_ui;
 mod theme;
 mod theme_engine;
+mod toolchain_banner;
 mod toolchain_status;
 mod toolwindows;
 mod welcome;

@@ -122,9 +122,32 @@ test result: ok. 1 passed
 
 (A first run without a cached root installed both: `setup in 14.1s` for jdtls 1.61.0 + JDK.)
 
+## Slice 2a — "missing toolchain" editor notification
+
+`jetthing_toolchains::providers::project_requirements` detects what a project needs from
+marker files (Gradle/Maven → `jdk` + `jdtls`, `Cargo.toml` → `rust-analyzer`, Bazel →
+`bazelisk`). Core caches the missing components per language (refreshed on project open,
+`toolchain.usePath` and finished installs); `toolchain.banner {path}` returns the bar for an
+editor and `toolchain.dismissBanner {language}` hides it for the session. The bar uses the
+reference `Banner.warningBackground`/`Banner.warningBorderColor` (dark) from
+`docs/spec/data/themes.json`.
+
+Walkthrough (same clean machine as above, language-server balloon dismissed first):
+
+1. `toolchains/java-04-missing-toolchain-bar.png`: above `App.java`,
+   *Java project: JDK and Eclipse JDT Language Server are missing* with **Set up** / **Dismiss**
+   (the wording issue #75 asks for).
+2. `toolchains/java-05-bar-setting-up.png`: after clicking **Set up**, the bar shows
+   *Setting up…* with a spinner while both downloads run.
+3. `toolchains/java-06-bar-done.png`: the bar is gone, the status line reads
+   *JDK 25.0.4.1+1 installed* and jdtls is starting from the managed install.
+
+Core test: `banner_lists_missing_components_for_the_project_language` (text, setup order,
+other languages unaffected, `usePath` shrinking the list, dismiss).
+
 ## Pending (next slices)
 
 - More catalog entries (rustup toolchains, Android SDK, kotlin-lsp, Node, Python, Go, ...);
   Rust (rust-analyzer) and Android SDK end-to-end runs.
-- "Missing toolchain" editor notification and Settings > Languages & Frameworks > Toolchains.
+- Settings > Languages & Frameworks > Toolchains page.
 - Probing versions of `PATH` binaries; signature (GPG/minisign) verification.
