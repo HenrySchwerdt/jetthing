@@ -8,11 +8,15 @@ pub mod build_system;
 pub mod console;
 pub mod events;
 pub mod run_config;
+pub mod test_results;
 
 pub use build_system::{BuildSystem, BuildSystemKind, BuildSystemRegistry, find_program};
 pub use console::{ConsoleBuffer, ConsoleLine};
 pub use events::{BuildEvents, BuildMessage, BuildStep, MessageKind, StepOutcome};
 pub use run_config::{RunConfiguration, RunManager, RunTarget};
+pub use test_results::{
+    ConsoleTestParser, TestCase, TestCounts, TestId, TestOutcome, TestResults, TestSuite,
+};
 
 use std::{
     io::Read,
@@ -149,7 +153,12 @@ pub struct TaskService {
     events: BuildEvents,
     plan: Option<TaskPlan>,
     started: Option<Instant>,
+    started_at: Option<std::time::SystemTime>,
     elapsed: Option<Duration>,
+    tests: TestResults,
+    test_parser: ConsoleTestParser,
+    /// JUnit reports that could not be read after the last test task.
+    pub test_report_errors: Vec<(PathBuf, String)>,
 }
 
 impl Default for TaskService {
@@ -162,7 +171,11 @@ impl Default for TaskService {
             events: BuildEvents::default(),
             plan: None,
             started: None,
+            started_at: None,
             elapsed: None,
+            tests: TestResults::default(),
+            test_parser: ConsoleTestParser::default(),
+            test_report_errors: Vec::new(),
         }
     }
 }
@@ -214,7 +227,12 @@ impl TaskService {
         self.events = BuildEvents::default();
         self.plan = Some(plan);
         self.started = Some(Instant::now());
+        // Report files may carry coarse timestamps; allow a little slack.
+        self.started_at = std::time::SystemTime::now().checked_sub(Duration::from_secs(2));
         self.elapsed = None;
+        self.tests = TestResults::default();
+        self.test_parser = ConsoleTestParser::default();
+        self.test_report_errors.clear();
     }
 
     fn spawn(&self, plan: &TaskPlan) -> Result<ActiveTask, RunnerError> {
@@ -299,6 +317,7 @@ impl TaskService {
         let base = self.console.dropped();
         for (offset, line) in lines[start..].iter().enumerate() {
             self.events.on_line(&line.text, now, base + start + offset);
+            self.test_parser.on_line(&line.text, &mut self.tests);
         }
         if self.output.len() >= MAX_RAW_CHUNKS {
             self.output.drain(..MAX_RAW_CHUNKS / 2);
@@ -313,8 +332,18 @@ impl TaskService {
         let lines = self.console.lines();
         for (index, line) in lines.iter().enumerate().skip(before) {
             self.events.on_line(&line.text, now, base + index);
+            self.test_parser.on_line(&line.text, &mut self.tests);
         }
         self.events.finish(now, success);
+        self.test_parser.finish(&mut self.tests);
+        if let Some(plan) = &self.plan
+            && plan.kind == TaskKind::Test
+            && let Some(since) = self.started_at
+        {
+            let (reports, errors) = TestResults::collect_reports(&plan.cwd, since);
+            self.tests.merge(reports);
+            self.test_report_errors = errors;
+        }
         self.elapsed = Some(now);
     }
 
@@ -356,6 +385,11 @@ impl TaskService {
     }
     pub fn plan(&self) -> Option<&TaskPlan> {
         self.plan.as_ref()
+    }
+    /// Test results of the current/last task (live for libtest and Go, from JUnit
+    /// reports once a test task has finished).
+    pub fn tests(&self) -> &TestResults {
+        &self.tests
     }
     /// Time since start while running, total duration once finished.
     pub fn elapsed(&self) -> Option<Duration> {
@@ -500,6 +534,30 @@ mod tests {
         service.start(shell("sleep 30")).unwrap();
         service.cancel().unwrap();
         assert_eq!(service.state(), &TaskState::Cancelled);
+    }
+
+    #[test]
+    fn test_tasks_collect_console_and_report_results() {
+        let root = std::env::temp_dir().join(format!("jetthing-task-tests-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let script = "echo 'test a::b ... ok'; mkdir -p build/test-results/test; \
+            printf '<testsuite name=\"T\"><testcase classname=\"T\" name=\"x()\" time=\"0.1\"><failure message=\"boom\"/></testcase></testsuite>' \
+            > build/test-results/test/TEST-T.xml";
+        let mut service = TaskService::default();
+        service
+            .start(TaskPlan::new("t", "/bin/sh", ["-c", script], &root).with_kind(TaskKind::Test))
+            .unwrap();
+        wait(&mut service);
+        let counts = service.tests().counts();
+        assert_eq!(
+            (counts.passed, counts.failed),
+            (1, 1),
+            "{:?}",
+            service.tests()
+        );
+        assert_eq!(service.tests().failed_tests()[0].name, "x()");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

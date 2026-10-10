@@ -31,6 +31,7 @@ mod run_config_dialog;
 mod settings_dialog;
 mod syntax;
 mod terminal_ui;
+mod test_view;
 mod theme;
 mod theme_engine;
 mod toolbar_gradient;

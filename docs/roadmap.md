@@ -78,7 +78,8 @@ workspace layout persistence, plugin manager, and recovery.
 - [x] Build-system provider trait; Build/Run window with step tree, timings and error navigation
 - [x] Gradle sync model (init script) and Gradle tool window
 - [x] Persistent run configurations with the Run/Debug Configurations dialog
-- [ ] Test tree, debug-before-run, and compound tasks
+- [x] Test runner tree with Rerun Failed Tests (JUnit XML, libtest, go test)
+- [ ] Debug-before-run and compound tasks
 
 ## M4 — web/JVM/Android bundles
 
