@@ -10,10 +10,12 @@ mod editor;
 mod findbar;
 mod icons;
 mod keys;
+mod lsp_status;
 mod notifications;
 mod palette;
 mod popups;
 mod settings_dialog;
+mod syntax;
 mod terminal_ui;
 mod theme;
 mod toolwindows;
@@ -241,11 +243,7 @@ impl IdeApp {
         } else {
             Modifiers::ALT
         };
-        let completion_open = self
-            .state
-            .lsp
-            .as_ref()
-            .is_some_and(|lsp| !lsp.completions().is_empty());
+        let completion_open = !self.state.lsp.completions().is_empty();
         let consumed_chord = std::cell::Cell::new(false);
         // Exact modifier matching: egui's consume_key ignores extra Shift/Alt, which
         // would let ⌘F swallow ⇧⌘F.
@@ -274,9 +272,9 @@ impl IdeApp {
             let count = self
                 .state
                 .lsp
-                .as_ref()
-                .map(|lsp| lsp.completions().len().min(editor::COMPLETION_LIMIT))
-                .unwrap_or(0);
+                .completions()
+                .len()
+                .min(editor::COMPLETION_LIMIT);
             if consume(Modifiers::NONE, Key::ArrowDown) && count > 0 {
                 self.completion_selected = (self.completion_selected + 1) % count;
             }
@@ -383,10 +381,8 @@ impl IdeApp {
             {
                 self.find.open = false;
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
-            } else if let Some(lsp) = self.state.lsp.as_mut()
-                && !lsp.completions().is_empty()
-            {
-                lsp.clear_completions();
+            } else if !self.state.lsp.completions().is_empty() {
+                self.state.lsp.clear_completions();
             } else if self.state.tool_windows.visible(Anchor::Bottom).is_some()
                 && !self.palette.open
             {
@@ -517,12 +513,7 @@ impl IdeApp {
     }
 
     fn accept_completion(&mut self, index: usize) {
-        let Some(item) = self
-            .state
-            .lsp
-            .as_ref()
-            .and_then(|lsp| lsp.completions().get(index).cloned())
-        else {
+        let Some(item) = self.state.lsp.completions().get(index).cloned() else {
             return;
         };
         let text = item.insert_text.unwrap_or(item.label);
@@ -530,9 +521,7 @@ impl IdeApp {
             "editor.insertText",
             json!({"position": self.state.active_caret().unwrap_or(0), "text": text}),
         );
-        if let Some(lsp) = self.state.lsp.as_mut() {
-            lsp.clear_completions();
-        }
+        self.state.lsp.clear_completions();
         self.completion_selected = 0;
     }
 }
@@ -547,6 +536,12 @@ impl eframe::App for IdeApp {
         self.state.poll_runner();
         self.state.poll_lsp();
         self.state.poll_updates();
+        if self.state.lsp.is_busy() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        } else if !self.state.lsp.servers().is_empty() {
+            // Diagnostics and server messages arrive without user input.
+            ctx.request_repaint_after(Duration::from_millis(500));
+        }
         if self.state.search.is_running() || self.state.runner.is_running() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
@@ -588,6 +583,7 @@ impl eframe::App for IdeApp {
         popups::show(self, ctx);
         settings_dialog::show(self, ctx);
         notifications::show(self, ctx);
+        lsp_status::notices(self, ctx);
         // Include operations started by controls in this frame, and keep
         // polling even when their notification balloon is hidden.
         if self.state.updates.is_busy() {

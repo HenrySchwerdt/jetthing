@@ -79,7 +79,8 @@ pub const ISLAND_RADIUS: u8 = 10;
 pub const ISLAND_GAP: f32 = 2.0;
 
 pub mod editor {
-    //! Islands Dark editor color scheme attributes.
+    //! Islands Dark editor colors. Syntax colors are resolved from the color
+    //! scheme data by text-attribute key (see `crate::syntax`).
     use super::hex;
     use eframe::egui::Color32;
 
@@ -93,12 +94,6 @@ pub mod editor {
     pub const SEARCH_RESULT: Color32 = hex(0x114957); // TEXT_SEARCH_RESULT_ATTRIBUTES
     pub const MATCHED_BRACE: Color32 = hex(0x43454A); // MATCHED_BRACE_ATTRIBUTES
     pub const INDENT_GUIDE: Color32 = hex(0x323438); // INDENT_GUIDE
-    pub const KEYWORD: Color32 = hex(0xCF8E6D); // DEFAULT_KEYWORD
-    pub const STRING: Color32 = hex(0x6AAB73); // DEFAULT_STRING
-    pub const NUMBER: Color32 = hex(0x2AACB8); // DEFAULT_NUMBER
-    pub const COMMENT: Color32 = hex(0x7A7E85); // DEFAULT_LINE_COMMENT
-    pub const DOC_COMMENT: Color32 = hex(0x5F826B); // DEFAULT_DOC_COMMENT (italic)
-    pub const FUNCTION: Color32 = hex(0x56A8F5); // DEFAULT_FUNCTION_DECLARATION
     pub const ERROR_EFFECT: Color32 = hex(0xFA6675); // ERRORS_ATTRIBUTES.EFFECT_COLOR
     pub const WARNING_EFFECT: Color32 = hex(0xF2C55C); // WARNING_ATTRIBUTES.EFFECT_COLOR
 }

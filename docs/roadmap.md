@@ -20,7 +20,10 @@
 - [x] Viewport-native editor that shapes and paints only visible lines
 - [x] Multi-cursor selections, atomic edits, and coalesced primary typing transactions
 - [x] Tree-sitter Rust parsing, syntax highlighting, and parse diagnostics
-- [ ] Incremental Tree-sitter edit notifications and multi-language grammars
+- [x] Data-driven Tree-sitter language registry (20 grammars) with bundled highlight queries
+- [x] IntelliJ editor color schemes (Islands Dark) resolved by text-attribute key
+- [ ] Incremental Tree-sitter edit notifications, viewport-bounded highlighting, injections
+- [ ] Tree-sitter folding, Expand/Shrink Selection, Structure view and File Structure popup
 - [x] Integrated native PTY terminal with shell input and command dispatch
 - [x] Interactive ANSI terminal grid, direct shell keys, selection/copy, scrollback and resize
 - [ ] Terminal hyperlinks, mouse reporting and multiple sessions
@@ -40,7 +43,7 @@
 - [x] Project tree New/Rename/Delete, commit with message and file selection
 - [x] Workspace restore (`.jetthing/workspace.json`), autosave on focus loss
 - [x] Check for Updates with verified self-update from GitHub releases
-- [x] Versioned release pipeline (0.0.1) publishing on every version bump
+- [x] Versioned release pipeline (0.0.2) publishing on every version bump
 
 ## M2 — language intelligence
 
@@ -49,6 +52,8 @@ navigation, formatting, cancellation, and persistent caches. First verified inte
 Rust via rust-analyzer.
 
 - [x] JSON-RPC/LSP process transport and initialization
+- [x] Multi-language server registry (provider trait, PATH/`lsp.toml` discovery), lazy start per
+      workspace root, crash restart with backoff, `$/progress` status widget, missing-server notices
 - [x] Rust document open/change synchronization and published diagnostics
 - [x] Completion request transport and result modeling
 - [x] Completion popup, UTF-16 caret integration, and transactional insertion
