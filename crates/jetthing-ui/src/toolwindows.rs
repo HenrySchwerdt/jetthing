@@ -61,21 +61,39 @@ pub fn bottom(app: &mut IdeApp, ctx: &egui::Context) {
     let Some(window) = app.state.tool_windows.visible(Anchor::Bottom) else {
         return;
     };
-    egui::TopBottomPanel::bottom("bottom_tool_window")
-        .default_height(260.0)
-        .min_height(180.0)
+    // egui persists the panel height from the frame's *content* rect, so the
+    // content must fill the panel; otherwise the panel shrinks every frame
+    // (the terminal rounds its grid down to whole cells). The stored layout
+    // height seeds a new project's panel (id keyed on the project root).
+    let root = app.state.project.as_ref().map(|p| p.root().to_path_buf());
+    let screen_height = ctx.content_rect().height();
+    let height = app
+        .state
+        .tool_windows
+        .effective_bottom_height(screen_height);
+    let response = egui::TopBottomPanel::bottom(egui::Id::new(("bottom_tool_window", root)))
+        .default_height(height)
+        .min_height(jetthing_core::BOTTOM_MIN_HEIGHT)
         .resizable(true)
         .show_separator_line(false)
         .frame(island_frame())
-        .show(ctx, |ui| match window {
-            ToolWindow::Find => find(app, ui),
-            ToolWindow::Build => crate::build_window::show(app, ui),
-            ToolWindow::Problems => problems(app, ui),
-            ToolWindow::Terminal => terminal(app, ui),
-            ToolWindow::Logcat => crate::logcat_ui::show(app, ui),
-            ToolWindow::Git => crate::git_log_ui::show(app, ui),
-            _ => {}
+        .show(ctx, |ui| {
+            ui.set_min_height(ui.available_height());
+            match window {
+                ToolWindow::Find => find(app, ui),
+                ToolWindow::Build => crate::build_window::show(app, ui),
+                ToolWindow::Problems => problems(app, ui),
+                ToolWindow::Terminal => terminal(app, ui),
+                ToolWindow::Logcat => crate::logcat_ui::show(app, ui),
+                ToolWindow::Git => crate::git_log_ui::show(app, ui),
+                _ => {}
+            }
         });
+    let shown = response.response.rect.height();
+    // Only a splitter drag changes the stored height, never a window clamp.
+    if (shown - height).abs() > 0.5 && ctx.input(|i| i.pointer.any_down()) {
+        app.state.tool_windows.set_bottom_height(shown);
+    }
 }
 
 /// Git status per project-relative path.
@@ -952,6 +970,35 @@ fn terminal(app: &mut IdeApp, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bottom_panel_keeps_its_height_across_frames() {
+        let mut app = IdeApp::new(None, Vec::new());
+        app.state.tool_windows.show(ToolWindow::Terminal);
+        app.state.tool_windows.set_bottom_height(420.0);
+        let ctx = egui::Context::default();
+        crate::install_theme(&ctx);
+        let mut heights = Vec::new();
+        for _ in 0..6 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1440.0, 900.0),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                bottom(&mut app, ctx);
+                heights.push(ctx.available_rect().max.y - ctx.available_rect().min.y);
+            });
+        }
+        // The remaining (editor) area must not grow back as the panel shrinks.
+        assert!(
+            heights.windows(2).all(|w| (w[0] - w[1]).abs() < 0.5),
+            "{heights:?}"
+        );
+        assert_eq!(app.state.tool_windows.bottom_height(), Some(420.0));
+    }
 
     #[test]
     fn find_options_become_command_parameters() {
