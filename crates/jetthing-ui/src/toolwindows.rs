@@ -859,12 +859,9 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
                 let (rect, response) = list_row(ui, false);
                 // The location stays visible at the right; the preview (already
                 // elided around the match by the search engine) is clipped before it.
-                let location = format!("{} {}", IdeApp::file_name(&result.path), result.line);
-                let location = ui.painter().layout_no_wrap(
-                    location,
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    *theme::TEXT_INFO,
-                );
+                let location = ui
+                    .painter()
+                    .layout_job(location_job(&result.path, result.line));
                 let location_x =
                     (rect.right() - location.size().x - 16.0).max(rect.left() + rect.width() * 0.5);
                 let job = highlighted_preview(&result.preview, &result.highlights);
@@ -911,6 +908,36 @@ fn find_params(query: &str, options: &jetthing_core::SearchOptions) -> Value {
         "regex": options.regex,
         "fileMask": options.file_mask,
     })
+}
+
+/// Location column of a result: `name line`, then the project-relative
+/// directory when the file is not in the project root (so the generated
+/// `build/scripts/java-gradle` is told apart from the root `gradlew`).
+fn result_location(path: &std::path::Path, line: usize) -> (String, Option<String>) {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| parent.display().to_string());
+    (format!("{name} {line}"), directory)
+}
+
+fn location_job(path: &std::path::Path, line: usize) -> egui::text::LayoutJob {
+    let (name, directory) = result_location(path, line);
+    let format = |color| egui::TextFormat {
+        font_id: egui::FontId::proportional(theme::UI_FONT_SIZE),
+        color,
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    job.append(&name, 0.0, format(*theme::TEXT_INFO));
+    if let Some(directory) = directory {
+        job.append(&directory, 8.0, format(*theme::TEXT_DISABLED));
+    }
+    job
 }
 
 /// Result preview with every occurrence on a search-result background.
@@ -1003,6 +1030,26 @@ mod tests {
         app.search_input = "typing".into();
         app.sync_find_inputs();
         assert_eq!(app.search_input, "typing");
+    }
+
+    #[test]
+    fn result_locations_name_the_file_and_its_directory() {
+        use std::path::Path;
+        assert_eq!(
+            result_location(Path::new("gradlew"), 12),
+            ("gradlew 12".to_owned(), None)
+        );
+        assert_eq!(
+            result_location(Path::new("gradlew.bat"), 10),
+            ("gradlew.bat 10".to_owned(), None)
+        );
+        assert_eq!(
+            result_location(Path::new("build/scripts/java-gradle"), 12),
+            (
+                "java-gradle 12".to_owned(),
+                Some("build/scripts".to_owned())
+            )
+        );
     }
 
     #[test]
