@@ -37,7 +37,7 @@ const fn menu(
     }
 }
 
-const MENUS: [Menu; 9] = [
+const MENUS: [Menu; 10] = [
     menu("File", &["Project", "Plugins"], &[]),
     menu("Edit", &["Editor"], &[]),
     menu("View", &["Window"], &[]),
@@ -54,6 +54,8 @@ const MENUS: [Menu; 9] = [
     menu("Build", &["Build"], &[]),
     menu("Run", &["Run"], &[]),
     menu("Git", &["Git"], &[]),
+    // Populated by plugin menu contributions.
+    menu("Tools", &[], &[]),
     menu("Help", &["Help"], &[]),
 ];
 
@@ -127,6 +129,13 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
         ui.set_min_width(180.0);
         let specs = app.commands.specs();
         for menu in &MENUS {
+            // Tools only holds plugin contributions; hide it when there are none.
+            if menu.categories.is_empty()
+                && menu.include.is_empty()
+                && !crate::plugin_ui::has_menu_items(app, menu.title)
+            {
+                continue;
+            }
             ui.menu_button(menu.title, |ui| {
                 ui.set_min_width(240.0);
                 if menu.title == "File" && ui.button("New Project…").clicked() {
@@ -141,6 +150,10 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
                     app.open_project_dialog();
                     ui.close();
                 }
+                if menu.title == "File" && ui.button("Plugins…").clicked() {
+                    app.plugins_window = Some(Default::default());
+                    ui.close();
+                }
                 for spec in menu_commands(menu, &specs) {
                     let enabled = app.commands.is_enabled(&spec.id, &app.state);
                     let button = egui::Button::new(&spec.label)
@@ -150,6 +163,7 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
                         ui.close();
                     }
                 }
+                crate::plugin_ui::menu_items(app, ui, menu.title);
             });
         }
         ui.separator();
@@ -229,9 +243,15 @@ fn project_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         ui.label(
             egui::RichText::new(widgets::pluralize(
-                app.state.plugins.len(),
-                "plugin loaded",
-                "plugins loaded",
+                app.state
+                    .plugin_host
+                    .registry
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.is_active())
+                    .count(),
+                "plugin active",
+                "plugins active",
             ))
             .color(theme::TEXT_INFO),
         );
@@ -339,7 +359,7 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
     }
 }
 
-fn window_controls(ui: &mut egui::Ui) {
+pub(crate) fn window_controls(ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let control = |ui: &mut egui::Ui, kind: u8, hover: Color32| {
         let (rect, response) = ui.allocate_exact_size(vec2(40.0, TOOLBAR_HEIGHT), Sense::click());
@@ -624,6 +644,7 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::plugin_ui::status_widgets(app, ui, &font);
                     let secondary = theme::TEXT_SECONDARY;
                     crate::lsp_status::status_widget(app, ui, font.clone());
                     let active = app
@@ -760,7 +781,8 @@ mod tests {
         for menu in &MENUS {
             let items = menu_commands(menu, &specs);
             assert!(
-                !items.is_empty() || menu.title == "File",
+                // Tools is hidden unless plugins contribute items.
+                !items.is_empty() || menu.title == "File" || menu.title == "Tools",
                 "{} menu is empty",
                 menu.title
             );

@@ -2096,7 +2096,9 @@ name = "jetthing-app"
 version = "0.0.2"
 dependencies = [
  "eframe",
+ "jetthing-plugin-hello",
  "jetthing-ui",
+ "mongo-raabit",
 ]
 
 [[package]]
@@ -2196,13 +2198,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "jetthing-plugin-api"
+version = "0.0.2"
+dependencies = [
+ "jetthing-command",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml",
+]
+
+[[package]]
+name = "jetthing-plugin-hello"
+version = "0.0.2"
+dependencies = [
+ "jetthing-plugin-api",
+ "jetthing-plugin-ui",
+]
+
+[[package]]
+name = "jetthing-plugin-ui"
+version = "0.0.2"
+dependencies = [
+ "egui",
+ "jetthing-plugin-api",
+]
+
+[[package]]
 name = "jetthing-plugins"
 version = "0.0.2"
 dependencies = [
+ "jetthing-command",
+ "jetthing-plugin-api",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "toml",
- "walkdir",
 ]
 
 [[package]]
@@ -2256,6 +2287,7 @@ dependencies = [
  "jetthing-git",
  "jetthing-language",
  "jetthing-lsp",
+ "jetthing-plugins",
  "jetthing-runner",
  "jetthing-terminal",
  "jetthing-text",
@@ -2625,6 +2657,8 @@ dependencies = [
  "eframe",
  "egui",
  "egui_extras",
+ "jetthing-plugin-api",
+ "jetthing-plugin-ui",
  "jetthing-ui",
  "mongo-raabit-core",
  "serde",

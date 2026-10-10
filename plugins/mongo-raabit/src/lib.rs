@@ -12,6 +12,7 @@ pub mod icons;
 mod index_view;
 pub mod jobs;
 pub mod manager;
+pub mod plugin;
 mod results;
 mod schema_view;
 mod shell_view;
@@ -24,6 +25,7 @@ mod welcome;
 pub mod widgets;
 
 pub use app::MongoRaabit;
+pub use plugin::MongoRaabitPlugin;
 pub use mongo_raabit_core as core;
 
 use app::TabKind;
@@ -94,12 +96,34 @@ impl MongoRaabit {
                     self.tab_content(ui);
                 });
             });
-        manager::show(self, ui.ctx());
-        dialogs::show(self, ui.ctx());
+        self.show_dialogs(ui.ctx());
         if self.jobs.busy() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
+    }
+
+    /// Only the connection tree (for a narrow tool window). Returns `true` when a tab
+    /// was opened, so the host can bring the workspace view forward.
+    pub fn tree_panel(&mut self, ui: &mut Ui) -> bool {
+        self.jobs.set_context(ui.ctx());
+        self.poll();
+        let tabs = self.tabs.len();
+        let active = self.active_tab;
+        tree::show(self, ui);
+        self.show_dialogs(ui.ctx());
+        self.tabs.len() != tabs || self.active_tab != active
+    }
+
+    /// Modal dialogs, drawn once per frame even when several views render the app.
+    fn show_dialogs(&mut self, ctx: &egui::Context) {
+        let pass = ctx.cumulative_pass_nr();
+        if self.dialogs_pass == Some(pass) {
+            return;
+        }
+        self.dialogs_pass = Some(pass);
+        manager::show(self, ctx);
+        dialogs::show(self, ctx);
     }
 
     fn toolbar(&mut self, ui: &mut Ui, p: &Palette) {

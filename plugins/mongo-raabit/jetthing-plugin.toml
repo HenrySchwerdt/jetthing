@@ -1,0 +1,14 @@
+id = "dev.jetthing.mongo-raabit"
+name = "mongo-raabit"
+version = "0.1.0"
+api_version = 1
+kind = "rust"
+vendor = "Jetthing"
+license = "Apache-2.0 OR MIT"
+description = "MongoDB GUI: connection manager, collection browser with table/tree/JSON views, document editor, aggregation editor, SQL query, schema explorer, index manager, explain, query code and a mongosh shell."
+permissions = ["network", "process", "secrets", "clipboard", "fs.user"]
+capabilities = ["database"]
+
+[app]
+view = "mongo-raabit.main"
+title = "mongo-raabit"

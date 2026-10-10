@@ -8,6 +8,8 @@ publish = false
 description = "mongo-raabit: a MongoDB GUI plugin for Jetthing (egui views over mongo-raabit-core)"
 
 [dependencies]
+jetthing-plugin-api = { path = "../../crates/jetthing-plugin-api" }
+jetthing-plugin-ui = { path = "../../crates/jetthing-plugin-ui" }
 mongo-raabit-core = { path = "core" }
 egui.workspace = true
 egui_extras = { version = "0.33", default-features = false }

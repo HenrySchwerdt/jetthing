@@ -4,7 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["mongo-raabit"]
+# Bundle the example plugin under plugins/hello (development and docs).
+example-plugins = ["dep:jetthing-plugin-hello"]
+# First-party MongoDB GUI plugin (plugins/mongo-raabit).
+mongo-raabit = ["dep:mongo-raabit"]
+
 [dependencies]
 eframe.workspace = true
+jetthing-plugin-hello = { path = "../../plugins/hello", optional = true }
 jetthing-ui = { path = "../jetthing-ui" }
-
+mongo-raabit = { path = "../../plugins/mongo-raabit", optional = true }

@@ -203,6 +203,8 @@ pub struct MongoRaabit {
     pub tree_filter: String,
     pub status: String,
     next_id: u64,
+    /// Frame in which modal dialogs were last drawn.
+    pub(crate) dialogs_pass: Option<u64>,
 }
 
 impl Default for MongoRaabit {
@@ -240,6 +242,7 @@ impl MongoRaabit {
             tree_filter: String::new(),
             status,
             next_id: 1,
+            dialogs_pass: None,
         }
     }
 
