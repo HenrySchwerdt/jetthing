@@ -1,3 +1,5 @@
+mod scenes;
+
 use anyhow::{Context, Result, bail};
 use std::{fs, path::Path, process::Command};
 
@@ -6,7 +8,10 @@ fn main() -> Result<()> {
     match args.next().as_deref() {
         Some("parity") => parity(args.any(|a| a == "--check")),
         Some("dist") => dist(),
-        _ => bail!("usage: cargo xtask parity [--check] | cargo xtask dist"),
+        Some("scenes") => scenes::run(args),
+        _ => bail!(
+            "usage: cargo xtask parity [--check] | dist | scenes [--only 01,05] [--out DIR] [--release]"
+        ),
     }
 }
 

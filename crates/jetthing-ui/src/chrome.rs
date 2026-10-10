@@ -4,6 +4,7 @@ use crate::icons::{self, Icon};
 use crate::widgets::{self, chrome_frame};
 use crate::{IdeApp, keys, theme};
 use eframe::egui::{self, Color32, Rect, Sense, vec2};
+use jetthing_command::CommandSpec;
 use jetthing_core::{Anchor, ToolWindow};
 use serde_json::{Value, json};
 
@@ -16,18 +17,60 @@ pub fn custom_title_bar() -> bool {
     !cfg!(target_os = "macos")
 }
 
-/// Menu groups of the main menu, mapping command categories to menus.
-const MENUS: [(&str, &[&str]); 9] = [
-    ("File", &["File", "Project", "Plugins"]),
-    ("Edit", &["Editor"]),
-    ("View", &["Window"]),
-    ("Navigate", &["Search"]),
-    ("Code", &["Language"]),
-    ("Build", &["Build"]),
-    ("Run", &["Run"]),
-    ("Git", &["Git"]),
-    ("Help", &["Help"]),
+/// One main-menu entry: the command categories it lists, plus commands the
+/// reference IDE files under this menu although their category is elsewhere.
+struct Menu {
+    title: &'static str,
+    categories: &'static [&'static str],
+    include: &'static [&'static str],
+}
+
+const fn menu(
+    title: &'static str,
+    categories: &'static [&'static str],
+    include: &'static [&'static str],
+) -> Menu {
+    Menu {
+        title,
+        categories,
+        include,
+    }
+}
+
+const MENUS: [Menu; 9] = [
+    menu("File", &["File", "Project", "Plugins"], &[]),
+    menu("Edit", &["Editor"], &[]),
+    menu("View", &["Window"], &[]),
+    menu("Navigate", &["Navigate", "Search"], &[]),
+    menu(
+        "Code",
+        &["Code"],
+        &[
+            "editor.commentLine",
+            "editor.moveLineUp",
+            "editor.moveLineDown",
+        ],
+    ),
+    menu("Build", &["Build"], &[]),
+    menu("Run", &["Run"], &[]),
+    menu("Git", &["Git"], &[]),
+    menu("Help", &["Help"], &[]),
 ];
+
+/// Parameterless commands shown in `menu`, in registry order. A command that
+/// another menu includes explicitly is not repeated under its category.
+fn menu_commands<'a>(menu: &Menu, specs: &'a [CommandSpec]) -> Vec<&'a CommandSpec> {
+    specs
+        .iter()
+        .filter(|spec| IdeApp::parameterless(spec))
+        .filter(|spec| {
+            let id = spec.id.as_str();
+            menu.include.contains(&id)
+                || (menu.categories.contains(&spec.category.as_str())
+                    && !MENUS.iter().any(|other| other.include.contains(&id)))
+        })
+        .collect()
+}
 
 pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
     egui::TopBottomPanel::top("main_toolbar")
@@ -83,14 +126,14 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
     egui::Popup::menu(&response).show(|ui| {
         ui.set_min_width(180.0);
         let specs = app.commands.specs();
-        for (menu, categories) in MENUS {
-            ui.menu_button(menu, |ui| {
+        for menu in &MENUS {
+            ui.menu_button(menu.title, |ui| {
                 ui.set_min_width(240.0);
-                if menu == "File" && ui.button("New Project…").clicked() {
+                if menu.title == "File" && ui.button("New Project…").clicked() {
                     app.new_project_dialog();
                     ui.close();
                 }
-                if menu == "File"
+                if menu.title == "File"
                     && ui
                         .add(egui::Button::new("Open Project…").shortcut_text(keys::display("⌘O")))
                         .clicked()
@@ -98,9 +141,7 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
                     app.open_project_dialog();
                     ui.close();
                 }
-                for spec in specs.iter().filter(|spec| {
-                    categories.contains(&spec.category.as_str()) && IdeApp::parameterless(spec)
-                }) {
+                for spec in menu_commands(menu, &specs) {
                     let enabled = app.commands.is_enabled(&spec.id, &app.state);
                     let button = egui::Button::new(&spec.label)
                         .shortcut_text(keys::display(spec.shortcut.as_deref().unwrap_or_default()));
@@ -711,5 +752,51 @@ mod tests {
         assert_eq!(line_ending("a\nb"), "LF");
         assert_eq!(indentation("fn a() {\n\tb\n}"), "Tab");
         assert_eq!(indentation("fn a() {\n    b\n}"), "4 spaces");
+    }
+
+    #[test]
+    fn every_menu_has_items_and_code_lists_code_actions() {
+        let specs = jetthing_core::built_in_commands().specs();
+        for menu in &MENUS {
+            let items = menu_commands(menu, &specs);
+            assert!(
+                !items.is_empty() || menu.title == "File",
+                "{} menu is empty",
+                menu.title
+            );
+        }
+        let code: Vec<&str> = menu_commands(&MENUS[4], &specs)
+            .iter()
+            .map(|spec| spec.id.as_str())
+            .collect();
+        assert!(code.contains(&"language.complete"), "{code:?}");
+        assert!(code.contains(&"editor.commentLine"), "{code:?}");
+        let edit = menu_commands(&MENUS[1], &specs);
+        assert!(edit.iter().all(|spec| spec.id != "editor.commentLine"));
+    }
+
+    #[test]
+    fn menu_shortcuts_are_unique_on_every_platform() {
+        let specs = jetthing_core::built_in_commands().specs();
+        let mut mac = std::collections::HashMap::new();
+        let mut others = std::collections::HashMap::new();
+        for menu in &MENUS {
+            for spec in menu_commands(menu, &specs) {
+                let Some(shortcut) = spec.shortcut.as_deref().filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                if let Some(previous) = mac.insert(shortcut.to_owned(), &spec.id) {
+                    panic!("{previous} and {} share {shortcut}", spec.id);
+                }
+                let linux = keys::for_windows_linux(shortcut);
+                if let Some(previous) = others.insert(linux.clone(), &spec.id) {
+                    panic!("{previous} and {} share {linux}", spec.id);
+                }
+            }
+        }
+        assert_eq!(
+            others.get("Ctrl+S").map(|id| id.as_str()),
+            Some("editor.saveAll")
+        );
     }
 }
