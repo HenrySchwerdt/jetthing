@@ -1,0 +1,11 @@
+{
+  "id": "01",
+  "title": "Welcome screen",
+  "reference": "reference/intellij-community/java-gradle/01-welcome.png",
+  "steps": [
+    {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/project", "equals": null},
+    {"op": "assert", "pointer": "/tabs", "equals": []},
+    {"op": "screenshot", "name": "01-welcome.png"}
+  ]
+}
