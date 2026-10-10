@@ -15,6 +15,37 @@ use std::rc::Rc;
 /// Creates a bundled (compiled-in) plugin instance.
 pub type PluginFactory = Rc<dyn Fn() -> Box<dyn Plugin>>;
 
+/// A runtime that instantiates directory plugins of one [`PluginKind`]
+/// (Lua scripts, WASM components).
+pub trait PluginLoader {
+    fn kind(&self) -> PluginKind;
+    /// Loads the plugin whose manifest is in `dir`.
+    fn load(&self, manifest: &PluginManifest, dir: &Path) -> Result<Box<dyn Plugin>, PluginError>;
+}
+
+/// Plugins compiled into the build plus the runtimes for script plugins.
+#[derive(Default, Clone)]
+pub struct PluginSet {
+    pub bundled: Vec<PluginFactory>,
+    pub loaders: Vec<Rc<dyn PluginLoader>>,
+}
+
+/// How an entry's code is instantiated.
+#[derive(Clone)]
+enum Code {
+    Factory(PluginFactory),
+    Loader(Rc<dyn PluginLoader>, PathBuf),
+}
+
+impl Code {
+    fn instantiate(&self, manifest: &PluginManifest) -> Result<Box<dyn Plugin>, PluginError> {
+        match self {
+            Code::Factory(factory) => Ok(factory()),
+            Code::Loader(loader, dir) => loader.load(manifest, dir),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginSource {
     /// Compiled into this Jetthing build.
@@ -53,7 +84,7 @@ pub struct PluginEntry {
     pub status: PluginStatus,
     pub contributions: Contributions,
     instance: Option<Box<dyn Plugin>>,
-    factory: Option<PluginFactory>,
+    code: Option<Code>,
 }
 
 impl PluginEntry {
@@ -77,6 +108,7 @@ pub struct PluginRegistry {
     /// Manifests that failed to load, with the path that was read.
     pub problems: Vec<(PathBuf, PluginError)>,
     pub store: PluginStore,
+    loaders: Vec<Rc<dyn PluginLoader>>,
     generation: u64,
 }
 
@@ -124,8 +156,22 @@ impl PluginRegistry {
             source: PluginSource::Bundled,
             contributions: Contributions::default(),
             instance: Some(instance),
-            factory: Some(factory),
+            code: Some(Code::Factory(factory)),
         })
+    }
+
+    /// Registers the runtime for script plugins of `loader.kind()`.
+    pub fn add_loader(&mut self, loader: Rc<dyn PluginLoader>) {
+        self.loaders
+            .retain(|existing| existing.kind() != loader.kind());
+        self.loaders.push(loader);
+    }
+
+    /// Forgets an entry (its instance is dropped without `deactivate`; the
+    /// host deactivates first).
+    pub fn remove(&mut self, id: &str) {
+        self.entries.retain(|entry| entry.id() != id);
+        self.touch();
     }
 
     fn initial_status(&self, id: &str) -> PluginStatus {
@@ -152,16 +198,16 @@ impl PluginRegistry {
     /// `plugin.toml`) below `root`. Entries previously discovered from `root`
     /// are replaced. Problems are collected in [`Self::problems`].
     pub fn discover(&mut self, root: &Path) {
-        let previous: Vec<String> = self
-            .entries
-            .iter()
-            .filter(|entry| {
-                matches!(&entry.source, PluginSource::Directory(dir) if dir.parent() == Some(root))
-            })
-            .map(|entry| entry.id().to_owned())
-            .collect();
-        self.entries
-            .retain(|entry| !previous.iter().any(|id| id == entry.id()));
+        // Entries still present on disk are kept as they are, so active
+        // plugins survive a rediscovery; vanished ones are dropped.
+        self.entries.retain(|entry| match &entry.source {
+            PluginSource::Directory(dir) if dir.parent() == Some(root) => {
+                [MANIFEST_FILE, LEGACY_MANIFEST_FILE]
+                    .iter()
+                    .any(|name| dir.join(name).is_file())
+            }
+            _ => true,
+        });
         self.problems.retain(|(path, _)| !path.starts_with(root));
         let Ok(dirs) = fs::read_dir(root) else {
             self.touch();
@@ -185,26 +231,41 @@ impl PluginRegistry {
                 .map_err(|error| PluginError::Io(path.display().to_string(), error.to_string()))
                 .and_then(|text| PluginManifest::parse(&text));
             // The source tree of a compiled-in plugin (e.g. `plugins/hello` when
-            // the Jetthing repository is open as a project) is not a second copy.
+            // the Jetthing repository is open as a project) is not a second copy,
+            // and an entry discovered earlier from this directory is kept.
             if let Ok(manifest) = &manifest
-                && self
-                    .get(&manifest.id)
-                    .is_some_and(|entry| entry.source == PluginSource::Bundled)
+                && self.get(&manifest.id).is_some_and(|entry| {
+                    entry.source == PluginSource::Bundled
+                        || entry.source == PluginSource::Directory(dir.clone())
+                })
             {
                 continue;
             }
             let result = manifest.and_then(|manifest| {
-                let status = match manifest.kind {
-                    PluginKind::Declarative => self.initial_status(&manifest.id),
-                    PluginKind::Rust => PluginStatus::Unsupported(
-                        "Rust plugins are compiled into Jetthing; third-party Rust code loads as a WASM component".into(),
+                let loader = self
+                    .loaders
+                    .iter()
+                    .find(|loader| loader.kind() == manifest.kind)
+                    .cloned();
+                let (status, code) = match (manifest.kind, loader) {
+                    (PluginKind::Declarative, _) => (self.initial_status(&manifest.id), None),
+                    (PluginKind::Rust, _) => (
+                        PluginStatus::Unsupported(
+                            "Rust plugins are compiled into Jetthing; third-party Rust code loads as a WASM component".into(),
+                        ),
+                        None,
                     ),
-                    PluginKind::Lua => {
-                        PluginStatus::Unsupported("the Lua runtime is not available in this build yet".into())
-                    }
-                    PluginKind::Wasm => {
-                        PluginStatus::Unsupported("the WASM runtime is not available in this build yet".into())
-                    }
+                    (_, Some(loader)) => (
+                        self.initial_status(&manifest.id),
+                        Some(Code::Loader(loader, dir.clone())),
+                    ),
+                    (kind, None) => (
+                        PluginStatus::Unsupported(format!(
+                            "the {} runtime is not available in this build",
+                            kind.label()
+                        )),
+                        None,
+                    ),
                 };
                 self.insert(PluginEntry {
                     manifest,
@@ -212,7 +273,7 @@ impl PluginRegistry {
                     status,
                     contributions: Contributions::default(),
                     instance: None,
-                    factory: None,
+                    code,
                 })
             });
             if let Err(error) = result {
@@ -280,18 +341,19 @@ impl PluginRegistry {
         }
     }
 
-    /// Ensures a fresh instance exists for an enabled bundled plugin.
-    pub fn ensure_instance(&mut self, id: &str) {
+    /// Ensures an instance exists for a plugin with code (loading scripts).
+    pub fn ensure_instance(&mut self, id: &str) -> Result<(), PluginError> {
         if let Some(entry) = self.get_mut(id)
             && entry.instance.is_none()
-            && let Some(factory) = &entry.factory
+            && let Some(code) = entry.code.clone()
         {
-            entry.instance = Some(factory());
+            entry.instance = Some(code.instantiate(&entry.manifest)?);
         }
+        Ok(())
     }
 
     pub fn has_code(&self, id: &str) -> bool {
-        self.get(id).is_some_and(|entry| entry.factory.is_some())
+        self.get(id).is_some_and(|entry| entry.code.is_some())
     }
 
     pub fn set_status(&mut self, id: &str, status: PluginStatus) {

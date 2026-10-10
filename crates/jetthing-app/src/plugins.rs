@@ -1,8 +1,8 @@
-//! Plugins compiled into this build. First-party plugin crates live under
-//! `plugins/`; add one line per plugin here.
+//! Plugins compiled into this build and the runtimes for script plugins.
+//! First-party plugin crates live under `plugins/`; add one line per plugin
+//! to [`bundled`].
 
-use jetthing_ui::PluginFactory;
-#[cfg(feature = "example-plugins")]
+use jetthing_ui::{PluginFactory, PluginSet};
 use std::rc::Rc;
 
 pub fn bundled() -> Vec<PluginFactory> {
@@ -13,4 +13,11 @@ pub fn bundled() -> Vec<PluginFactory> {
         Box::new(jetthing_plugin_hello::HelloPlugin::new())
     }));
     plugins
+}
+
+pub fn plugin_set() -> PluginSet {
+    PluginSet {
+        bundled: bundled(),
+        loaders: vec![Rc::new(jetthing_plugin_lua::LuaLoader)],
+    }
 }

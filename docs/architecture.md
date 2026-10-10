@@ -33,7 +33,9 @@ no crate below `jetthing-ui` imports UI types.
   `PluginHost`, `jetthing-plugin.toml` manifest, opaque `ViewFrame`); see `docs/plugins/api.md`.
 - `jetthing-plugins`: plugin registry: discovery, activation order, enable/disable and
   settings persistence. Lua/Wasm loading is deliberately not claimed yet.
-- `jetthing-plugin-ui`: egui helpers for plugin views (UI layer, used by plugin crates).
+- `jetthing-plugin-ui`: egui helpers for plugin views and the declarative `ViewNode` renderer
+  (UI layer, used by plugin crates and script runtimes).
+- `jetthing-plugin-lua`: sandboxed Lua 5.4 plugin runtime (`LuaLoader`), registered by the app.
 - `jetthing-core`: application state, the plugin host (scoped `PluginHost`, command
   routing, plugin tool window/tab state), tool window layout model (one visible tool window
   per anchor), and built-in command handlers.

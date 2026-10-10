@@ -136,12 +136,12 @@ fn parse_args() -> Result<Mode, String> {
 
 fn build_app(mode: &Mode) -> Result<jetthing_ui::IdeApp, String> {
     match mode {
-        Mode::Ide { project, files } => Ok(jetthing_ui::IdeApp::with_plugins(
+        Mode::Ide { project, files } => Ok(jetthing_ui::IdeApp::with_plugin_set(
             project.clone(),
             files.clone(),
-            plugins::bundled(),
+            plugins::plugin_set(),
         )),
-        Mode::App(id) => jetthing_ui::IdeApp::standalone(id, plugins::bundled()),
+        Mode::App(id) => jetthing_ui::IdeApp::standalone(id, plugins::plugin_set()),
     }
 }
 

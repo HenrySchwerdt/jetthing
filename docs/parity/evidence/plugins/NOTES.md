@@ -12,6 +12,9 @@ Captured under Xvfb 1600×1000, `JETTHING_RENDERER=glow`. The build used
 | `24-plugins-marketplace.png` | Marketplace tab: no marketplace is configured yet, so an empty state offers Install Plugin from Disk…. |
 | `standalone-app.png` | `jetthing-app --app dev.jetthing.hello`: only the plugin's app view, with title bar, window controls, status text, status widget and notification. |
 
+| `lua-plugin-toolwindow-and-declarative-tab.png` | `plugins/hello-lua`, discovered from the open project's `plugins/` directory: "L" tool window with the immediate-mode view (text input, buttons, properties) and the "Todos (Lua)" editor tab with a declarative view (text input + Add, list toggled by clicking, muted label). Two todos added, one toggled. The status bar shows the Lua status widget ("Lua × 1"); a Lua notification is showing. |
+| `lua-standalone-app-with-tab.png` | `--app dev.jetthing.hello-lua` (installed from `hello-lua.jtplugin`): the app view plus the Todos tab it opened; the status bar shows only this plugin's widget. |
+
 Also observed in the same session:
 
 - Uninstall removed `<config>/plugins/com.example.darcula-plus/` and the entry; the status bar said

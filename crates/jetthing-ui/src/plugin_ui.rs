@@ -394,8 +394,19 @@ pub fn active_tab_body(app: &mut IdeApp, ui: &mut egui::Ui) {
 }
 
 /// Contributed status bar widgets (call inside a right-to-left layout).
-pub fn status_widgets(app: &mut IdeApp, ui: &mut egui::Ui, font: &egui::FontId) {
-    for widget in app.state.plugin_status_widgets() {
+/// `only` restricts them to one plugin (standalone app mode).
+pub fn status_widgets(
+    app: &mut IdeApp,
+    ui: &mut egui::Ui,
+    font: &egui::FontId,
+    only: Option<&str>,
+) {
+    for widget in app
+        .state
+        .plugin_status_widgets()
+        .into_iter()
+        .filter(|widget| only.is_none_or(|plugin| widget.plugin == plugin))
+    {
         let mut response = widgets::flat_widget(
             ui,
             None,
@@ -581,23 +592,69 @@ pub fn app_window(app: &mut IdeApp, ctx: &egui::Context, plugin: &str) {
                         .color(theme::TEXT_INFO),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    status_widgets(app, ui, &font);
+                    status_widgets(app, ui, &font, Some(plugin));
                 });
             });
         });
     egui::CentralPanel::default()
-        .frame(island_frame().inner_margin(egui::Margin::same(12)))
+        .frame(island_frame())
         .show(ctx, |ui| {
-            render_view(
-                app,
-                ui,
-                plugin,
-                ViewContext {
-                    view,
-                    placement: ViewPlacement::App,
-                },
-            );
+            // Editor tabs opened by the app share the window with its main view.
+            if !app.state.plugin_host.tabs.is_empty() {
+                app_tab_bar(app, ui, &title);
+            }
+            if app.state.plugin_host.active_tab.is_some() {
+                active_tab_body(app, ui);
+                return;
+            }
+            egui::Frame::new()
+                .inner_margin(egui::Margin::same(12))
+                .show(ui, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    render_view(
+                        app,
+                        ui,
+                        plugin,
+                        ViewContext {
+                            view,
+                            placement: ViewPlacement::App,
+                        },
+                    );
+                });
         });
+}
+
+/// Tab bar of standalone mode: the app's main view, then its editor tabs.
+fn app_tab_bar(app: &mut IdeApp, ui: &mut egui::Ui, title: &str) {
+    let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::hover());
+    let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
+    let active = app.state.plugin_host.active_tab.is_none();
+    let color = if active {
+        theme::TEXT_BRIGHT
+    } else {
+        theme::TEXT_SECONDARY
+    };
+    let galley = ui.painter().layout_no_wrap(title.to_owned(), font, color);
+    let rect = Rect::from_min_size(
+        egui::pos2(bar.left() + 6.0, bar.top() + 5.0),
+        vec2(galley.size().x + 20.0, 28.0),
+    );
+    let response = ui.interact(rect, egui::Id::new("app_main_tab"), Sense::click());
+    if active {
+        ui.painter()
+            .rect_filled(rect, 6.0, Color32::from_rgb(0x23, 0x35, 0x58));
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 6.0, theme::HOVER);
+    }
+    ui.painter().galley(
+        rect.left_center() + vec2(10.0, -galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    if response.clicked() {
+        app.dispatch("plugin.tab.activate", json!({}));
+    }
+    editor_tabs(app, ui, bar, rect.right() + 2.0);
 }
 
 #[cfg(test)]

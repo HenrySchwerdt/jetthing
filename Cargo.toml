@@ -2,7 +2,7 @@
 resolver = "3"
 members = ["crates/*", "plugins/*", "xtask"]
 # Manifest-only plugins (no Rust crate).
-exclude = ["plugins/rust"]
+exclude = ["plugins/rust", "plugins/hello-lua"]
 
 [workspace.package]
 version = "0.0.2"

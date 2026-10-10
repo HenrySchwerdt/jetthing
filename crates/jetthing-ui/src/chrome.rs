@@ -640,7 +640,7 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    crate::plugin_ui::status_widgets(app, ui, &font);
+                    crate::plugin_ui::status_widgets(app, ui, &font, None);
                     let secondary = theme::TEXT_SECONDARY;
                     crate::lsp_status::status_widget(app, ui, font.clone());
                     let active = app

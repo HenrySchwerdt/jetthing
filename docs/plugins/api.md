@@ -3,14 +3,15 @@
 Plugins add commands, menu items, keybindings, settings pages, tool windows,
 editor tabs and status bar widgets to the workbench. A plugin can also run on its
 own as a standalone app (`jetthing --app <plugin-id>`). Plugin API 1 covers
-**compiled-in Rust plugins**. Lua and WASM plugins will implement the same
-contract (see [Roadmap](#roadmap)).
+**compiled-in Rust plugins** and **Lua plugins** ([lua.md](lua.md)). WASM plugins
+will implement the same contract (see [Roadmap](#roadmap)).
 
 | Crate | Layer | Purpose |
 |---|---|---|
 | `jetthing-plugin-api` | engine (no UI toolkit) | `Plugin` trait, `Contributions`, `PluginHost`, `PluginManifest`, `ViewFrame`, `testing::RecordingHost` |
 | `jetthing-plugin-ui` | UI | `ui(frame) -> Option<&mut egui::Ui>`, `EguiView`, and theme-aware widgets (`header`, `section`, `property`, `empty_state`) |
-| `jetthing-plugins` | engine | registry: discovery, enable/disable, settings store (`<config>/plugins.json`), activation order |
+| `jetthing-plugins` | engine | registry: discovery, enable/disable, settings store (`<config>/plugins.json`), activation order, `PluginLoader` for script runtimes, `.jtplugin` archives |
+| `jetthing-plugin-lua` | UI (runtime) | `LuaLoader`: sandboxed Lua 5.4 plugins with the same contributions, `ctx` services, immediate and declarative views |
 | `jetthing-core` (`plugin_host`) | engine | `PluginHost` implementation, command routing, plugin tool window/tab state, `plugin.*` commands |
 | `jetthing-ui` (`plugin_ui`) | UI | renders contributions in the workbench, Plugins dialog, standalone window |
 
@@ -142,6 +143,10 @@ All plugin methods run on the UI thread. Never block in them: spawn a thread
 | Status widget | `StatusWidgetContribution::new(id).command(..)` | status bar; text from `Plugin::status_widget(id)` |
 | App view | `[app] view = …` in the manifest | `jetthing --app <id>` window |
 
+Views can also return a declarative `ViewNode` tree (columns, rows, labels, buttons, inputs,
+lists, tables, trees) instead of drawing with egui. `jetthing_plugin_ui::render_node` renders it
+and returns `ViewEvent`s. Lua and WASM plugins use this model.
+
 `ViewContext::placement` tells a view where it is rendered:
 `ToolWindow { id }`, `EditorTab { key, path }`, `App` or `SettingsPage { id }`.
 
@@ -220,7 +225,6 @@ implementations) do not.
 ## Roadmap
 
 - Move the Plugins page into the Settings dialog, and add an update check for installed plugins.
-- Lua plugins (mlua) with the same contributions, declarative views and an immediate-mode panel API.
 - WASM component plugins (wasmtime + WIT) with enforced permissions.
 - Left/bottom tool window anchors for plugins (API 1 docks every plugin tool window on the right),
   editor/project context menus, and opening custom editors by file extension.

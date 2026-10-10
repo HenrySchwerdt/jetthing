@@ -4,8 +4,8 @@
 use crate::{IdeState, spec, string_param, usize_param};
 use jetthing_command::{Command, CommandError, CommandRegistry, CommandResult};
 use jetthing_plugins::{
-    EditorTabRequest, Notification, Permission, Plugin, PluginError, PluginFactory, PluginHost,
-    PluginManifest, PluginRegistry, PluginStatus, PluginStore, StatusWidgetState, ViewContext,
+    EditorTabRequest, Notification, Permission, Plugin, PluginError, PluginHost, PluginManifest,
+    PluginRegistry, PluginSet, PluginStatus, PluginStore, StatusWidgetState, ViewContext,
     ViewPlacement, user_config_dir,
 };
 use serde_json::{Value, json};
@@ -160,9 +160,12 @@ impl PluginHost for HostAdapter<'_> {
 impl IdeState {
     /// Sets up the registry with the user's store, compiled-in plugins and the
     /// per-user plugin directory, then activates enabled plugins.
-    pub fn init_plugins(&mut self, store: PluginStore, bundled: Vec<PluginFactory>) {
+    pub fn init_plugins(&mut self, store: PluginStore, set: PluginSet) {
         let mut registry = PluginRegistry::new(store);
-        for factory in bundled {
+        for loader in set.loaders {
+            registry.add_loader(loader);
+        }
+        for factory in set.bundled {
             if let Err(error) = registry.add_bundled(factory) {
                 registry.problems.push((PathBuf::from("<bundled>"), error));
             }
@@ -203,7 +206,12 @@ impl IdeState {
                     .set_status(&id, PluginStatus::Active);
                 continue;
             }
-            self.plugin_host.registry.ensure_instance(&id);
+            if let Err(error) = self.plugin_host.registry.ensure_instance(&id) {
+                self.plugin_host
+                    .registry
+                    .set_status(&id, PluginStatus::Failed(error.to_string()));
+                continue;
+            }
             let Some(mut instance) = self.plugin_host.registry.take_instance(&id) else {
                 continue;
             };
@@ -327,6 +335,8 @@ impl IdeState {
             )));
         }
         self.deactivate_plugin(&manifest.id);
+        // Rediscovery must load the new files, not keep the old entry.
+        self.plugin_host.registry.remove(&manifest.id);
         let manifest = jetthing_plugins::archive::install(archive, &install_dir)?;
         self.discover_plugins();
         self.status = format!("Installed plugin {} {}", manifest.name, manifest.version);
@@ -697,10 +707,15 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             "Activate Plugin Tab",
             "Window",
             None,
-            r#"{"index":"number"}"#,
+            r#"{"index":"number?"}"#,
         ),
         |_| true,
         |state: &mut IdeState, params| {
+            // Without an index the editor (or the standalone app view) is shown again.
+            if params.get("index").is_none_or(Value::is_null) {
+                state.plugin_host.active_tab = None;
+                return Ok(Value::Null);
+            }
             let index = usize_param(&params, "index")?;
             if index >= state.plugin_host.tabs.len() {
                 return Err(CommandError::InvalidParams(
@@ -835,7 +850,7 @@ mod tests {
         }
     }
 
-    fn factory(id: &'static str, fail: bool) -> PluginFactory {
+    fn factory(id: &'static str, fail: bool) -> jetthing_plugins::PluginFactory {
         Rc::new(move || {
             Box::new(Counter {
                 manifest: PluginManifest::parse(&format!(
@@ -852,7 +867,10 @@ mod tests {
         let mut state = IdeState::default();
         state.init_plugins(
             PluginStore::in_memory(),
-            vec![factory("test.counter", fail)],
+            PluginSet {
+                bundled: vec![factory("test.counter", fail)],
+                ..PluginSet::default()
+            },
         );
         let mut registry = built_in_commands();
         let mut registered = Vec::new();
@@ -1064,7 +1082,10 @@ mod tests {
         let mut state = IdeState::default();
         state.init_plugins(
             PluginStore::in_memory(),
-            vec![factory("test.counter", false)],
+            PluginSet {
+                bundled: vec![factory("test.counter", false)],
+                ..PluginSet::default()
+            },
         );
         let mut registry = built_in_commands();
         registry

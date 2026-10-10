@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-pub use jetthing_plugins::PluginFactory;
+pub use jetthing_plugins::{PluginFactory, PluginLoader, PluginSet};
 pub use theme::install as install_theme;
 
 pub struct IdeApp {
@@ -82,7 +82,25 @@ impl IdeApp {
         bundled: Vec<PluginFactory>,
     ) -> Self {
         let check_updates = std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none();
-        Self::build(project, files, bundled, check_updates)
+        Self::build(
+            project,
+            files,
+            PluginSet {
+                bundled,
+                ..PluginSet::default()
+            },
+            check_updates,
+        )
+    }
+
+    /// Like [`Self::with_plugins`], also registering script plugin runtimes.
+    pub fn with_plugin_set(
+        project: Option<PathBuf>,
+        files: Vec<PathBuf>,
+        plugins: PluginSet,
+    ) -> Self {
+        let check_updates = std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none();
+        Self::build(project, files, plugins, check_updates)
     }
 
     #[cfg(test)]
@@ -91,18 +109,18 @@ impl IdeApp {
         files: Vec<PathBuf>,
         check_updates: bool,
     ) -> Self {
-        Self::build(project, files, Vec::new(), check_updates)
+        Self::build(project, files, PluginSet::default(), check_updates)
     }
 
     fn build(
         project: Option<PathBuf>,
         files: Vec<PathBuf>,
-        bundled: Vec<PluginFactory>,
+        plugins: PluginSet,
         check_updates: bool,
     ) -> Self {
         let commands = built_in_commands();
         let mut state = IdeState::default();
-        state.init_plugins(jetthing_plugins::PluginStore::user(), bundled);
+        state.init_plugins(jetthing_plugins::PluginStore::user(), plugins);
         if let Some(path) = project {
             if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
             {
@@ -167,8 +185,8 @@ impl IdeApp {
 
     /// Standalone app mode (`jetthing --app <plugin-id>`): a window showing
     /// only the plugin's app view.
-    pub fn standalone(plugin: &str, bundled: Vec<PluginFactory>) -> Result<Self, String> {
-        let mut app = Self::with_plugins(None, Vec::new(), bundled);
+    pub fn standalone(plugin: &str, plugins: PluginSet) -> Result<Self, String> {
+        let mut app = Self::with_plugin_set(None, Vec::new(), plugins);
         plugin_ui::app_mode_error(&app.state.plugin_host.registry, plugin)?;
         app.state.plugin_host.app_mode = Some(plugin.to_owned());
         Ok(app)
