@@ -22,6 +22,7 @@ mod disk_sync;
 mod editor_commands;
 mod lsp_commands;
 mod plugin_host;
+mod problems;
 mod project_commands;
 mod settings_commands;
 mod snippet_session;
@@ -40,6 +41,7 @@ pub use plugin_host::{
 };
 pub use completion::CompletionSession;
 pub use snippet_session::SnippetSession;
+pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
 pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
@@ -84,6 +86,8 @@ pub struct IdeState {
     pub runner: TaskService,
     /// Language servers of the open project, started lazily per language.
     pub lsp: LspManager,
+    /// Project-wide problems, refreshed by [`IdeState::refresh_problems`].
+    pub problems: ProblemIndex,
     /// Toolchain provisioning: discovery, pins and background installs.
     pub toolchains: ToolchainState,
     /// The code completion popup, while open.
@@ -213,6 +217,8 @@ impl IdeState {
         document.text.mark_saved();
         document.disk_hash = content_hash(&text);
         self.status = format!("Saved {}", document.path.display());
+        let absolute = project.root().join(&document.path);
+        let _ = self.lsp.save_document(&absolute);
         Ok(())
     }
 
@@ -483,6 +489,7 @@ impl IdeState {
     pub fn poll_lsp(&mut self) {
         let restarted = self.lsp.poll();
         self.poll_completion();
+        self.refresh_problems();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };
@@ -662,6 +669,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     lsp_commands::register(&mut registry);
     vcs::register(&mut registry);
     plugin_host::register(&mut registry);
+    problems::register(&mut registry);
     toolchain_commands::register(&mut registry);
     registry
         .register(Command::new(

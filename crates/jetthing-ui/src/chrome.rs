@@ -507,15 +507,11 @@ pub(crate) fn stripe_button(app: &mut IdeApp, ui: &mut egui::Ui, window: ToolWin
     );
     let mut badge = None;
     if window == ToolWindow::Problems {
-        let count = app.state.active_lsp_diagnostics().len()
-            + app
-                .state
-                .active_document
-                .and_then(|index| app.state.documents.get(index))
-                .map(|document| document.analysis.diagnostics.len())
-                .unwrap_or(0);
-        if count > 0 {
+        let counts = app.state.problems.counts();
+        if counts.errors > 0 {
             badge = Some(theme::ERROR);
+        } else if counts.warnings > 0 {
+            badge = Some(theme::WARNING);
         }
     }
     if window == ToolWindow::Build && app.state.runner.is_running() {

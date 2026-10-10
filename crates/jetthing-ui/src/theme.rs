@@ -46,6 +46,9 @@ pub mod editor {
     pub const INDENT_GUIDE: Token = t::EDITOR_INDENT_GUIDE;
     pub const ERROR_EFFECT: Token = t::EDITOR_ERROR_EFFECT;
     pub const WARNING_EFFECT: Token = t::EDITOR_WARNING_EFFECT;
+    pub const WEAK_WARNING_EFFECT: Token = t::EDITOR_WEAK_WARNING_EFFECT;
+    pub const ERROR_STRIPE: Token = t::EDITOR_ERROR_STRIPE;
+    pub const WARNING_STRIPE: Token = t::EDITOR_WARNING_STRIPE;
 }
 
 /// Avatar gradient start colors (`RecentProject.ColorN.Avatar.Start`).

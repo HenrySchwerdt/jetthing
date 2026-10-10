@@ -96,6 +96,9 @@ pub struct LspManager {
     dismissed: BTreeSet<String>,
     completion: Option<CompletionRequest>,
     completion_result: Option<CompletionResult>,
+    /// Diagnostics revisions of the live servers at the last poll.
+    diagnostics_seen: Vec<u64>,
+    diagnostics_generation: u64,
 }
 
 /// Why completion was requested (LSP `CompletionTriggerKind`).
@@ -135,6 +138,8 @@ impl LspManager {
             dismissed: BTreeSet::new(),
             completion: None,
             completion_result: None,
+            diagnostics_seen: Vec::new(),
+            diagnostics_generation: 0,
         }
     }
 
@@ -172,6 +177,8 @@ impl LspManager {
             }
         }
         self.servers.clear();
+        self.diagnostics_seen.clear();
+        self.diagnostics_generation += 1;
     }
 
     /// Restarts every server and re-opens its documents on the next sync.
@@ -287,6 +294,21 @@ impl LspManager {
         }
     }
 
+    /// Notifies the server of `path` that the document was saved.
+    pub fn save_document(&mut self, path: &Path) -> Result<(), LspError> {
+        let Some(key) = self
+            .documents
+            .get(path)
+            .map(|document| document.server.clone())
+        else {
+            return Ok(());
+        };
+        match self.service_mut(&key) {
+            Some(service) if service.state() == ServerState::Ready => service.save_document(path),
+            _ => Ok(()),
+        }
+    }
+
     pub fn close_document(&mut self, path: &Path) -> Result<(), LspError> {
         let Some(document) = self.documents.remove(path) else {
             return Ok(());
@@ -375,7 +397,37 @@ impl LspManager {
             }
         }
         self.poll_completion();
+        let seen: Vec<u64> = self
+            .servers
+            .iter()
+            .map(|server| {
+                server
+                    .service
+                    .as_ref()
+                    .map_or(0, LspService::diagnostics_revision)
+            })
+            .collect();
+        if seen != self.diagnostics_seen {
+            self.diagnostics_seen = seen;
+            self.diagnostics_generation += 1;
+        }
         restarted
+    }
+
+    /// Changes whenever the published diagnostics of any server may have
+    /// changed (after [`poll`](Self::poll)), so callers can cache derived views.
+    pub fn diagnostics_generation(&self) -> u64 {
+        self.diagnostics_generation
+    }
+
+    /// Every file with published diagnostics, across all running servers.
+    /// Paths are as the servers reported them (absolute, usually canonical).
+    pub fn all_diagnostics(&self) -> impl Iterator<Item = (&Path, &[LspDiagnostic])> {
+        self.servers
+            .iter()
+            .filter_map(|server| server.service.as_ref())
+            .flat_map(|service| service.diagnostics().iter())
+            .map(|(path, diagnostics)| (path.as_path(), diagnostics.as_slice()))
     }
 
     /// The running server for `path`, if any.
@@ -460,16 +512,19 @@ impl LspManager {
 
     /// Diagnostics published for `path` by its server.
     pub fn diagnostics_for(&self, path: &Path) -> Vec<LspDiagnostic> {
-        let Some(service) = self.server_for(path) else {
-            return Vec::new();
-        };
+        self.published_diagnostics(path).unwrap_or_default()
+    }
+
+    /// Diagnostics for `path`, or `None` when its server has not checked it
+    /// yet (so callers can fall back to syntax errors).
+    pub fn published_diagnostics(&self, path: &Path) -> Option<Vec<LspDiagnostic>> {
+        let service = self.server_for(path)?;
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_owned());
         service
             .diagnostics()
             .get(&canonical)
             .or_else(|| service.diagnostics().get(path))
             .cloned()
-            .unwrap_or_default()
     }
 
     /// One entry per started server.
