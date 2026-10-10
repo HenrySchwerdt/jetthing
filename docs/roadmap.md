@@ -35,7 +35,8 @@ Rust via rust-analyzer.
 - [x] JSON-RPC/LSP process transport and initialization
 - [x] Rust document open/change synchronization and published diagnostics
 - [x] Completion request transport and result modeling
-- [ ] Completion popup/caret integration, hover, navigation, formatting, and code actions
+- [x] Completion popup, UTF-16 caret integration, and transactional insertion
+- [ ] Completion filtering/snippets, hover, navigation, formatting, and code actions
 
 ## M3 — professional workflows
 

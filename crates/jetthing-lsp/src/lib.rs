@@ -69,6 +69,7 @@ pub struct LspService {
     pending_documents: Vec<PendingDocument>,
     diagnostics: HashMap<PathBuf, Vec<LspDiagnostic>>,
     completions: Vec<CompletionItem>,
+    pending_completion: Option<u64>,
 }
 
 impl LspService {
@@ -116,6 +117,7 @@ impl LspService {
             pending_documents: Vec::new(),
             diagnostics: HashMap::new(),
             completions: Vec::new(),
+            pending_completion: None,
         };
         service.send(json!({
             "jsonrpc": "2.0", "id": service.initialize_id, "method": "initialize",
@@ -175,9 +177,11 @@ impl LspService {
     ) -> Result<u64, LspError> {
         let id = self.next_id;
         self.next_id += 1;
+        self.completions.clear();
         self.send(json!({"jsonrpc":"2.0","id":id,"method":"textDocument/completion","params":{
             "textDocument":{"uri":file_uri(path)?},"position":{"line":line,"character":character}
         }}))?;
+        self.pending_completion = Some(id);
         Ok(id)
     }
 
@@ -189,6 +193,10 @@ impl LspService {
     }
     pub fn completions(&self) -> &[CompletionItem] {
         &self.completions
+    }
+    pub fn clear_completions(&mut self) {
+        self.completions.clear();
+        self.pending_completion = None;
     }
 
     fn handle(&mut self, message: Value) -> Result<(), LspError> {
@@ -222,7 +230,9 @@ impl LspService {
                 .filter_map(parse_diagnostic)
                 .collect();
             self.diagnostics.insert(path, diagnostics);
-        } else if message.get("id").is_some() && message.get("result").is_some() {
+        } else if message.get("id").and_then(Value::as_u64) == self.pending_completion
+            && message.get("result").is_some()
+        {
             let result = message.get("result").cloned().unwrap_or(Value::Null);
             let items = if result.is_array() {
                 result
@@ -232,6 +242,7 @@ impl LspService {
             if let Ok(completions) = serde_json::from_value(items) {
                 self.completions = completions;
             }
+            self.pending_completion = None;
         }
         Ok(())
     }
@@ -333,11 +344,16 @@ mod tests {
     #[test]
     fn initializes_against_a_real_framed_fake_server() {
         let response = r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}"#;
+        let completion = r#"{"jsonrpc":"2.0","id":2,"result":[{"label":"hello","detail":"fake completion","insertText":"hello"}]}"#;
         let script = format!(
-            "sleep 0.05; printf 'Content-Length: {}\\r\\n\\r\\n%s' '{}' ; sleep 1",
+            "sleep 0.05; printf 'Content-Length: {}\\r\\n\\r\\n%s' '{}'; sleep 0.1; printf 'Content-Length: {}\\r\\n\\r\\n%s' '{}'; sleep 1",
             response.len(),
-            response
+            response,
+            completion.len(),
+            completion,
         );
+        let source_path = Path::new("/tmp/jetthing-lsp-fake.rs");
+        std::fs::write(source_path, "fn main() {}\n").unwrap();
         let mut service =
             LspService::start("/bin/sh", &["-c", &script], Path::new("/tmp")).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -346,6 +362,14 @@ mod tests {
             thread::sleep(std::time::Duration::from_millis(10));
         }
         assert_eq!(service.state(), ServerState::Ready);
+        service.request_completion(source_path, 0, 0).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while service.completions().is_empty() && std::time::Instant::now() < deadline {
+            service.poll().unwrap();
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(service.completions()[0].label, "hello");
+        std::fs::remove_file(source_path).unwrap();
     }
 
     #[cfg(unix)]

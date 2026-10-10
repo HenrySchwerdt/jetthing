@@ -17,7 +17,7 @@
 | PLAT-013 | IntelliJ Platform | Find in Files | Partial | `search.project`, `search.cancel`, `editor.openFile` | async search tests | opens matching file; exact caret navigation pending |
 | PLAT-014 | IntelliJ Platform | Git changes | Partial | `git.refresh`, `git.stage`, `git.unstage` | real repository integration test | status/staging only; diff/history/remotes pending |
 | PLAT-015 | IntelliJ Platform | Build execution | Partial | `build.project`, `run.task`, `run.cancel` | real process/output/cancellation tests | detected single build plan; configurations/test tree pending |
-| PLAT-016 | IntelliJ Platform | Language server integration | Partial | `language.completion` | framed fake-server integration test | Rust analyzer transport/diagnostics; editor completion UI pending |
+| PLAT-016 | IntelliJ Platform | Language server integration | Partial | `language.complete`, `language.completion` | framed fake-server integration test | Rust diagnostics and completion popup work; filtering, snippets, resolve, and navigation remain |
 
 Statuses are intentionally conservative. “Implemented” means the listed scope works;
 only “Verified” will count as independently parity-validated.

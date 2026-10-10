@@ -74,6 +74,21 @@ impl TextDocument {
         self.saved_state = self.current_state;
     }
 
+    /// Converts a rope character offset to the UTF-16 line/character position
+    /// required by the Language Server Protocol.
+    pub fn lsp_position(&self, char_index: usize) -> Result<(usize, usize), TextError> {
+        self.validate_range(char_index, char_index)?;
+        let line = self.rope.char_to_line(char_index);
+        let line_start = self.rope.line_to_char(line);
+        let utf16_character = self
+            .rope
+            .slice(line_start..char_index)
+            .chars()
+            .map(char::len_utf16)
+            .sum();
+        Ok((line, utf16_character))
+    }
+
     pub fn edit(
         &mut self,
         start_char: usize,
@@ -217,6 +232,14 @@ mod tests {
         assert!(doc.is_dirty());
         doc.edit(0, 3, "ONE").unwrap();
         assert!(doc.is_dirty());
+    }
+
+    #[test]
+    fn converts_character_offsets_to_lsp_utf16_positions() {
+        let doc = TextDocument::new("one\na🦀b\n");
+        assert_eq!(doc.lsp_position(4).unwrap(), (1, 0));
+        assert_eq!(doc.lsp_position(6).unwrap(), (1, 3));
+        assert!(doc.lsp_position(99).is_err());
     }
 
     proptest! {

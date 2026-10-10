@@ -100,6 +100,14 @@ impl eframe::App for IdeApp {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::P)) {
             self.palette_open = true;
         }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Space)) {
+            self.dispatch("language.complete", Value::Null);
+        }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            && let Some(lsp) = self.state.lsp.as_mut()
+        {
+            lsp.clear_completions();
+        }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
             self.dispatch("editor.save", Value::Null);
         }
@@ -504,6 +512,10 @@ impl eframe::App for IdeApp {
                         .clicked()
                     {
                         self.state.active_document = Some(index);
+                        self.state.caret_char = 0;
+                        if let Some(lsp) = self.state.lsp.as_mut() {
+                            lsp.clear_completions();
+                        }
                     }
                 }
             });
@@ -522,19 +534,21 @@ impl eframe::App for IdeApp {
                             ))
                         })
                     };
-                let response = egui::ScrollArea::both()
+                let output = egui::ScrollArea::both()
                     .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut snapshot)
-                                .font(egui::TextStyle::Monospace)
-                                .layouter(&mut layouter)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(40)
-                                .lock_focus(true),
-                        )
+                        egui::TextEdit::multiline(&mut snapshot)
+                            .font(egui::TextStyle::Monospace)
+                            .layouter(&mut layouter)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(40)
+                            .lock_focus(true)
+                            .show(ui)
                     })
                     .inner;
-                if response.changed() {
+                if let Some(cursor_range) = output.cursor_range {
+                    self.state.caret_char = cursor_range.primary.index;
+                }
+                if output.response.changed() {
                     if let Err(error) = doc.text.replace_from_snapshot(&snapshot) {
                         self.state.status = error.to_string();
                     } else {
@@ -554,6 +568,36 @@ impl eframe::App for IdeApp {
         });
         if let Some((path, text, version)) = changed_document {
             self.state.sync_document_lsp(&path, &text, version);
+        }
+        let completions = self
+            .state
+            .lsp
+            .as_ref()
+            .map(|lsp| lsp.completions().to_vec())
+            .unwrap_or_default();
+        if !completions.is_empty() {
+            egui::Window::new("Code Completion")
+                .collapsible(false)
+                .resizable(false)
+                .default_width(360.0)
+                .show(ctx, |ui| {
+                    for item in completions.iter().take(30) {
+                        let label = match item.detail.as_deref() {
+                            Some(detail) => format!("{}    {detail}", item.label),
+                            None => item.label.clone(),
+                        };
+                        if ui.selectable_label(false, label).clicked() {
+                            let text = item
+                                .insert_text
+                                .clone()
+                                .unwrap_or_else(|| item.label.clone());
+                            self.dispatch(
+                                "editor.insertText",
+                                json!({"position": self.state.caret_char, "text": text}),
+                            );
+                        }
+                    }
+                });
         }
         if self.palette_open {
             let mut open = true;
