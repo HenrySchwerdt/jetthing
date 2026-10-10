@@ -7,7 +7,10 @@ smoke tests need no `xdotool` clicking.
 
 ## Protocol
 
-Start the IDE with `JETTHING_CONTROL_SOCKET=/path/ctl.sock`. Each request is one
+Start the IDE with `JETTHING_CONTROL_SOCKET=/path/ctl.sock` (a Unix domain socket on
+Linux and macOS). On Windows the transport is a named pipe: a `\\.\pipe\name` value is
+used as given, any other value names a pipe by its file name
+(`JETTHING_CONTROL_SOCKET=jetthing` → `\\.\pipe\jetthing`). Each request is one
 JSON line and gets one JSON response line (`{"ok":true,"result":…}` or
 `{"ok":false,"error":"…"}`):
 
@@ -54,5 +57,4 @@ returned structured errors.
 
 ## Gaps
 
-- Unix domain sockets only; the Windows named-pipe transport is pending.
 - Pixel comparison against the reference is deliberately not automated; scenes assert state.

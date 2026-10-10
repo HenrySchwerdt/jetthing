@@ -32,7 +32,8 @@ Java templates require JDK 21 and Gradle on PATH; Rust templates require Cargo.
 ## UI automation
 
 Set `JETTHING_CONTROL_SOCKET=/path/ctl.sock` to let scripts drive a running IDE over
-JSON lines: run commands, read state, send keys and text, wait, and take screenshots.
+JSON lines: run commands, read state, send keys, text and clicks, wait, and take screenshots.
+On Windows the value names a named pipe (`jetthing` → `\\.\pipe\jetthing`).
 
 ```bash
 JETTHING_CONTROL_SOCKET=/tmp/jt.sock cargo run -p jetthing-app -- . &
