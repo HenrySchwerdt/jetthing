@@ -145,7 +145,7 @@ pub fn prepare_request(
     };
 
     let raw_url = render("URL", request.url.trim())?;
-    let mut url = parse_url(&raw_url)?;
+    let mut url = parse_url_for(&raw_url, request.protocol)?;
     let params = rendered_pairs(&request.params, "query parameter", &render)?;
     if !params.is_empty() {
         let mut query = url.query_pairs_mut();
@@ -329,6 +329,35 @@ fn rendered_pairs(
             Ok((name, value))
         })
         .collect()
+}
+
+/// Parses a URL for `protocol`: WebSocket URLs use `ws`/`wss` (an `http(s)`
+/// URL is converted), everything else `http`/`https`.
+pub fn parse_url_for(raw: &str, protocol: crate::model::Protocol) -> Result<Url, ExecError> {
+    if protocol != crate::model::Protocol::WebSocket {
+        return parse_url(raw);
+    }
+    let candidate = if raw.contains("://") {
+        raw.to_owned()
+    } else {
+        format!("ws://{raw}")
+    };
+    let candidate = match candidate.split_once("://") {
+        Some(("http", rest)) => format!("ws://{rest}"),
+        Some(("https", rest)) => format!("wss://{rest}"),
+        _ => candidate,
+    };
+    let url = Url::parse(&candidate).map_err(|e| ExecError::InvalidUrl {
+        url: raw.to_owned(),
+        reason: e.to_string(),
+    })?;
+    match url.scheme() {
+        "ws" | "wss" => Ok(url),
+        other => Err(ExecError::InvalidUrl {
+            url: raw.to_owned(),
+            reason: format!("unsupported scheme `{other}` for WebSocket (use ws or wss)"),
+        }),
+    }
 }
 
 /// Parses a user-typed URL, defaulting to `http://` when no scheme is given.
@@ -865,6 +894,42 @@ impl Client {
 }
 
 impl Client {
+    /// Sends a request and returns the live response for streaming (Server-Sent
+    /// Events). Redirects follow reqwest's default policy; cookies are sent but
+    /// the body is not read.
+    pub fn open_stream(
+        &self,
+        prepared: &PreparedRequest,
+        jar: Option<&CookieJar>,
+    ) -> Result<reqwest::blocking::Response, ExecError> {
+        let url = &prepared.url;
+        let client = self.pool(url, prepared.transport.verify_tls)?;
+        let method = reqwest::Method::from_bytes(prepared.method.as_bytes())
+            .map_err(|_| ExecError::Config(format!("invalid HTTP method {}", prepared.method)))?;
+        let mut builder = client.request(method, url.clone());
+        for (name, value) in &prepared.headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        if !prepared
+            .headers
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case("user-agent"))
+        {
+            builder = builder.header("User-Agent", USER_AGENT);
+        }
+        if prepared.transport.use_cookies
+            && let Some(cookie) = jar.and_then(|j| j.header_for(url))
+        {
+            builder = builder.header("Cookie", cookie);
+        }
+        if !prepared.body.is_empty() {
+            builder = builder.body(prepared.body.clone());
+        }
+        builder
+            .send()
+            .map_err(|e| classify(&e, url, prepared.transport.timeout_ms))
+    }
+
     /// Runs an OAuth 2.0 token request and parses the token.
     pub fn fetch_oauth_token(
         &self,

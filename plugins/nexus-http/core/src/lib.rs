@@ -4,7 +4,8 @@
 //! storage ([`storage`]), templating with variables and template tags
 //! ([`template`]), authentication ([`auth`]), request execution ([`exec`]), the
 //! cookie jar ([`cookies`]), response history and chaining ([`history`]),
-//! JSONPath filters ([`filter`]), response assertions ([`assertions`]), importers
+//! JSONPath filters ([`filter`]), response assertions ([`assertions`]), the collection
+//! runner ([`runner`]), importers
 //! ([`import`]) and code generation ([`codegen`]).
 
 pub mod assertions;
@@ -13,11 +14,14 @@ pub mod codegen;
 pub mod cookies;
 pub mod exec;
 pub mod filter;
+pub mod graphql;
 pub mod history;
 pub mod import;
 pub mod model;
 pub mod response;
+pub mod runner;
 pub mod storage;
+pub mod stream;
 pub mod template;
 
 use std::path::Path;

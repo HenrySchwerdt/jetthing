@@ -11,7 +11,7 @@ use egui::{CornerRadius, RichText, Sense, Ui, vec2};
 use nexus_http_core::assertions::{Assertion, Operator, Source};
 use nexus_http_core::model::{
     ApiKeyLocation, Auth, Body, Id, KeyValue, Method, MultipartField, MultipartValue, OAuth2Config,
-    OAuth2Grant, Request,
+    OAuth2Grant, Protocol, Request,
 };
 use serde_json::{Map, Value};
 
@@ -21,6 +21,9 @@ pub const URL_FIELD_ID: &str = "nexus.url";
 #[derive(Default)]
 pub struct RequestActions {
     pub send: bool,
+    pub connect: bool,
+    pub disconnect: bool,
+    pub send_message: bool,
     pub cancel: bool,
     pub generate_code: bool,
     pub fetch_token: bool,
@@ -30,6 +33,16 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
     let pal = Palette::of(ui);
     let vars = variables_for(state, id);
     let sending = state.sending_id() == Some(id);
+    let connected = state.stream_connected(id);
+    let mut gql = match state.schemas.get(id) {
+        Some(s) => GqlContext {
+            schema: s.schema.clone(),
+            loading: s.loading(),
+            error: s.error.clone(),
+            fetch: false,
+        },
+        None => GqlContext::default(),
+    };
     let tab = &mut state.request_tab;
     let mut current_tab = *tab;
     let Some(request) = state.request_mut(id) else {
@@ -46,15 +59,24 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
         frame.show(ui, |ui| {
             ui.set_width(bar_width - 10.0);
             ui.horizontal(|ui| {
-                changed |= method_picker(ui, &mut request.method);
+                changed |= method_picker(ui, &mut request.method, &mut request.protocol);
                 let (sep, _) = ui.allocate_exact_size(vec2(1.0, 22.0), Sense::hover());
                 ui.painter().rect_filled(sep, 0.0, pal.border);
-                let send_w = 86.0;
+                let send_w = if request.protocol.is_http() {
+                    86.0
+                } else {
+                    112.0
+                };
                 let url_w = ui.available_width() - send_w - 34.0;
+                let hint = match request.protocol {
+                    Protocol::Http => "Enter a URL, paste a curl command, or use {{ base_url }}",
+                    Protocol::WebSocket => "ws://host/socket or wss://…",
+                    Protocol::Sse => "https://host/events",
+                };
                 let resp = template_field(
                     ui,
                     &mut request.url,
-                    "Enter a URL, paste a curl command, or use {{ base_url }}",
+                    hint,
                     &vars,
                     url_w,
                     egui::Id::new(URL_FIELD_ID),
@@ -69,7 +91,18 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
                 if icon_button(ui, Icon::Code, pal.weak, "Generate code").clicked() {
                     actions.generate_code = true;
                 }
-                if sending {
+                if !request.protocol.is_http() {
+                    if connected {
+                        if widgets::secondary_button(ui, "Disconnect").clicked() {
+                            actions.disconnect = true;
+                        }
+                    } else if primary_button(ui, "Connect", true)
+                        .on_hover_text("Connect (Ctrl+Enter)")
+                        .clicked()
+                    {
+                        actions.connect = true;
+                    }
+                } else if sending {
                     if widgets::secondary_button(ui, "Cancel").clicked() {
                         actions.cancel = true;
                     }
@@ -93,6 +126,7 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
             &mut current_tab,
             &RequestTab::ALL,
             |t| match t {
+                RequestTab::Body if request.protocol == Protocol::WebSocket => "Message".to_owned(),
                 RequestTab::Body => match &request.body {
                     Body::None => "Body".to_owned(),
                     other => other.label().to_owned(),
@@ -143,7 +177,10 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
                             }
                         });
                 }
-                RequestTab::Body => changed |= body_tab(ui, &mut request.body, &vars),
+                RequestTab::Body if request.protocol == Protocol::WebSocket => {
+                    changed |= message_tab(ui, &mut request.body, &vars, connected, actions);
+                }
+                RequestTab::Body => changed |= body_tab(ui, &mut request.body, &vars, &mut gql),
                 RequestTab::Auth => changed |= auth_tab(ui, &mut request.auth, &vars, actions),
                 RequestTab::Tests => changed |= tests_tab(ui, &mut request.assertions),
                 RequestTab::Settings => changed |= settings_tab(ui, request),
@@ -151,6 +188,9 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
         });
 
     state.request_tab = current_tab;
+    if gql.fetch {
+        state.fetch_schema(id);
+    }
     if changed {
         state.touch();
     }
@@ -165,6 +205,15 @@ pub fn variables_for(state: &NexusState, id: &Id) -> Map<String, Value> {
         ws.active_environment(),
         &folders,
     )
+}
+
+/// GraphQL schema state handed to the body tab.
+#[derive(Default)]
+struct GqlContext {
+    schema: Option<std::sync::Arc<nexus_http_core::graphql::Schema>>,
+    loading: bool,
+    error: Option<String>,
+    fetch: bool,
 }
 
 struct TabCounts {
@@ -193,13 +242,15 @@ impl TabCounts {
     }
 }
 
-fn method_picker(ui: &mut Ui, method: &mut Method) -> bool {
+fn method_picker(ui: &mut Ui, method: &mut Method, protocol: &mut Protocol) -> bool {
     let pal = Palette::of(ui);
     let font = semibold(ui, 13.0);
-    let text = method.as_str().to_owned();
-    let galley = ui
-        .painter()
-        .layout_no_wrap(text, font.clone(), pal.method(method));
+    let (text, color) = match protocol {
+        Protocol::Http => (method.as_str().to_owned(), pal.method(method)),
+        Protocol::WebSocket => ("WS".to_owned(), pal.syntax_number),
+        Protocol::Sse => ("SSE".to_owned(), pal.info),
+    };
+    let galley = ui.painter().layout_no_wrap(text, font.clone(), color);
     let (rect, resp) =
         ui.allocate_exact_size(vec2(galley.size().x.max(44.0) + 30.0, 26.0), Sense::click());
     if resp.hovered() {
@@ -217,13 +268,29 @@ fn method_picker(ui: &mut Ui, method: &mut Method) -> bool {
     );
     widgets::paint_icon(ui.painter(), chevron, Icon::Chevron(true), pal.weak);
     let mut changed = false;
-    egui::Popup::menu(&resp).width(140.0).show(|ui| {
+    egui::Popup::menu(&resp).width(170.0).show(|ui| {
         for m in Method::COMMON {
             let label = RichText::new(m.as_str())
                 .font(semibold(ui, 12.5))
                 .color(pal.method(&m));
-            if ui.selectable_label(*method == m, label).clicked() {
+            if ui
+                .selectable_label(protocol.is_http() && *method == m, label)
+                .clicked()
+            {
                 *method = m;
+                *protocol = Protocol::Http;
+                changed = true;
+            }
+        }
+        ui.separator();
+        for (p, label, color) in [
+            (Protocol::WebSocket, "WebSocket", pal.syntax_number),
+            (Protocol::Sse, "Server-Sent Events", pal.info),
+        ] {
+            let text = RichText::new(label).font(semibold(ui, 12.5)).color(color);
+            if ui.selectable_label(*protocol == p, text).clicked() {
+                *protocol = p;
+                *method = Method::Get;
                 changed = true;
             }
         }
@@ -354,7 +421,7 @@ impl BodyKind {
     }
 }
 
-fn body_tab(ui: &mut Ui, body: &mut Body, vars: &Map<String, Value>) -> bool {
+fn body_tab(ui: &mut Ui, body: &mut Body, vars: &Map<String, Value>, gql: &mut GqlContext) -> bool {
     let pal = Palette::of(ui);
     let mut changed = false;
     let current = BodyKind::of(body);
@@ -456,15 +523,79 @@ fn body_tab(ui: &mut Ui, body: &mut Body, vars: &Map<String, Value>) -> bool {
             variables,
             operation_name: _,
         } => {
-            let h = ui.available_height();
-            caption(ui, "Query");
-            ui.allocate_ui(vec2(ui.available_width(), h * 0.6), |ui| {
-                changed |= editor_box(ui, query, Syntax::Plain, vars, "gql");
-            });
-            ui.add_space(6.0);
-            caption(ui, "Variables (JSON)");
-            changed |= editor_box(ui, variables, Syntax::Json, vars, "gqlvars");
+            changed |= crate::graphql_ui::body(
+                ui,
+                query,
+                variables,
+                vars,
+                gql.schema.as_deref(),
+                gql.loading,
+                gql.error.as_deref(),
+                &mut gql.fetch,
+            );
         }
+    }
+    changed
+}
+
+/// WebSocket message composer.
+fn message_tab(
+    ui: &mut Ui,
+    body: &mut Body,
+    vars: &Map<String, Value>,
+    connected: bool,
+    actions: &mut RequestActions,
+) -> bool {
+    let pal = Palette::of(ui);
+    let mut changed = false;
+    if !matches!(body, Body::Json { .. } | Body::Text { .. }) {
+        *body = Body::Json {
+            text: String::new(),
+        };
+        changed = true;
+    }
+    ui.horizontal(|ui| {
+        let is_json = matches!(body, Body::Json { .. });
+        for (label, json) in [("JSON", true), ("Text", false)] {
+            let text = RichText::new(label).size(12.0).color(if is_json == json {
+                pal.strong
+            } else {
+                pal.weak
+            });
+            if ui
+                .add(
+                    egui::Button::selectable(is_json == json, text)
+                        .corner_radius(CornerRadius::same(5)),
+                )
+                .clicked()
+                && is_json != json
+            {
+                *body = if json {
+                    BodyKind::Json.convert(body)
+                } else {
+                    BodyKind::Text.convert(body)
+                };
+                changed = true;
+            }
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if primary_button(ui, "Send message", connected)
+                .on_hover_text(if connected {
+                    "Send (Ctrl+Enter)"
+                } else {
+                    "Connect first"
+                })
+                .clicked()
+            {
+                actions.send_message = true;
+            }
+        });
+    });
+    ui.add_space(8.0);
+    match body {
+        Body::Json { text } => changed |= editor_box(ui, text, Syntax::Json, vars, "wsjson"),
+        Body::Text { text, .. } => changed |= editor_box(ui, text, Syntax::Plain, vars, "wstext"),
+        _ => {}
     }
     changed
 }

@@ -4,8 +4,8 @@
 use crate::state::NexusState;
 use crate::theme::{Palette, mono, semibold};
 use crate::widgets::{
-    self, Icon, Syntax, caption, code_editor, code_view, field_frame, icon_button, method_label,
-    primary_button, secondary_button,
+    self, Icon, Syntax, caption, code_editor, code_view, field_frame, icon_button, primary_button,
+    secondary_button,
 };
 use egui::{Align, CornerRadius, Layout, RichText, Sense, Ui, vec2};
 use nexus_http_core::codegen::{self, Target};
@@ -198,7 +198,7 @@ fn switcher(ui: &mut Ui, state: &mut NexusState, local: &mut OverlayUi, pal: &Pa
                         .max_rect(rect.shrink2(vec2(8.0, 0.0)))
                         .layout(Layout::left_to_right(Align::Center)),
                 );
-                method_label(&mut child, &request.method, 40.0);
+                widgets::request_label(&mut child, request, 40.0);
                 child.add_space(8.0);
                 child.label(RichText::new(&request.name).color(pal.strong));
                 if !path.is_empty() {
