@@ -79,11 +79,46 @@ pub fn row_text(
     font: egui::FontId,
     color: Color32,
 ) -> f32 {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    row_text_elided(ui, rect, x, text, font, color).0
+}
+
+/// Single-line layout that ends in "…" when wider than `max_width`.
+pub fn elided_job(
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+    max_width: f32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+    job.wrap = egui::text::TextWrapping {
+        max_width: max_width.max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    job
+}
+
+/// Paints `text` from `x`, elided with "…" at the row's right edge (minus
+/// padding). Returns the end x and whether the text was shortened, so callers
+/// can offer the full text as a tooltip.
+pub fn row_text_elided(
+    ui: &egui::Ui,
+    rect: Rect,
+    x: f32,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+) -> (f32, bool) {
+    let max_width = rect.right() - 6.0 - x;
+    let galley = ui
+        .painter()
+        .layout_job(elided_job(text, font, color, max_width));
     let width = galley.size().x;
+    let elided = galley.elided;
     let pos = egui::pos2(x, rect.center().y - galley.size().y / 2.0);
     ui.painter().with_clip_rect(rect).galley(pos, galley, color);
-    x + width
+    (x + width, elided)
 }
 
 /// Hoverable text widget for the status bar and toolbar dropdowns.
@@ -175,5 +210,26 @@ mod tests {
     fn pluralizes() {
         assert_eq!(pluralize(1, "problem", "problems"), "1 problem");
         assert_eq!(pluralize(3, "problem", "problems"), "3 problems");
+    }
+
+    #[test]
+    fn long_names_are_elided_with_an_ellipsis() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            let font = egui::FontId::proportional(13.0);
+            let layout = |text: &str, width: f32| {
+                ctx.fonts_mut(|fonts| {
+                    fonts.layout_job(elided_job(text, font.clone(), Color32::WHITE, width))
+                })
+            };
+            let long = layout("ExtremelyLongFileNameThatDoesNotFit.kt", 80.0);
+            assert!(long.elided);
+            assert!(long.size().x <= 80.0 + 1.0, "{}", long.size().x);
+            let last = long.rows.last().and_then(|row| row.glyphs.last());
+            assert_eq!(last.map(|glyph| glyph.chr), Some('…'));
+            let short = layout("App.kt", 80.0);
+            assert!(!short.elided);
+            assert_eq!(short.text(), "App.kt");
+        });
     }
 }

@@ -2071,6 +2071,7 @@ name = "jetthing-cli"
 version = "0.0.2"
 dependencies = [
  "jetthing-command",
+ "jetthing-control",
  "jetthing-core",
  "serde_json",
 ]
@@ -2079,6 +2080,16 @@ dependencies = [
 name = "jetthing-command"
 version = "0.0.2"
 dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "jetthing-control"
+version = "0.0.2"
+dependencies = [
+ "png",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2207,6 +2218,7 @@ dependencies = [
  "eframe",
  "egui",
  "jetthing-command",
+ "jetthing-control",
  "jetthing-core",
  "jetthing-git",
  "jetthing-language",
@@ -6037,6 +6049,9 @@ name = "xtask"
 version = "0.0.2"
 dependencies = [
  "anyhow",
+ "jetthing-control",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
