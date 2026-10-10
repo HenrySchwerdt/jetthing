@@ -683,9 +683,36 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
             "Text to find",
             360.0,
         );
-        let submit = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let mut submit = input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        // Option toggles re-run the search, like the reference popup.
+        let options = &mut app.find_options;
+        for (label, tooltip, value) in [
+            ("Cc", "Match Case", &mut options.match_case),
+            ("W", "Words", &mut options.whole_words),
+            (".*", "Regex", &mut options.regex),
+        ] {
+            let toggle = ui
+                .selectable_label(*value, RichText::new(label).monospace())
+                .on_hover_text(tooltip);
+            if toggle.clicked() {
+                *value = !*value;
+                submit = true;
+            }
+        }
+        ui.add_space(8.0);
+        let mask = widgets::search_field(
+            ui,
+            egui::Id::new("find_file_mask"),
+            &mut options.file_mask,
+            "File mask, e.g. *.java, !*Test.java",
+            220.0,
+        );
+        submit |= mask.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if submit && !app.search_input.is_empty() {
-            app.dispatch("search.project", json!({"query": app.search_input.clone()}));
+            app.dispatch(
+                "search.project",
+                find_params(&app.search_input, &app.find_options),
+            );
         }
         let count = app.state.search_results.len();
         let mut summary = widgets::pluralize(count, "match", "matches");
@@ -748,6 +775,17 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
         );
         ui.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
     }
+}
+
+/// Parameters of `search.project` for the query and the toggled options.
+fn find_params(query: &str, options: &jetthing_core::SearchOptions) -> Value {
+    json!({
+        "query": query,
+        "matchCase": options.match_case,
+        "wholeWords": options.whole_words,
+        "regex": options.regex,
+        "fileMask": options.file_mask,
+    })
 }
 
 /// Result preview with every occurrence on a search-result background.
@@ -978,6 +1016,29 @@ fn terminal(app: &mut IdeApp, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_options_become_command_parameters() {
+        let options = jetthing_core::SearchOptions {
+            match_case: true,
+            regex: true,
+            file_mask: "*.kt".into(),
+            ..Default::default()
+        };
+        let params = find_params("gr.*t", &options);
+        assert_eq!(
+            params,
+            json!({"query": "gr.*t", "matchCase": true, "wholeWords": false, "regex": true, "fileMask": "*.kt"})
+        );
+        let specs = jetthing_core::built_in_commands().specs();
+        let spec = specs
+            .iter()
+            .find(|spec| spec.id == "search.project")
+            .unwrap();
+        for key in ["matchCase", "wholeWords", "regex", "fileMask"] {
+            assert!(spec.params.contains(key), "{key} documented in the schema");
+        }
+    }
 
     #[test]
     fn find_preview_highlights_each_occurrence() {
