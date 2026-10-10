@@ -4,6 +4,8 @@
 //! Windows/Linux the default keymap differs, so labels are translated: modifier
 //! glyphs become words and a few bindings use their documented non-macOS form.
 
+use eframe::egui;
+
 /// Translates a macOS-notation shortcut for display on the current platform.
 pub fn display(mac: &str) -> String {
     if cfg!(target_os = "macos") {
@@ -20,7 +22,6 @@ pub fn for_windows_linux(mac: &str) -> String {
         // Default keymap differences between macOS and Windows/Linux.
         "⌃R" => return "Shift+F10".into(),
         "⌘W" => return "Ctrl+F4".into(),
-        "⌥⌘S" => return "Ctrl+S".into(),
         "⌥F12" => return "Alt+F12".into(),
         "⌘," => return "Ctrl+Alt+S".into(),
         _ => {}
@@ -62,6 +63,30 @@ pub fn for_windows_linux(mac: &str) -> String {
     parts.join("+")
 }
 
+/// Drops the text some platforms emit alongside an Alt chord (Alt+7 → "7"),
+/// so an unbound chord does not type into the focused field. Characters
+/// composed with AltGr or macOS Option differ from the key's own symbol
+/// ("@" for AltGr+Q, "¶" for ⌥7) and are kept.
+pub fn strip_alt_chord_text(events: &mut Vec<egui::Event>) {
+    let mut echoed: Vec<String> = Vec::new();
+    events.retain(|event| match event {
+        egui::Event::Key {
+            key,
+            modifiers,
+            pressed: true,
+            ..
+        } if modifiers.alt && !modifiers.ctrl && !modifiers.mac_cmd => {
+            let symbol = key.symbol_or_name();
+            if symbol.chars().count() == 1 {
+                echoed.push(symbol.to_lowercase());
+            }
+            true
+        }
+        egui::Event::Text(text) => !echoed.iter().any(|symbol| text.to_lowercase() == *symbol),
+        _ => true,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,5 +100,41 @@ mod tests {
         assert_eq!(for_windows_linux("⌃R"), "Shift+F10");
         assert_eq!(for_windows_linux("Double ⇧"), "Double Shift");
         assert_eq!(for_windows_linux(""), "");
+        assert_eq!(for_windows_linux("⌘S"), "Ctrl+S");
+    }
+
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn unbound_alt_digit_does_not_type() {
+        let mut events = vec![
+            key(egui::Key::Num7, egui::Modifiers::ALT),
+            egui::Event::Text("7".into()),
+        ];
+        strip_alt_chord_text(&mut events);
+        assert_eq!(events.len(), 1);
+        // AltGr composes another character, which must still be typed.
+        let altgr = egui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        let mut events = vec![key(egui::Key::Q, altgr), egui::Event::Text("@".into())];
+        strip_alt_chord_text(&mut events);
+        assert_eq!(events.len(), 2);
+        // Plain typing is untouched.
+        let mut events = vec![
+            key(egui::Key::Num7, egui::Modifiers::NONE),
+            egui::Event::Text("7".into()),
+        ];
+        strip_alt_chord_text(&mut events);
+        assert_eq!(events.len(), 2);
     }
 }

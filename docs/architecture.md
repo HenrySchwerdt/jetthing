@@ -45,14 +45,18 @@ no crate below `jetthing-ui` imports UI types.
   (original 16×16 vector icons).
 - `jetthing-app`: process startup, native window (custom title bar on Windows/Linux),
   and wgpu → OpenGL renderer fallback.
-- `jetthing-cli`: headless command discovery and execution.
+- `jetthing-control`: UI automation wire protocol (JSON lines), local-socket listener and
+  blocking client; toolkit-independent. The workbench drains requests each frame.
+- `jetthing-cli`: headless command discovery and execution, and `ui …` requests to a
+  running workbench over the control socket.
 
 ## Command contract
 
 Commands have stable IDs, human labels, JSON schemas expressed as documentation,
 capability requirements, an enabled predicate, and an execution handler. GUI and CLI
-use the same registry. Cancellation/progress and MCP/control transports are next-step
-extensions of this contract.
+use the same registry, and the control socket's `execute` request reaches every command of
+a running workbench. Cancellation/progress and MCP transports are next-step extensions of
+this contract.
 
 ## Settings extension point
 

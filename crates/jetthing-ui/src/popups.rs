@@ -40,6 +40,21 @@ pub enum Dialog {
     },
 }
 
+impl Dialog {
+    /// Stable name reported by the automation `state` request.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Dialog::NewProject { .. } => "newProject",
+            Dialog::OpenProject { .. } => "openProject",
+            Dialog::NewEntry { .. } => "newEntry",
+            Dialog::Rename { .. } => "rename",
+            Dialog::Delete { .. } => "delete",
+            Dialog::GotoLine { .. } => "gotoLine",
+            Dialog::Recent { .. } => "recentFiles",
+        }
+    }
+}
+
 fn input_id() -> egui::Id {
     egui::Id::new("dialog_input")
 }
