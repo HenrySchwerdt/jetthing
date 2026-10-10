@@ -356,9 +356,11 @@ fn is_digest(text: &str) -> bool {
 }
 
 /// Reads a `sha256sum`-style file: a bare digest, `<hex>  <name>` or several
-/// such lines (then the line naming `file_name` wins).
+/// such lines. With file names present, only the line naming `file_name`
+/// counts; a single unnamed digest applies to the file it accompanies.
 pub fn parse_checksum_file(text: &str, file_name: &str) -> Option<String> {
-    let mut first = None;
+    let wanted = Path::new(file_name).file_name();
+    let mut unnamed = Vec::new();
     for line in text.lines() {
         let mut parts = line.split_whitespace();
         let Some(digest) = parts.next().filter(|d| is_digest(d)) else {
@@ -366,15 +368,12 @@ pub fn parse_checksum_file(text: &str, file_name: &str) -> Option<String> {
         };
         let digest = digest.to_ascii_lowercase();
         match parts.next().map(|name| name.trim_start_matches('*')) {
-            Some(name) if Path::new(name).file_name() == Path::new(file_name).file_name() => {
-                return Some(digest);
-            }
-            _ => {
-                first.get_or_insert(digest);
-            }
+            Some(name) if Path::new(name).file_name() == wanted => return Some(digest),
+            Some(_) => {}
+            None => unnamed.push(digest),
         }
     }
-    first
+    (unnamed.len() == 1).then(|| unnamed.remove(0))
 }
 
 #[cfg(test)]
@@ -390,6 +389,11 @@ mod tests {
         assert_eq!(
             parse_checksum_file(&listing, "x.zip"),
             Some(b.to_ascii_lowercase())
+        );
+        // A listing without our file must not fall back to another file's digest.
+        assert_eq!(
+            parse_checksum_file(&format!("{a}  other.zip"), "x.zip"),
+            None
         );
         assert_eq!(parse_checksum_file("nope", "x.zip"), None);
     }
