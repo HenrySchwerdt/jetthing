@@ -9,6 +9,7 @@ eframe.workspace = true
 egui.workspace = true
 jetthing-actions = { path = "../jetthing-actions" }
 jetthing-command = { path = "../jetthing-command" }
+jetthing-control = { path = "../jetthing-control" }
 jetthing-core = { path = "../jetthing-core" }
 jetthing-git = { path = "../jetthing-git" }
 jetthing-keymap = { path = "../jetthing-keymap" }

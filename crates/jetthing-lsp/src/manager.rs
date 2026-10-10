@@ -255,7 +255,16 @@ impl LspManager {
         );
         match self.servers[index].service.as_mut() {
             Some(service) if service.state() != ServerState::Exited => {
-                service.sync_document(path, language_id, text, version)
+                match service.sync_document(path, language_id, text, version) {
+                    // The server exited after the state check; `poll` notices the exit,
+                    // restarts it and re-sends every open document, this one included.
+                    Err(LspError::Start(error))
+                        if error.kind() == std::io::ErrorKind::BrokenPipe =>
+                    {
+                        Ok(())
+                    }
+                    other => other,
+                }
             }
             // Restarting: the document is re-sent once the server is back.
             _ => Ok(()),

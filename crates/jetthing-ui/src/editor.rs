@@ -189,18 +189,15 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
                 egui::StrokeKind::Inside,
             );
         }
+        let layout = TabLayout::new(rect, galley.size());
         icons::paint(
             ui.painter(),
-            Rect::from_min_size(rect.left_center() + vec2(10.0, -8.0), vec2(16.0, 16.0)),
+            layout.icon,
             Icon::for_file(&name),
             *icons::ICON,
         );
-        let text_pos = rect.left_center() + vec2(32.0, -galley.size().y / 2.0);
-        ui.painter().galley(text_pos, galley, color);
-        let close_rect = Rect::from_min_size(
-            egui::pos2(rect.right() - 24.0, rect.center().y - 8.0),
-            vec2(16.0, 16.0),
-        );
+        ui.painter().galley(layout.text.min, galley, color);
+        let close_rect = layout.close;
         let dirty = doc.text.is_dirty();
         let pointer_on_close = response
             .hover_pos()
@@ -221,11 +218,8 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
                 .circle_filled(close_rect.center(), 3.0, theme::TEXT_SECONDARY);
         }
         if dirty && (response.hovered() || active) && !pointer_on_close {
-            ui.painter().circle_filled(
-                close_rect.center() + vec2(-14.0, -7.0),
-                2.5,
-                theme::MODIFIED,
-            );
+            ui.painter()
+                .circle_filled(layout.modified_dot, 2.5, theme::MODIFIED);
         }
         let response = response.on_hover_text(doc.path.display().to_string());
         if response.clicked() {
@@ -244,6 +238,36 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     } else if let Some(index) = activate {
         app.dispatch("editor.activate", json!({"index": index}));
         ui.memory_mut(|memory| memory.request_focus(editor_id()));
+    }
+}
+
+/// Geometry of one editor tab: file icon, title, close button, and the
+/// modified badge shown while the close button is visible. The badge sits on
+/// the icon's top-right corner so it never covers the title.
+struct TabLayout {
+    icon: Rect,
+    text: Rect,
+    close: Rect,
+    modified_dot: egui::Pos2,
+}
+
+impl TabLayout {
+    fn new(rect: Rect, text_size: egui::Vec2) -> Self {
+        let icon = Rect::from_min_size(rect.left_center() + vec2(10.0, -8.0), vec2(16.0, 16.0));
+        let text = Rect::from_min_size(
+            rect.left_center() + vec2(32.0, -text_size.y / 2.0),
+            text_size,
+        );
+        let close = Rect::from_min_size(
+            egui::pos2(rect.right() - 24.0, rect.center().y - 8.0),
+            vec2(16.0, 16.0),
+        );
+        Self {
+            icon,
+            text,
+            close,
+            modified_dot: icon.right_top() + vec2(-1.0, 2.0),
+        }
     }
 }
 
@@ -976,6 +1000,23 @@ pub fn completion_popup(app: &mut IdeApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modified_badge_does_not_cover_the_tab_title() {
+        for text_width in [20.0, 87.0, 240.0] {
+            let width = 10.0 + 16.0 + 6.0 + text_width + 6.0 + 16.0 + 8.0;
+            let rect = Rect::from_min_size(egui::pos2(100.0, 5.0), vec2(width, 28.0));
+            let layout = TabLayout::new(rect, vec2(text_width, 16.0));
+            let badge = Rect::from_center_size(layout.modified_dot, vec2(5.0, 5.0));
+            assert!(
+                !badge.intersects(layout.text),
+                "badge over title at {text_width}"
+            );
+            assert!(!badge.intersects(layout.close));
+            assert!(!layout.text.intersects(layout.close));
+            assert!(rect.contains_rect(badge));
+        }
+    }
 
     #[test]
     fn highlighting_skips_spans_that_split_characters() {

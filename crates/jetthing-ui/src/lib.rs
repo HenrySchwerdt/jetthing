@@ -6,6 +6,7 @@
 //! dispatched through the typed command registry.
 
 mod chrome;
+mod control;
 mod editor;
 mod findbar;
 mod icons;
@@ -61,12 +62,23 @@ pub struct IdeApp {
     window_focused: bool,
     /// First stroke of a two-stroke chord waiting for its second stroke.
     pending_chord: Option<jetthing_keymap::KeyStroke>,
+    /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
+    control: Option<control::Control>,
 }
 
 impl IdeApp {
     /// Opens `project` (if any) and then each of `files`, relative to the project root
     /// or absolute inside it.
     pub fn new(project: Option<PathBuf>, files: Vec<PathBuf>) -> Self {
+        let check_updates = std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none();
+        Self::with_update_check(project, files, check_updates)
+    }
+
+    fn with_update_check(
+        project: Option<PathBuf>,
+        files: Vec<PathBuf>,
+        check_updates: bool,
+    ) -> Self {
         let commands = built_in_commands();
         let mut state = IdeState::default();
         if let Some(dir) = jetthing_settings::default_config_dir() {
@@ -97,9 +109,7 @@ impl IdeApp {
                 state.status = error.to_string();
             }
         }
-        if std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none()
-            && state.settings.bool(ids::CHECK_UPDATES).unwrap_or(true)
-        {
+        if check_updates && state.settings.bool(ids::CHECK_UPDATES).unwrap_or(true) {
             let _ = commands.execute("app.checkForUpdates", &mut state, json!({"silent": true}));
         }
         let run_label = state.project.as_ref().and_then(|project| {
@@ -130,6 +140,7 @@ impl IdeApp {
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
             pending_chord: None,
+            control: None,
         }
     }
 
@@ -323,6 +334,11 @@ impl IdeApp {
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
             }
         }
+        // Unbound Alt chords (e.g. Alt+7) must not type their digit either; the
+        // terminal gets them as shell input.
+        if !terminal_focused {
+            ctx.input_mut(|input| keys::strip_alt_chord_text(&mut input.events));
+        }
         // Some platforms also emit the chord's character as text (e.g. Alt+1 → "1");
         // a consumed shortcut must not type into the focused field.
         if consumed_chord.get() {
@@ -415,6 +431,10 @@ impl eframe::App for IdeApp {
         theme::FRAME.to_normalized_gamma_f32()
     }
 
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.control_before_frame(ctx, raw_input);
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.state.poll_search();
         self.state.poll_runner();
@@ -473,6 +493,7 @@ impl eframe::App for IdeApp {
         if self.state.updates.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
+        self.control_after_frame(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

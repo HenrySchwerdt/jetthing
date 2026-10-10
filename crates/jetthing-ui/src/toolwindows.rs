@@ -201,7 +201,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                         })
                         .flatten()
                 });
-                row_text(
+                let (_, elided) = widgets::row_text_elided(
                     ui,
                     rect,
                     x,
@@ -209,6 +209,11 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                     egui::FontId::proportional(theme::UI_FONT_SIZE),
                     change_color(kind),
                 );
+                let response = if elided {
+                    response.on_hover_text(&name)
+                } else {
+                    response
+                };
                 if response.secondary_clicked() {
                     app.tree_selection = Some(path.clone());
                 }
