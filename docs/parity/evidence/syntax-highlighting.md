@@ -130,6 +130,20 @@ the tree's parameter `type` fields and the return type (`greeting(String): Strin
   stripe) highlights the declaration at the caret. The status-bar navigation path reads
   `java-gradle › src › main › java › com › example › App › main`, as in the reference.
 
+## Matching brace, markup and data structure
+
+- The highlight for the matching brace now comes from the tree
+  (`jetthing-language::brackets`). Only real bracket tokens match, and the partner is the
+  complementary token among the same node's children. A `(` inside a string or comment never
+  matches; files without a grammar keep the text matcher.
+- Structure for languages whose grammars ship no tags query uses Jetthing-owned
+  `queries/<lang>/tags.scm` data: XML/HTML elements, JSON/YAML/TOML keys and tables, and Markdown
+  headings (nested through tree-sitter-md sections). Qualified tag names are shortened in the
+  navigation bar (`ConstraintLayout`).
+- `syntax-highlighting/structure-android-layout-xml.png`: the Structure window for the Android
+  layout (`ConstraintLayout` › `TextView`), with the caret's element highlighted and the
+  breadcrumbs shortened.
+
 ## Languages
 
 Rust, Java, Kotlin (`tree-sitter-kotlin-sg`), Groovy (`*.gradle`, `*.groovy`, `Jenkinsfile`), XML, JSON, TOML, YAML, Markdown (block grammar, with the inline grammar injected),

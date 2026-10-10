@@ -58,6 +58,9 @@ fn badge(kind: SymbolKind) -> (&'static str, Color32) {
         SymbolKind::Module => ("M", Color32::from_rgb(0x86, 0x8A, 0x91)),
         SymbolKind::Type => ("T", Color32::from_rgb(0x2A, 0xAC, 0xB8)),
         SymbolKind::Macro => ("!", Color32::from_rgb(0x86, 0x8A, 0x91)),
+        SymbolKind::Tag => ("<", Color32::from_rgb(0xD5, 0xB7, 0x78)),
+        SymbolKind::Key => ("k", Color32::from_rgb(0xC7, 0x7D, 0xBB)),
+        SymbolKind::Heading => ("#", Color32::from_rgb(0x86, 0x8A, 0x91)),
         SymbolKind::Other => ("•", Color32::from_rgb(0x86, 0x8A, 0x91)),
     }
 }
@@ -155,8 +158,24 @@ pub fn breadcrumbs(ctx: &egui::Context, document: &Document) -> Vec<(SymbolKind,
         .char_to_byte(document.selections.primary().head);
     structure::path_at(&items, byte)
         .into_iter()
-        .map(|item| (item.kind, item.name.clone()))
+        .map(|item| (item.kind, crumb_label(&item.name)))
         .collect()
+}
+
+/// Short breadcrumb label: qualified names keep their last segment
+/// (`androidx.…ConstraintLayout` → `ConstraintLayout`), long ones are cut.
+fn crumb_label(name: &str) -> String {
+    let name = name.lines().next().unwrap_or_default().trim();
+    let short = if name.len() > 24 && name.contains('.') && !name.contains(' ') {
+        name.rsplit('.').next().unwrap_or(name)
+    } else {
+        name
+    };
+    if short.chars().count() > 32 {
+        format!("{}…", short.chars().take(31).collect::<String>())
+    } else {
+        short.to_owned()
+    }
 }
 
 /// Structure tool window body.
@@ -228,5 +247,13 @@ mod tests {
             .map(|(_, name)| name)
             .collect();
         assert_eq!(crumbs, vec!["A", "B", "g"]);
+        assert_eq!(
+            crumb_label("androidx.constraintlayout.widget.ConstraintLayout"),
+            "ConstraintLayout"
+        );
+        assert_eq!(
+            crumb_label("Getting started with the very long heading"),
+            "Getting started with the very l…"
+        );
     }
 }

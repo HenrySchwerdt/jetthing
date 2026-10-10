@@ -2,6 +2,7 @@
 //! their bundled queries, a generic highlight engine, and IntelliJ color
 //! schemes. No language has its own code path here.
 
+pub mod brackets;
 mod captures;
 pub mod folding;
 pub mod highlight;
@@ -49,6 +50,14 @@ pub struct LanguageAnalysis {
 }
 
 impl LanguageAnalysis {
+    /// Matching-bracket pair for the bracket token starting at `byte`, from the
+    /// syntax tree (`None` for non-brackets, brackets in strings/comments and
+    /// unmatched brackets). Callers fall back to text matching when the
+    /// language has no grammar ([`LanguageAnalysis::syntax`] is `None`).
+    pub fn matching_bracket(&self, byte: usize) -> Option<(usize, usize)> {
+        brackets::matching_bracket(self.syntax.as_ref()?.tree(), byte)
+    }
+
     /// Declarations of the file, nested (empty without a tags query).
     pub fn structure(&self) -> Vec<StructureItem> {
         match &self.syntax {

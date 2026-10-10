@@ -444,11 +444,21 @@ fn editor_surface(
     let mut caret_pos = None;
     let brace_pair: Vec<usize> = {
         let head = document.selections.primary().head;
-        ops::matching_bracket(&document.text, head)
-            .or_else(|| {
-                head.checked_sub(1)
-                    .and_then(|h| ops::matching_bracket(&document.text, h))
-            })
+        // Structural matching from the syntax tree when the language has a
+        // grammar (brackets in strings/comments never match); text otherwise.
+        let find = |offset: usize| {
+            if document.analysis.syntax.is_some() {
+                let byte = document.text.char_to_byte(offset);
+                document
+                    .analysis
+                    .matching_bracket(byte)
+                    .map(|(a, b)| (document.text.byte_to_char(a), document.text.byte_to_char(b)))
+            } else {
+                ops::matching_bracket(&document.text, offset)
+            }
+        };
+        find(head)
+            .or_else(|| head.checked_sub(1).and_then(find))
             .into_iter()
             .flat_map(|(a, b)| [a, b])
             .collect()

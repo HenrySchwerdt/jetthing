@@ -21,6 +21,12 @@ pub enum SymbolKind {
     Module,
     Type,
     Macro,
+    /// Markup element (XML/HTML tag).
+    Tag,
+    /// Data key (JSON/YAML/TOML).
+    Key,
+    /// Document section (Markdown heading, TOML table).
+    Heading,
     Other,
 }
 
@@ -38,6 +44,9 @@ impl SymbolKind {
             "module" | "namespace" | "package" => Self::Module,
             "type" => Self::Type,
             "macro" => Self::Macro,
+            "tag" | "element" => Self::Tag,
+            "key" => Self::Key,
+            "heading" | "section" => Self::Heading,
             _ => Self::Other,
         }
     }
@@ -309,6 +318,48 @@ mod tests {
         assert!(
             rendered.contains(&"Function main()".to_owned()),
             "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn markup_and_data_languages_have_structure() {
+        assert_eq!(
+            render(
+                "markdown",
+                "# Title\n\ntext\n\n## Usage\n\nmore\n\n## API\n"
+            ),
+            vec!["Heading Title", "  Heading Usage", "  Heading API"]
+        );
+        assert_eq!(
+            render(
+                "xml",
+                "<LinearLayout a=\"b\">\n  <TextView/>\n  <Button></Button>\n</LinearLayout>\n"
+            ),
+            vec!["Tag LinearLayout", "  Tag TextView", "  Tag Button"]
+        );
+        assert_eq!(
+            render("json", "{\"name\": \"x\", \"deps\": {\"a\": 1}}"),
+            vec!["Key name", "Key deps", "  Key a"]
+        );
+        assert_eq!(
+            render("yaml", "build:\n  steps:\n    - run: x\nname: y\n"),
+            vec!["Key build", "  Key steps", "    Key run", "Key name"]
+        );
+        assert_eq!(
+            render(
+                "toml",
+                "[package]\nname = \"x\"\n\n[dependencies]\nserde = \"1\"\n"
+            ),
+            vec![
+                "Heading package",
+                "  Key name",
+                "Heading dependencies",
+                "  Key serde"
+            ]
+        );
+        assert_eq!(
+            render("html", "<html><body><p>hi</p></body></html>"),
+            vec!["Tag html", "  Tag body", "    Tag p"]
         );
     }
 

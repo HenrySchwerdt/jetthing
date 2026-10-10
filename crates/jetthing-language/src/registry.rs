@@ -146,7 +146,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: &[],
+        tags: &[include_str!("../queries/xml/tags.scm")],
         capture_keys: XML_KEYS,
     },
     LanguageSpec {
@@ -160,7 +160,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: &[],
+        tags: &[include_str!("../queries/json/tags.scm")],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -174,7 +174,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: &[],
+        tags: &[include_str!("../queries/toml/tags.scm")],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -188,7 +188,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: None,
         locals: None,
         folds: None,
-        tags: &[],
+        tags: &[include_str!("../queries/yaml/tags.scm")],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -202,7 +202,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: Some(tree_sitter_md::INJECTION_QUERY_BLOCK),
         locals: None,
         folds: None,
-        tags: &[],
+        tags: &[include_str!("../queries/markdown/tags.scm")],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -387,7 +387,7 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         injections: Some(tree_sitter_html::INJECTIONS_QUERY),
         locals: None,
         folds: None,
-        tags: &[],
+        tags: &[include_str!("../queries/html/tags.scm")],
         capture_keys: HTML_KEYS,
     },
     LanguageSpec {
