@@ -29,6 +29,7 @@ mod toolwindow;
 mod update_commands;
 pub use toolchain_commands::ToolchainState;
 mod vcs;
+mod worktree_commands;
 pub use branch_commands::abort_label;
 pub use git_log::GitLogState;
 pub use line_changes::hunk_at_line;
@@ -655,6 +656,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     branch_commands::register(&mut registry);
     remote_commands::register(&mut registry);
     annotations::register(&mut registry);
+    worktree_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(

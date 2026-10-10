@@ -68,10 +68,12 @@ pub struct IdeApp {
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
     repaint_hook_installed: bool,
+    /// Amend toggle of the Commit tool window.
+    commit_amend: bool,
     /// Open push dialog.
     push_dialog: Option<push_dialog::PushDialog>,
     /// Open branch name/confirmation dialog.
-    branch_dialog: Option<branches_popup::BranchDialog>,
+    git_dialog: Option<branches_popup::GitDialog>,
     /// Open gutter change-marker popup.
     change_popup: Option<change_popup::ChangePopup>,
 }
@@ -152,8 +154,9 @@ impl IdeApp {
             control: None,
             repaint_hook_installed: false,
             change_popup: None,
-            branch_dialog: None,
+            git_dialog: None,
             push_dialog: None,
+            commit_amend: false,
         }
     }
 
@@ -418,8 +421,8 @@ impl IdeApp {
                 self.state.about_open = false;
             } else if self.dialog.is_some() {
                 self.dialog = None;
-            } else if self.branch_dialog.is_some() {
-                self.branch_dialog = None;
+            } else if self.git_dialog.is_some() {
+                self.git_dialog = None;
             } else if self.push_dialog.is_some() {
                 self.push_dialog = None;
             } else if self.change_popup.is_some() {

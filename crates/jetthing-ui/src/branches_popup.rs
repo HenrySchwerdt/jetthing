@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 /// A dialog opened from the branches popup.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BranchDialog {
+pub enum GitDialog {
     /// Create a branch from `from` (current HEAD when `None`).
     NewBranch {
         from: Option<String>,
@@ -28,10 +28,23 @@ pub enum BranchDialog {
     },
     /// `git branch -d` refused an unmerged branch.
     ForceDelete { branch: String },
+    /// Confirm discarding local changes of project-relative paths.
+    Rollback { paths: Vec<String> },
+    Stash {
+        message: String,
+        keep_index: bool,
+        include_untracked: bool,
+        error: Option<String>,
+    },
+    Unstash {
+        selected: usize,
+        pop: bool,
+        error: Option<String>,
+    },
 }
 
 fn input_id() -> egui::Id {
-    egui::Id::new("branch_dialog_input")
+    egui::Id::new("git_dialog_input")
 }
 
 /// Contents of the VCS widget popup.
@@ -89,7 +102,7 @@ pub fn menu(app: &mut IdeApp, ui: &mut egui::Ui) {
         ui.label(RichText::new(progress).color(theme::TEXT_SECONDARY));
     }
     if ui.button("New Branch…").clicked() {
-        dialog = Some(BranchDialog::NewBranch {
+        dialog = Some(GitDialog::NewBranch {
             from: None,
             name: String::new(),
             checkout: true,
@@ -97,8 +110,23 @@ pub fn menu(app: &mut IdeApp, ui: &mut egui::Ui) {
         });
     }
     if ui.button("Checkout Tag or Revision…").clicked() {
-        dialog = Some(BranchDialog::CheckoutRevision {
+        dialog = Some(GitDialog::CheckoutRevision {
             revision: String::new(),
+            error: None,
+        });
+    }
+    if ui.button("Stash Changes…").clicked() {
+        dialog = Some(GitDialog::Stash {
+            message: String::new(),
+            keep_index: false,
+            include_untracked: false,
+            error: None,
+        });
+    }
+    if ui.button("Unstash Changes…").clicked() {
+        dialog = Some(GitDialog::Unstash {
+            selected: 0,
+            pop: true,
             error: None,
         });
     }
@@ -163,7 +191,7 @@ pub fn menu(app: &mut IdeApp, ui: &mut egui::Ui) {
         crate::push_dialog::open(app);
     }
     if let Some(dialog) = dialog {
-        app.branch_dialog = Some(dialog);
+        app.git_dialog = Some(dialog);
         app.dialog_focus = true;
     }
     if let Some((id, params)) = action {
@@ -186,14 +214,14 @@ fn branch_actions(
     current: &str,
     remote: bool,
     action: &mut Option<(&'static str, Value)>,
-    dialog: &mut Option<BranchDialog>,
+    dialog: &mut Option<GitDialog>,
 ) {
     let is_current = branch == current;
     if !is_current && ui.button("Checkout").clicked() {
         *action = Some(("git.checkout", json!({ "branch": branch })));
     }
     if ui.button(format!("New Branch from '{branch}'…")).clicked() {
-        *dialog = Some(BranchDialog::NewBranch {
+        *dialog = Some(GitDialog::NewBranch {
             from: Some(branch.to_owned()),
             name: String::new(),
             checkout: true,
@@ -218,7 +246,7 @@ fn branch_actions(
     if !remote {
         ui.separator();
         if ui.button("Rename…").clicked() {
-            *dialog = Some(BranchDialog::Rename {
+            *dialog = Some(GitDialog::Rename {
                 branch: branch.to_owned(),
                 name: branch.to_owned(),
                 error: None,
@@ -237,7 +265,7 @@ fn run(app: &mut IdeApp, id: &str, params: Value) {
         Err(error) => {
             let message = error.to_string();
             if id == "git.deleteBranch" && message.contains("not fully merged") {
-                app.branch_dialog = Some(BranchDialog::ForceDelete {
+                app.git_dialog = Some(GitDialog::ForceDelete {
                     branch: params["branch"].as_str().unwrap_or_default().to_owned(),
                 });
             }
@@ -249,7 +277,7 @@ fn run(app: &mut IdeApp, id: &str, params: Value) {
 fn frame(ctx: &egui::Context, title: &str, add: impl FnOnce(&mut egui::Ui)) {
     let screen = ctx.content_rect();
     let width = 380.0;
-    egui::Area::new(egui::Id::new("branch_dialog"))
+    egui::Area::new(egui::Id::new("git_dialog"))
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(
             screen.center().x - width / 2.0,
@@ -311,14 +339,14 @@ fn buttons(ui: &mut egui::Ui, primary: &str) -> (bool, bool) {
 
 /// Draws the open branch dialog, if any.
 pub fn show_dialog(app: &mut IdeApp, ctx: &egui::Context) {
-    let Some(mut dialog) = app.branch_dialog.take() else {
+    let Some(mut dialog) = app.git_dialog.take() else {
         return;
     };
     let focus = std::mem::take(&mut app.dialog_focus);
     let mut keep = true;
     let mut command: Option<(&'static str, Value)> = None;
     match &mut dialog {
-        BranchDialog::NewBranch {
+        GitDialog::NewBranch {
             from,
             name,
             checkout,
@@ -342,7 +370,7 @@ pub fn show_dialog(app: &mut IdeApp, ctx: &egui::Context) {
                 }
             });
         }
-        BranchDialog::Rename {
+        GitDialog::Rename {
             branch,
             name,
             error,
@@ -360,7 +388,7 @@ pub fn show_dialog(app: &mut IdeApp, ctx: &egui::Context) {
                 }
             });
         }
-        BranchDialog::CheckoutRevision { revision, error } => {
+        GitDialog::CheckoutRevision { revision, error } => {
             frame(ctx, "Checkout Tag or Revision", |ui| {
                 let submit = field(ui, revision, focus);
                 error_line(ui, error);
@@ -371,7 +399,7 @@ pub fn show_dialog(app: &mut IdeApp, ctx: &egui::Context) {
                 }
             });
         }
-        BranchDialog::ForceDelete { branch } => {
+        GitDialog::ForceDelete { branch } => {
             frame(ctx, "Delete Branch", |ui| {
                 ui.label(format!(
                     "Branch {branch} is not fully merged. Its commits will only be \
@@ -384,25 +412,133 @@ pub fn show_dialog(app: &mut IdeApp, ctx: &egui::Context) {
                 }
             });
         }
+        GitDialog::Rollback { paths } => {
+            let title = format!(
+                "Rollback {}",
+                crate::widgets::pluralize(paths.len(), "File", "Files")
+            );
+            frame(ctx, &title, |ui| {
+                ui.label("Local changes of these files will be discarded:");
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical()
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        for path in paths.iter() {
+                            ui.label(RichText::new(path).color(theme::TEXT_BRIGHT));
+                        }
+                    });
+                ui.label(
+                    RichText::new("Newly added files are kept on disk as unversioned files.")
+                        .color(theme::TEXT_SECONDARY),
+                );
+                let (ok, cancel) = buttons(ui, "Rollback");
+                keep = !cancel;
+                if ok {
+                    command = Some(("git.rollback", json!({ "paths": paths })));
+                }
+            });
+        }
+        GitDialog::Stash {
+            message,
+            keep_index,
+            include_untracked,
+            error,
+        } => {
+            frame(ctx, "Stash Changes", |ui| {
+                ui.label(RichText::new("Message").color(theme::TEXT_SECONDARY));
+                let submit = field(ui, message, focus);
+                ui.checkbox(keep_index, "Keep index");
+                ui.checkbox(include_untracked, "Include unversioned files");
+                error_line(ui, error);
+                let (ok, cancel) = buttons(ui, "Create Stash");
+                keep = !cancel;
+                if ok || submit {
+                    command = Some((
+                        "git.stash",
+                        json!({
+                            "message": message.trim(),
+                            "keepIndex": *keep_index,
+                            "includeUntracked": *include_untracked,
+                        }),
+                    ));
+                }
+            });
+        }
+        GitDialog::Unstash {
+            selected,
+            pop,
+            error,
+        } => {
+            let stashes = app.state.stashes();
+            frame(ctx, "Unstash Changes", |ui| {
+                if stashes.is_empty() {
+                    ui.label(RichText::new("There are no stashes").color(theme::TEXT_SECONDARY));
+                }
+                egui::ScrollArea::vertical()
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        for entry in &stashes {
+                            let label = format!("stash@{{{}}}  {}", entry.index, entry.message);
+                            if ui
+                                .selectable_label(*selected == entry.index, label)
+                                .clicked()
+                            {
+                                *selected = entry.index;
+                            }
+                        }
+                    });
+                ui.checkbox(pop, "Pop stash (drop it after applying)");
+                error_line(ui, error);
+                ui.add_space(8.0);
+                let mut cancel = false;
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let enabled = *selected < stashes.len();
+                    let apply =
+                        egui::Button::new(RichText::new("Apply Stash").color(egui::Color32::WHITE))
+                            .fill(theme::ACCENT)
+                            .min_size(vec2(72.0, 26.0));
+                    if ui.add_enabled(enabled, apply).clicked() {
+                        let id = if *pop {
+                            "git.stash.pop"
+                        } else {
+                            "git.stash.apply"
+                        };
+                        command = Some((id, json!({ "index": *selected })));
+                    }
+                    cancel = ui.button("Cancel").clicked();
+                    if ui.add_enabled(enabled, egui::Button::new("Drop")).clicked() {
+                        command = Some(("git.stash.drop", json!({ "index": *selected })));
+                    }
+                });
+                keep = !cancel;
+            });
+        }
     }
     if let Some((id, params)) = command {
         match app.commands.execute(id, &mut app.state, params) {
+            Ok(_) if id == "git.stash.drop" => {
+                if let GitDialog::Unstash { selected, .. } = &mut dialog {
+                    *selected = 0;
+                }
+            }
             Ok(_) => keep = false,
             Err(failure) => {
                 let message = failure.to_string();
                 match &mut dialog {
-                    BranchDialog::NewBranch { error, .. }
-                    | BranchDialog::Rename { error, .. }
-                    | BranchDialog::CheckoutRevision { error, .. } => {
+                    GitDialog::NewBranch { error, .. }
+                    | GitDialog::Rename { error, .. }
+                    | GitDialog::CheckoutRevision { error, .. }
+                    | GitDialog::Stash { error, .. }
+                    | GitDialog::Unstash { error, .. } => {
                         *error = Some(message.clone());
                     }
-                    BranchDialog::ForceDelete { .. } => keep = false,
+                    GitDialog::ForceDelete { .. } | GitDialog::Rollback { .. } => keep = false,
                 }
                 app.state.status = message;
             }
         }
     }
     if keep {
-        app.branch_dialog = Some(dialog);
+        app.git_dialog = Some(dialog);
     }
 }
