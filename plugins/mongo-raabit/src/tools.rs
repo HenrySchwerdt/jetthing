@@ -1,5 +1,5 @@
-//! State and background operations of the tool tabs: Aggregation Editor, SQL Query,
-//! Schema Explorer and Index Manager.
+//! State and background operations of the tool tabs: Aggregation Editor, SQL mode of
+//! the Query tab, and the Structure tab (Schema Explorer and Index Manager).
 
 use crate::app::{Load, MongoRaabit, ResultView, SessionId, Tab, TabId, TabKind};
 use mongo_raabit_core::Connection;
@@ -104,6 +104,21 @@ impl IndexForm {
             partial_filter: (!partial.is_empty()).then_some(partial),
         })
     }
+}
+
+/// Which half of the Structure tab is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StructureSection {
+    #[default]
+    Schema,
+    Indexes,
+}
+
+/// Structure tab: Schema Explorer and Index Manager of one collection.
+pub struct StructureTab {
+    pub section: StructureSection,
+    pub schema: SchemaTab,
+    pub indexes: IndexTab,
 }
 
 pub struct IndexTab {
@@ -260,26 +275,28 @@ impl MongoRaabit {
 
     // ----- SQL --------------------------------------------------------------------------
 
-    pub fn open_sql(&mut self, session: SessionId, db: &str, collection: Option<&str>) -> TabId {
-        let sql = match collection {
-            Some(coll) => format!("SELECT *\nFROM {coll}\nLIMIT 50"),
-            None => "SELECT *\nFROM collection\nLIMIT 50".into(),
+    /// Opens the Query tab of `collection` in SQL mode. Without a collection (SQL on a
+    /// database) the first collection of the database is used.
+    pub fn open_sql(
+        &mut self,
+        session: SessionId,
+        db: &str,
+        collection: Option<&str>,
+    ) -> Option<TabId> {
+        let collection = match collection {
+            Some(coll) => coll.to_owned(),
+            None => self.first_collection(session, db)?,
         };
-        self.push_tab(TabKind::Sql(Box::new(SqlTab {
-            session,
-            db: db.to_owned(),
-            sql,
-            result: Load::Idle,
-            view: ResultView::Tree,
-            open: HashSet::new(),
-        })))
+        let kind = self.collection_kind(session, db, &collection);
+        let id = self.open_collection(session, db, &collection, kind);
+        if let Some(tab) = self.collection_tab_mut(id) {
+            tab.mode = crate::app::QueryMode::Sql;
+        }
+        Some(id)
     }
 
     pub fn sql_tab_mut(&mut self, id: TabId) -> Option<&mut SqlTab> {
-        match self.tab_kind_mut(id)? {
-            TabKind::Sql(tab) => Some(tab),
-            _ => None,
-        }
+        self.collection_tab_mut(id).map(|tab| &mut tab.sql)
     }
 
     pub fn run_sql(&mut self, tab_id: TabId) {
@@ -319,24 +336,69 @@ impl MongoRaabit {
     // ----- schema -----------------------------------------------------------------------
 
     pub fn open_schema(&mut self, session: SessionId, db: &str, collection: &str) -> TabId {
-        let id = self.push_tab(TabKind::Schema(Box::new(SchemaTab {
-            session,
-            db: db.to_owned(),
-            collection: collection.to_owned(),
-            size: 1000,
-            method: SampleMethod::Random,
-            report: Load::Idle,
-            selected: None,
+        self.open_structure(session, db, collection, StructureSection::Schema)
+    }
+
+    /// Focuses (or opens) the Structure tab of `db.collection` on `section`.
+    pub fn open_structure(
+        &mut self,
+        session: SessionId,
+        db: &str,
+        collection: &str,
+        section: StructureSection,
+    ) -> TabId {
+        let existing = self.tabs.iter().position(|t| {
+            matches!(&t.kind, TabKind::Structure(s)
+                if s.schema.session == session && s.schema.db == db && s.schema.collection == collection)
+        });
+        if let Some(index) = existing {
+            self.active_tab = index;
+            let id = self.tabs[index].id;
+            if let Some(TabKind::Structure(tab)) = self.tab_kind_mut(id) {
+                tab.section = section;
+            }
+            return id;
+        }
+        let id = self.push_tab(TabKind::Structure(Box::new(StructureTab {
+            section,
+            schema: SchemaTab {
+                session,
+                db: db.to_owned(),
+                collection: collection.to_owned(),
+                size: 1000,
+                method: SampleMethod::Random,
+                report: Load::Idle,
+                selected: None,
+            },
+            indexes: IndexTab {
+                session,
+                db: db.to_owned(),
+                collection: collection.to_owned(),
+                indexes: Load::Idle,
+                form: IndexForm {
+                    keys: "{  : 1 }".into(),
+                    ..IndexForm::default()
+                },
+                form_open: false,
+                error: None,
+                busy: false,
+                confirm_drop: None,
+            },
         })));
         self.analyze_schema(id);
+        self.load_indexes(id);
         id
     }
 
-    pub fn schema_tab_mut(&mut self, id: TabId) -> Option<&mut SchemaTab> {
+    pub fn structure_tab_mut(&mut self, id: TabId) -> Option<&mut StructureTab> {
         match self.tab_kind_mut(id)? {
-            TabKind::Schema(tab) => Some(tab),
+            TabKind::Structure(tab) => Some(tab),
             _ => None,
         }
+    }
+
+    pub fn schema_tab_mut(&mut self, id: TabId) -> Option<&mut SchemaTab> {
+        self.structure_tab_mut(id).map(|tab| &mut tab.schema)
     }
 
     pub fn analyze_schema(&mut self, tab_id: TabId) {
@@ -379,29 +441,11 @@ impl MongoRaabit {
     // ----- indexes ----------------------------------------------------------------------
 
     pub fn open_indexes(&mut self, session: SessionId, db: &str, collection: &str) -> TabId {
-        let id = self.push_tab(TabKind::Indexes(Box::new(IndexTab {
-            session,
-            db: db.to_owned(),
-            collection: collection.to_owned(),
-            indexes: Load::Idle,
-            form: IndexForm {
-                keys: "{  : 1 }".into(),
-                ..IndexForm::default()
-            },
-            form_open: false,
-            error: None,
-            busy: false,
-            confirm_drop: None,
-        })));
-        self.load_indexes(id);
-        id
+        self.open_structure(session, db, collection, StructureSection::Indexes)
     }
 
     pub fn index_tab_mut(&mut self, id: TabId) -> Option<&mut IndexTab> {
-        match self.tab_kind_mut(id)? {
-            TabKind::Indexes(tab) => Some(tab),
-            _ => None,
-        }
+        self.structure_tab_mut(id).map(|tab| &mut tab.indexes)
     }
 
     pub fn load_indexes(&mut self, tab_id: TabId) {

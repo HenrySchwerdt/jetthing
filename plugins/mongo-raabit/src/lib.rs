@@ -12,9 +12,12 @@ pub mod icons;
 mod index_view;
 pub mod jobs;
 pub mod manager;
+pub mod query_builder;
 mod results;
 mod schema_view;
 mod sql_view;
+pub mod stage_builder;
+mod structure_view;
 pub mod style;
 pub mod tools;
 mod tree;
@@ -201,7 +204,7 @@ impl MongoRaabit {
                                     core::connection::CollectionKind::View => Icon::View,
                                     _ => Icon::Collection,
                                 },
-                                c.collection.clone(),
+                                format!("{} · Query", c.collection),
                                 p.text_secondary,
                             ),
                             TabKind::Aggregation(t) => (
@@ -209,13 +212,11 @@ impl MongoRaabit {
                                 format!("{} · Aggregate", t.collection),
                                 p.accent_text,
                             ),
-                            TabKind::Sql(t) => (Icon::Sql, format!("{} · SQL", t.db), p.keyword),
-                            TabKind::Schema(t) => {
-                                (Icon::Schema, format!("{} · Schema", t.collection), p.leaf)
-                            }
-                            TabKind::Indexes(t) => {
-                                (Icon::Index, format!("{} · Indexes", t.collection), p.date)
-                            }
+                            TabKind::Structure(t) => (
+                                Icon::Schema,
+                                format!("{} · Structure", t.schema.collection),
+                                p.leaf,
+                            ),
                         };
                         let active = index == self.active_tab;
                         let font = FontId::proportional(13.0);
@@ -319,17 +320,9 @@ impl MongoRaabit {
                 let id = tab.id;
                 aggregation_view::show(self, id, ui);
             }
-            TabKind::Sql(_) => {
+            TabKind::Structure(_) => {
                 let id = tab.id;
-                sql_view::show(self, id, ui);
-            }
-            TabKind::Schema(_) => {
-                let id = tab.id;
-                schema_view::show(self, id, ui);
-            }
-            TabKind::Indexes(_) => {
-                let id = tab.id;
-                index_view::show(self, id, ui);
+                structure_view::show(self, id, ui);
             }
         }
     }

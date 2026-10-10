@@ -82,6 +82,15 @@ impl Session {
     }
 }
 
+/// How the query of a collection tab is written: visually, as shell code, or as SQL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QueryMode {
+    #[default]
+    Builder,
+    Code,
+    Sql,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultView {
     Table,
@@ -111,6 +120,11 @@ pub struct CollectionTab {
     pub query_error: Option<String>,
     /// Inline table cell edit in progress.
     pub editing: Option<CellEdit>,
+    pub mode: QueryMode,
+    /// Visual query builder state (Builder mode).
+    pub builder: crate::query_builder::QueryBuilder,
+    /// SQL mode state.
+    pub sql: crate::tools::SqlTab,
 }
 
 /// An inline edit of one field of one document.
@@ -146,17 +160,27 @@ impl CollectionTab {
             ran: None,
             query_error: None,
             editing: None,
+            mode: QueryMode::default(),
+            builder: Default::default(),
+            sql: crate::tools::SqlTab {
+                session,
+                db: db.to_owned(),
+                sql: format!("SELECT *\nFROM {collection}\nLIMIT 50"),
+                result: Load::Idle,
+                view: ResultView::Tree,
+                open: HashSet::new(),
+            },
         }
     }
 }
 
+/// The three tool tabs: Query (builder, code or SQL), Aggregation and Structure
+/// (schema and indexes).
 pub enum TabKind {
     Welcome,
     Collection(Box<CollectionTab>),
     Aggregation(Box<crate::tools::AggregationTab>),
-    Sql(Box<crate::tools::SqlTab>),
-    Schema(Box<crate::tools::SchemaTab>),
-    Indexes(Box<crate::tools::IndexTab>),
+    Structure(Box<crate::tools::StructureTab>),
 }
 
 impl TabKind {
@@ -166,9 +190,7 @@ impl TabKind {
             Self::Welcome => None,
             Self::Collection(t) => Some(t.session),
             Self::Aggregation(t) => Some(t.session),
-            Self::Sql(t) => Some(t.session),
-            Self::Schema(t) => Some(t.session),
-            Self::Indexes(t) => Some(t.session),
+            Self::Structure(t) => Some(t.schema.session),
         }
     }
 }
@@ -462,13 +484,13 @@ impl MongoRaabit {
         db: &str,
         collection: &str,
         kind: CollectionKind,
-    ) {
+    ) -> TabId {
         let existing = self.tabs.iter().position(|t| {
             matches!(&t.kind, TabKind::Collection(c) if c.session == session && c.db == db && c.collection == collection)
         });
         if let Some(index) = existing {
             self.active_tab = index;
-            return;
+            return self.tabs[index].id;
         }
         let id = self.next_id();
         self.tabs.push(Tab {
@@ -477,6 +499,36 @@ impl MongoRaabit {
         });
         self.active_tab = self.tabs.len() - 1;
         self.run_query(id, true);
+        id
+    }
+
+    /// Kind of `db.collection` from the loaded tree metadata (plain collection if unknown).
+    pub fn collection_kind(
+        &self,
+        session: SessionId,
+        db: &str,
+        collection: &str,
+    ) -> CollectionKind {
+        self.session(session)
+            .and_then(|s| s.databases.ready())
+            .and_then(|dbs| dbs.iter().find(|d| d.info.name == db))
+            .and_then(|d| d.collections.ready())
+            .and_then(|colls| colls.iter().find(|c| c.info.name == collection))
+            .map(|c| c.info.kind)
+            .unwrap_or(CollectionKind::Collection)
+    }
+
+    /// First collection of `db` in the loaded tree metadata.
+    pub fn first_collection(&self, session: SessionId, db: &str) -> Option<String> {
+        self.session(session)?
+            .databases
+            .ready()?
+            .iter()
+            .find(|d| d.info.name == db)?
+            .collections
+            .ready()?
+            .first()
+            .map(|c| c.info.name.clone())
     }
 
     /// Run (or re-page) the query of a collection tab. `recount` refreshes the total.

@@ -1,6 +1,7 @@
-//! Collection tab: query bar, paging toolbar and the Table / Tree / JSON result views.
+//! Query tab of a collection: the query written with the visual builder, as shell code or
+//! as SQL, the paging toolbar and the Table / Tree / JSON result views.
 
-use crate::app::{CollectionTab, Load, MongoRaabit, ResultView, TabId};
+use crate::app::{CollectionTab, Load, MongoRaabit, QueryMode, ResultView, TabId};
 use crate::icons::{self, Icon};
 use crate::results::{self, DocCommand, TableEvent, TreeEvent};
 use crate::style::{self, Palette};
@@ -39,6 +40,7 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
     };
     let mut actions = Vec::new();
     let mut tool = None;
+    let mut sql = false;
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 14,
@@ -49,7 +51,32 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
         .show(ui, |ui| {
             header(ui, &p, tab, &server_name, &mut tool);
             ui.add_space(8.0);
-            query_bar(ui, &p, tab, &mut actions);
+            mode_switch(ui, tab);
+            if tab.mode == QueryMode::Sql {
+                sql = true;
+                return;
+            }
+            ui.add_space(6.0);
+            match tab.mode {
+                QueryMode::Builder => {
+                    let fields = tab
+                        .result
+                        .ready()
+                        .map(|page| crate::query_builder::field_names(&page.documents))
+                        .unwrap_or_default();
+                    match crate::query_builder::show(ui, &p, &mut tab.builder, &fields) {
+                        crate::query_builder::Event::None => {}
+                        crate::query_builder::Event::Changed => {
+                            tab.query = tab.builder.to_query_text();
+                        }
+                        crate::query_builder::Event::Run => {
+                            tab.query = tab.builder.to_query_text();
+                            actions.push(Action::Run { recount: true });
+                        }
+                    }
+                }
+                _ => query_bar(ui, &p, tab, &mut actions),
+            }
             if let Some(err) = &tab.query_error {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
@@ -60,6 +87,17 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
             ui.add_space(8.0);
             result_toolbar(ui, &p, tab, &mut actions);
         });
+    if sql {
+        widgets::separator(ui);
+        crate::sql_view::show(app, tab_id, ui);
+        if let Some(kind) = tool
+            && let Some(tab) = app.collection_tab_mut(tab_id)
+        {
+            let (session, db, coll) = (tab.session, tab.db.clone(), tab.collection.clone());
+            crate::tree::open_tool(app, session, &db, Some(&coll), kind);
+        }
+        return;
+    }
     widgets::separator(ui);
     result_area(ui, &p, tab, &mut actions);
     if let Some(kind) = tool
@@ -164,10 +202,12 @@ fn header(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             for (icon, tip, kind) in [
-                (Icon::Index, "Manage indexes", ToolKind::Indexes),
-                (Icon::Schema, "Schema Explorer", ToolKind::Schema),
-                (Icon::Sql, "SQL Query", ToolKind::Sql),
-                (Icon::Pipeline, "Aggregation Editor", ToolKind::Aggregation),
+                (
+                    Icon::Schema,
+                    "Structure (schema and indexes)",
+                    ToolKind::Schema,
+                ),
+                (Icon::Pipeline, "Aggregation", ToolKind::Aggregation),
             ] {
                 if widgets::icon_button(ui, icon, tip).clicked() {
                     *tool = Some(kind);
@@ -189,6 +229,26 @@ fn header(
             }
         });
     });
+}
+
+/// Builder | Code | SQL. Switching from Code back to the builder takes over the code
+/// when the builder can represent it.
+fn mode_switch(ui: &mut Ui, tab: &mut CollectionTab) {
+    let before = tab.mode;
+    ui.horizontal(|ui| {
+        widgets::segmented(
+            ui,
+            &mut tab.mode,
+            &[
+                (QueryMode::Builder, Icon::Filter, "Builder"),
+                (QueryMode::Code, Icon::Code, "Code"),
+                (QueryMode::Sql, Icon::Sql, "SQL"),
+            ],
+        );
+    });
+    if before != QueryMode::Builder && tab.mode == QueryMode::Builder {
+        tab.builder.take_over(&tab.query);
+    }
 }
 
 fn query_bar(ui: &mut Ui, p: &Palette, tab: &mut CollectionTab, actions: &mut Vec<Action>) {

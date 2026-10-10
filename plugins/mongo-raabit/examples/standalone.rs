@@ -204,13 +204,14 @@ impl App {
                     }
                 }
                 "sql" => {
-                    let id = self.raabit.open_sql(session, &db, Some(&coll));
-                    if let Some(t) = text
-                        && let Some(tab) = self.raabit.sql_tab_mut(id)
-                    {
-                        tab.sql = t;
+                    if let Some(id) = self.raabit.open_sql(session, &db, Some(&coll)) {
+                        if let Some(t) = text
+                            && let Some(tab) = self.raabit.sql_tab_mut(id)
+                        {
+                            tab.sql = t;
+                        }
+                        self.raabit.run_sql(id);
                     }
-                    self.raabit.run_sql(id);
                 }
                 "schema" => {
                     let id = self.raabit.open_schema(session, &db, &coll);

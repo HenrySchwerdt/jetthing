@@ -338,7 +338,11 @@ fn aggregation_sql_schema_and_index_tabs() {
     );
 
     // SQL.
-    let sql = app.open_sql(session, db, Some("sales"));
+    let sql = app.open_sql(session, db, Some("sales")).unwrap();
+    assert_eq!(
+        app.collection_tab_mut(sql).unwrap().mode,
+        mongo_raabit::app::QueryMode::Sql
+    );
     app.sql_tab_mut(sql).unwrap().sql = "SELECT region, SUM(amount) AS total FROM sales GROUP BY region ORDER BY total DESC LIMIT 1".into();
     app.run_sql(sql);
     app.wait_idle(Duration::from_secs(10));
@@ -376,8 +380,10 @@ fn aggregation_sql_schema_and_index_tabs() {
             .any(|f| f.path == "region" && f.top_values.len() == 3)
     );
 
-    // Indexes: create, hide, drop.
+    // Indexes: create, hide, drop. They share the Structure tab with the schema.
     let idx = app.open_indexes(session, db, "sales");
+    assert_eq!(idx, schema);
+    assert_eq!(app.tabs.len(), 4, "welcome, query, aggregation, structure");
     app.wait_idle(Duration::from_secs(10));
     assert_eq!(
         app.index_tab_mut(idx)

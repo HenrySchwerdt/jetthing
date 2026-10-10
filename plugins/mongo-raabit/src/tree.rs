@@ -442,7 +442,7 @@ pub fn show(app: &mut MongoRaabit, ui: &mut Ui) {
                                     actions.push(Action::Select(ckey.clone()));
                                 }
                                 response.context_menu(|ui| {
-                                    if ui.button("Open").clicked() {
+                                    if ui.button("Query").clicked() {
                                         actions.push(Action::Open(
                                             session.id,
                                             db.info.name.clone(),
@@ -453,10 +453,10 @@ pub fn show(app: &mut MongoRaabit, ui: &mut Ui) {
                                     }
                                     ui.separator();
                                     for (label, kind) in [
-                                        ("Aggregation Editor", ToolKind::Aggregation),
-                                        ("SQL Query", ToolKind::Sql),
-                                        ("Schema Explorer", ToolKind::Schema),
-                                        ("Manage Indexes", ToolKind::Indexes),
+                                        ("Query with SQL", ToolKind::Sql),
+                                        ("Aggregation", ToolKind::Aggregation),
+                                        ("Structure: Schema", ToolKind::Schema),
+                                        ("Structure: Indexes", ToolKind::Indexes),
                                     ] {
                                         if ui.button(label).clicked() {
                                             actions.push(Action::Tool(
