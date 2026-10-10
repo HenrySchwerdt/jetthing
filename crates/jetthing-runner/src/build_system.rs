@@ -344,6 +344,22 @@ impl BuildSystem for Maven {
             root,
         )
     }
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Maven { goals, options } = &config.target else {
+            return Err(RunnerError::NotRunnable("not a Maven configuration".into()));
+        };
+        let args = goals.iter().chain(options).cloned();
+        Ok(TaskPlan::new(
+            &config.name,
+            Self::program(root)?,
+            args,
+            root,
+        ))
+    }
 }
 
 pub struct Bazel;
@@ -397,6 +413,24 @@ impl BuildSystem for Bazel {
             &["test", "//..."],
             root,
         )
+    }
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Bazel {
+            command,
+            target,
+            options,
+            program_arguments,
+        } = &config.target
+        else {
+            return Err(RunnerError::NotRunnable("not a Bazel configuration".into()));
+        };
+        let base = vec![command.clone(), target.clone()];
+        let args = with_program_arguments(base, options, program_arguments);
+        Ok(TaskPlan::new(&config.name, Self::program()?, args, root))
     }
 }
 
@@ -574,6 +608,30 @@ mod tests {
             error.to_string().contains("no Gradle integration"),
             "{error}"
         );
+        let maven = RunConfiguration::new(
+            "Verify",
+            RunTarget::Maven {
+                goals: vec!["clean".into(), "verify".into()],
+                options: vec!["-q".into()],
+            },
+        );
+        match registry.plan_configuration(root, &maven) {
+            Ok(plan) => assert_eq!(plan.args, ["clean", "verify", "-q"]),
+            Err(error) => assert!(matches!(error, RunnerError::ToolNotFound { .. }), "{error}"),
+        }
+        let bazel = RunConfiguration::new(
+            "App",
+            RunTarget::Bazel {
+                command: "run".into(),
+                target: "//:app".into(),
+                options: Vec::new(),
+                program_arguments: vec!["x".into()],
+            },
+        );
+        match registry.plan_configuration(root, &bazel) {
+            Ok(plan) => assert_eq!(plan.args, ["run", "//:app", "--", "x"]),
+            Err(error) => assert!(error.to_string().contains("Bazel"), "{error}"),
+        }
         let invalid = RunConfiguration::new("", RunTarget::template("shell").unwrap());
         assert!(registry.plan_configuration(root, &invalid).is_err());
     }
