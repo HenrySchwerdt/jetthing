@@ -78,6 +78,20 @@ property test includes Markdown and HTML samples.
 - `syntax-highlighting/groovy-build-gradle.png`: Groovy `build.gradle` (`dekobon-tree-sitter-groovy`)
   with strings, numbers, comments, `def` and GString interpolation.
 
+## Extend / Shrink Selection
+
+`jetthing-language::selection::expand` starts at the smallest node around the selection and walks
+up the tree. At each node it returns the first candidate that strictly contains the current
+selection, trying in order: the word under the caret inside a comment or string, the contents
+between the node's first and last anonymous children (brackets, quotes, tags; trimmed), and then
+the node itself. `editor.extendSelection` applies this to every caret. `editor.shrinkSelection`
+walks back the recorded history for as long as each remembered selection still lies inside the
+current one. Keys follow `docs/spec/keymaps.md`: Ctrl+W / Ctrl+Shift+W on Windows/Linux, ⌥↑ / ⌥↓
+on macOS.
+
+- `syntax-highlighting/extend-selection-ctrl-w.png`: the caret was in `greeting` on line 11, then
+  Ctrl+W was pressed three times (`greeting` → `app.greeting(name)` → `(app.greeting(name))`).
+
 ## Languages
 
 Rust, Java, Kotlin (`tree-sitter-kotlin-sg`), Groovy (`*.gradle`, `*.groovy`, `Jenkinsfile`), XML, JSON, TOML, YAML, Markdown (block grammar, with the inline grammar injected),

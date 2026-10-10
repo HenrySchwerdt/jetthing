@@ -7,6 +7,7 @@ pub mod highlight;
 mod injection;
 pub mod registry;
 pub mod scheme;
+pub mod selection;
 pub mod syntax;
 
 pub use captures::capture_key;
@@ -41,6 +42,15 @@ pub struct LanguageAnalysis {
 }
 
 impl LanguageAnalysis {
+    /// Extend Selection: the next larger syntactic byte range around `range`.
+    pub fn expand_selection(
+        &self,
+        source: &str,
+        range: std::ops::Range<usize>,
+    ) -> Option<std::ops::Range<usize>> {
+        selection::expand(self.syntax.as_ref()?.tree(), source, range)
+    }
+
     /// Brings the analysis up to date with `source` after `edits` (as
     /// journaled by the text buffer): applies them to the syntax tree,
     /// reparses incrementally and re-highlights only the affected ranges.

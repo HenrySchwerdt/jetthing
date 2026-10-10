@@ -308,6 +308,17 @@ impl TextDocument {
         (line < self.len_lines()).then(|| self.rope.line_to_char(line))
     }
 
+    /// UTF-8 byte offset of a character offset (clamped to the end).
+    pub fn char_to_byte(&self, index: usize) -> usize {
+        self.rope.char_to_byte(index.min(self.len_chars()))
+    }
+
+    /// Character offset of a UTF-8 byte offset (clamped to the end; a byte
+    /// inside a character maps to that character).
+    pub fn byte_to_char(&self, byte: usize) -> usize {
+        self.rope.byte_to_char(byte.min(self.rope.len_bytes()))
+    }
+
     pub fn line_to_byte(&self, line: usize) -> Option<usize> {
         (line < self.len_lines()).then(|| self.rope.line_to_byte(line))
     }

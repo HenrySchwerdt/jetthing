@@ -393,7 +393,8 @@ impl IdeApp {
         if consume(Modifiers::COMMAND, Key::Z) {
             self.dispatch("editor.undo", Value::Null);
         }
-        let close_tab = consume(Modifiers::COMMAND, Key::W)
+        // ⌘W on macOS; elsewhere Ctrl+W is Extend Selection (handled by the editor).
+        let close_tab = (mac && consume(Modifiers::COMMAND, Key::W))
             || consume(Modifiers::COMMAND, Key::F4)
             || consume(Modifiers::CTRL, Key::F4);
         if close_tab && self.state.active_document.is_some() {

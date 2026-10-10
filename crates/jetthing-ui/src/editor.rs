@@ -770,6 +770,18 @@ fn editor_surface(
                 requests.push(command("editor.deleteLine"))
             }
             egui::Key::Slash if modifiers.command => requests.push(command("editor.commentLine")),
+            // Extend/Shrink Selection: Ctrl+W / Ctrl+Shift+W, ⌥↑ / ⌥↓ on macOS.
+            egui::Key::W if modifiers.ctrl && !mac => requests.push(command(if modifiers.shift {
+                "editor.shrinkSelection"
+            } else {
+                "editor.extendSelection"
+            })),
+            egui::Key::ArrowUp if mac && modifiers.alt && !modifiers.shift => {
+                requests.push(command("editor.extendSelection"))
+            }
+            egui::Key::ArrowDown if mac && modifiers.alt && !modifiers.shift => {
+                requests.push(command("editor.shrinkSelection"))
+            }
             egui::Key::ArrowUp if modifiers.alt && modifiers.shift => {
                 requests.push(command("editor.moveLineUp"))
             }

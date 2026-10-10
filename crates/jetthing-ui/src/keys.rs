@@ -23,6 +23,8 @@ pub fn for_windows_linux(mac: &str) -> String {
         "⌃R" => return "Shift+F10".into(),
         "⌘W" => return "Ctrl+F4".into(),
         "⌥F12" => return "Alt+F12".into(),
+        "⌥↑" => return "Ctrl+W".into(),
+        "⌥↓" => return "Ctrl+Shift+W".into(),
         _ => {}
     }
     let mut chars = mac.chars().peekable();
@@ -98,6 +100,8 @@ mod tests {
         assert_eq!(for_windows_linux("⇧⌘F12"), "Ctrl+Shift+F12");
         assert_eq!(for_windows_linux("⌃R"), "Shift+F10");
         assert_eq!(for_windows_linux("Double ⇧"), "Double Shift");
+        assert_eq!(for_windows_linux("⌥↑"), "Ctrl+W");
+        assert_eq!(for_windows_linux("⌥↓"), "Ctrl+Shift+W");
         assert_eq!(for_windows_linux(""), "");
         assert_eq!(for_windows_linux("⌘S"), "Ctrl+S");
     }

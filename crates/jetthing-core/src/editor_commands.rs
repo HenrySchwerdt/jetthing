@@ -95,7 +95,101 @@ fn select_match(
     json!({"matches": matches.len(), "index": index})
 }
 
+/// Extend Selection: grows every selection to the next syntactic unit.
+/// Returns false when nothing could grow (plain text or whole file selected).
+pub fn extend_selection(document: &mut crate::Document) -> bool {
+    let source = document.text.text();
+    let before = document.selections.selections().to_vec();
+    let next: Vec<Selection> = before
+        .iter()
+        .map(|selection| {
+            let bytes = document.text.char_to_byte(selection.start())
+                ..document.text.char_to_byte(selection.end());
+            match document.analysis.expand_selection(&source, bytes) {
+                Some(range) => Selection {
+                    anchor: document.text.byte_to_char(range.start),
+                    head: document.text.byte_to_char(range.end),
+                },
+                None => *selection,
+            }
+        })
+        .collect();
+    if next == before {
+        return false;
+    }
+    // History only continues while the selection is the last extended one.
+    let continues = document.selection_history.last().is_some_and(|previous| {
+        previous.len() == before.len()
+            && previous
+                .iter()
+                .zip(&before)
+                .all(|(inner, outer)| outer.start() <= inner.start() && inner.end() <= outer.end())
+    });
+    if !continues {
+        document.selection_history.clear();
+    }
+    document.selection_history.push(before);
+    document.selections.set_all(next);
+    true
+}
+
+/// Shrink Selection: steps back through Extend Selection history, as long as
+/// each remembered selection still lies inside the current one.
+pub fn shrink_selection(document: &mut crate::Document) -> bool {
+    let current = document.selections.selections().to_vec();
+    let Some(previous) = document.selection_history.pop() else {
+        return false;
+    };
+    let nested = previous.len() == current.len()
+        && previous
+            .iter()
+            .zip(&current)
+            .all(|(inner, outer)| outer.start() <= inner.start() && inner.end() <= outer.end());
+    if !nested {
+        document.selection_history.clear();
+        return false;
+    }
+    document.selections.set_all(previous);
+    true
+}
+
+fn selection_command(
+    registry: &mut CommandRegistry<IdeState>,
+    id: &str,
+    label: &str,
+    shortcut: &str,
+    run: fn(&mut crate::Document) -> bool,
+) {
+    registry
+        .register(Command::new(
+            spec(id, label, "Editor", Some(shortcut), "{}"),
+            |state: &IdeState| state.active_document.is_some(),
+            move |state: &mut IdeState, _| {
+                let document = state
+                    .active_document
+                    .and_then(|index| state.documents.get_mut(index))
+                    .ok_or_else(|| CommandError::Disabled("no active document".into()))?;
+                Ok(json!({"changed": run(document)}))
+            },
+        ))
+        .expect("unique built-in id");
+}
+
 pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
+    selection_command(
+        registry,
+        "editor.extendSelection",
+        "Extend Selection",
+        "⌥↑",
+        extend_selection,
+    );
+    selection_command(
+        registry,
+        "editor.shrinkSelection",
+        "Shrink Selection",
+        "⌥↓",
+        shrink_selection,
+    );
     action(
         registry,
         "editor.duplicate",
@@ -363,6 +457,56 @@ mod tests {
             .execute("editor.openFile", &mut state, json!({"path": name}))
             .unwrap();
         (state, commands, root)
+    }
+
+    #[test]
+    fn extend_and_shrink_selection_follow_the_syntax_tree() {
+        let source = "class A {\n    int f() { return 1 + 42; }\n}\n";
+        let (mut state, commands, root) = state_with(source, "A.java");
+        let caret = source.find("42").unwrap();
+        state.documents[0]
+            .selections
+            .set_single(Selection::caret(caret));
+        let selected = |state: &IdeState| {
+            let selection = state.documents[0].selections.primary();
+            state.documents[0]
+                .text
+                .slice(selection.start(), selection.end())
+                .unwrap()
+        };
+        let extend = |state: &mut IdeState| {
+            commands
+                .execute("editor.extendSelection", state, Value::Null)
+                .unwrap()
+        };
+        assert_eq!(extend(&mut state)["changed"], true);
+        assert_eq!(selected(&state), "42");
+        extend(&mut state);
+        assert_eq!(selected(&state), "1 + 42");
+        extend(&mut state);
+        assert_eq!(selected(&state), "return 1 + 42;");
+        commands
+            .execute("editor.shrinkSelection", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(selected(&state), "1 + 42");
+        commands
+            .execute("editor.shrinkSelection", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(selected(&state), "42");
+        // Moving the caret elsewhere invalidates the history.
+        state.documents[0]
+            .selections
+            .set_single(Selection::caret(0));
+        let shrunk = commands
+            .execute("editor.shrinkSelection", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(shrunk["changed"], false);
+        for _ in 0..20 {
+            extend(&mut state);
+        }
+        assert_eq!(selected(&state), source);
+        assert_eq!(extend(&mut state)["changed"], false);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

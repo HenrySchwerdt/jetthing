@@ -29,6 +29,8 @@ pub struct Document {
     pub text: TextDocument,
     pub analysis: LanguageAnalysis,
     pub selections: SelectionSet,
+    /// Selections before each Extend Selection step, for Shrink Selection.
+    pub selection_history: Vec<Vec<Selection>>,
 }
 
 impl Document {
@@ -39,6 +41,7 @@ impl Document {
             text: TextDocument::new(text),
             path,
             selections: SelectionSet::default(),
+            selection_history: Vec::new(),
         };
         // The analysis already reflects `text`.
         document.text.take_edits();
