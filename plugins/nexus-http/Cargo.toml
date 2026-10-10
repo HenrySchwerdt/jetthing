@@ -1,0 +1,17 @@
+[package]
+name = "nexus-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "nexus-http: an Insomnia-class API client plugin for Jetthing (egui views over nexus-http-core)."
+
+[dependencies]
+egui.workspace = true
+nexus-http-core = { path = "core" }
+serde_json = { workspace = true, features = ["preserve_order"] }
+url.workspace = true
+
+[dev-dependencies]
+eframe.workspace = true
+tempfile = "3"
+tiny_http = "0.12"

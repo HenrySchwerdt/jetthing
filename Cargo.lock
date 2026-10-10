@@ -2844,6 +2844,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "libyaml-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3262,6 +3268,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexus-http"
+version = "0.0.2"
+dependencies = [
+ "eframe",
+ "egui",
+ "nexus-http-core",
+ "serde_json",
+ "tempfile",
+ "tiny_http",
+ "url",
+]
+
+[[package]]
 name = "nexus-http-core"
 version = "0.0.2"
 dependencies = [
@@ -3275,11 +3294,13 @@ dependencies = [
  "serde_json",
  "serde_json_path",
  "sha2 0.10.9",
+ "shell-words",
  "tempfile",
  "thiserror 2.0.21",
  "tiny_http",
  "url",
  "uuid",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -6914,6 +6935,19 @@ dependencies = [
  "sha2 0.10.9",
  "tar",
  "zip",
+]
+
+[[package]]
+name = "yaml_serde"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "libyaml-rs",
+ "ryu",
+ "serde",
 ]
 
 [[package]]
