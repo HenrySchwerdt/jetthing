@@ -14,7 +14,19 @@ pub struct FindBar {
     pub replacement: String,
     pub match_case: bool,
     pub whole_words: bool,
+    pub regex: bool,
     focus_requested: bool,
+    /// Matches for (path, revision, query, options); searching a large file
+    /// every frame would dominate the frame time.
+    cache: Option<(MatchKey, Vec<(usize, usize)>)>,
+}
+
+#[derive(PartialEq)]
+struct MatchKey {
+    path: std::path::PathBuf,
+    revision: u64,
+    query: String,
+    options: FindOptions,
 }
 
 pub fn query_id() -> egui::Id {
@@ -36,11 +48,34 @@ impl FindBar {
         FindOptions {
             match_case: self.match_case,
             whole_words: self.whole_words,
+            regex: self.regex,
         }
     }
 
-    pub fn matches(&self, text: &str) -> Vec<(usize, usize)> {
-        ops::find_all(text, &self.query, self.options())
+    /// Why the query cannot run (an invalid regular expression), if it can't.
+    pub fn error(&self) -> Option<String> {
+        ops::validate_query(&self.query, self.options())
+            .err()
+            .map(|error| error.to_string())
+    }
+
+    /// Matches of the query in `document`, recomputed only when the document,
+    /// its revision, the query or the options change.
+    pub fn matches(&mut self, document: &jetthing_core::Document) -> Vec<(usize, usize)> {
+        let key = MatchKey {
+            path: document.path.clone(),
+            revision: document.text.revision(),
+            query: self.query.clone(),
+            options: self.options(),
+        };
+        if let Some((cached, matches)) = &self.cache
+            && *cached == key
+        {
+            return matches.clone();
+        }
+        let matches = ops::find_all(&document.text.text(), &self.query, self.options());
+        self.cache = Some((key, matches.clone()));
+        matches
     }
 
     pub fn params(&self) -> Value {
@@ -49,6 +84,7 @@ impl FindBar {
             "replacement": self.replacement,
             "matchCase": self.match_case,
             "wholeWords": self.whole_words,
+            "regex": self.regex,
         })
     }
 }
@@ -56,9 +92,9 @@ impl FindBar {
 fn toggle(ui: &mut egui::Ui, label: &str, on: &mut bool, tooltip: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(24.0, 22.0), egui::Sense::click());
     let fill = if *on {
-        theme::SELECTION
+        *theme::SELECTION
     } else if response.hovered() {
-        theme::HOVER
+        *theme::HOVER
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -69,9 +105,9 @@ fn toggle(ui: &mut egui::Ui, label: &str, on: &mut bool, tooltip: &str) -> bool 
         label,
         theme::semibold(theme::UI_FONT_SIZE - 1.0),
         if *on {
-            theme::TEXT_BRIGHT
+            *theme::TEXT_BRIGHT
         } else {
-            theme::TEXT_SECONDARY
+            *theme::TEXT_SECONDARY
         },
     );
     let clicked = response.on_hover_text(tooltip).clicked();
@@ -85,20 +121,19 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     let Some(index) = app.state.active_document else {
         return;
     };
-    let text = app.state.documents[index].text.text();
-    let matches = app.find.matches(&text);
+    let matches = app.find.matches(&app.state.documents[index]);
     let primary = app.state.documents[index].selections.primary();
     let current = matches
         .iter()
         .position(|&(s, e)| s == primary.start() && e == primary.end());
     let mut action: Option<(&'static str, Value)> = None;
     egui::Frame::new()
-        .fill(theme::editor::BACKGROUND_PANEL)
+        .fill(*theme::editor::BACKGROUND_PANEL)
         .inner_margin(egui::Margin::symmetric(10, 4))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                icons::show(ui, Icon::Search, 14.0, theme::TEXT_SECONDARY);
+                icons::show(ui, Icon::Search, 14.0, *theme::TEXT_SECONDARY);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut app.find.query)
                         .id(query_id())
@@ -125,7 +160,11 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                 }
                 toggle(ui, "Cc", &mut app.find.match_case, "Match Case");
                 toggle(ui, "W", &mut app.find.whole_words, "Words");
-                let summary = if app.find.query.is_empty() {
+                toggle(ui, ".*", &mut app.find.regex, "Regex");
+                let error = app.find.error();
+                let summary = if let Some(error) = &error {
+                    error.clone()
+                } else if app.find.query.is_empty() {
                     String::new()
                 } else if matches.is_empty() {
                     "0 results".into()
@@ -135,9 +174,9 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     format!("{} results", matches.len())
                 };
                 let color = if !app.find.query.is_empty() && matches.is_empty() {
-                    theme::ERROR
+                    *theme::ERROR
                 } else {
-                    theme::TEXT_SECONDARY
+                    *theme::TEXT_SECONDARY
                 };
                 ui.label(RichText::new(summary).color(color));
                 if icons::button(ui, Icon::ChevronUp, "Previous Occurrence (⇧Enter)").clicked() {
@@ -205,8 +244,37 @@ mod tests {
         bar.show(true, Some("two\nlines".into()));
         assert_eq!(bar.query, "needle");
         assert!(bar.replace);
-        assert_eq!(bar.matches("a needle, Needle").len(), 2);
+        let path = std::path::PathBuf::from("n.txt");
+        let mut document = jetthing_core::Document::new(path, "a needle, Needle");
+        assert_eq!(bar.matches(&document).len(), 2);
         bar.match_case = true;
-        assert_eq!(bar.matches("a needle, Needle").len(), 1);
+        assert_eq!(
+            bar.matches(&document).len(),
+            1,
+            "options invalidate the cache"
+        );
+        document.text.edit(0, 0, "needle ").unwrap();
+        assert_eq!(
+            bar.matches(&document).len(),
+            2,
+            "edits invalidate the cache"
+        );
+    }
+
+    #[test]
+    fn regex_toggle_reaches_matches_params_and_errors() {
+        let mut bar = FindBar {
+            query: r"ne+dle\b".into(),
+            regex: true,
+            ..Default::default()
+        };
+        let document = jetthing_core::Document::new("n.txt".into(), "needle neeedles neeedle");
+        assert_eq!(bar.matches(&document).len(), 2);
+        assert_eq!(bar.params()["regex"], true);
+        assert_eq!(bar.error(), None);
+        bar.query = "(".into();
+        assert!(bar.error().unwrap().contains("invalid regular expression"));
+        bar.regex = false;
+        assert_eq!(bar.error(), None, "plain text is never invalid");
     }
 }

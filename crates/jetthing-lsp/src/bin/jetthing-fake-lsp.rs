@@ -28,6 +28,19 @@
 //! and `didChange` publish one diagnostic per `@error`, `@warning`, `@weak`,
 //! `@hint` and `@unused` marker in the text, or one warning at 0:0 when the
 //! text has no markers.
+//! - `--incomplete`: mark completion lists `isIncomplete`.
+//! - `--importing <n>`: like jdtls importing a Gradle project, report a
+//!   "Building" progress from `initialized` on, answer the first `n`
+//!   completion requests with an empty list, and end the progress 300 ms
+//!   after the last of them.
+//!
+//! Completion lists start with an item `trigger<kind>` naming the request's
+//! `triggerKind`.
+//!
+//! Completion returns a fixed Java-like member list; resolve adds Markdown
+//! documentation and an import edit; hover and signature help return fixed
+//! answers. `textDocument/didOpen` and `didChange` publish one diagnostic
+//! per document.
 
 use jetthing_lsp::transport::{read_message, write_message};
 use serde_json::{Value, json};
@@ -44,12 +57,16 @@ fn main() {
             .cloned()
     };
     let progress = flag("--progress");
+    let incomplete = flag("--incomplete");
     let crash_file = value("--crash-once");
     let delay = value("--completion-delay-ms")
         .and_then(|ms| ms.parse().ok())
         .map(Duration::from_millis);
     let publish = value("--publish");
     let prepare_rename = !flag("--no-prepare-rename");
+    let mut importing: u32 = value("--importing")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
     let mut root = String::new();
     let mut documents: std::collections::BTreeMap<String, String> = Default::default();
     let mut input = BufReader::new(stdin().lock());
@@ -100,6 +117,14 @@ fn main() {
                     "codeActionProvider": {"resolveProvider": true},
                     "executeCommandProvider": {"commands": ["fake.apply"]}
                 },"serverInfo":{"name":"fake"}}}));
+            }
+            ("initialized", None) if importing > 0 => {
+                send(
+                    json!({"jsonrpc":"2.0","id":"p2","method":"window/workDoneProgress/create","params":{"token":"import"}}),
+                );
+                send(
+                    json!({"jsonrpc":"2.0","method":"$/progress","params":{"token":"import","value":{"kind":"begin","title":"Building","percentage":0}}}),
+                );
             }
             ("initialized", None) => {
                 if let Some(file) = &crash_file
@@ -381,18 +406,48 @@ fn main() {
                 );
                 send(json!({"jsonrpc":"2.0","id":id,"result":null}));
             }
+            ("textDocument/completion", Some(id)) if importing > 0 => {
+                send(json!({"jsonrpc":"2.0","id":id,"result":{"isIncomplete":false,"items":[]}}));
+                importing -= 1;
+                if importing == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    send(
+                        json!({"jsonrpc":"2.0","method":"$/progress","params":{"token":"import","value":{"kind":"end"}}}),
+                    );
+                }
+            }
             ("textDocument/completion", Some(id)) => {
                 if let Some(delay) = delay {
                     std::thread::sleep(delay);
                 }
+                let kind = params["context"]["triggerKind"].as_u64().unwrap_or(0);
                 send(
-                    json!({"jsonrpc":"2.0","id":id,"result":{"isIncomplete":false,"items":[
+                    json!({"jsonrpc":"2.0","id":id,"result":{"isIncomplete":incomplete,"items":[
+                        {"label":format!("trigger{kind}"),"kind":1,"sortText":"9"},
                         {"label":"greeting","kind":2,"detail":"String","labelDetails":{"detail":"(String name)","description":"String"},"sortText":"0"},
                         {"label":"getRequiredField","kind":2,"detail":"Field","sortText":"1"},
                         {"label":"getClass","kind":2,"detail":"Class<?>","sortText":"2"},
                         {"label":"hashCode","kind":2,"detail":"int","sortText":"3"}
                     ]}}),
                 );
+            }
+            ("completionItem/resolve", Some(id)) => {
+                let mut item = params.clone();
+                item["documentation"] = json!({"kind": "markdown",
+                    "value": format!("**{}**\n\nReturns a `String`.", params["label"].as_str().unwrap_or(""))});
+                item["additionalTextEdits"] = json!([{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"import fake.Greeting;\n"}]);
+                send(json!({"jsonrpc":"2.0","id":id,"result":item}));
+            }
+            ("textDocument/hover", Some(id)) => {
+                send(
+                    json!({"jsonrpc":"2.0","id":id,"result":{"contents":{"kind":"markdown",
+                    "value":"```java\nString greeting(String name)\n```\nGreets *name*."}}}),
+                );
+            }
+            ("textDocument/signatureHelp", Some(id)) => {
+                send(json!({"jsonrpc":"2.0","id":id,"result":{"signatures":[
+                    {"label":"greeting(String name, int times)","parameters":[{"label":"String name"},{"label":[22,31]}]}
+                ],"activeSignature":0,"activeParameter":1}}));
             }
             ("shutdown", Some(id)) => send(json!({"jsonrpc":"2.0","id":id,"result":null})),
             ("exit", None) => std::process::exit(0),

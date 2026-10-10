@@ -1,0 +1,10 @@
+[package]
+name = "jetthing-plugin-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "egui view helpers for Jetthing plugins (UI layer; engine crates stay egui-free)."
+
+[dependencies]
+egui.workspace = true
+jetthing-plugin-api = { path = "../jetthing-plugin-api" }

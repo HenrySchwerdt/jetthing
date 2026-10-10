@@ -7,7 +7,7 @@
 //! file's change is one undo step and the language server sees it.
 use crate::{Document, IdeState};
 use jetthing_language::analyze;
-use jetthing_text::{Selection, SelectionSet, TextChange, TextDocument};
+use jetthing_text::{Selection, TextChange};
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -118,12 +118,8 @@ impl IdeState {
         }
         let project = self.project.as_ref().ok_or("no project is open")?;
         let text = project.read_text(relative).map_err(|e| e.to_string())?;
-        self.documents.push(Document {
-            path: relative.to_owned(),
-            text: TextDocument::new(&text),
-            analysis: analyze(relative, &text),
-            selections: SelectionSet::default(),
-        });
+        self.documents
+            .push(Document::new(relative.to_owned(), &text));
         self.sync_document_lsp(relative, &text, 0);
         Ok(self.documents.len() - 1)
     }
@@ -154,10 +150,10 @@ impl IdeState {
                     format!("{}: {error}", file.relative.display())
                 };
                 let start_char = text
-                    .char_from_lsp_position(start_line, start_character)
+                    .try_char_from_lsp_position(start_line, start_character)
                     .map_err(invalid)?;
                 let end_char = text
-                    .char_from_lsp_position(end_line, end_character)
+                    .try_char_from_lsp_position(end_line, end_character)
                     .map_err(invalid)?;
                 if end_char < start_char {
                     return Err(format!(

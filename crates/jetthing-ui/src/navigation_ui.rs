@@ -19,7 +19,6 @@ fn selected_id() -> egui::Id {
 
 /// Navigation shortcuts (IntelliJ default keymaps) and the chooser's keys.
 pub fn handle_shortcuts(app: &mut IdeApp, ctx: &egui::Context) {
-    let mac = cfg!(target_os = "macos");
     let consume = |modifiers: Modifiers, key: Key| {
         ctx.input_mut(|input| {
             let before = input.events.len();
@@ -36,44 +35,15 @@ pub fn handle_shortcuts(app: &mut IdeApp, ctx: &egui::Context) {
     if app.state.navigation.choices.is_some() {
         choices_keys(app, ctx, &consume);
     }
-    if app.state.active_document.is_some() {
-        let command = Modifiers::COMMAND;
-        for (modifiers, key, id) in [
-            (command, Key::B, "navigate.declaration"),
-            (
-                command | Modifiers::SHIFT,
-                Key::B,
-                "navigate.typeDeclaration",
-            ),
-            (command | Modifiers::ALT, Key::B, "navigate.implementation"),
-            (Modifiers::ALT, Key::F7, "navigate.findUsages"),
-            (command | Modifiers::ALT, Key::F7, "navigate.showUsages"),
-        ] {
-            if consume(modifiers, key) {
-                app.dispatch(id, Value::Null);
-            }
-        }
-    }
-    // Back/Forward: ⌘[ / ⌘] on macOS, Ctrl+Alt+←/→ elsewhere, and the mouse
-    // side buttons everywhere.
-    let (back_mouse, forward_mouse) = ctx.input(|input| {
+    // Go to Declaration/Type/Implementation, Find/Show Usages and keyboard
+    // Back/Forward are keymap actions (`ACTION_COMMANDS`); only the mouse side
+    // buttons are handled here.
+    let (back, forward) = ctx.input(|input| {
         (
             input.pointer.button_pressed(egui::PointerButton::Extra1),
             input.pointer.button_pressed(egui::PointerButton::Extra2),
         )
     });
-    let back = back_mouse
-        || if mac {
-            consume(Modifiers::COMMAND, Key::OpenBracket)
-        } else {
-            consume(Modifiers::CTRL | Modifiers::ALT, Key::ArrowLeft)
-        };
-    let forward = forward_mouse
-        || if mac {
-            consume(Modifiers::COMMAND, Key::CloseBracket)
-        } else {
-            consume(Modifiers::CTRL | Modifiers::ALT, Key::ArrowRight)
-        };
     if back && app.state.navigation.can_go_back() {
         app.dispatch("navigate.back", Value::Null);
         ctx.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
@@ -239,9 +209,9 @@ fn item_row(ui: &egui::Ui, rect: Rect, item: &NavigationItem, with_file: bool) {
         .skip(item.column.saturating_sub(trimmed) + symbol.chars().count())
         .collect();
     let line_label = format!("{}", item.line + 1);
-    let gutter = ui
-        .painter()
-        .layout_no_wrap(line_label.clone(), ui_font.clone(), theme::TEXT_INFO);
+    let gutter =
+        ui.painter()
+            .layout_no_wrap(line_label.clone(), ui_font.clone(), *theme::TEXT_INFO);
     if !with_file {
         ui.painter().galley(
             egui::pos2(
@@ -249,7 +219,7 @@ fn item_row(ui: &egui::Ui, rect: Rect, item: &NavigationItem, with_file: bool) {
                 rect.center().y - gutter.size().y / 2.0,
             ),
             gutter,
-            theme::TEXT_INFO,
+            *theme::TEXT_INFO,
         );
         x += 40.0;
     }
@@ -279,14 +249,14 @@ fn item_row(ui: &egui::Ui, rect: Rect, item: &NavigationItem, with_file: bool) {
         let location = format!("{} {}", name, item.line + 1);
         let galley = ui
             .painter()
-            .layout_no_wrap(location, ui_font, theme::TEXT_INFO);
+            .layout_no_wrap(location, ui_font, *theme::TEXT_INFO);
         let pos = egui::pos2(
             (rect.right() - galley.size().x - 10.0).max(x + 16.0),
             rect.center().y - galley.size().y / 2.0,
         );
         ui.painter()
             .with_clip_rect(rect)
-            .galley(pos, galley, theme::TEXT_INFO);
+            .galley(pos, galley, *theme::TEXT_INFO);
     }
 }
 
@@ -325,7 +295,7 @@ pub fn find_header(app: &mut IdeApp, ui: &mut egui::Ui) -> bool {
         }
         let width = ui
             .painter()
-            .layout_no_wrap(label.clone(), font.clone(), theme::TEXT)
+            .layout_no_wrap(label.clone(), font.clone(), *theme::TEXT)
             .size()
             .x
             + 16.0;
@@ -368,17 +338,17 @@ pub fn find_header(app: &mut IdeApp, ui: &mut egui::Ui) -> bool {
         icons::paint(ui.painter(), rect.shrink(3.0), icon, color);
         response.on_hover_text(tooltip).clicked()
     };
-    if button(ui, Icon::Minimize, icons::ICON, "Hide") {
+    if button(ui, Icon::Minimize, *icons::ICON, "Hide") {
         app.toggle_tool_window(ToolWindow::Find);
     }
     let usages_selected =
         app.state.navigation.usages_selected && app.state.navigation.usages.is_some();
     if usages_selected {
-        if button(ui, Icon::Close, icons::ICON, "Close Usages Tab") {
+        if button(ui, Icon::Close, *icons::ICON, "Close Usages Tab") {
             app.state.navigation.usages = None;
             app.state.navigation.usages_selected = false;
         }
-    } else if app.state.search.is_running() && button(ui, Icon::Stop, theme::STOP_RED, "Cancel") {
+    } else if app.state.search.is_running() && button(ui, Icon::Stop, *theme::STOP_RED, "Cancel") {
         app.dispatch("search.cancel", Value::Null);
     }
     usages_selected

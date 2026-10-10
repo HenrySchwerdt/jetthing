@@ -517,7 +517,7 @@ impl IdeState {
                 let offset = |position: &Value| {
                     let line = position.get("line")?.as_u64()? as usize;
                     let character = position.get("character")?.as_u64()? as usize;
-                    document.text.char_from_lsp_position(line, character).ok()
+                    Some(document.text.char_from_lsp_position(line, character))
                 };
                 offset(start).zip(offset(end))
             }
@@ -565,12 +565,10 @@ impl IdeState {
             .filter_map(|location| {
                 let start = document
                     .text
-                    .char_from_lsp_position(location.start_line, location.start_character)
-                    .ok()?;
+                    .char_from_lsp_position(location.start_line, location.start_character);
                 let end = document
                     .text
-                    .char_from_lsp_position(location.end_line, location.end_character)
-                    .ok()?;
+                    .char_from_lsp_position(location.end_line, location.end_character);
                 (start < end).then_some((start, end))
             })
             .collect();

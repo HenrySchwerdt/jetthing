@@ -50,12 +50,13 @@ pub fn handle(app: &mut IdeApp, ctx: &egui::Context) {
             popup_keys(app, ctx, &consume);
         }
     }
-    let editor_focused = ctx.memory(|memory| memory.has_focus(crate::editor::editor_id()));
-    if editor_focused && consume(Modifiers::ALT, Key::Enter) {
-        ctx.data_mut(|data| data.insert_temp(selected_id(), 0usize));
-        app.dispatch("code.showIntentions", Value::Null);
-    }
+    // Alt+Enter itself is the keymap's `ShowIntentionActions` (`ACTION_COMMANDS`).
     request_when_resting(app, ctx);
+}
+
+/// Selects the first row of the next intentions popup.
+pub fn reset_selection(ctx: &egui::Context) {
+    ctx.data_mut(|data| data.insert_temp(selected_id(), 0usize));
 }
 
 fn request_when_resting(app: &mut IdeApp, ctx: &egui::Context) {
@@ -201,7 +202,7 @@ pub fn popup(app: &mut IdeApp, ctx: &egui::Context) {
                                 .layout_no_wrap(
                                     list.items[index].title.clone(),
                                     font.clone(),
-                                    theme::TEXT,
+                                    *theme::TEXT,
                                 )
                                 .size()
                                 .x

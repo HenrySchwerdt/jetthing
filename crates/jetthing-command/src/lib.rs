@@ -57,11 +57,25 @@ pub struct CommandRegistry<C> {
 
 impl<C> CommandRegistry<C> {
     pub fn register(&mut self, command: Command<C>) -> Result<(), CommandError> {
-        let id = command.spec.id.clone();
-        if self.commands.insert(id.clone(), command).is_some() {
-            return Err(CommandError::Failed(format!("duplicate command id: {id}")));
+        // A duplicate must not replace the existing handler.
+        match self.commands.entry(command.spec.id.clone()) {
+            std::collections::btree_map::Entry::Occupied(entry) => Err(CommandError::Failed(
+                format!("duplicate command id: {}", entry.key()),
+            )),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(command);
+                Ok(())
+            }
         }
-        Ok(())
+    }
+
+    /// Removes a command (used when a plugin is disabled). Returns whether it existed.
+    pub fn unregister(&mut self, id: &str) -> bool {
+        self.commands.remove(id).is_some()
+    }
+
+    pub fn contains(&self, id: &str) -> bool {
+        self.commands.contains_key(id)
     }
 
     pub fn specs(&self) -> Vec<CommandSpec> {
@@ -116,8 +130,16 @@ mod tests {
         );
         assert!(
             registry
-                .register(Command::new(spec, |_| true, |_, _| Ok(Value::Null)))
+                .register(Command::new(spec.clone(), |_| true, |_, _| Ok(Value::Null)))
                 .is_err()
         );
+        // The original handler survives a rejected duplicate.
+        assert_eq!(
+            registry.execute(&spec.id, &mut value, Value::Null).unwrap(),
+            2
+        );
+        assert!(registry.unregister(&spec.id));
+        assert!(!registry.contains(&spec.id));
+        assert!(!registry.unregister(&spec.id));
     }
 }

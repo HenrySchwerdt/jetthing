@@ -1,4 +1,4 @@
-use jetthing_control::{ControlClient, Request, WaitCondition};
+use jetthing_control::{ControlClient, PointerButton, Request, WaitCondition};
 use jetthing_core::{IdeState, built_in_commands};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -9,12 +9,23 @@ requests:
   state
   key <chord>                  e.g. Ctrl+Shift+A, Alt+1, Escape
   type <text>
+  click <x> <y> [--button primary|secondary|middle] [--count N]
+  move <x> <y>
   screenshot <path.png>
   wait <idle|popup|text> [text] [--timeout MS]
   raw <json-request>
 The socket defaults to $JETTHING_CONTROL_SOCKET.";
 
 fn main() {
+    let first = std::env::args_os().nth(1);
+    if let Some(text) = jetthing_core::build_info::cli_flag_output(
+        "jetthing-cli",
+        "usage: jetthing-cli <commands|run|ui> …\n  -V, --version   print version and build information",
+        first.as_deref().and_then(|arg| arg.to_str()),
+    ) {
+        println!("{text}");
+        return;
+    }
     let mut args = std::env::args().skip(1);
     let mode = args.next().unwrap_or_else(|| "commands".into());
     let registry = built_in_commands();
@@ -93,6 +104,8 @@ fn ui(args: Vec<String>) {
 fn parse_ui_args(args: Vec<String>) -> Result<(PathBuf, Request), String> {
     let mut socket = std::env::var_os(jetthing_control::SOCKET_ENV).map(PathBuf::from);
     let mut timeout_ms = None;
+    let mut button = PointerButton::Primary;
+    let mut count = 1u8;
     let mut positional = Vec::new();
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -107,6 +120,20 @@ fn parse_ui_args(args: Vec<String>) -> Result<(PathBuf, Request), String> {
                         .parse::<u64>()
                         .map_err(|_| format!("invalid --timeout {value:?}"))?,
                 );
+            }
+            "--button" => {
+                button = match args.next().as_deref() {
+                    Some("primary") => PointerButton::Primary,
+                    Some("secondary") => PointerButton::Secondary,
+                    Some("middle") => PointerButton::Middle,
+                    other => return Err(format!("invalid --button {other:?}")),
+                };
+            }
+            "--count" => {
+                let value = args.next().ok_or("--count needs a number")?;
+                count = value
+                    .parse()
+                    .map_err(|_| format!("invalid --count {value:?}"))?;
             }
             _ => positional.push(arg),
         }
@@ -142,6 +169,25 @@ fn parse_ui_args(args: Vec<String>) -> Result<(PathBuf, Request), String> {
         "type" => Request::Type {
             text: required("text")?,
         },
+        "click" | "move" => {
+            let mut coordinate = |name: &str| -> Result<f32, String> {
+                let value = required(name)?;
+                value
+                    .parse::<f32>()
+                    .map_err(|_| format!("invalid {name} {value:?}"))
+            };
+            let (x, y) = (coordinate("x")?, coordinate("y")?);
+            if op == "move" {
+                Request::Move { x, y }
+            } else {
+                Request::Click {
+                    x,
+                    y,
+                    button,
+                    count,
+                }
+            }
+        }
         "screenshot" => Request::Screenshot {
             path: required("path")?.into(),
         },
@@ -206,6 +252,29 @@ mod tests {
                 chord: "Escape".into()
             }
         );
+        assert_eq!(
+            parse(&[
+                "click",
+                "18",
+                "20.5",
+                "--button",
+                "secondary",
+                "--count",
+                "2"
+            ])
+            .unwrap(),
+            Request::Click {
+                x: 18.0,
+                y: 20.5,
+                button: PointerButton::Secondary,
+                count: 2
+            }
+        );
+        assert_eq!(
+            parse(&["move", "1", "2"]).unwrap(),
+            Request::Move { x: 1.0, y: 2.0 }
+        );
+        assert!(parse(&["click", "x", "2"]).is_err());
         assert!(parse(&["wait", "text"]).is_err());
         assert!(parse(&["wait", "forever"]).is_err());
         assert!(parse(&["key"]).is_err());

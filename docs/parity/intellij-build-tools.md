@@ -1,0 +1,49 @@
+# IntelliJ IDEA parity: Gradle and Maven
+
+Gradle and Maven project import, synchronization, tool windows, task/goal execution, and
+dependency management.
+
+Sources: IntelliJ IDEA public documentation (<https://www.jetbrains.com/help/idea/>), the predefined Windows
+keymap reference (<https://www.jetbrains.com/help/idea/reference-keymap-win-default.html>) and the unified-distribution FAQ (<https://lp.jetbrains.com/intellij-idea-unified-faq/>), which lists
+the features that need an Ultimate subscription. Rows were written from public
+documentation and observable behavior only; no JetBrains code, artwork, or branding
+is reused.
+
+Rows tagged `[Ultimate]` require an IntelliJ IDEA Ultimate subscription. Untagged rows are
+available in the free distribution. `Weight` (1-5) is the relative importance used by the
+weighted dashboard: 5 = core daily workflow, 3 = significant, 2 = moderate, 1 = minor.
+Statuses describe Jetthing, conservatively: nothing in this catalog is `Verified`.
+
+| ID | Reference | Feature | Status | Weight | Commands | Tests | Limitations / evidence |
+|---|---|---|---|---:|---|---|---|
+| IJ-BLD-001 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Detect Gradle project (settings.gradle[.kts], build.gradle[.kts]) | Partial | 5 | `build.detect`, `build.project` | `jetthing-gradle` detection tests | settings/build scripts, included projects, wrapper version and applied plugins detected statically (no build logic runs); Android apps build with `assembleDebug`; model import pending; `evidence/build-run.md` |
+| IJ-BLD-002 | [work-with-gradle-projects](https://www.jetbrains.com/help/idea/work-with-gradle-projects.html) | Import Gradle project model (modules, source sets, dependencies) | Partial | 5 | `gradle.sync`, `gradle.refresh` | model parser tests, real-Gradle multi-module sync integration test (skipped without Gradle/JDK), fake-wrapper command test | init script exports projects, plugins, tasks and source sets to `.jetthing/gradle/model.json` (restored on reopen); dependencies, JDK and module mapping pending; `evidence/gradle/a06-gradle-sync.png` |
+| IJ-BLD-003 | [work-with-gradle-projects](https://www.jetbrains.com/help/idea/work-with-gradle-projects.html) | Reload Gradle project / auto-reload on script changes | Missing | 3 | — | — | not started |
+| IJ-BLD-004 | [work-with-gradle-tasks](https://www.jetbrains.com/help/idea/work-with-gradle-tasks.html) | Gradle tool window: task tree and run task | Partial | 3 | `toolwindow.activate.gradle`, `gradle.runTask`, `gradle.sync` | tree row/filter unit tests, command test | right-stripe Gradle window: project → Tasks → groups → tasks, sub-projects nested, double-click runs, Execute Gradle Task field, Sync, Expand/Collapse All, filter; no Dependencies/Run Configurations nodes; `evidence/gradle/21-gradle-tool-window.png` |
+| IJ-BLD-005 | [run-debug-gradle](https://www.jetbrains.com/help/idea/run-debug-gradle.html) | Gradle run/debug configurations | Partial | 3 | `runConfig.save`, `runConfig.run` | Gradle configuration plan test | tasks, options and program arguments (`--args`); no debug, VM options or before-launch tasks |
+| IJ-BLD-006 | [gradle-jvm-selection](https://www.jetbrains.com/help/idea/gradle-jvm-selection.html) | Gradle JVM selection | Missing | 2 | — | — | not started |
+| IJ-BLD-007 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Delegate build and run to Gradle vs IDE builder | Partial | 2 | `run.gutter` | real-Gradle `jetthingRunMain` integration test | Java/Kotlin mains and tests always run through Gradle (an init-script JavaExec task runs any main class); no IntelliJ-builder alternative or setting |
+| IJ-BLD-008 | [work-with-tests-in-gradle](https://www.jetbrains.com/help/idea/work-with-tests-in-gradle.html) | Run tests through Gradle with test tree | Partial | 3 | `test.project`, `test.rerunFailed` | Gradle report collection and rerun tests | `gradle test` results from `build/test-results` in the test tree; rerun failed with `--tests`; no live per-test events |
+| IJ-BLD-009 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Gradle wrapper support (gradlew) | Partial | 3 | `build.project` | wrapper/PATH plan tests | wrapper preferred, else `gradle` on PATH with an actionable error; wrapper version read from `gradle-wrapper.properties` |
+| IJ-BLD-010 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Offline mode and build scans | Missing | 1 | — | — | not started |
+| IJ-BLD-011 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Kotlin DSL / Groovy DSL editing assistance | Missing | 3 | — | — | not started |
+| IJ-BLD-012 | [migrate-gradle-build-scripts-to-kotlin-dsl](https://www.jetbrains.com/help/idea/migrate-gradle-build-scripts-to-kotlin-dsl.html) | Version catalogs (libs.versions.toml) support | Missing | 2 | — | — | not started |
+| IJ-BLD-013 | [work-with-gradle-dependency-diagram](https://www.jetbrains.com/help/idea/work-with-gradle-dependency-diagram.html) | [Ultimate] Gradle dependency diagram | Missing | 1 | — | — | not started |
+| IJ-BLD-014 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Gradle composite builds and buildSrc | Missing | 1 | — | — | not started |
+| IJ-BLD-020 | [maven-support](https://www.jetbrains.com/help/idea/maven-support.html) | Detect Maven project (pom.xml) | Partial | 5 | `build.project` | — | detects Maven for building; no model import |
+| IJ-BLD-021 | [maven-support](https://www.jetbrains.com/help/idea/maven-support.html) | Import Maven project model (modules, dependencies, profiles) | Missing | 5 | — | — | not started |
+| IJ-BLD-022 | [maven-support](https://www.jetbrains.com/help/idea/maven-support.html) | Reload Maven project / auto-reload | Missing | 3 | — | — | not started |
+| IJ-BLD-023 | [work-with-maven-goals](https://www.jetbrains.com/help/idea/work-with-maven-goals.html) | Maven tool window: lifecycle and plugin goals | Missing | 3 | — | — | not started |
+| IJ-BLD-024 | [run-debug-configuration-maven](https://www.jetbrains.com/help/idea/run-debug-configuration-maven.html) | Maven run/debug configurations | Partial | 2 | `runConfig.save`, `runConfig.run` | Maven configuration plan test | goals and options; no profiles or debug |
+| IJ-BLD-025 | [work-with-maven-profiles](https://www.jetbrains.com/help/idea/work-with-maven-profiles.html) | Maven profiles toggling | Missing | 1 | — | — | not started |
+| IJ-BLD-026 | [work-with-maven-dependencies](https://www.jetbrains.com/help/idea/work-with-maven-dependencies.html) | pom.xml completion, dependency search, version updates | Missing | 3 | — | — | not started |
+| IJ-BLD-027 | [delegate-build-and-run-actions-to-maven](https://www.jetbrains.com/help/idea/delegate-build-and-run-actions-to-maven.html) | Delegate build/run to Maven | Missing | 1 | — | — | not started |
+| IJ-BLD-028 | [work-with-tests-in-maven](https://www.jetbrains.com/help/idea/work-with-tests-in-maven.html) | Run tests via Maven Surefire with test tree | Partial | 2 | `test.project`, `test.rerunFailed` | surefire report path and rerun tests | Surefire/Failsafe `TEST-*.xml` read after the run; rerun failed with `-Dtest` |
+| IJ-BLD-029 | [maven-support](https://www.jetbrains.com/help/idea/maven-support.html) | Maven wrapper (mvnw) support | Partial | 2 | `build.project` | — | wrapper preferred when present |
+| IJ-BLD-030 | [convert-a-regular-project-into-a-maven-project](https://www.jetbrains.com/help/idea/convert-a-regular-project-into-a-maven-project.html) | Add framework support / convert project to Maven or Gradle | Missing | 1 | — | — | not started |
+| IJ-BLD-031 | [maven-support](https://www.jetbrains.com/help/idea/maven-support.html) | Download sources and documentation for dependencies | Missing | 1 | — | — | not started |
+| IJ-BLD-040 | [work-with-maven-dependencies](https://www.jetbrains.com/help/idea/work-with-maven-dependencies.html) | Dependency Analyzer (conflicts, scopes, usages) | Missing | 2 | — | — | not started |
+| IJ-BLD-041 | [package-search](https://www.jetbrains.com/help/idea/package-search.html) | Dependency search and add from editor | Missing | 1 | — | — | not started |
+| IJ-BLD-042 | [ant](https://www.jetbrains.com/help/idea/ant.html) | Ant build files | Missing | 1 | — | — | not started |
+| IJ-BLD-043 | [sbt-support](https://www.jetbrains.com/help/idea/sbt-support.html) | sbt (Scala plugin) | Missing | 1 | — | — | not started |
+| IJ-BLD-044 | [build-overview](https://www.jetbrains.com/help/idea/build-overview.html) | Build output with clickable compiler errors | Partial | 3 | `build.project` | build-event parser tests (javac, kotlinc, rustc, Maven, Bazel, Go) | Build window tree of steps (Gradle tasks, Cargo crates, Maven mojos) with outcomes and durations; errors/warnings open the file at the line; `evidence/build-run/16b-build-output-failed.png` |

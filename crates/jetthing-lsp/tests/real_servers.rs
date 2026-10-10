@@ -1,11 +1,43 @@
 //! Integration checks against installed language servers. Ignored by default;
 //! run with `cargo test -p jetthing-lsp --test real_servers -- --ignored`.
 
-use jetthing_lsp::LspManager;
+use jetthing_lsp::{CompletionTrigger, LspManager, lsp_types::CompletionItem};
 use std::{
+    path::Path,
     thread,
     time::{Duration, Instant},
 };
+
+/// Requests completion until the server returns items (servers answer with
+/// an empty list while they are still loading the workspace).
+fn complete(
+    manager: &mut LspManager,
+    file: &Path,
+    line: usize,
+    character: usize,
+    deadline: Instant,
+) -> Vec<CompletionItem> {
+    while Instant::now() < deadline {
+        manager.poll();
+        if manager.ready_server_for(file).is_ok() {
+            manager
+                .request_completion(file, line, character, CompletionTrigger::Invoked)
+                .unwrap();
+            while Instant::now() < deadline {
+                manager.poll();
+                if let Some(result) = manager.take_completion() {
+                    if !result.items.is_empty() {
+                        return result.items;
+                    }
+                    break;
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    Vec::new()
+}
 
 fn installed(program: &str) -> bool {
     jetthing_lsp::registry::resolve_program(program).is_some()
@@ -39,19 +71,8 @@ fn rust_analyzer_publishes_diagnostics_and_completes() {
         thread::sleep(Duration::from_millis(25));
     }
     assert!(!manager.diagnostics_for(&file).is_empty());
-    // rust-analyzer answers with an empty list until the workspace is loaded.
-    while manager.completions().is_empty() && Instant::now() < deadline {
-        manager.request_completion(&file, 0, 76).unwrap();
-        while manager.completion_pending() && Instant::now() < deadline {
-            manager.poll();
-            thread::sleep(Duration::from_millis(25));
-        }
-    }
-    let labels: Vec<_> = manager
-        .completions()
-        .iter()
-        .map(|i| i.label.as_str())
-        .collect();
+    let items = complete(&mut manager, &file, 0, 76, deadline);
+    let labels: Vec<_> = items.iter().map(|i| i.label.as_str()).collect();
     assert!(
         labels.iter().any(|label| label.starts_with("push_str")),
         "{labels:?}"
@@ -76,25 +97,34 @@ fn jdtls_completes_java_members() {
     manager.set_project(Some(&root));
     manager.sync_document(&file, source, 0).unwrap();
     let deadline = Instant::now() + Duration::from_secs(180);
-    while manager.completions().is_empty() && Instant::now() < deadline {
-        manager.poll();
-        if manager.ready_server_for(&file).is_ok() {
-            manager.request_completion(&file, 4, 12).unwrap();
-            while manager.completion_pending() && Instant::now() < deadline {
-                manager.poll();
-                thread::sleep(Duration::from_millis(50));
-            }
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
-    let labels: Vec<_> = manager
-        .completions()
-        .iter()
-        .map(|i| i.label.as_str())
-        .collect();
+    let items = complete(&mut manager, &file, 4, 12, deadline);
+    let labels: Vec<_> = items.iter().map(|i| i.label.as_str()).collect();
     assert!(
         labels.iter().any(|label| label.starts_with("greeting")),
         "{labels:?}"
     );
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[ignore = "requires kotlin-lsp on PATH and /home/user/samples/kotlin-app"]
+fn kotlin_lsp_completes_kotlin_members() {
+    let root = Path::new("/home/user/samples/kotlin-app");
+    if !installed("kotlin-lsp") || !root.is_dir() {
+        return;
+    }
+    let file = root.join("src/main/kotlin/Main.kt").canonicalize().unwrap();
+    let source = std::fs::read_to_string(&file)
+        .unwrap()
+        .replace("    \n}", "    greeter.\n}");
+    let mut manager = LspManager::default();
+    manager.set_project(Some(root));
+    manager.sync_document(&file, &source, 0).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(300);
+    let items = complete(&mut manager, &file, 6, 12, deadline);
+    let labels: Vec<_> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(
+        labels.iter().any(|label| label.starts_with("greeting")),
+        "{labels:?}"
+    );
 }

@@ -1,6 +1,7 @@
 //! Language server commands: completion, server status, restart and notices.
 use crate::{IdeState, spec, string_param, usize_param};
 use jetthing_command::{Command, CommandError, CommandRegistry};
+use jetthing_lsp::CompletionTrigger;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
@@ -45,6 +46,187 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     registry
         .register(Command::new(
             spec(
+                "language.parameterInfo",
+                "Parameter Info",
+                "Code",
+                Some("⌘P"),
+                "{}",
+            ),
+            |state: &IdeState| state.active_has_language_server(),
+            |state: &mut IdeState, _| {
+                state
+                    .request_parameter_info(None, true)
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "language.closeParameterInfo",
+                "Close Parameter Info",
+                "Code",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.signature.popup.is_some(),
+            |state: &mut IdeState, _| {
+                state.close_parameter_info();
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "language.quickDoc",
+                "Quick Documentation",
+                "Code",
+                Some("F1"),
+                "{}",
+            ),
+            |state: &IdeState| state.active_has_language_server(),
+            |state: &mut IdeState, _| {
+                state.toggle_quick_doc().map_err(CommandError::Failed)?;
+                Ok(json!({"panel": state.docs.completion_panel}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "language.hoverAt",
+                "Show Documentation at Offset",
+                "Code",
+                None,
+                r#"{"offset":0}"#,
+            ),
+            |state: &IdeState| state.active_has_language_server(),
+            |state: &mut IdeState, params| {
+                let offset = usize_param(&params, "offset")?;
+                state
+                    .request_quick_doc(offset, true)
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "language.closeQuickDoc",
+                "Close Documentation",
+                "Code",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.docs.popup.is_some(),
+            |state: &mut IdeState, _| {
+                state.close_quick_doc();
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    // Tab, Shift+Tab and Esc drive these only while a snippet is active, so
+    // they carry no menu shortcut.
+    for (id, label) in [
+        ("snippet.next", "Next Snippet Stop"),
+        ("snippet.previous", "Previous Snippet Stop"),
+        ("snippet.exit", "Exit Snippet"),
+    ] {
+        registry
+            .register(Command::new(
+                spec(id, label, "Code", None, "{}"),
+                |state: &IdeState| state.snippet.is_some(),
+                move |state: &mut IdeState, _| {
+                    match id {
+                        "snippet.next" => {
+                            state.snippet_next();
+                        }
+                        "snippet.previous" => {
+                            state.snippet_previous();
+                        }
+                        _ => state.exit_snippet(),
+                    }
+                    Ok(Value::Null)
+                },
+            ))
+            .expect("unique built-in id");
+    }
+    registry
+        .register(Command::new(
+            spec(
+                "completion.accept",
+                "Accept Completion",
+                "Code",
+                Some("⏎"),
+                r#"{"replace":"bool?","row":"number?"}"#,
+            ),
+            |state: &IdeState| state.completion.as_ref().is_some_and(|s| s.visible()),
+            |state: &mut IdeState, params| {
+                if let Some(row) = params.get("row") {
+                    let row = row
+                        .as_u64()
+                        .and_then(|row| usize::try_from(row).ok())
+                        .ok_or_else(|| {
+                            CommandError::InvalidParams("row must be a non-negative integer".into())
+                        })?;
+                    state.select_completion(row);
+                }
+                let replace = params
+                    .get("replace")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                state
+                    .accept_completion(replace)
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "completion.move",
+                "Move Completion Selection",
+                "Code",
+                None,
+                r#"{"delta":"number"}"#,
+            ),
+            |state: &IdeState| state.completion.as_ref().is_some_and(|s| s.visible()),
+            |state: &mut IdeState, params| {
+                let delta = params
+                    .get("delta")
+                    .and_then(Value::as_i64)
+                    .and_then(|delta| isize::try_from(delta).ok())
+                    .ok_or_else(|| {
+                        CommandError::InvalidParams("delta must be an integer".into())
+                    })?;
+                state.move_completion_selection(delta);
+                Ok(json!({"selected": state.completion.as_ref().map(|s| s.selected)}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "completion.close",
+                "Close Completion",
+                "Code",
+                Some("⎋"),
+                "{}",
+            ),
+            |state: &IdeState| state.completion.is_some(),
+            |state: &mut IdeState, _| {
+                state.close_completion();
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
                 "language.complete",
                 "Code Completion",
                 "Code",
@@ -54,7 +236,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             |state: &IdeState| state.active_has_language_server(),
             |state: &mut IdeState, _| {
                 let id = state
-                    .request_active_completion()
+                    .start_completion(CompletionTrigger::Invoked, true)
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"requestId": id}))
             },
@@ -82,7 +264,12 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                     .to_owned();
                 let id = state
                     .lsp
-                    .request_completion(&root.join(relative), line, character)
+                    .request_completion(
+                        &root.join(relative),
+                        line,
+                        character,
+                        CompletionTrigger::Invoked,
+                    )
                     .map_err(|error| CommandError::Failed(error.to_string()))?;
                 Ok(json!({"requestId": id}))
             },

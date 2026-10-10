@@ -785,8 +785,7 @@ fn workspace_folder(root: &Path) -> Result<WorkspaceFolder, LspError> {
     })
 }
 
-/// The capabilities Jetthing advertises. Snippets stay off until the editor
-/// can expand tab stops.
+/// The capabilities Jetthing advertises.
 pub fn client_capabilities() -> ClientCapabilities {
     let markup = Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]);
     ClientCapabilities {
@@ -821,12 +820,17 @@ pub fn client_capabilities() -> ClientCapabilities {
             }),
             completion: Some(CompletionClientCapabilities {
                 completion_item: Some(CompletionItemCapability {
-                    snippet_support: Some(false),
+                    snippet_support: Some(true),
+                    insert_replace_support: Some(true),
                     documentation_format: markup.clone(),
                     deprecated_support: Some(true),
                     label_details_support: Some(true),
                     resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                        properties: vec!["documentation".into(), "detail".into()],
+                        properties: vec![
+                            "documentation".into(),
+                            "detail".into(),
+                            "additionalTextEdits".into(),
+                        ],
                     }),
                     ..Default::default()
                 }),
@@ -950,7 +954,8 @@ fn parse_diagnostic(value: &Value) -> Option<LspDiagnostic> {
     })
 }
 
-pub(crate) fn file_uri(path: &Path) -> Result<Url, LspError> {
+/// `file://` URI of `path` (canonicalized when it exists).
+pub fn file_uri(path: &Path) -> Result<Url, LspError> {
     let absolute = path.canonicalize().unwrap_or_else(|_| path.to_owned());
     Url::from_file_path(&absolute).map_err(|_| LspError::InvalidPath(path.to_owned()))
 }

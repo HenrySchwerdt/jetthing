@@ -116,6 +116,7 @@ fn items(app: &IdeApp, query: &str, tab: Tab) -> Vec<Item> {
         .filter_map(|spec| {
             let score = fuzzy_score(&spec.label, query)
                 .or_else(|| fuzzy_score(&spec.id, query).map(|score| score + 50))?;
+            let shortcut = app.command_shortcut(&spec);
             Some((
                 score,
                 Item::Action {
@@ -123,7 +124,7 @@ fn items(app: &IdeApp, query: &str, tab: Tab) -> Vec<Item> {
                     id: spec.id,
                     label: spec.label,
                     category: spec.category,
-                    shortcut: crate::keys::display(spec.shortcut.as_deref().unwrap_or_default()),
+                    shortcut,
                 },
             ))
         })
@@ -211,7 +212,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                             let galley = ui.painter().layout_no_wrap(
                                 tab.label().to_owned(),
                                 egui::FontId::proportional(theme::UI_FONT_SIZE),
-                                theme::TEXT_BRIGHT,
+                                *theme::TEXT_BRIGHT,
                             );
                             let (rect, response) = ui.allocate_exact_size(
                                 vec2(galley.size().x + 20.0, 32.0),
@@ -224,9 +225,9 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                 ui.painter().rect_filled(pill, 4.0, theme::HOVER);
                             }
                             let color = if tab == app.palette.tab {
-                                theme::TEXT_BRIGHT
+                                *theme::TEXT_BRIGHT
                             } else {
-                                theme::TEXT_SECONDARY
+                                *theme::TEXT_SECONDARY
                             };
                             ui.painter()
                                 .galley(rect.center() - galley.size() / 2.0, galley, color);
@@ -243,7 +244,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                     );
                     ui.horizontal(|ui| {
                         ui.add_space(12.0);
-                        icons::show(ui, Icon::Search, 16.0, theme::TEXT_SECONDARY);
+                        icons::show(ui, Icon::Search, 16.0, *theme::TEXT_SECONDARY);
                         let input = ui.add(
                             egui::TextEdit::singleline(&mut app.palette.query)
                                 .frame(false)
@@ -296,11 +297,11 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                 enabled,
                                 ..
                             } => {
-                                icons::paint(ui.painter(), icon_rect, Icon::Run, theme::TEXT_INFO);
+                                icons::paint(ui.painter(), icon_rect, Icon::Run, *theme::TEXT_INFO);
                                 let color = if *enabled {
-                                    theme::TEXT_BRIGHT
+                                    *theme::TEXT_BRIGHT
                                 } else {
-                                    theme::TEXT_DISABLED
+                                    *theme::TEXT_DISABLED
                                 };
                                 let x = crate::widgets::row_text(
                                     ui,
@@ -316,14 +317,14 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                     x + 10.0,
                                     category,
                                     egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                                    theme::TEXT_INFO,
+                                    *theme::TEXT_INFO,
                                 );
                                 ui.painter().text(
                                     row.right_center() - vec2(10.0, 0.0),
                                     egui::Align2::RIGHT_CENTER,
                                     shortcut,
                                     egui::FontId::proportional(theme::UI_FONT_SIZE),
-                                    theme::TEXT_SECONDARY,
+                                    *theme::TEXT_SECONDARY,
                                 );
                             }
                             Item::File(path) => {
@@ -331,8 +332,8 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                 icons::paint(
                                     ui.painter(),
                                     icon_rect,
-                                    Icon::for_file(&name),
-                                    icons::ICON,
+                                    app.file_icon(path),
+                                    *icons::ICON,
                                 );
                                 let x = crate::widgets::row_text(
                                     ui,
@@ -340,7 +341,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                     row.left() + 32.0,
                                     &name,
                                     egui::FontId::proportional(theme::UI_FONT_SIZE),
-                                    theme::TEXT_BRIGHT,
+                                    *theme::TEXT_BRIGHT,
                                 );
                                 let parent = path
                                     .parent()
@@ -352,7 +353,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                     x + 10.0,
                                     &parent,
                                     egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                                    theme::TEXT_INFO,
+                                    *theme::TEXT_INFO,
                                 );
                             }
                         }
@@ -382,7 +383,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                         egui::Align2::LEFT_CENTER,
                         "↑↓ to navigate · Enter to run · Esc to close",
                         egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                        theme::TEXT_INFO,
+                        *theme::TEXT_INFO,
                     );
                 });
         });

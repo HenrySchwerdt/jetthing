@@ -15,13 +15,17 @@ pub struct Workspace {
     pub expanded_dirs: Vec<PathBuf>,
     pub left_tool_window: Option<String>,
     pub bottom_tool_window: Option<String>,
+    pub right_tool_window: Option<String>,
+    pub selected_run_configuration: Option<String>,
+    pub bottom_tool_height: Option<u32>,
     pub recent_files: Vec<PathBuf>,
+    pub pinned_files: Vec<PathBuf>,
 }
 
 pub const WORKSPACE_FILE: &str = ".jetthing/workspace.json";
 
 impl IdeState {
-    fn refresh_files(&mut self) {
+    pub(crate) fn refresh_files(&mut self) {
         if let Some(project) = &self.project {
             self.files = project.entries(20_000);
         }
@@ -106,6 +110,16 @@ impl IdeState {
 
     /// Commits the given project-relative paths with `message`.
     pub fn commit_paths(&mut self, message: &str, paths: &[PathBuf]) -> Result<String, String> {
+        self.commit_paths_with(message, paths, false)
+    }
+
+    /// Commits project-relative `paths`, or amends the last commit.
+    pub fn commit_paths_with(
+        &mut self,
+        message: &str,
+        paths: &[PathBuf],
+        amend: bool,
+    ) -> Result<String, String> {
         let project = self.project.as_ref().ok_or("no project is open")?;
         let git = self
             .git
@@ -128,24 +142,44 @@ impl IdeState {
             .git
             .as_ref()
             .ok_or("the project is not a Git repository")?
-            .commit(message, &repo_paths)
+            .commit_with(message, &repo_paths, amend)
             .map_err(|error| error.to_string())?;
         self.refresh_git()?;
         self.status = format!(
-            "Committed {} file{} ({hash})",
+            "{} {} file{} ({hash})",
+            if amend {
+                "Amended commit with"
+            } else {
+                "Committed"
+            },
             paths.len(),
             if paths.len() == 1 { "" } else { "s" }
         );
         Ok(hash)
     }
 
+    /// Saves every modified document except those with an unresolved outside
+    /// change, which are reported instead of being overwritten.
     pub fn save_all(&mut self) -> Result<(), String> {
+        let mut blocked = Vec::new();
         for index in 0..self.documents.len() {
-            if self.documents[index].text.is_dirty() {
-                self.save(index)?;
+            if !self.documents[index].text.is_dirty() {
+                continue;
             }
+            if self.documents[index].conflict.is_some() {
+                blocked.push(self.documents[index].path.display().to_string());
+                continue;
+            }
+            self.save(index)?;
         }
-        Ok(())
+        if blocked.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Not saved, changed on disk: {} (load the disk version or keep yours)",
+                blocked.join(", ")
+            ))
+        }
     }
 
     pub fn workspace(&self) -> Workspace {
@@ -164,7 +198,18 @@ impl IdeState {
                 .tool_windows
                 .visible(Anchor::Bottom)
                 .map(|window| window.id().to_owned()),
+            right_tool_window: self
+                .tool_windows
+                .visible(Anchor::Right)
+                .map(|window| window.id().to_owned()),
+            bottom_tool_height: self.tool_windows.bottom_height().map(|h| h as u32),
             recent_files: self.recent_files.clone(),
+            pinned_files: self.tabs.pinned.iter().cloned().collect(),
+            selected_run_configuration: self
+                .run_configurations
+                .selected()
+                .filter(|config| !config.temporary)
+                .map(|config| config.name.clone()),
         }
     }
 
@@ -175,7 +220,10 @@ impl IdeState {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         let json = serde_json::to_string_pretty(&self.workspace()).map_err(|e| e.to_string())?;
-        std::fs::write(path, json).map_err(|error| error.to_string())
+        std::fs::write(path, json).map_err(|error| error.to_string())?;
+        // Completion statistics are per user; flush them with the workspace.
+        self.completion_stats.save()?;
+        self.save_ai_chat()
     }
 
     /// Restores tabs, tree expansion and tool windows; missing files are skipped.
@@ -207,16 +255,31 @@ impl IdeState {
         for path in keep(&workspace.open_files) {
             let _ = self.open_file(&path);
         }
+        self.tabs.pinned = keep(&workspace.pinned_files)
+            .into_iter()
+            .filter(|path| self.documents.iter().any(|d| &d.path == path))
+            .collect();
+        self.sort_pinned_first();
         if let Some(active) = &workspace.active_file
             && let Some(index) = self.documents.iter().position(|d| &d.path == active)
         {
             self.active_document = Some(index);
         }
         self.recent_files = recent;
+        if let Some(name) = &workspace.selected_run_configuration {
+            let _ = self.run_configurations.select(name);
+        }
         self.tool_windows.hide_all();
-        for id in [&workspace.left_tool_window, &workspace.bottom_tool_window]
-            .into_iter()
-            .flatten()
+        if let Some(height) = workspace.bottom_tool_height {
+            self.tool_windows.set_bottom_height(height as f32);
+        }
+        for id in [
+            &workspace.left_tool_window,
+            &workspace.bottom_tool_window,
+            &workspace.right_tool_window,
+        ]
+        .into_iter()
+        .flatten()
         {
             // The terminal is not restored automatically: it would spawn a shell.
             if let Some(window) = ToolWindow::parse(id).filter(|w| *w != ToolWindow::Terminal) {
@@ -311,7 +374,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 "Commit",
                 "Git",
                 Some("⌘K"),
-                r#"{"message":"string","paths":["string"]}"#,
+                r#"{"message":"string","paths":["string"],"amend":"bool?"}"#,
             ),
             |state: &IdeState| state.git.is_some(),
             |state: &mut IdeState, params| {
@@ -320,8 +383,12 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                     .into_iter()
                     .map(PathBuf::from)
                     .collect();
+                let amend = params
+                    .get("amend")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 let hash = state
-                    .commit_paths(&message, &paths)
+                    .commit_paths_with(&message, &paths, amend)
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"commit": hash}))
             },
@@ -470,6 +537,7 @@ mod tests {
         commands
             .execute("toolwindow.activate.problems", &mut state, Value::Null)
             .unwrap();
+        state.tool_windows.set_bottom_height(420.0);
         commands
             .execute("workspace.save", &mut state, Value::Null)
             .unwrap();
@@ -483,6 +551,7 @@ mod tests {
         assert_eq!(reopened.recent_files[0], Path::new("src/a.rs"));
         assert!(reopened.expanded_dirs.contains(Path::new("src")));
         assert!(reopened.tool_windows.is_visible(ToolWindow::Problems));
+        assert_eq!(reopened.tool_windows.bottom_height(), Some(420.0));
         assert!(reopened.tool_windows.is_visible(ToolWindow::Project));
         // The workspace directory itself stays out of the Project tree.
         assert!(

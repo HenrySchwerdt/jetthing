@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+jetthing-command = { path = "../jetthing-command" }
+jetthing-plugin-api = { path = "../jetthing-plugin-api" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 toml.workspace = true
-walkdir.workspace = true
-
+zip = { version = "2", default-features = false, features = ["deflate"] }

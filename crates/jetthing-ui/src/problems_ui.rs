@@ -24,18 +24,18 @@ pub fn icon(severity: Severity) -> Icon {
 
 fn effect_color(severity: Severity) -> Option<Color32> {
     match severity {
-        Severity::Error => Some(theme::editor::ERROR_EFFECT),
-        Severity::Warning => Some(theme::editor::WARNING_EFFECT),
-        Severity::WeakWarning => Some(theme::editor::WEAK_WARNING_EFFECT),
+        Severity::Error => Some(*theme::editor::ERROR_EFFECT),
+        Severity::Warning => Some(*theme::editor::WARNING_EFFECT),
+        Severity::WeakWarning => Some(*theme::editor::WEAK_WARNING_EFFECT),
         Severity::Hint => None,
     }
 }
 
 fn stripe_color(severity: Severity) -> Color32 {
     match severity {
-        Severity::Error => theme::editor::ERROR_STRIPE,
-        Severity::Warning => theme::editor::WARNING_STRIPE,
-        _ => theme::editor::WEAK_WARNING_EFFECT,
+        Severity::Error => *theme::editor::ERROR_STRIPE,
+        Severity::Warning => *theme::editor::WARNING_STRIPE,
+        _ => *theme::editor::WEAK_WARNING_EFFECT,
     }
 }
 
@@ -288,7 +288,8 @@ pub fn inspection_widget(
         if count == 0 {
             continue;
         }
-        let galley = painter.layout_no_wrap(count.to_string(), font.clone(), theme::TEXT_SECONDARY);
+        let galley =
+            painter.layout_no_wrap(count.to_string(), font.clone(), *theme::TEXT_SECONDARY);
         let width = 14.0 + 3.0 + galley.size().x;
         let start = x - width;
         icons::paint(
@@ -300,7 +301,7 @@ pub fn inspection_widget(
         painter.galley(
             egui::pos2(start + 17.0, y - galley.size().y / 2.0),
             galley,
-            theme::TEXT_SECONDARY,
+            *theme::TEXT_SECONDARY,
         );
         x = start - 8.0;
         tooltip.insert(0, widgets::pluralize(count, singular, plural));
@@ -403,7 +404,7 @@ pub fn tool_window(app: &mut IdeApp, ui: &mut egui::Ui) {
         let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
         let label_width = ui
             .painter()
-            .layout_no_wrap(label.into(), font.clone(), theme::TEXT)
+            .layout_no_wrap(label.into(), font.clone(), *theme::TEXT)
             .size()
             .x;
         let count_text = if count > 0 {
@@ -413,7 +414,7 @@ pub fn tool_window(app: &mut IdeApp, ui: &mut egui::Ui) {
         };
         let count_width = ui
             .painter()
-            .layout_no_wrap(count_text.clone(), font.clone(), theme::TEXT)
+            .layout_no_wrap(count_text.clone(), font.clone(), *theme::TEXT)
             .size()
             .x;
         let width = label_width + if count > 0 { count_width + 6.0 } else { 0.0 } + 16.0;
@@ -457,6 +458,13 @@ pub fn tool_window(app: &mut IdeApp, ui: &mut egui::Ui) {
     );
     if hide.on_hover_text("Hide").clicked() {
         app.toggle_tool_window(ToolWindow::Problems);
+    }
+    // "Fix with AI" (AI Assistant), left of Hide.
+    let can_fix = app.commands.is_enabled("ai.action.fixProblems", &app.state);
+    let fix_rect = hide_rect.translate(vec2(-26.0, 0.0));
+    let mut fix_ui = ui.new_child(egui::UiBuilder::new().max_rect(fix_rect));
+    if crate::ai_actions::problems_button(&mut fix_ui, can_fix) {
+        app.dispatch("ai.action.fixProblems", serde_json::Value::Null);
     }
     ui.data_mut(|data| data.insert_temp(tab_id, tab));
 
