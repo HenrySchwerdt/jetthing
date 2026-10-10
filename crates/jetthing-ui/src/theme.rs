@@ -44,6 +44,8 @@ pub const SELECTION: Color32 = hex(0x2A4371);
 pub const ACCENT: Color32 = hex(0x3871E1);
 /// Disabled default button fill (palette `Gray5`).
 pub const SELECTION_DISABLED: Color32 = hex(0x4E5157);
+/// `Notification.background`.
+pub const NOTIFICATION: Color32 = hex(0x33353B);
 /// `Component.borderColor`.
 pub const BORDER: Color32 = hex(0x40434A);
 /// `TextField.background`.

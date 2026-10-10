@@ -1,0 +1,203 @@
+//! "Check for Updates" and in-place installation.
+
+use crate::{IdeState, spec};
+use jetthing_command::{Command, CommandError, CommandRegistry};
+use jetthing_update::{CheckOutcome, Release, UpdateEvent, UpdateSource, Version};
+use serde_json::{Value, json};
+
+pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum UpdateState {
+    #[default]
+    Idle,
+    Checking,
+    UpToDate(Version),
+    Available {
+        version: Version,
+        release: Box<Release>,
+    },
+    Installing(Version),
+    /// Installed; takes effect after restarting the IDE.
+    Installed(Version),
+    Failed(String),
+}
+
+pub fn current_version() -> Version {
+    Version::parse(CURRENT_VERSION).unwrap_or(Version {
+        major: 0,
+        minor: 0,
+        patch: 0,
+        pre: None,
+    })
+}
+
+/// Only release layouts (`jetthing` executable from a distribution archive) can
+/// update themselves; development builds (`target/*/jetthing-app`) cannot.
+pub fn installable_executable() -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    if exe.file_stem().and_then(|s| s.to_str()) == Some("jetthing") {
+        Ok(exe)
+    } else {
+        Err("This is a development build; download the update from the release page.".into())
+    }
+}
+
+impl IdeState {
+    pub fn check_for_updates(&mut self, silent: bool) {
+        if self.updates.is_busy() {
+            return;
+        }
+        self.update_silent = silent;
+        self.update_state = UpdateState::Checking;
+        self.updates
+            .check(UpdateSource::from_env(), current_version());
+    }
+
+    pub fn install_update(&mut self) -> Result<(), String> {
+        let UpdateState::Available { version, release } = &self.update_state else {
+            return Err("no update is available".into());
+        };
+        let exe = installable_executable()?;
+        let version = version.clone();
+        self.updates
+            .install(UpdateSource::from_env(), (**release).clone(), exe);
+        self.status = format!("Downloading Jetthing {version}…");
+        self.update_state = UpdateState::Installing(version);
+        Ok(())
+    }
+
+    pub fn poll_updates(&mut self) {
+        let Some(event) = self.updates.poll() else {
+            return;
+        };
+        self.update_state = match event {
+            UpdateEvent::Checked(Ok(CheckOutcome::Available { version, release })) => {
+                self.status = format!("Jetthing {version} is available");
+                self.update_notification = true;
+                UpdateState::Available {
+                    version,
+                    release: Box::new(release),
+                }
+            }
+            UpdateEvent::Checked(Ok(CheckOutcome::UpToDate { latest })) => {
+                if !self.update_silent {
+                    self.status = format!("Jetthing {CURRENT_VERSION} is up to date");
+                    self.update_notification = true;
+                }
+                UpdateState::UpToDate(latest)
+            }
+            UpdateEvent::Checked(Err(error)) => {
+                if !self.update_silent {
+                    self.status = format!("Update check failed: {error}");
+                    self.update_notification = true;
+                }
+                UpdateState::Failed(error)
+            }
+            UpdateEvent::Installed(Ok(version)) => {
+                self.status = format!("Jetthing {version} installed; restart to finish");
+                self.update_notification = true;
+                UpdateState::Installed(version)
+            }
+            UpdateEvent::Installed(Err(error)) => {
+                self.status = format!("Update failed: {error}");
+                self.update_notification = true;
+                UpdateState::Failed(error)
+            }
+        };
+    }
+}
+
+pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
+    registry
+        .register(Command::new(
+            spec(
+                "app.checkForUpdates",
+                "Check for Updates…",
+                "Help",
+                None,
+                r#"{"silent":"bool?"}"#,
+            ),
+            |state: &IdeState| !state.updates.is_busy(),
+            |state: &mut IdeState, params| {
+                let silent = params
+                    .get("silent")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                state.check_for_updates(silent);
+                Ok(json!({"current": CURRENT_VERSION}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "app.installUpdate",
+                "Update and Restart",
+                "Help",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| matches!(state.update_state, UpdateState::Available { .. }),
+            |state: &mut IdeState, _| {
+                state.install_update().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "app.dismissUpdate",
+                "Dismiss Update Notification",
+                "Help",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.update_notification,
+            |state: &mut IdeState, _| {
+                state.update_notification = false;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("app.about", "About Jetthing", "Help", None, "{}"),
+            |_| true,
+            |state: &mut IdeState, _| {
+                state.status = format!("Jetthing {CURRENT_VERSION}");
+                Ok(json!({"version": CURRENT_VERSION}))
+            },
+        ))
+        .expect("unique built-in id");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jetthing_update::parse_release;
+
+    #[test]
+    fn version_comes_from_the_workspace() {
+        assert_eq!(current_version().to_string(), CURRENT_VERSION);
+    }
+
+    #[test]
+    fn install_requires_an_available_update_and_a_release_build() {
+        let mut state = IdeState::default();
+        assert!(state.install_update().is_err());
+        let release = parse_release(
+            r#"{"tag_name":"v99.0.0","html_url":"https://example.invalid","assets":[]}"#,
+        )
+        .unwrap();
+        state.update_state = UpdateState::Available {
+            version: release.version().unwrap(),
+            release: Box::new(release),
+        };
+        // Test binaries are not named `jetthing`, so they never replace themselves.
+        let error = state.install_update().unwrap_err();
+        assert!(error.contains("development build"));
+        assert!(matches!(state.update_state, UpdateState::Available { .. }));
+    }
+}

@@ -10,6 +10,7 @@ mod editor;
 mod findbar;
 mod icons;
 mod keys;
+mod notifications;
 mod palette;
 mod popups;
 mod theme;
@@ -80,6 +81,9 @@ impl IdeApp {
             {
                 state.status = error.to_string();
             }
+        }
+        if std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none() {
+            let _ = commands.execute("app.checkForUpdates", &mut state, json!({"silent": true}));
         }
         let run_label = state.project.as_ref().and_then(|project| {
             jetthing_runner::TaskPlan::detect_run(project.root())
@@ -440,6 +444,7 @@ impl eframe::App for IdeApp {
         self.state.poll_search();
         self.state.poll_runner();
         self.state.poll_lsp();
+        self.state.poll_updates();
         if self.state.search.is_running() || self.state.runner.is_running() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
@@ -466,6 +471,7 @@ impl eframe::App for IdeApp {
         editor::completion_popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
+        notifications::show(self, ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

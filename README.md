@@ -19,14 +19,27 @@ cargo run -p xtask -- parity                        # regenerate the parity dash
 If wgpu finds no usable adapter (VMs, old drivers) the app falls back to OpenGL
 automatically; `JETTHING_RENDERER=glow` forces it.
 
-## Build a distribution
+## Builds, releases and updates
 
 ```bash
 cargo run -p xtask -- dist     # release build staged in dist/jetthing-<version>-<os>-<arch>/
 ```
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds Linux, macOS and
-Windows archives and attaches them to the GitHub release.
+Every push to `main` runs `.github/workflows/release.yml`: it builds Linux, macOS and
+Windows archives (with `.sha256` checksums). When the version in `Cargo.toml` has no
+`v<version>` tag yet, the workflow publishes them as GitHub release `v<version>`. To ship
+a new version, bump `[workspace.package] version` and merge.
+
+The IDE checks for a newer release on startup and via **Help → Check for Updates…**.
+A notification offers **Update and Restart**: the archive is downloaded, verified against
+its checksum and swapped in place of the running executable (the previous one is kept as
+`jetthing.old`). Development builds (`cargo run`) only link to the release page.
+
+| Variable | Effect |
+|---|---|
+| `JETTHING_NO_UPDATE_CHECK` | disable the startup check |
+| `JETTHING_GITHUB_TOKEN` / `GITHUB_TOKEN` | token for a private release repository |
+| `JETTHING_UPDATE_REPOSITORY` | `owner/repo` to update from (default `HenrySchwerdt/jetthing`) |
 
 ## Keyboard
 
@@ -42,6 +55,14 @@ Shortcuts follow the default keymap of the reference IDE (macOS / Windows & Linu
 | Run / Build | ⌃R / ⌘F9 | Shift+F10 / Ctrl+F9 |
 | Close tab | ⌘W | Ctrl+F4 |
 | Hide all tool windows | ⇧⌘F12 | Ctrl+Shift+F12 |
+| Go to File / Recent Files | ⇧⌘O / ⌘E | Ctrl+Shift+N / Ctrl+E |
+| Find / Replace in file | ⌘F / ⌘R | Ctrl+F / Ctrl+R |
+| Go to Line | ⌘L | Ctrl+G |
+| Duplicate / Delete line | ⌘D / ⌘⌫ | Ctrl+D / Ctrl+Y |
+| Comment line | ⌘/ | Ctrl+/ |
+| Move line up / down | ⌥⇧↑ / ⌥⇧↓ | Alt+Shift+↑ / Alt+Shift+↓ |
+| Commit | ⌘K | Ctrl+K |
+| Rename / Delete in Project tree | ⇧F6 / ⌦ | Shift+F6 / Delete |
 
 ## Assets and trademarks
 

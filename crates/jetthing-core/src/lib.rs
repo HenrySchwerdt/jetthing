@@ -15,7 +15,11 @@ use std::path::{Path, PathBuf};
 mod editor_commands;
 mod project_commands;
 mod toolwindow;
+mod update_commands;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
+pub use update_commands::{
+    CURRENT_VERSION, UpdateState, installable_executable as update_installable,
+};
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -47,6 +51,11 @@ pub struct IdeState {
     pub expanded_dirs: BTreeSet<PathBuf>,
     /// Most recently used files, newest first (Recent Files, ⌘E).
     pub recent_files: Vec<PathBuf>,
+    pub updates: jetthing_update::UpdateService,
+    pub update_state: UpdateState,
+    /// Whether the update balloon is showing.
+    pub update_notification: bool,
+    update_silent: bool,
     pub status: String,
 }
 
@@ -550,6 +559,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
     editor_commands::register(&mut registry);
     project_commands::register(&mut registry);
+    update_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(

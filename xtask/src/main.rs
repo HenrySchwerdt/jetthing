@@ -60,7 +60,8 @@ fn dist() -> Result<()> {
         )
         .with_context(|| format!("copy {license}"))?;
     }
-    println!("{}", out.display());
+    // Forward slashes on every platform so CI scripts can parse the path.
+    println!("dist/{name}");
     Ok(())
 }
 

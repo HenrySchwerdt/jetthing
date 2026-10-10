@@ -33,6 +33,12 @@
 - [x] Run widget (`run.project`) next to Build, with OpenGL fallback renderer
 - [x] Release packaging (`cargo xtask dist`) and CI/release workflows
 - [ ] Light theme, settings dialog, and bundled icon set beyond the core actions
+- [x] Editor actions: duplicate/delete/comment/move lines, pairing, smart Enter, word moves
+- [x] Find/Replace in file, Go to Line, Recent Files, Go to File
+- [x] Project tree New/Rename/Delete, commit with message and file selection
+- [x] Workspace restore (`.jetthing/workspace.json`), autosave on focus loss
+- [x] Check for Updates with verified self-update from GitHub releases
+- [x] Versioned release pipeline (0.0.1) publishing on every version bump
 
 ## M2 — language intelligence
 
