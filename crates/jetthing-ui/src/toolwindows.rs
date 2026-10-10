@@ -1,6 +1,7 @@
 //! Docked tool windows rendered as islands.
 
 use crate::icons::{self, Icon};
+use crate::popups::Dialog;
 use crate::widgets::{self, island_frame, list_row, row_text, tool_window_header};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, RichText, vec2};
@@ -121,13 +122,15 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
         .collect();
     let mut toggle = None;
     let mut open = None;
+    let mut dialog = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show_rows(ui, widgets::ROW_HEIGHT, entries.len() + 1, |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for row in range {
                 if row == 0 {
-                    let (rect, _) = list_row(ui, false);
+                    let (rect, response) = list_row(ui, false);
+                    tree_context_menu(&response, Path::new(""), true, &mut dialog, &mut open);
                     let mut x = rect.left() + 12.0 + 16.0;
                     icons::paint(
                         ui.painter(),
@@ -206,6 +209,10 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                     egui::FontId::proportional(theme::UI_FONT_SIZE),
                     change_color(kind),
                 );
+                if response.secondary_clicked() {
+                    app.tree_selection = Some(path.clone());
+                }
+                tree_context_menu(&response, path, *is_dir, &mut dialog, &mut open);
                 if response.clicked() {
                     app.tree_selection = Some(path.clone());
                     let on_chevron = response
@@ -225,6 +232,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
             }
         });
     if ui.ui_contains_pointer()
+        && ui.memory(|m| m.focused().is_none())
         && ui.input(|input| input.key_pressed(egui::Key::Enter))
         && let Some(selected) = app.tree_selection.clone()
     {
@@ -237,11 +245,148 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
             open = Some(selected);
         }
     }
+    // Keyboard actions on the selected node while the pointer is over the tree.
+    // Only when no text field (editor, terminal, …) holds keyboard focus.
+    let tree_has_keys = ui.ui_contains_pointer() && ui.memory(|m| m.focused().is_none());
+    if tree_has_keys
+        && dialog.is_none()
+        && let Some(selected) = app.tree_selection.clone()
+    {
+        let is_dir = entries.iter().any(|(p, d)| *p == selected && *d);
+        let (delete, rename, new_file) = ui.input_mut(|input| {
+            let mac = cfg!(target_os = "macos");
+            (
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                    || (mac && input.consume_key(egui::Modifiers::COMMAND, egui::Key::Backspace)),
+                input.consume_key(egui::Modifiers::SHIFT, egui::Key::F6),
+                input.consume_key(egui::Modifiers::ALT, egui::Key::Insert)
+                    || (mac && input.consume_key(egui::Modifiers::COMMAND, egui::Key::N)),
+            )
+        });
+        if delete {
+            dialog = Some(Dialog::Delete {
+                path: selected.clone(),
+            });
+        } else if rename {
+            dialog = Some(Dialog::Rename {
+                name: IdeApp::file_name(&selected),
+                path: selected.clone(),
+            });
+        } else if new_file {
+            dialog = Some(Dialog::NewEntry {
+                parent: new_entry_parent(&selected, is_dir),
+                directory: false,
+                name: String::new(),
+            });
+        }
+    }
+    if let Some(dialog) = dialog {
+        app.open_dialog(dialog);
+    }
     if let Some(path) = toggle {
         app.dispatch("project.toggleDirectory", json!({"path": path}));
     }
     if let Some(path) = open {
         app.dispatch("editor.openFile", json!({"path": path}));
+    }
+}
+
+fn new_entry_parent(path: &Path, is_dir: bool) -> PathBuf {
+    if is_dir {
+        path.to_owned()
+    } else {
+        path.parent().map(Path::to_path_buf).unwrap_or_default()
+    }
+}
+
+/// Right-click menu of a Project tree node.
+fn tree_context_menu(
+    response: &egui::Response,
+    path: &Path,
+    is_dir: bool,
+    dialog: &mut Option<Dialog>,
+    open: &mut Option<PathBuf>,
+) {
+    let is_root = path.as_os_str().is_empty();
+    response.context_menu(|ui| {
+        ui.set_min_width(220.0);
+        ui.menu_button("New", |ui| {
+            ui.set_min_width(160.0);
+            for (label, directory) in [("File", false), ("Directory", true)] {
+                if ui.button(label).clicked() {
+                    *dialog = Some(Dialog::NewEntry {
+                        parent: new_entry_parent(path, is_dir),
+                        directory,
+                        name: String::new(),
+                    });
+                    ui.close();
+                }
+            }
+        });
+        if !is_dir && ui.button("Open").clicked() {
+            *open = Some(path.to_owned());
+            ui.close();
+        }
+        if !is_root {
+            ui.separator();
+            if ui
+                .add(egui::Button::new("Rename…").shortcut_text(crate::keys::display("⇧F6")))
+                .clicked()
+            {
+                *dialog = Some(Dialog::Rename {
+                    path: path.to_owned(),
+                    name: IdeApp::file_name(path),
+                });
+                ui.close();
+            }
+            if ui
+                .add(egui::Button::new("Delete…").shortcut_text("Delete"))
+                .clicked()
+            {
+                *dialog = Some(Dialog::Delete {
+                    path: path.to_owned(),
+                });
+                ui.close();
+            }
+        }
+    });
+}
+
+/// Paints a checkbox in the reference style and returns whether it was clicked.
+fn checkbox(ui: &egui::Ui, rect: Rect, state: Option<bool>) {
+    let fill = match state {
+        Some(true) | None => theme::ACCENT,
+        Some(false) => Color32::TRANSPARENT,
+    };
+    ui.painter().rect_filled(rect, 3.0, fill);
+    if state == Some(false) {
+        ui.painter().rect_stroke(
+            rect,
+            3.0,
+            egui::Stroke::new(1.0_f32, theme::TEXT_INFO),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let white = egui::Stroke::new(1.5_f32, Color32::WHITE);
+    match state {
+        Some(true) => {
+            let points = vec![
+                rect.left_top() + vec2(3.0, 7.0),
+                rect.left_top() + vec2(6.0, 10.0),
+                rect.left_top() + vec2(11.0, 4.0),
+            ];
+            ui.painter().add(egui::Shape::line(points, white));
+        }
+        None => {
+            ui.painter().line_segment(
+                [
+                    rect.left_center() + vec2(3.5, 0.0),
+                    rect.right_center() - vec2(3.5, 0.0),
+                ],
+                white,
+            );
+        }
+        Some(false) => {}
     }
 }
 
@@ -255,47 +400,81 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
         });
         return;
     };
-    let mut action = None;
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for (title, staged, untracked) in [
-                ("Staged", true, false),
-                ("Changes", false, false),
-                ("Unversioned Files", false, true),
-            ] {
-                let changes: Vec<_> = git
+    let project_root = app.state.project.as_ref().map(|p| p.root().to_path_buf());
+    let git_root = git.root.canonicalize().unwrap_or_else(|_| git.root.clone());
+    // Project-relative path for each change (commands take project paths).
+    let to_project = |path: &Path| -> PathBuf {
+        let absolute = git_root.join(path);
+        project_root
+            .as_ref()
+            .and_then(|root| absolute.strip_prefix(root).ok())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| path.to_owned())
+    };
+    let included = |app: &IdeApp, path: &Path, kind: ChangeKind| {
+        app.commit_overrides
+            .get(path)
+            .copied()
+            .unwrap_or(kind != ChangeKind::Untracked)
+    };
+    let groups: Vec<(&str, Vec<(PathBuf, ChangeKind)>)> =
+        [("Changes", false), ("Unversioned Files", true)]
+            .into_iter()
+            .map(|(title, untracked)| {
+                let files = git
                     .changes
                     .iter()
-                    .filter(|change| {
-                        let is_untracked = change.kind == ChangeKind::Untracked;
-                        if staged {
-                            change.staged
-                        } else if untracked {
-                            is_untracked
-                        } else {
-                            !is_untracked && (change.unstaged || !change.staged)
-                        }
-                    })
-                    .collect();
-                if changes.is_empty() && (staged || untracked) {
+                    .filter(|c| (c.kind == ChangeKind::Untracked) == untracked)
+                    .map(|c| (to_project(&c.path), c.kind))
+                    .collect::<Vec<_>>();
+                (title, files)
+            })
+            .collect();
+    let selected: Vec<PathBuf> = groups
+        .iter()
+        .flat_map(|(_, files)| files.iter())
+        .filter(|(path, kind)| included(app, path, *kind))
+        .map(|(path, _)| path.clone())
+        .collect();
+    let mut open = None;
+    let mut toggles: Vec<(PathBuf, bool)> = Vec::new();
+    let form_height = 132.0;
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .max_height((ui.available_height() - form_height).max(60.0))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (title, files) in &groups {
+                if files.is_empty() && *title != "Changes" {
                     continue;
                 }
-                let (rect, _) = list_row(ui, false);
+                let checked = files.iter().filter(|(p, k)| included(app, p, *k)).count();
+                let state = match checked {
+                    0 => Some(false),
+                    n if n == files.len() => Some(true),
+                    _ => None,
+                };
+                let (rect, response) = list_row(ui, false);
                 icons::paint(
                     ui.painter(),
                     Rect::from_min_size(
-                        egui::pos2(rect.left() + 12.0, rect.center().y - 8.0),
+                        egui::pos2(rect.left() + 10.0, rect.center().y - 8.0),
                         vec2(16.0, 16.0),
                     ),
                     Icon::ChevronDown,
                     theme::TEXT_SECONDARY,
                 );
+                let check = Rect::from_min_size(
+                    egui::pos2(rect.left() + 30.0, rect.center().y - 7.0),
+                    vec2(14.0, 14.0),
+                );
+                if !files.is_empty() {
+                    checkbox(ui, check, state);
+                }
                 let x = row_text(
                     ui,
                     rect,
-                    rect.left() + 32.0,
+                    rect.left() + 52.0,
                     title,
                     theme::semibold(theme::UI_FONT_SIZE),
                     theme::TEXT_BRIGHT,
@@ -304,14 +483,24 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     ui,
                     rect,
                     x + 8.0,
-                    &widgets::pluralize(changes.len(), "file", "files"),
+                    &widgets::pluralize(files.len(), "file", "files"),
                     egui::FontId::proportional(theme::UI_FONT_SIZE),
                     theme::TEXT_INFO,
                 );
-                for change in changes {
+                if response.clicked() && !files.is_empty() {
+                    let value = state != Some(true);
+                    toggles.extend(files.iter().map(|(p, _)| (p.clone(), value)));
+                }
+                for (path, kind) in files {
                     let (rect, response) = list_row(ui, false);
-                    let name = IdeApp::file_name(&change.path);
-                    let mut x = rect.left() + 34.0;
+                    let check = Rect::from_min_size(
+                        egui::pos2(rect.left() + 46.0, rect.center().y - 7.0),
+                        vec2(14.0, 14.0),
+                    );
+                    let is_included = included(app, path, *kind);
+                    checkbox(ui, check, Some(is_included));
+                    let name = IdeApp::file_name(path);
+                    let mut x = rect.left() + 68.0;
                     icons::paint(
                         ui.painter(),
                         Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
@@ -325,10 +514,9 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                         x,
                         &name,
                         egui::FontId::proportional(theme::UI_FONT_SIZE),
-                        change_color(Some(change.kind)),
+                        change_color(Some(*kind)),
                     );
-                    if let Some(parent) = change.path.parent().filter(|p| !p.as_os_str().is_empty())
-                    {
+                    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
                         row_text(
                             ui,
                             rect,
@@ -338,44 +526,14 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                             theme::TEXT_INFO,
                         );
                     }
-                    if response.hovered() {
-                        let button = Rect::from_min_size(
-                            egui::pos2(rect.right() - 32.0, rect.top()),
-                            vec2(24.0, 24.0),
-                        );
-                        icons::paint(
-                            ui.painter(),
-                            button.shrink(4.0),
-                            if staged { Icon::Minus } else { Icon::Plus },
-                            icons::ICON,
-                        );
-                        if response.clicked()
-                            && response
-                                .interact_pointer_pos()
-                                .is_some_and(|pos| button.contains(pos))
-                        {
-                            action = Some((
-                                if staged { "git.unstage" } else { "git.stage" },
-                                change.path.clone(),
-                            ));
-                            continue;
-                        }
+                    let on_check = response
+                        .interact_pointer_pos()
+                        .is_some_and(|pos| check.expand(4.0).contains(pos));
+                    if response.clicked() && on_check {
+                        toggles.push((path.clone(), !is_included));
                     }
-                    let response = response.on_hover_text(if staged {
-                        "Double-click to open · − to unstage"
-                    } else {
-                        "Double-click to open · + to stage"
-                    });
-                    if response.double_clicked() && change.kind != ChangeKind::Deleted {
-                        let absolute = git.root.join(&change.path);
-                        let relative = app
-                            .state
-                            .project
-                            .as_ref()
-                            .and_then(|project| absolute.strip_prefix(project.root()).ok())
-                            .map(Path::to_path_buf)
-                            .unwrap_or_else(|| change.path.clone());
-                        action = Some(("editor.openFile", relative));
+                    if response.double_clicked() && *kind != ChangeKind::Deleted {
+                        open = Some(path.clone());
                     }
                 }
             }
@@ -386,9 +544,82 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                 });
             }
         });
-    if let Some((id, path)) = action {
-        app.dispatch(id, json!({"path": path}));
+    for (path, value) in toggles {
+        app.commit_overrides.insert(path, value);
     }
+    // Commit message and actions.
+    let mut commit_now = false;
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.painter().hline(
+                ui.max_rect().x_range(),
+                ui.max_rect().top(),
+                egui::Stroke::new(1.0_f32, theme::POPUP_BORDER),
+            );
+            let response = ui.add(
+                egui::TextEdit::multiline(&mut app.commit_message)
+                    .id(commit_message_id())
+                    .desired_rows(4)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Commit Message"),
+            );
+            if response.has_focus()
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter))
+            {
+                commit_now = true;
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let enabled = !app.commit_message.trim().is_empty() && !selected.is_empty();
+                let button = egui::Button::new(RichText::new("Commit").color(Color32::WHITE))
+                    .fill(if enabled {
+                        theme::ACCENT
+                    } else {
+                        theme::SELECTION_DISABLED
+                    })
+                    .min_size(vec2(72.0, 26.0));
+                if ui
+                    .add_enabled(enabled, button)
+                    .on_hover_text(format!(
+                        "Commit selected files ({})",
+                        crate::keys::display("⌘↩")
+                    ))
+                    .clicked()
+                {
+                    commit_now = true;
+                }
+                ui.label(
+                    RichText::new(widgets::pluralize(
+                        selected.len(),
+                        "file selected",
+                        "files selected",
+                    ))
+                    .color(theme::TEXT_INFO),
+                );
+            });
+        });
+    if commit_now && !app.commit_message.trim().is_empty() && !selected.is_empty() {
+        let result = app.commands.execute(
+            "git.commit",
+            &mut app.state,
+            json!({"message": app.commit_message.trim_end(), "paths": selected}),
+        );
+        match result {
+            Ok(_) => {
+                app.commit_message.clear();
+                app.commit_overrides.clear();
+            }
+            Err(error) => app.state.status = error.to_string(),
+        }
+    }
+    if let Some(path) = open {
+        app.dispatch("editor.openFile", json!({"path": path}));
+    }
+}
+
+pub fn commit_message_id() -> egui::Id {
+    egui::Id::new("commit_message")
 }
 
 fn find(app: &mut IdeApp, ui: &mut egui::Ui) {

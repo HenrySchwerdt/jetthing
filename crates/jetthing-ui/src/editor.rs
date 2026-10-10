@@ -7,12 +7,28 @@ use eframe::egui::{self, Color32, Rect, Sense, Stroke, vec2};
 use jetthing_core::Document;
 use jetthing_language::{LanguageAnalysis, SyntaxKind};
 use jetthing_text::Selection;
-use serde_json::json;
+use jetthing_text::ops;
+use serde_json::{Value, json};
 
 pub const COMPLETION_LIMIT: usize = 30;
 const TAB_BAR_HEIGHT: f32 = 38.0;
 const ROW_HEIGHT: f32 = 20.0;
 const TEXT_LEFT_PADDING: f32 = 14.0;
+
+/// Work the editor surface hands back to the app: named actions go through the
+/// command registry; clipboard requests need the platform clipboard.
+pub enum EditorRequest {
+    Command(&'static str, Value),
+    Copy,
+    Cut,
+    Paste(String),
+}
+
+pub struct EditorOutput {
+    pub changed: bool,
+    pub caret_pos: Option<egui::Pos2>,
+    pub requests: Vec<EditorRequest>,
+}
 
 pub fn editor_id() -> egui::Id {
     egui::Id::new("jetthing_editor_surface")
@@ -20,20 +36,37 @@ pub fn editor_id() -> egui::Id {
 
 pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
     let mut changed_document = None;
+    let mut requests = Vec::new();
     egui::CentralPanel::default()
         .frame(island_frame())
         .show(ctx, |ui| {
             tabs(app, ui);
-            let Some(index) = app.state.active_document else {
+            if app.state.active_document.is_none() {
                 empty_state(ui);
                 app.caret_screen_pos = None;
                 return;
+            }
+            if app.find.open {
+                crate::findbar::show(app, ui);
+            }
+            let Some(index) = app.state.active_document else {
+                return;
             };
             let diagnostics = app.state.active_lsp_diagnostics();
+            let highlights = if app.find.open {
+                app.find.matches(&app.state.documents[index].text.text())
+            } else {
+                Vec::new()
+            };
             let doc = &mut app.state.documents[index];
-            match editor_surface(ui, doc, &diagnostics) {
-                Ok((changed, caret_pos)) => {
+            match editor_surface(ui, doc, &diagnostics, &highlights) {
+                Ok(EditorOutput {
+                    changed,
+                    caret_pos,
+                    requests: editor_requests,
+                }) => {
                     app.caret_screen_pos = caret_pos;
+                    requests = editor_requests;
                     if changed {
                         let snapshot = doc.text.text();
                         doc.analysis = jetthing_language::analyze(&doc.path, &snapshot);
@@ -49,6 +82,38 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
         });
     if let Some((path, text, version)) = changed_document {
         app.state.sync_document_lsp(&path, &text, version);
+    }
+    for request in requests {
+        handle_request(app, ctx, request);
+    }
+}
+
+fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: EditorRequest) {
+    match request {
+        EditorRequest::Command(id, params) => app.dispatch(id, params),
+        EditorRequest::Copy | EditorRequest::Cut => {
+            let id = if matches!(request, EditorRequest::Copy) {
+                "editor.copy"
+            } else {
+                "editor.cut"
+            };
+            match app.commands.execute(id, &mut app.state, Value::Null) {
+                Ok(result) => {
+                    let text = result["text"].as_str().unwrap_or_default().to_owned();
+                    let whole_line = result["wholeLine"].as_bool().unwrap_or(false);
+                    app.clipboard_line = whole_line.then(|| text.clone());
+                    ctx.copy_text(text);
+                }
+                Err(error) => app.state.status = error.to_string(),
+            }
+        }
+        EditorRequest::Paste(text) => {
+            let whole_line = app.clipboard_line.as_deref() == Some(text.as_str());
+            app.dispatch(
+                "editor.paste",
+                json!({"text": text.replace("\r\n", "\n"), "wholeLine": whole_line}),
+            );
+        }
     }
 }
 
@@ -321,7 +386,9 @@ fn editor_surface(
     ui: &mut egui::Ui,
     document: &mut Document,
     lsp_diagnostics: &[jetthing_lsp::LspDiagnostic],
-) -> Result<(bool, Option<egui::Pos2>), String> {
+    highlights: &[(usize, usize)],
+) -> Result<EditorOutput, String> {
+    let mut requests = Vec::new();
     let font = egui::FontId::monospace(theme::EDITOR_FONT_SIZE);
     let char_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'm'));
     let line_count = document.text.len_lines();
@@ -334,6 +401,17 @@ fn editor_surface(
         .map(|(line, _)| line)
         .unwrap_or(0);
     let mut caret_pos = None;
+    let brace_pair: Vec<usize> = {
+        let head = document.selections.primary().head;
+        ops::matching_bracket(&document.text, head)
+            .or_else(|| {
+                head.checked_sub(1)
+                    .and_then(|h| ops::matching_bracket(&document.text, h))
+            })
+            .into_iter()
+            .flat_map(|(a, b)| [a, b])
+            .collect()
+    };
     let output = egui::ScrollArea::both()
         .auto_shrink([false, false])
         .show_viewport(ui, |ui, viewport| {
@@ -378,6 +456,25 @@ fn editor_surface(
                     document.selections.set_single(Selection::caret(offset));
                 }
             }
+            if response.double_clicked()
+                && let Some(position) = response.interact_pointer_pos()
+            {
+                let (start, end) = ops::word_at(&document.text, position_to_offset(position));
+                document.selections.set_single(Selection {
+                    anchor: start,
+                    head: end,
+                });
+            }
+            if response.triple_clicked()
+                && let Some(position) = response.interact_pointer_pos()
+            {
+                let line = document.text.char_to_line(position_to_offset(position));
+                let (start, _, full_end) = ops::line_bounds(&document.text, line);
+                document.selections.set_single(Selection {
+                    anchor: start,
+                    head: full_end,
+                });
+            }
             if response.drag_started()
                 && let Some(position) = response.interact_pointer_pos()
             {
@@ -385,6 +482,53 @@ fn editor_surface(
                     .selections
                     .set_single(Selection::caret(position_to_offset(position)));
             }
+            response.context_menu(|ui| {
+                ui.set_min_width(220.0);
+                for (label, shortcut, request) in [
+                    ("Cut", "⌘X", EditorRequest::Cut),
+                    ("Copy", "⌘C", EditorRequest::Copy),
+                ] {
+                    if ui
+                        .add(egui::Button::new(label).shortcut_text(crate::keys::display(shortcut)))
+                        .clicked()
+                    {
+                        requests.push(request);
+                        ui.close();
+                    }
+                }
+                if ui
+                    .add(egui::Button::new("Paste").shortcut_text(crate::keys::display("⌘V")))
+                    .clicked()
+                {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+                    ui.close();
+                }
+                ui.separator();
+                for (label, shortcut, id) in [
+                    ("Comment with Line Comment", "⌘/", "editor.commentLine"),
+                    ("Duplicate Line or Selection", "⌘D", "editor.duplicate"),
+                    ("Delete Line", "⌘⌫", "editor.deleteLine"),
+                    ("Move Line Up", "⌥⇧↑", "editor.moveLineUp"),
+                    ("Move Line Down", "⌥⇧↓", "editor.moveLineDown"),
+                ] {
+                    if ui
+                        .add(egui::Button::new(label).shortcut_text(crate::keys::display(shortcut)))
+                        .clicked()
+                    {
+                        requests.push(EditorRequest::Command(id, Value::Null));
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                if ui
+                    .add(egui::Button::new("Select All").shortcut_text(crate::keys::display("⌘A")))
+                    .clicked()
+                {
+                    requests.push(EditorRequest::Command("editor.selectAll", Value::Null));
+                    ui.close();
+                }
+            });
             if response.dragged()
                 && let Some(position) = response.interact_pointer_pos()
             {
@@ -436,6 +580,30 @@ fn editor_surface(
                         [egui::pos2(x, y), egui::pos2(x, y + ROW_HEIGHT)],
                         Stroke::new(1.0_f32, theme::editor::INDENT_GUIDE),
                     );
+                }
+                for &(match_start, match_end) in highlights {
+                    let start = match_start.max(line_start).min(line_end);
+                    let end = match_end.max(line_start).min(line_end);
+                    if start < end {
+                        let x1 = rect.left() + text_left + (start - line_start) as f32 * char_width;
+                        let x2 = rect.left() + text_left + (end - line_start) as f32 * char_width;
+                        painter.rect_filled(
+                            Rect::from_min_max(egui::pos2(x1, y), egui::pos2(x2, y + ROW_HEIGHT)),
+                            2.0,
+                            theme::editor::SEARCH_RESULT,
+                        );
+                    }
+                }
+                for &offset in &brace_pair {
+                    if offset >= line_start && offset < line_end {
+                        let x1 =
+                            rect.left() + text_left + (offset - line_start) as f32 * char_width;
+                        painter.rect_filled(
+                            Rect::from_min_size(egui::pos2(x1, y), vec2(char_width, ROW_HEIGHT)),
+                            2.0,
+                            theme::editor::MATCHED_BRACE,
+                        );
+                    }
                 }
                 for selection in document.selections.selections() {
                     let start = selection.start().max(line_start).min(line_end);
@@ -542,7 +710,11 @@ fn editor_surface(
 
     let response = output.inner;
     if !response.has_focus() {
-        return Ok((false, caret_pos));
+        return Ok(EditorOutput {
+            changed: false,
+            caret_pos,
+            requests,
+        });
     }
     ui.memory_mut(|memory| {
         memory.set_focus_lock_filter(
@@ -558,62 +730,135 @@ fn editor_surface(
     let events = ui.input(|input| input.events.clone());
     let initial_revision = document.text.revision();
     let page = (ui.available_height() / ROW_HEIGHT).max(1.0) as isize;
+    let mac = cfg!(target_os = "macos");
+    let text_error = |error: jetthing_text::TextError| error.to_string();
     for event in events {
-        let egui::Event::Key {
-            key,
-            pressed: true,
-            modifiers,
-            ..
-        } = event
-        else {
-            if let egui::Event::Text(text) | egui::Event::Paste(text) = event
-                && !text.is_empty()
-            {
-                document
-                    .selections
-                    .insert(&mut document.text, &text)
-                    .map_err(|error| error.to_string())?;
+        let (key, modifiers) = match event {
+            egui::Event::Text(text) if !text.is_empty() => {
+                let mut chars = text.chars();
+                let single = chars.next().filter(|_| chars.next().is_none());
+                let handled = match single {
+                    Some(c) => ops::type_char(&mut document.text, &mut document.selections, c)
+                        .map_err(text_error)?,
+                    None => false,
+                };
+                if !handled {
+                    document
+                        .selections
+                        .insert(&mut document.text, &text)
+                        .map_err(text_error)?;
+                }
+                continue;
             }
-            continue;
+            egui::Event::Copy => {
+                requests.push(EditorRequest::Copy);
+                continue;
+            }
+            egui::Event::Cut => {
+                requests.push(EditorRequest::Cut);
+                continue;
+            }
+            egui::Event::Paste(text) if !text.is_empty() => {
+                requests.push(EditorRequest::Paste(text));
+                continue;
+            }
+            egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } => (key, modifiers),
+            _ => continue,
         };
         let head = document.selections.primary().head;
         let len = document.text.len_chars();
         let extend = modifiers.shift;
+        // Word-wise movement: ⌥ on macOS, Ctrl elsewhere.
+        let word = if mac { modifiers.alt } else { modifiers.ctrl };
+        let command = |id: &'static str| EditorRequest::Command(id, Value::Null);
         match key {
+            egui::Key::D if modifiers.command => requests.push(command("editor.duplicate")),
+            egui::Key::Y if modifiers.command && !mac => {
+                requests.push(command("editor.deleteLine"))
+            }
+            egui::Key::Backspace if modifiers.command && mac => {
+                requests.push(command("editor.deleteLine"))
+            }
+            egui::Key::Slash if modifiers.command => requests.push(command("editor.commentLine")),
+            egui::Key::ArrowUp if modifiers.alt && modifiers.shift => {
+                requests.push(command("editor.moveLineUp"))
+            }
+            egui::Key::ArrowDown if modifiers.alt && modifiers.shift => {
+                requests.push(command("editor.moveLineDown"))
+            }
+            egui::Key::Enter if modifiers.shift => {
+                // Start New Line: open a line below without splitting the current one.
+                let line = document.text.char_to_line(head);
+                let (_, content_end, _) = ops::line_bounds(&document.text, line);
+                document
+                    .selections
+                    .set_single(Selection::caret(content_end));
+                ops::newline(&mut document.text, &mut document.selections).map_err(text_error)?;
+            }
             egui::Key::Enter => {
-                // Keep the indentation of the current line.
-                let (line, _) = document.text.char_to_line_column(head).unwrap_or((0, 0));
-                let indent: String = document
-                    .text
-                    .line(line)
-                    .unwrap_or_default()
-                    .chars()
-                    .take_while(|c| *c == ' ' || *c == '\t')
-                    .collect();
+                ops::newline(&mut document.text, &mut document.selections).map_err(text_error)?
+            }
+            egui::Key::Tab if modifiers.shift => {
+                requests.push(command("editor.unindent"));
+            }
+            egui::Key::Tab => {
+                let primary = document.selections.primary();
+                let multi_line = document.text.char_to_line(primary.start())
+                    != document.text.char_to_line(primary.end());
+                if multi_line {
+                    requests.push(command("editor.indent"));
+                } else {
+                    document
+                        .selections
+                        .insert(&mut document.text, "    ")
+                        .map_err(text_error)?;
+                }
+            }
+            egui::Key::Backspace if word && document.selections.primary().is_caret() => {
+                let target = ops::word_left(&document.text, head);
+                document.selections.set_single(Selection {
+                    anchor: head,
+                    head: target,
+                });
                 document
                     .selections
-                    .insert(&mut document.text, &format!("\n{indent}"))
-                    .map_err(|error| error.to_string())?;
+                    .insert(&mut document.text, "")
+                    .map_err(text_error)?;
             }
-            egui::Key::Tab if !modifiers.shift => {
+            egui::Key::Backspace => {
+                ops::backspace(&mut document.text, &mut document.selections).map_err(text_error)?
+            }
+            egui::Key::Delete if word && document.selections.primary().is_caret() => {
+                let target = ops::word_right(&document.text, head);
+                document.selections.set_single(Selection {
+                    anchor: head,
+                    head: target,
+                });
                 document
                     .selections
-                    .insert(&mut document.text, "    ")
-                    .map_err(|error| error.to_string())?;
+                    .insert(&mut document.text, "")
+                    .map_err(text_error)?;
             }
-            egui::Key::Backspace => document
-                .selections
-                .backspace(&mut document.text)
-                .map_err(|error| error.to_string())?,
             egui::Key::Delete => document
                 .selections
                 .delete_forward(&mut document.text)
-                .map_err(|error| error.to_string())?,
+                .map_err(text_error)?,
             egui::Key::A if modifiers.command => {
                 document.selections.set_single(Selection {
                     anchor: 0,
                     head: len,
                 });
+            }
+            egui::Key::ArrowLeft if word => {
+                move_primary(document, ops::word_left(&document.text, head), extend)
+            }
+            egui::Key::ArrowRight if word => {
+                move_primary(document, ops::word_right(&document.text, head), extend)
             }
             egui::Key::ArrowLeft => {
                 let target = if !extend && !document.selections.primary().is_caret() {
@@ -647,7 +892,7 @@ fn editor_surface(
                 let target = if modifiers.command {
                     0
                 } else {
-                    let (line, _) = document.text.char_to_line_column(head).unwrap_or((0, 0));
+                    let line = document.text.char_to_line(head);
                     let start = document.text.line_to_char(line).unwrap_or(0);
                     let indent = document
                         .text
@@ -669,15 +914,25 @@ fn editor_surface(
                 let target = if modifiers.command {
                     len
                 } else {
-                    let (line, _) = document.text.char_to_line_column(head).unwrap_or((0, 0));
+                    let line = document.text.char_to_line(head);
                     document.text.line_to_char(line).unwrap_or(0) + line_length(document, line)
                 };
                 move_primary(document, target, extend);
             }
+            egui::Key::Escape if document.selections.selections().len() > 1 => {
+                let primary = document.selections.primary();
+                document
+                    .selections
+                    .set_single(Selection::caret(primary.head));
+            }
             _ => {}
         }
     }
-    Ok((document.text.revision() != initial_revision, caret_pos))
+    Ok(EditorOutput {
+        changed: document.text.revision() != initial_revision,
+        caret_pos,
+        requests,
+    })
 }
 
 pub fn completion_popup(app: &mut IdeApp, ctx: &egui::Context) {

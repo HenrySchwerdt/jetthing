@@ -15,4 +15,5 @@ jetthing-runner = { path = "../jetthing-runner" }
 jetthing-search = { path = "../jetthing-search" }
 jetthing-terminal = { path = "../jetthing-terminal" }
 jetthing-text = { path = "../jetthing-text" }
+serde.workspace = true
 serde_json.workspace = true

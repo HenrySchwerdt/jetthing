@@ -7,9 +7,11 @@
 
 mod chrome;
 mod editor;
+mod findbar;
 mod icons;
 mod keys;
 mod palette;
+mod popups;
 mod theme;
 mod toolwindows;
 mod widgets;
@@ -36,6 +38,16 @@ pub struct IdeApp {
     last_shift_release: Option<Instant>,
     shift_tainted: bool,
     last_bottom: Option<ToolWindow>,
+    find: findbar::FindBar,
+    /// Text of the last whole-line copy, so pasting it inserts a line.
+    clipboard_line: Option<String>,
+    dialog: Option<popups::Dialog>,
+    dialog_focus: bool,
+    commit_message: String,
+    /// Commit checkbox overrides; by default tracked changes are included and
+    /// unversioned files are not.
+    commit_overrides: std::collections::HashMap<PathBuf, bool>,
+    window_focused: bool,
 }
 
 impl IdeApp {
@@ -88,12 +100,41 @@ impl IdeApp {
             last_shift_release: None,
             shift_tainted: false,
             last_bottom: None,
+            find: findbar::FindBar::default(),
+            clipboard_line: None,
+            dialog: None,
+            dialog_focus: false,
+            commit_message: String::new(),
+            commit_overrides: std::collections::HashMap::new(),
+            window_focused: true,
         }
     }
 
     fn dispatch(&mut self, id: &str, params: Value) {
         if let Err(error) = self.commands.execute(id, &mut self.state, params) {
             self.state.status = error.to_string();
+        }
+    }
+
+    fn open_dialog(&mut self, dialog: popups::Dialog) {
+        self.dialog = Some(dialog);
+        self.dialog_focus = true;
+    }
+
+    fn editor_focused(&self, ctx: &egui::Context) -> bool {
+        ctx.memory(|memory| memory.has_focus(editor::editor_id()))
+    }
+
+    fn primary_selection_text(&self) -> Option<String> {
+        let document = self.state.documents.get(self.state.active_document?)?;
+        let primary = document.selections.primary();
+        document.text.slice(primary.start(), primary.end()).ok()
+    }
+
+    /// Saves modified files silently (autosave); nothing to save is not an error.
+    fn autosave(&mut self) {
+        if self.state.documents.iter().any(|d| d.text.is_dirty()) {
+            self.dispatch("editor.saveAll", Value::Null);
         }
     }
 
@@ -140,8 +181,20 @@ impl IdeApp {
             .as_ref()
             .is_some_and(|lsp| !lsp.completions().is_empty());
         let consumed_chord = std::cell::Cell::new(false);
+        // Exact modifier matching: egui's consume_key ignores extra Shift/Alt, which
+        // would let ⌘F swallow ⇧⌘F.
         let consume = |modifiers: Modifiers, key: Key| {
-            let hit = ctx.input_mut(|input| input.consume_key(modifiers, key));
+            let hit = ctx.input_mut(|input| {
+                let before = input.events.len();
+                input.events.retain(|event| {
+                    !matches!(
+                        event,
+                        egui::Event::Key { key: k, modifiers: m, pressed: true, .. }
+                            if *k == key && m.matches_exact(modifiers)
+                    )
+                });
+                input.events.len() != before
+            });
             if hit && (modifiers.alt || modifiers.ctrl || modifiers.command) {
                 consumed_chord.set(true);
             }
@@ -164,18 +217,66 @@ impl IdeApp {
                 self.accept_completion(self.completion_selected);
             }
         }
-        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::A)
-            || consume(Modifiers::COMMAND, Key::P)
+        let mac = cfg!(target_os = "macos");
+        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::A) {
+            self.palette.show_tab(palette::Tab::Actions);
+        }
+        // Go to File: ⇧⌘O on macOS, Ctrl+Shift+N elsewhere.
+        if (mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::O))
+            || (!mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::N))
         {
-            self.palette.show();
+            self.palette.show_tab(palette::Tab::Files);
+        }
+        if consume(Modifiers::COMMAND, Key::E) {
+            self.open_dialog(popups::Dialog::Recent {
+                query: String::new(),
+                selected: usize::from(self.state.recent_files.len() > 1),
+            });
+        }
+        if self.state.active_document.is_some() {
+            // Go to Line: ⌘L on macOS, Ctrl+G elsewhere.
+            if (mac && consume(Modifiers::COMMAND, Key::L))
+                || (!mac && consume(Modifiers::COMMAND, Key::G))
+            {
+                self.open_dialog(popups::Dialog::GotoLine {
+                    input: String::new(),
+                });
+            }
+            if consume(Modifiers::COMMAND, Key::F) {
+                let selection = self.primary_selection_text();
+                self.find.show(false, selection);
+            }
+            if consume(Modifiers::COMMAND, Key::R) {
+                let selection = self.primary_selection_text();
+                self.find.show(true, selection);
+            }
+            let next =
+                consume(Modifiers::NONE, Key::F3) || (mac && consume(Modifiers::COMMAND, Key::G));
+            let previous = consume(Modifiers::SHIFT, Key::F3)
+                || (mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::G));
+            if (next || previous) && !self.find.query.is_empty() {
+                let id = if next {
+                    "editor.findNext"
+                } else {
+                    "editor.findPrevious"
+                };
+                self.dispatch(id, self.find.params());
+            }
         }
         self.detect_double_shift(ctx);
         if consume(Modifiers::CTRL, Key::Space) {
             self.dispatch("language.complete", Value::Null);
         }
         if consume(Modifiers::NONE, Key::Escape) {
-            if self.palette.open {
+            if self.dialog.is_some() {
+                self.dialog = None;
+            } else if self.palette.open {
                 self.palette.open = false;
+            } else if self.find.open
+                && (self.editor_focused(ctx) || ctx.memory(|m| m.has_focus(findbar::query_id())))
+            {
+                self.find.open = false;
+                ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
             } else if let Some(lsp) = self.state.lsp.as_mut()
                 && !lsp.completions().is_empty()
             {
@@ -188,7 +289,7 @@ impl IdeApp {
             }
         }
         if consume(Modifiers::COMMAND, Key::S) {
-            self.dispatch("editor.saveAll", Value::Null);
+            self.autosave();
         }
         if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z) {
             self.dispatch("editor.redo", Value::Null);
@@ -205,7 +306,8 @@ impl IdeApp {
         if consume(Modifiers::COMMAND, Key::F9) {
             self.dispatch("build.project", Value::Null);
         }
-        if consume(Modifiers::CTRL, Key::R) || consume(Modifiers::SHIFT, Key::F10) {
+        // Run: ⌃R on macOS, Shift+F10 elsewhere (Ctrl+R is Replace there).
+        if (mac && consume(Modifiers::CTRL, Key::R)) || consume(Modifiers::SHIFT, Key::F10) {
             self.dispatch("run.project", Value::Null);
         }
         if consume(Modifiers::COMMAND, Key::F2) && self.state.runner.is_running() {
@@ -344,6 +446,12 @@ impl eframe::App for IdeApp {
         if self.state.terminal.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
+        // Like the reference IDE, save all files when the window loses focus.
+        let focused = ctx.input(|input| input.focused);
+        if self.window_focused && !focused {
+            self.autosave();
+        }
+        self.window_focused = focused;
         self.handle_shortcuts(ctx);
         self.follow_tool_window_focus(ctx);
 
@@ -357,6 +465,14 @@ impl eframe::App for IdeApp {
         editor::central(self, ctx);
         editor::completion_popup(self, ctx);
         palette::show(self, ctx);
+        popups::show(self, ctx);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.state.project.is_some() {
+            self.autosave();
+            self.dispatch("workspace.save", Value::Null);
+        }
     }
 }
 
