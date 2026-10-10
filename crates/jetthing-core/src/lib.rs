@@ -12,11 +12,11 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod annotations;
+mod branch_commands;
 pub mod build_info;
 mod diagnostic_commands;
 pub mod diagnostics;
-mod annotations;
-mod branch_commands;
 mod editor_commands;
 mod git_log;
 mod line_changes;
