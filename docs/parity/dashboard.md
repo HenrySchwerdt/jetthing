@@ -12,47 +12,47 @@ rows. Rows tagged `[Ultimate]` are IntelliJ IDEA Ultimate-only features.
 | Metric | Value |
 |---|---:|
 | Areas | 17 |
-| Rows | 745 |
-| Total weight | 1571 |
-| **Weighted % implemented** | **12.9%** |
+| Rows | 768 |
+| Total weight | 1604 |
+| **Weighted % implemented** | **18.4%** |
 | **Weighted % verified** | **0.0%** |
 
 ## Status counts
 
 | Status | Rows | Weight |
 |---|---:|---:|
-| Missing | 601 | 1243 |
+| Missing | 553 | 1156 |
 | Planned | 0 | 0 |
-| Partial | 108 | 250 |
-| Implemented | 36 | 78 |
+| Partial | 152 | 305 |
+| Implemented | 63 | 143 |
 | Verified | 0 | 0 |
-| **Total** | **745** | **1571** |
+| **Total** | **768** | **1604** |
 
 ## By area
 
 | Area | File | Rows | Weight | Missing | Planned | Partial | Implemented | Verified | % implemented | % verified |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Android Studio parity | [android-studio.md](android-studio.md) | 11 | 11 | 4 | 0 | 3 | 4 | 0 | 50.0% | 0.0% |
-| IntelliJ IDEA parity: Gradle and Maven | [intellij-build-tools.md](intellij-build-tools.md) | 31 | 74 | 27 | 0 | 4 | 0 | 0 | 10.1% | 0.0% |
+| Android Studio parity | [android-studio.md](android-studio.md) | 14 | 14 | 1 | 0 | 8 | 5 | 0 | 64.3% | 0.0% |
+| IntelliJ IDEA parity: Gradle and Maven | [intellij-build-tools.md](intellij-build-tools.md) | 31 | 74 | 26 | 0 | 5 | 0 | 0 | 12.2% | 0.0% |
 | IntelliJ IDEA parity: editor and coding assistance | [intellij-editor.md](intellij-editor.md) | 102 | 258 | 85 | 0 | 12 | 5 | 0 | 17.6% | 0.0% |
-| IntelliJ IDEA parity: Java and JVM languages | [intellij-java.md](intellij-java.md) | 33 | 89 | 32 | 0 | 1 | 0 | 0 | 2.8% | 0.0% |
-| IntelliJ IDEA parity: main menu and window chrome | [intellij-menus.md](intellij-menus.md) | 91 | 210 | 79 | 0 | 7 | 5 | 0 | 15.2% | 0.0% |
-| IntelliJ IDEA parity: navigation and search | [intellij-navigation.md](intellij-navigation.md) | 50 | 132 | 49 | 0 | 1 | 0 | 0 | 1.9% | 0.0% |
+| IntelliJ IDEA parity: Java and JVM languages | [intellij-java.md](intellij-java.md) | 33 | 89 | 31 | 0 | 2 | 0 | 0 | 5.6% | 0.0% |
+| IntelliJ IDEA parity: main menu and window chrome | [intellij-menus.md](intellij-menus.md) | 91 | 210 | 65 | 0 | 10 | 16 | 0 | 33.8% | 0.0% |
+| IntelliJ IDEA parity: navigation and search | [intellij-navigation.md](intellij-navigation.md) | 50 | 132 | 48 | 0 | 2 | 0 | 0 | 3.0% | 0.0% |
 | IntelliJ IDEA parity: refactorings | [intellij-refactoring.md](intellij-refactoring.md) | 42 | 83 | 42 | 0 | 0 | 0 | 0 | 0.0% | 0.0% |
 | IntelliJ IDEA parity: run, debug, and test | [intellij-run-debug.md](intellij-run-debug.md) | 59 | 145 | 55 | 0 | 4 | 0 | 0 | 5.2% | 0.0% |
-| IntelliJ IDEA parity: Settings dialog | [intellij-settings.md](intellij-settings.md) | 79 | 143 | 67 | 0 | 11 | 1 | 0 | 14.0% | 0.0% |
-| IntelliJ IDEA parity: tool windows | [intellij-tool-windows.md](intellij-tool-windows.md) | 42 | 114 | 37 | 0 | 5 | 0 | 0 | 10.1% | 0.0% |
+| IntelliJ IDEA parity: Settings dialog | [intellij-settings.md](intellij-settings.md) | 79 | 143 | 64 | 0 | 12 | 3 | 0 | 17.8% | 0.0% |
+| IntelliJ IDEA parity: tool windows | [intellij-tool-windows.md](intellij-tool-windows.md) | 42 | 114 | 36 | 0 | 6 | 0 | 0 | 11.4% | 0.0% |
 | IntelliJ IDEA parity: frameworks, databases, and integrations | [intellij-ultimate.md](intellij-ultimate.md) | 43 | 57 | 42 | 0 | 1 | 0 | 0 | 0.9% | 0.0% |
 | IntelliJ IDEA parity: version control | [intellij-vcs.md](intellij-vcs.md) | 58 | 139 | 53 | 0 | 3 | 2 | 0 | 10.8% | 0.0% |
-| mongo-raabit parity | [mongo-raabit.md](mongo-raabit.md) | 22 | 22 | 9 | 0 | 12 | 1 | 0 | 31.8% | 0.0% |
-| nexus-http parity | [nexus-http.md](nexus-http.md) | 17 | 17 | 6 | 0 | 11 | 0 | 0 | 32.4% | 0.0% |
-| Platform parity | [platform.md](platform.md) | 44 | 44 | 1 | 0 | 25 | 18 | 0 | 69.3% | 0.0% |
-| Toolchain provisioning parity | [toolchains.md](toolchains.md) | 4 | 16 | 0 | 0 | 4 | 0 | 0 | 50.0% | 0.0% |
-| Version control (Git) parity | [vcs.md](vcs.md) | 17 | 17 | 13 | 0 | 4 | 0 | 0 | 11.8% | 0.0% |
+| mongo-raabit parity | [mongo-raabit.md](mongo-raabit.md) | 22 | 22 | 2 | 0 | 12 | 8 | 0 | 63.6% | 0.0% |
+| nexus-http parity | [nexus-http.md](nexus-http.md) | 17 | 17 | 1 | 0 | 16 | 0 | 0 | 47.1% | 0.0% |
+| Platform parity | [platform.md](platform.md) | 56 | 56 | 1 | 0 | 34 | 21 | 0 | 67.9% | 0.0% |
+| Toolchain provisioning parity | [toolchains.md](toolchains.md) | 7 | 29 | 0 | 0 | 5 | 2 | 0 | 67.2% | 0.0% |
+| Version control (Git) parity | [vcs.md](vcs.md) | 22 | 22 | 1 | 0 | 20 | 1 | 0 | 50.0% | 0.0% |
 
 ## By edition
 
 | Edition scope | Rows | Weight | % implemented | % verified |
 |---|---:|---:|---:|---:|
-| Community / platform (untagged) | 693 | 1501 | 13.5% | 0.0% |
+| Community / platform (untagged) | 716 | 1534 | 19.2% | 0.0% |
 | Ultimate-only (`[Ultimate]`) | 52 | 70 | 0.7% | 0.0% |

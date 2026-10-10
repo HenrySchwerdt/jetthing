@@ -6,3 +6,6 @@ license.workspace = true
 
 [dependencies]
 
+globset = "0.4"
+regex = "1"
+thiserror.workspace = true

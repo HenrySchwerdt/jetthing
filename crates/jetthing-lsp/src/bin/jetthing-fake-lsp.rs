@@ -5,9 +5,13 @@
 //! - `--crash-once <file>`: exit with code 3 after `initialized` unless `<file>`
 //!   exists (the file is created first, so the restarted server survives).
 //! - `--completion-delay-ms <n>`: answer completion requests after a delay.
+//! - `--publish <relative path>`: after `initialized`, publish one error for a
+//!   file below the workspace root that was never opened.
 //!
-//! Completion returns a fixed Java-like member list; `textDocument/didOpen`
-//! and `didChange` publish one diagnostic per document.
+//! Completion returns a fixed Java-like member list. `textDocument/didOpen`
+//! and `didChange` publish one diagnostic per `@error`, `@warning`, `@weak`,
+//! `@hint` and `@unused` marker in the text, or one warning at 0:0 when the
+//! text has no markers.
 
 use jetthing_lsp::transport::{read_message, write_message};
 use serde_json::{Value, json};
@@ -28,6 +32,8 @@ fn main() {
     let delay = value("--completion-delay-ms")
         .and_then(|ms| ms.parse().ok())
         .map(Duration::from_millis);
+    let publish = value("--publish");
+    let mut root = String::new();
     let mut input = BufReader::new(stdin().lock());
     let mut output = stdout().lock();
     let mut send = |message: Value| {
@@ -44,6 +50,7 @@ fn main() {
         let params = message.get("params").cloned().unwrap_or(Value::Null);
         match (method, id) {
             ("initialize", Some(id)) => {
+                root = params["rootUri"].as_str().unwrap_or_default().to_owned();
                 if progress {
                     send(
                         json!({"jsonrpc":"2.0","id":"p1","method":"window/workDoneProgress/create","params":{"token":"index"}}),
@@ -56,7 +63,7 @@ fn main() {
                     );
                 }
                 send(json!({"jsonrpc":"2.0","id":id,"result":{"capabilities":{
-                    "textDocumentSync": 1,
+                    "textDocumentSync": {"openClose": true, "change": 1, "save": {"includeText": false}},
                     "completionProvider": {"triggerCharacters": ["."], "resolveProvider": true},
                     "hoverProvider": true,
                     "signatureHelpProvider": {"triggerCharacters": ["(", ","]}
@@ -73,13 +80,39 @@ fn main() {
                 send(
                     json!({"jsonrpc":"2.0","method":"workspace/configuration","id":"c1","params":{"items":[{"section":"fake"}]}}),
                 );
+                if let Some(relative) = &publish {
+                    let uri = format!("{}/{relative}", root.trim_end_matches('/'));
+                    send(
+                        json!({"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{
+                            "uri": uri, "diagnostics": [{"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":3}},
+                            "severity":1,"source":"fake","message":"fake project error"}]
+                        }}),
+                    );
+                }
             }
             ("textDocument/didOpen" | "textDocument/didChange", None) => {
+                let uri = params["textDocument"]["uri"].clone();
+                let text = params["textDocument"]["text"]
+                    .as_str()
+                    .or_else(|| params["contentChanges"][0]["text"].as_str())
+                    .unwrap_or_default();
+                let mut diagnostics = marker_diagnostics(text);
+                if diagnostics.is_empty() {
+                    diagnostics.push(json!({"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},
+                        "severity":2,"message":format!("fake diagnostic ({method})")}));
+                }
+                send(
+                    json!({"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{
+                        "uri": uri, "diagnostics": diagnostics
+                    }}),
+                );
+            }
+            ("textDocument/didSave", None) => {
                 let uri = params["textDocument"]["uri"].clone();
                 send(
                     json!({"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{
                         "uri": uri, "diagnostics": [{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},
-                        "severity":2,"message":format!("fake diagnostic ({method})")}]
+                        "severity":2,"source":"check","message":"fake check warning"}]
                     }}),
                 );
             }
@@ -104,4 +137,39 @@ fn main() {
             _ => {}
         }
     }
+}
+
+/// One diagnostic per marker; positions are UTF-16 like a real server's.
+fn marker_diagnostics(text: &str) -> Vec<Value> {
+    let markers = [
+        ("@error", 1, None),
+        ("@warning", 2, None),
+        ("@weak", 3, None),
+        ("@hint", 4, None),
+        ("@unused", 2, Some(1)),
+    ];
+    let mut diagnostics = Vec::new();
+    for (line, content) in text.lines().enumerate() {
+        for (marker, severity, tag) in markers {
+            let mut from = 0;
+            while let Some(found) = content[from..].find(marker) {
+                let byte = from + found;
+                let start: usize = content[..byte].chars().map(char::len_utf16).sum();
+                let end = start + marker.len();
+                let mut diagnostic = json!({
+                    "range":{"start":{"line":line,"character":start},"end":{"line":line,"character":end}},
+                    "severity": severity,
+                    "source": "fake",
+                    "code": format!("F{severity}"),
+                    "message": format!("marker {marker}")
+                });
+                if let Some(tag) = tag {
+                    diagnostic["tags"] = json!([tag]);
+                }
+                diagnostics.push(diagnostic);
+                from = byte + marker.len();
+            }
+        }
+    }
+    diagnostics
 }

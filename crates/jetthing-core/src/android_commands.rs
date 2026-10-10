@@ -21,6 +21,10 @@ pub struct AndroidState {
     pub sdk_manager_open: bool,
     pub devices: crate::android_devices::DeviceHub,
     pub logcat: crate::android_logcat::LogcatState,
+    pub deploy: crate::android_deploy::DeployState,
+    /// Active build variant per module Gradle path (Build Variants tool window).
+    pub active_variants: std::collections::BTreeMap<String, String>,
+    pub merged_manifest: crate::android_manifest::MergedManifestView,
     /// Project tool window shows the Android view (default for Android projects).
     pub android_view: bool,
 }
@@ -30,6 +34,7 @@ impl AndroidState {
         self.root = Some(root.to_owned());
         self.project = AndroidProject::detect(root);
         self.android_view = self.project.is_some();
+        self.active_variants.clear();
         self.sdk = None;
         if self.project.is_some() {
             self.detect_sdk(Some(root));

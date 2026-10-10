@@ -1,0 +1,15 @@
+{
+  "id": "19",
+  "title": "Project tree context menu",
+  "reference": "reference/intellij-community/java-gradle/19-project-context-menu.png",
+  "fixture": "java-gradle",
+  "steps": [
+    {"op": "wait", "until": "idle"},
+    {"op": "click", "x": 120, "y": 113, "button": "secondary"},
+    {"op": "wait", "until": "popup"},
+    {"op": "move", "x": 180, "y": 135},
+    {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/popups/menu", "equals": true},
+    {"op": "screenshot", "name": "19-project-context-menu.png"}
+  ]
+}

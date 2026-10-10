@@ -1,8 +1,8 @@
 //! End-to-end tests against the scriptable `jetthing-fake-lsp` server.
 
 use jetthing_lsp::{
-    LanguageServerProvider, LaunchConfig, LaunchContext, LspError, LspManager, LspService,
-    ServerRegistry, ServerSpec, ServerState, ServerStatus,
+    CompletionTrigger, LanguageServerProvider, LaunchConfig, LaunchContext, LspError, LspManager,
+    LspService, ServerRegistry, ServerSpec, ServerState, ServerStatus,
 };
 use std::{
     path::{Path, PathBuf},
@@ -39,6 +39,7 @@ fn registry(args: &[&str]) -> ServerRegistry {
             root_markers: &["fake.project"],
             install_hint: "",
             notify_missing: true,
+            initialization_options: None,
         },
         args: args.iter().map(|arg| arg.to_string()).collect(),
     }));
@@ -134,12 +135,21 @@ fn manager_starts_lazily_reports_progress_and_routes_completion() {
         manager.poll();
         !manager.diagnostics_for(&file).is_empty()
     }));
-    manager.request_completion(&file, 0, 4).unwrap();
+    manager
+        .request_completion(&file, 0, 4, CompletionTrigger::Character(".".into()))
+        .unwrap();
+    let mut result = None;
     assert!(wait_until(|| {
         manager.poll();
-        !manager.completions().is_empty()
+        result = manager.take_completion();
+        result.is_some()
     }));
-    assert_eq!(manager.completions().len(), 4);
+    let result = result.unwrap();
+    assert_eq!(result.items.len(), 4);
+    assert!(!result.incomplete);
+    assert_eq!(manager.trigger_characters(&file), ["."]);
+    let ranked = manager.rank_completions(&file, &result.items, "gRF");
+    assert_eq!(result.items[ranked[0].index].label, "getRequiredField");
     manager.close_document(&file).unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -187,14 +197,19 @@ fn stale_completion_requests_are_cancelled() {
         manager.poll();
         manager.ready_server_for(&file).is_ok()
     }));
-    let first = manager.request_completion(&file, 0, 4).unwrap();
-    manager.clear_completions();
+    let first = manager
+        .request_completion(&file, 0, 4, CompletionTrigger::Invoked)
+        .unwrap();
+    manager.cancel_completion();
     assert!(!manager.completion_pending());
     let service = manager.ready_server_for(&file).unwrap();
     assert!(!service.is_pending(first), "cancelled request is forgotten");
     thread::sleep(Duration::from_millis(400));
     manager.poll();
-    assert!(manager.completions().is_empty(), "late response is dropped");
+    assert!(
+        manager.take_completion().is_none(),
+        "late response is dropped"
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -247,5 +262,59 @@ fn disabled_servers_are_not_started() {
         manager.ready_server_for(Path::new(&file)),
         Err(LspError::Disabled(_))
     ));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn diagnostics_carry_severity_tags_and_project_files() {
+    let root = workspace("diagnostics");
+    let file = root.join("src/App.fake");
+    let mut manager = LspManager::new(registry(&["--publish", "src/Other.fake"]));
+    manager.set_project(Some(&root));
+    let generation = manager.diagnostics_generation();
+    assert_eq!(manager.published_diagnostics(&file), None);
+    let text = "ok\nlet x = 1; // @error é @unused\n@weak @hint\n";
+    manager.sync_document(&file, text, 0).unwrap();
+    assert!(wait_until(|| {
+        manager.poll();
+        manager.diagnostics_for(&file).len() == 4
+            && manager
+                .all_diagnostics()
+                .any(|(path, _)| path.ends_with("Other.fake"))
+    }));
+    assert_ne!(manager.diagnostics_generation(), generation);
+    let mut diagnostics = manager.diagnostics_for(&file);
+    diagnostics.sort_by_key(|d| (d.start_line, d.start_character));
+    let error = &diagnostics[0];
+    assert_eq!((error.severity, error.start_line), (Some(1), 1));
+    assert_eq!(error.start_character, 14);
+    assert_eq!(error.code.as_deref(), Some("F1"));
+    assert_eq!(error.source.as_deref(), Some("fake"));
+    let unused = &diagnostics[1];
+    // `é` is one UTF-16 unit, so the marker starts at 23.
+    assert_eq!((unused.start_character, unused.unnecessary), (23, true));
+    assert_eq!(diagnostics[2].severity, Some(3));
+    assert_eq!(diagnostics[3].severity, Some(4));
+    let (other, published) = manager
+        .all_diagnostics()
+        .find(|(path, _)| path.ends_with("Other.fake"))
+        .unwrap();
+    assert_eq!(other, root.join("src/Other.fake"));
+    assert_eq!(published[0].message, "fake project error");
+    // Fixing the text clears the markers and bumps the generation.
+    let generation = manager.diagnostics_generation();
+    manager.sync_document(&file, "ok\n", 1).unwrap();
+    assert!(wait_until(|| {
+        manager.poll();
+        manager.diagnostics_for(&file).len() == 1
+    }));
+    assert!(manager.diagnostics_generation() > generation);
+    // Saving triggers the server's on-save check.
+    manager.save_document(&file).unwrap();
+    assert!(wait_until(|| {
+        manager.poll();
+        manager.diagnostics_for(&file)[0].message == "fake check warning"
+    }));
+    manager.shutdown();
     std::fs::remove_dir_all(root).unwrap();
 }

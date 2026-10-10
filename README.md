@@ -81,6 +81,7 @@ that declares an `[app]` view on its own with `jetthing --app <plugin-id>`. See
 ```bash
 cargo run -p xtask -- dist               # archive in dist/ (the self-updater's format)
 cargo run -p xtask -- dist --installer   # + .msi / .dmg / .deb for the host OS
+cargo run -p xtask -- changelog          # release notes since the last v* tag, from conventional commits
 ```
 
 `.github/workflows/release.yml` builds and smoke-tests the archives and installers for
@@ -108,7 +109,9 @@ reports together with **Help → About → Copy**.
 
 ## Keyboard
 
-Shortcuts follow the default keymap of the reference IDE (macOS / Windows & Linux):
+Shortcuts come from the reference IDE's bundled keymaps (`docs/spec/data/keymaps.json`).
+The default follows the desktop (macOS, Windows, GNOME, KDE, XWin); pick another keymap or
+change shortcuts in **Settings › Keymap**. Common defaults (macOS / Windows & Linux):
 
 | Action | macOS | Windows / Linux |
 |---|---|---|
@@ -142,6 +145,6 @@ JetBrains s.r.o.; Jetthing is not affiliated with or endorsed by JetBrains.
 See `docs/roadmap.md` for honest status and limitations.
 
 <!-- parity:begin -->
-**Parity progress:** 12.9% implemented (weighted), 0.0% verified, across 745 tracked
+**Parity progress:** 18.4% implemented (weighted), 0.0% verified, across 768 tracked
 features in 17 areas. See [`docs/parity/dashboard.md`](docs/parity/dashboard.md).
 <!-- parity:end -->

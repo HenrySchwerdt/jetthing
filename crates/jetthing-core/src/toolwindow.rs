@@ -22,10 +22,12 @@ pub enum ToolWindow {
     Terminal,
     DeviceManager,
     Logcat,
+    Git,
+    BuildVariants,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 8] = [
+    pub const ALL: [ToolWindow; 10] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Find,
@@ -34,6 +36,8 @@ impl ToolWindow {
         ToolWindow::Terminal,
         ToolWindow::DeviceManager,
         ToolWindow::Logcat,
+        ToolWindow::Git,
+        ToolWindow::BuildVariants,
     ];
 
     pub fn id(self) -> &'static str {
@@ -46,6 +50,8 @@ impl ToolWindow {
             ToolWindow::Terminal => "terminal",
             ToolWindow::DeviceManager => "deviceManager",
             ToolWindow::Logcat => "logcat",
+            ToolWindow::Git => "git",
+            ToolWindow::BuildVariants => "buildVariants",
         }
     }
 
@@ -59,6 +65,8 @@ impl ToolWindow {
             ToolWindow::Terminal => "Terminal",
             ToolWindow::DeviceManager => "Device Manager",
             ToolWindow::Logcat => "Logcat",
+            ToolWindow::Git => "Git",
+            ToolWindow::BuildVariants => "Build Variants",
         }
     }
 
@@ -72,18 +80,20 @@ impl ToolWindow {
             ToolWindow::Problems => "⌘6",
             ToolWindow::Terminal => "⌥F12",
             // Unbound by default, like the reference IDE.
-            ToolWindow::DeviceManager | ToolWindow::Logcat => "",
+            ToolWindow::DeviceManager | ToolWindow::Logcat | ToolWindow::BuildVariants => "",
+            ToolWindow::Git => "⌘9",
         }
     }
 
     pub fn anchor(self) -> Anchor {
         match self {
-            ToolWindow::Project | ToolWindow::Commit => Anchor::Left,
+            ToolWindow::Project | ToolWindow::Commit | ToolWindow::BuildVariants => Anchor::Left,
             ToolWindow::Find
             | ToolWindow::Build
             | ToolWindow::Problems
             | ToolWindow::Terminal
-            | ToolWindow::Logcat => Anchor::Bottom,
+            | ToolWindow::Logcat
+            | ToolWindow::Git => Anchor::Bottom,
             ToolWindow::DeviceManager => Anchor::Right,
         }
     }

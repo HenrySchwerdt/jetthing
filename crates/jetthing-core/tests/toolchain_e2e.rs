@@ -6,6 +6,7 @@
 //! Set `JETTHING_E2E_TOOLCHAINS` to reuse an install root between runs.
 
 use jetthing_core::{IdeState, ToolchainState, built_in_commands};
+use jetthing_lsp::CompletionTrigger;
 use jetthing_toolchains::{ToolchainStore, Toolchains, providers::builtin_catalog};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -75,23 +76,24 @@ fn java_project_without_jdk_sets_up_jdk_and_jdtls_and_completes() {
         .join("src/main/java/demo/App.java");
     let started = Instant::now();
     let deadline = started + Duration::from_secs(240);
-    while state.lsp.completions().is_empty() && Instant::now() < deadline {
+    let mut items = Vec::new();
+    while items.is_empty() && Instant::now() < deadline {
         state.poll_lsp();
         if state.lsp.ready_server_for(&file).is_ok() {
-            let _ = state.lsp.request_completion(&file, 7, 12);
+            let _ = state
+                .lsp
+                .request_completion(&file, 7, 12, CompletionTrigger::Invoked);
             while state.lsp.completion_pending() && Instant::now() < deadline {
                 state.poll_lsp();
                 std::thread::sleep(Duration::from_millis(50));
             }
+            if let Some(result) = state.lsp.take_completion() {
+                items = result.items;
+            }
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    let labels: Vec<&str> = state
-        .lsp
-        .completions()
-        .iter()
-        .map(|item| item.label.as_str())
-        .collect();
+    let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
     println!(
         "completion after {:.1?}: {:?}",
         started.elapsed(),

@@ -1,7 +1,8 @@
-//! Editor island: tabs, viewport-native text surface, and completion popup.
+//! Editor island: tabs and the viewport-native text surface.
 
 use crate::editor_keys;
 use crate::icons::{self, Icon};
+use crate::problems_ui;
 use crate::widgets::island_frame;
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, Sense, Stroke, vec2};
@@ -11,7 +12,6 @@ use jetthing_text::Selection;
 use jetthing_text::ops;
 use serde_json::{Value, json};
 
-pub const COMPLETION_LIMIT: usize = 30;
 const TAB_BAR_HEIGHT: f32 = 38.0;
 const ROW_HEIGHT: f32 = 20.0;
 const TEXT_LEFT_PADDING: f32 = 14.0;
@@ -23,12 +23,20 @@ pub enum EditorRequest {
     Copy,
     Cut,
     Paste(String),
+    /// An entry of the editor context menu (`EditorPopupMenu`).
+    ContextAction(String),
+    /// A gutter change marker was clicked: hunk index and screen position.
+    ShowChange(usize, egui::Pos2),
+    /// A blame annotation was clicked: commit hash.
+    ShowCommit(String),
 }
 
 pub struct EditorOutput {
     pub changed: bool,
     pub caret_pos: Option<egui::Pos2>,
     pub requests: Vec<EditorRequest>,
+    /// Text typed this frame (drives completion auto-popup and filtering).
+    pub typed: String,
 }
 
 pub fn editor_id() -> egui::Id {
@@ -38,6 +46,8 @@ pub fn editor_id() -> egui::Id {
 pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
     let mut changed_document = None;
     let mut requests = Vec::new();
+    let mut typed = String::new();
+    let caret_before = app.state.active_caret();
     egui::CentralPanel::default()
         .frame(island_frame())
         .show(ctx, |ui| {
@@ -64,21 +74,76 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let Some(index) = app.state.active_document else {
                 return;
             };
-            let diagnostics = app.state.active_lsp_diagnostics();
-            let highlights = if app.find.open {
-                app.find.matches(&app.state.documents[index].text.text())
+            let problems = app.state.active_problems();
+            let mut highlights = if app.find.open {
+                app.find.matches(&app.state.documents[index])
             } else {
                 Vec::new()
             };
+            // Snippet tab stops are boxed like search results while active.
+            if let Some(snippet) = &app.state.snippet {
+                highlights.extend(snippet.ranges().filter(|(start, end)| start < end));
+                // The painter only visits the matches of visible lines: keep them sorted.
+                highlights.sort_unstable();
+            }
+            let available = ui.available_rect_before_wrap();
+            let stripe_rect = Rect::from_min_max(
+                egui::pos2(
+                    available.right() - problems_ui::STRIPE_WIDTH,
+                    available.top(),
+                ),
+                available.max,
+            );
+            let text_rect = available.with_max_x(stripe_rect.left());
+            ui.allocate_rect(available, Sense::hover());
+            let line_count = app.state.documents[index].text.len_lines();
+            if let Some((line, column)) =
+                problems_ui::error_stripe(ui, stripe_rect, &problems, line_count, ROW_HEIGHT)
+            {
+                move_caret_to(app, line, column);
+                ui.memory_mut(|memory| memory.request_focus(editor_id()));
+            }
+            let mut text_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
+            let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
+            let changes = app.state.document_changes(index).to_vec();
+            let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
             let doc = &mut app.state.documents[index];
-            match editor_surface(ui, doc, &diagnostics, &highlights) {
+            let surface = editor_surface(
+                &mut text_ui,
+                doc,
+                &problems,
+                &highlights,
+                &context_model,
+                &changes,
+                blame.as_deref(),
+            );
+            let counts = jetthing_core::ProblemCounts::of(&problems);
+            match problems_ui::inspection_widget(ui, text_rect.right_top(), counts) {
+                Some(problems_ui::WidgetAction::Next) => {
+                    requests.push(EditorRequest::Command("editor.nextProblem", Value::Null));
+                }
+                Some(problems_ui::WidgetAction::Previous) => {
+                    requests.push(EditorRequest::Command(
+                        "editor.previousProblem",
+                        Value::Null,
+                    ));
+                }
+                Some(problems_ui::WidgetAction::ShowProblems) => requests.push(
+                    EditorRequest::Command("toolwindow.activate.problems", Value::Null),
+                ),
+                None => {}
+            }
+            let doc = &mut app.state.documents[index];
+            match surface {
                 Ok(EditorOutput {
                     changed,
                     caret_pos,
                     requests: editor_requests,
+                    typed: typed_text,
                 }) => {
                     app.caret_screen_pos = caret_pos;
-                    requests = editor_requests;
+                    requests.extend(editor_requests);
+                    typed = typed_text;
                     if changed {
                         let snapshot = doc.text.text();
                         doc.analysis = jetthing_language::analyze(&doc.path, &snapshot);
@@ -94,15 +159,29 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
         });
     if let Some((path, text, version)) = changed_document {
         app.state.sync_document_lsp(&path, &text, version);
+        app.state.snippet_after_change();
+        app.state.completion_after_typing(&typed);
+    } else if app.state.active_caret() != caret_before {
+        app.state.snippet_after_caret_move();
+        if app.state.completion.is_some() {
+            app.state.refresh_completion();
+        }
     }
     for request in requests {
         handle_request(app, ctx, request);
     }
 }
 
-fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: EditorRequest) {
+pub(crate) fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: EditorRequest) {
     match request {
         EditorRequest::Command(id, params) => app.dispatch(id, params),
+        EditorRequest::ShowCommit(hash) => {
+            app.dispatch("git.log.show", Value::Null);
+            app.dispatch("git.log.selectCommit", json!({ "hash": hash }));
+        }
+        EditorRequest::ShowChange(hunk, position) => {
+            app.change_popup = Some(crate::change_popup::ChangePopup::new(hunk, position));
+        }
         EditorRequest::Copy | EditorRequest::Cut => {
             let id = if matches!(request, EditorRequest::Copy) {
                 "editor.copy"
@@ -118,6 +197,9 @@ fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: EditorRequest)
                 }
                 Err(error) => app.state.status = error.to_string(),
             }
+        }
+        EditorRequest::ContextAction(action) => {
+            app.run_context_action(&action, &crate::context_menus::Target::Editor, ctx)
         }
         EditorRequest::Paste(text) => {
             let whole_line = app.clipboard_line.as_deref() == Some(text.as_str());
@@ -165,6 +247,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     let mut x = bar.left() + 6.0;
     let mut activate = None;
     let mut close = None;
+    let mut tab_action = None;
     let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
     for index in 0..app.state.documents.len() {
         let doc = &app.state.documents[index];
@@ -210,13 +293,36 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             Icon::for_file(&name),
             *icons::ICON,
         );
+        let text_rect = layout.text;
         ui.painter().galley(layout.text.min, galley, color);
+        if app.state.problems.has_errors(&doc.path) {
+            problems_ui::squiggle(
+                ui.painter(),
+                text_rect.left(),
+                text_rect.right(),
+                rect.center().y + 8.0,
+                *theme::editor::ERROR_EFFECT,
+            );
+        }
         let close_rect = layout.close;
         let dirty = doc.text.is_dirty();
+        let pinned = app.state.is_pinned(index);
         let pointer_on_close = response
             .hover_pos()
             .is_some_and(|pos| close_rect.expand(2.0).contains(pos));
-        if response.hovered() || active {
+        if pinned {
+            // Pinned tabs show a pin in place of the close button; clicking it unpins.
+            if pointer_on_close {
+                ui.painter()
+                    .rect_filled(close_rect.expand(2.0), 4.0, theme::HOVER);
+            }
+            icons::paint(
+                ui.painter(),
+                close_rect.shrink(1.0),
+                Icon::Pin,
+                theme::TEXT_SECONDARY,
+            );
+        } else if response.hovered() || active {
             if pointer_on_close {
                 ui.painter()
                     .rect_filled(close_rect.expand(2.0), 4.0, theme::HOVER);
@@ -236,8 +342,22 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
                 .circle_filled(layout.modified_dot, 2.5, theme::MODIFIED);
         }
         let response = response.on_hover_text(doc.path.display().to_string());
+        response.context_menu(|ui| {
+            let target = crate::context_menus::Target::Tab(index);
+            let model = app.context_menu_model(&target);
+            let mut chosen = None;
+            crate::context_menus::show(ui, &model, &mut chosen);
+            if let Some(action) = chosen {
+                tab_action = Some((action, target));
+            }
+        });
         if response.clicked() {
-            if pointer_on_close {
+            if pointer_on_close && pinned {
+                tab_action = Some((
+                    "PinActiveTabToggle".to_owned(),
+                    crate::context_menus::Target::Tab(index),
+                ));
+            } else if pointer_on_close {
                 close = Some(index);
             } else {
                 activate = Some(index);
@@ -259,7 +379,10 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
     }
     crate::plugin_ui::editor_tabs(app, ui, bar, x);
-    if let Some(index) = close {
+    if let Some((action, target)) = tab_action {
+        let ctx = ui.ctx().clone();
+        app.run_context_action(&action, &target, &ctx);
+    } else if let Some(index) = close {
         app.dispatch("editor.close", json!({"index": index}));
     } else if let Some(index) = activate {
         app.dispatch("editor.activate", json!({"index": index}));
@@ -411,20 +534,6 @@ pub(crate) fn highlighted_line_job(
     job
 }
 
-/// Squiggle underline used for errors and warnings.
-fn squiggle(painter: &egui::Painter, x1: f32, x2: f32, y: f32, color: Color32) {
-    let step = 2.0;
-    let mut points = Vec::new();
-    let mut x = x1;
-    let mut up = true;
-    while x <= x2.max(x1 + 6.0) {
-        points.push(egui::pos2(x, if up { y - 1.5 } else { y + 0.5 }));
-        x += step;
-        up = !up;
-    }
-    painter.add(egui::Shape::line(points, Stroke::new(1.0_f32, color)));
-}
-
 /// Moves the primary caret to a zero-based line/column and focuses the editor.
 pub fn move_caret_to(app: &mut IdeApp, line: usize, column: usize) {
     let Some(index) = app.state.active_document else {
@@ -475,8 +584,11 @@ fn move_primary(document: &mut Document, head: usize, extend: bool) {
 fn editor_surface(
     ui: &mut egui::Ui,
     document: &mut Document,
-    lsp_diagnostics: &[jetthing_lsp::LspDiagnostic],
+    problems: &[jetthing_core::Problem],
     highlights: &[(usize, usize)],
+    context_model: &crate::context_menus::Model,
+    changes: &[jetthing_git::Hunk],
+    blame: Option<&[jetthing_git::BlameLine]>,
 ) -> Result<EditorOutput, String> {
     let mut requests = Vec::new();
     let font = theme::editor_font(ui.style());
@@ -495,7 +607,12 @@ fn editor_surface(
     let char_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'm'));
     let line_count = document.text.len_lines();
     let digits = line_count.max(1).to_string().len().max(2);
-    let gutter_width = 20.0 + digits as f32 * char_width + 18.0;
+    let blame_width = if blame.is_some() {
+        crate::blame_gutter::WIDTH
+    } else {
+        0.0
+    };
+    let gutter_width = blame_width + 20.0 + digits as f32 * char_width + 18.0;
     let text_left = gutter_width + TEXT_LEFT_PADDING;
     let caret_line = document
         .text
@@ -550,7 +667,39 @@ fn editor_surface(
                     .max(0.0) as usize,
             };
             let block_drag_id = editor_id().with("block_drag_anchor");
-            if response.clicked()
+            // Clicking a change marker opens the change popup instead of
+            // moving the caret.
+            let marker_hit = response
+                .interact_pointer_pos()
+                .filter(|position| {
+                    crate::change_popup::in_marker_column(position.x - rect.left(), gutter_width)
+                })
+                .and_then(|position| {
+                    let line = ((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize;
+                    jetthing_core::hunk_at_line(changes, line).map(|hunk| (hunk, position))
+                });
+            let blame_line = response
+                .hover_pos()
+                .or(response.interact_pointer_pos())
+                .filter(|position| position.x - rect.left() < blame_width)
+                .map(|position| ((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize);
+            if let (Some(lines), Some(line)) = (blame, blame_line) {
+                if let Some(text) = crate::blame_gutter::tooltip(lines, line) {
+                    response.clone().on_hover_text_at_pointer(text);
+                }
+                if response.clicked()
+                    && let Some(entry) = lines.get(line).filter(|entry| !entry.is_uncommitted())
+                {
+                    requests.push(EditorRequest::ShowCommit(entry.hash.clone()));
+                }
+            }
+            if response.clicked() && blame_line.is_some() {
+                // Handled above: annotation clicks never move the caret.
+            } else if response.clicked()
+                && let Some((hunk, position)) = marker_hit
+            {
+                requests.push(EditorRequest::ShowChange(hunk, position));
+            } else if response.clicked()
                 && let Some(position) = response.interact_pointer_pos()
             {
                 let offset = position_to_offset(position);
@@ -602,51 +751,35 @@ fn editor_surface(
                     .set_single(Selection::caret(position_to_offset(position)));
             }
             response.context_menu(|ui| {
-                ui.set_min_width(220.0);
-                for (label, shortcut, request) in [
-                    ("Cut", "⌘X", EditorRequest::Cut),
-                    ("Copy", "⌘C", EditorRequest::Copy),
-                ] {
-                    if ui
-                        .add(egui::Button::new(label).shortcut_text(crate::keys::display(shortcut)))
-                        .clicked()
-                    {
-                        requests.push(request);
-                        ui.close();
-                    }
-                }
-                if ui
-                    .add(egui::Button::new("Paste").shortcut_text(crate::keys::display("⌘V")))
-                    .clicked()
-                {
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-                    ui.close();
+                let mut chosen = None;
+                crate::context_menus::show(ui, context_model, &mut chosen);
+                match chosen.as_deref() {
+                    // Copy/Cut also fill the system clipboard.
+                    Some("$Copy") => requests.push(EditorRequest::Copy),
+                    Some("$Cut") => requests.push(EditorRequest::Cut),
+                    Some(action) => requests.push(EditorRequest::ContextAction(action.to_owned())),
+                    None => {}
                 }
                 ui.separator();
-                for (label, shortcut, id) in [
-                    ("Comment with Line Comment", "⌘/", "editor.commentLine"),
-                    ("Duplicate Line or Selection", "⌘D", "editor.duplicate"),
-                    ("Delete Line", "⌘⌫", "editor.deleteLine"),
-                    ("Move Line Up", "⌥⇧↑", "editor.moveLineUp"),
-                    ("Move Line Down", "⌥⇧↓", "editor.moveLineDown"),
-                ] {
-                    if ui
-                        .add(egui::Button::new(label).shortcut_text(crate::keys::display(shortcut)))
-                        .clicked()
-                    {
-                        requests.push(EditorRequest::Command(id, Value::Null));
-                        ui.close();
+                ui.menu_button("Git", |ui| {
+                    ui.set_min_width(220.0);
+                    let annotate = if blame.is_some() {
+                        "Close Annotations"
+                    } else {
+                        "Annotate with Git Blame"
+                    };
+                    for (label, id) in [
+                        (annotate, "git.annotate"),
+                        ("Show History", "git.fileHistory"),
+                        ("Show Diff", "vcs.showChangeDiff"),
+                        ("Rollback Lines", "vcs.rollbackChange"),
+                    ] {
+                        if ui.button(label).clicked() {
+                            requests.push(EditorRequest::Command(id, Value::Null));
+                            ui.close();
+                        }
                     }
-                }
-                ui.separator();
-                if ui
-                    .add(egui::Button::new("Select All").shortcut_text(crate::keys::display("⌘A")))
-                    .clicked()
-                {
-                    requests.push(EditorRequest::Command("editor.selectAll", Value::Null));
-                    ui.close();
-                }
+                });
             });
             let block_anchor: Option<jetthing_text::multicaret::BlockPoint> =
                 ui.data(|data| data.get_temp(block_drag_id)).flatten();
@@ -672,6 +805,9 @@ fn editor_surface(
             }
 
             let painter = ui.painter().clone();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs() as i64);
             // Gutter background matches the editor in Islands; draw caret row first.
             let first_line =
                 ((viewport.top() / row_height).floor().max(0.0) as usize).min(line_count);
@@ -703,6 +839,23 @@ fn editor_surface(
                         *theme::editor::LINE_NUMBER
                     },
                 );
+                if let Some(lines) = blame {
+                    crate::blame_gutter::paint(
+                        &painter,
+                        lines,
+                        line,
+                        egui::pos2(rect.left(), y),
+                        ROW_HEIGHT,
+                        now,
+                    );
+                }
+                crate::change_popup::paint_marker(
+                    &painter,
+                    changes,
+                    line,
+                    egui::pos2(rect.left() + gutter_width, y),
+                    ROW_HEIGHT,
+                );
                 // Indent guides every four columns of leading whitespace.
                 let indent = content.chars().take_while(|c| *c == ' ').count();
                 for level in (4..=indent.saturating_sub(1)).step_by(4) {
@@ -712,7 +865,12 @@ fn editor_surface(
                         Stroke::new(1.0_f32, theme::editor::INDENT_GUIDE),
                     );
                 }
-                for &(match_start, match_end) in highlights {
+                // Matches are sorted and disjoint: only visit those on this line.
+                let first_match = highlights.partition_point(|&(_, end)| end <= line_start);
+                let visible_matches = highlights[first_match..]
+                    .iter()
+                    .take_while(|&&(start, _)| start <= line_end);
+                for &(match_start, match_end) in visible_matches {
                     let start = match_start.max(line_start).min(line_end);
                     let end = match_end.max(line_start).min(line_end);
                     if start < end {
@@ -765,44 +923,14 @@ fn editor_surface(
                 );
 
                 let column_x = |column: usize| rect.left() + text_left + column as f32 * char_width;
-                for diagnostic in &document.analysis.diagnostics {
-                    if diagnostic.row == line + 1 {
-                        let start = diagnostic.column.saturating_sub(1);
-                        squiggle(
-                            &painter,
-                            column_x(start),
-                            column_x(start + 1),
-                            y + row_height - 2.0,
-                            *theme::editor::ERROR_EFFECT,
-                        );
-                    }
-                }
-                for diagnostic in lsp_diagnostics {
-                    if diagnostic.start_line <= line && diagnostic.end_line >= line {
-                        let start = if diagnostic.start_line == line {
-                            diagnostic.start_character
-                        } else {
-                            0
-                        };
-                        let end = if diagnostic.end_line == line {
-                            diagnostic.end_character
-                        } else {
-                            content.chars().count()
-                        };
-                        let color = if diagnostic.severity == Some(1) {
-                            *theme::editor::ERROR_EFFECT
-                        } else {
-                            *theme::editor::WARNING_EFFECT
-                        };
-                        squiggle(
-                            &painter,
-                            column_x(start),
-                            column_x(end.max(start + 1)),
-                            y + row_height - 2.0,
-                            color,
-                        );
-                    }
-                }
+                problems_ui::paint_line(
+                    &painter,
+                    problems,
+                    line,
+                    content.chars().count(),
+                    column_x,
+                    row,
+                );
                 for selection in document.selections.selections() {
                     if selection.head >= line_start && selection.head <= line_end {
                         let x = column_x(selection.head - line_start);
@@ -816,6 +944,26 @@ fn editor_surface(
                             );
                         }
                     }
+                }
+            }
+            if let Some(pointer) = response.hover_pos() {
+                let line = ((pointer.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize;
+                let column = (pointer.x - rect.left() - text_left) / char_width;
+                if line < line_count && column >= 0.0 {
+                    let line_len = document
+                        .text
+                        .line(line)
+                        .unwrap_or_default()
+                        .trim_end_matches(['\r', '\n'])
+                        .chars()
+                        .count();
+                    problems_ui::hover_tooltip(
+                        &response,
+                        problems,
+                        line,
+                        column.floor() as usize,
+                        line_len,
+                    );
                 }
             }
             if focused {
@@ -845,6 +993,7 @@ fn editor_surface(
             changed: false,
             caret_pos,
             requests,
+            typed: String::new(),
         });
     }
     ui.memory_mut(|memory| {
@@ -865,9 +1014,11 @@ fn editor_surface(
     let text_error = |error: jetthing_text::TextError| error.to_string();
     let command = |id: &'static str| EditorRequest::Command(id, Value::Null);
     let clone_armed = editor_keys::clone_gesture_armed(ui.ctx(), response.id, mac);
+    let mut typed = String::new();
     for event in events {
         let (key, modifiers) = match event {
             egui::Event::Text(text) if !text.is_empty() => {
+                typed.push_str(&text);
                 let mut chars = text.chars();
                 let single = chars.next().filter(|_| chars.next().is_none());
                 let handled = match single {
@@ -926,21 +1077,9 @@ fn editor_surface(
         let extend = modifiers.shift;
         // Word-wise movement: ⌥ on macOS, Ctrl elsewhere.
         let word = if mac { modifiers.alt } else { modifiers.ctrl };
+        // Duplicate, Delete Line, Comment and Move Line come from the active keymap
+        // (`keybindings`), which consumes their keys before the editor sees them.
         match key {
-            egui::Key::D if modifiers.command => requests.push(command("editor.duplicate")),
-            egui::Key::Y if modifiers.command && !mac => {
-                requests.push(command("editor.deleteLine"))
-            }
-            egui::Key::Backspace if modifiers.command && mac => {
-                requests.push(command("editor.deleteLine"))
-            }
-            egui::Key::Slash if modifiers.command => requests.push(command("editor.commentLine")),
-            egui::Key::ArrowUp if modifiers.alt && modifiers.shift => {
-                requests.push(command("editor.moveLineUp"))
-            }
-            egui::Key::ArrowDown if modifiers.alt && modifiers.shift => {
-                requests.push(command("editor.moveLineDown"))
-            }
             egui::Key::Enter if modifiers.shift => {
                 // Start New Line: open a line below without splitting the current one.
                 let line = document.text.char_to_line(head);
@@ -1072,83 +1211,8 @@ fn editor_surface(
         changed: document.text.revision() != initial_revision,
         caret_pos,
         requests,
+        typed,
     })
-}
-
-pub fn completion_popup(app: &mut IdeApp, ctx: &egui::Context) {
-    let completions = app.state.lsp.completions().to_vec();
-    if completions.is_empty() {
-        app.completion_selected = 0;
-        return;
-    }
-    let anchor = app
-        .caret_screen_pos
-        .unwrap_or_else(|| ctx.content_rect().center());
-    let mut accept = None;
-    egui::Area::new(egui::Id::new("completion_popup"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(anchor + vec2(-20.0, 2.0))
-        .show(ctx, |ui| {
-            egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::same(4))
-                .show(ui, |ui| {
-                    ui.set_width(420.0);
-                    egui::ScrollArea::vertical()
-                        .max_height(260.0)
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 0.0;
-                            for (index, item) in
-                                completions.iter().take(COMPLETION_LIMIT).enumerate()
-                            {
-                                let selected = index == app.completion_selected;
-                                let (rect, response) = ui.allocate_exact_size(
-                                    vec2(ui.available_width(), 22.0),
-                                    Sense::click(),
-                                );
-                                if selected {
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        4.0,
-                                        theme::COMPLETION_SELECTION,
-                                    );
-                                    ui.scroll_to_rect(rect, None);
-                                } else if response.hovered() {
-                                    ui.painter().rect_filled(rect, 4.0, theme::HOVER);
-                                }
-                                let x = crate::widgets::row_text(
-                                    ui,
-                                    rect,
-                                    rect.left() + 8.0,
-                                    &item.label,
-                                    theme::editor_font(ui.style()),
-                                    *theme::TEXT_BRIGHT,
-                                );
-                                if let Some(detail) = &item.detail {
-                                    let galley = ui.painter().layout_no_wrap(
-                                        detail.clone(),
-                                        egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                                        *theme::TEXT_INFO,
-                                    );
-                                    let pos = egui::pos2(
-                                        (rect.right() - galley.size().x - 8.0).max(x + 16.0),
-                                        rect.center().y - galley.size().y / 2.0,
-                                    );
-                                    ui.painter().with_clip_rect(rect).galley(
-                                        pos,
-                                        galley,
-                                        *theme::TEXT_INFO,
-                                    );
-                                }
-                                if response.clicked() {
-                                    accept = Some(index);
-                                }
-                            }
-                        });
-                });
-        });
-    if let Some(index) = accept {
-        app.accept_completion(index);
-    }
 }
 
 #[cfg(test)]

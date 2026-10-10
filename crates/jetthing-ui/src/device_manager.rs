@@ -87,6 +87,20 @@ pub fn device_selector(app: &mut IdeApp, ui: &mut egui::Ui) {
             }
         }
         ui.separator();
+        let can_run = app.commands.is_enabled("android.app.run", &app.state)
+            && hub.selected_device().is_some_and(|d| d.is_online());
+        let run_label = match hub.selected_device() {
+            Some(device) => format!("Run 'app' on {}", device.display_name()),
+            None => "Run 'app'".into(),
+        };
+        let mut run = false;
+        if ui
+            .add_enabled(can_run, egui::Button::new(run_label))
+            .clicked()
+        {
+            run = true;
+            ui.close();
+        }
         if ui.button("Device Manager").clicked() {
             app.dispatch("toolwindow.activate.deviceManager", Value::Null);
             ui.close();
@@ -96,6 +110,9 @@ pub fn device_selector(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         if let Some(avd) = start {
             app.dispatch("android.emulator.start", json!({"avd": avd}));
+        }
+        if run {
+            app.dispatch("android.app.run", Value::Null);
         }
     });
 }

@@ -6,9 +6,17 @@
 //! dispatched through the typed command registry.
 
 mod about;
+mod android_run_ui;
 mod android_sdk;
 mod android_view;
+mod blame_gutter;
+mod branches_popup;
+mod build_variants_ui;
+mod build_window;
+mod change_popup;
 mod chrome;
+mod completion_ui;
+mod context_menus;
 mod control;
 mod crash_notice;
 mod device_manager;
@@ -17,15 +25,23 @@ mod disk_banner;
 mod editor;
 mod editor_keys;
 mod findbar;
+mod git_log_ui;
 mod icons;
+mod keybindings;
 mod keys;
 mod logcat_ui;
 mod lsp_status;
+mod main_menu;
+mod merged_manifest_ui;
 mod notifications;
 mod palette;
 mod plugin_ui;
 mod popups;
+mod problems_ui;
+mod push_dialog;
 mod settings_dialog;
+mod settings_keymap;
+mod settings_plugins;
 mod syntax;
 mod terminal_ui;
 mod theme;
@@ -54,10 +70,12 @@ pub struct IdeApp {
     palette: palette::Palette,
     terminal_selection: Option<(terminal_ui::GridPoint, terminal_ui::GridPoint)>,
     search_input: String,
+    /// Find in Files option toggles and file mask.
+    find_options: jetthing_core::SearchOptions,
     tree_selection: Option<PathBuf>,
-    completion_selected: usize,
+    /// Active editor file last revealed in the Project tree.
+    tree_revealed: Option<PathBuf>,
     caret_screen_pos: Option<egui::Pos2>,
-    run_label: Option<String>,
     last_shift_release: Option<Instant>,
     shift_tainted: bool,
     last_bottom: Option<ToolWindow>,
@@ -72,6 +90,11 @@ pub struct IdeApp {
     /// unversioned files are not.
     commit_overrides: std::collections::HashMap<PathBuf, bool>,
     window_focused: bool,
+    /// First stroke of a two-stroke chord waiting for its second stroke.
+    pending_chord: Option<jetthing_keymap::KeyStroke>,
+    /// The main menu titles are expanded in the toolbar.
+    menu_bar_open: bool,
+    menu_bar_popup_seen: bool,
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
     android_sdk: android_sdk::SdkPage,
@@ -85,6 +108,15 @@ pub struct IdeApp {
     /// Registry generation the contributed commands were synced at.
     plugin_generation: u64,
     plugins_window: Option<plugin_ui::PluginsWindow>,
+    /// Amend toggle of the Commit tool window.
+    commit_amend: bool,
+    /// Open push dialog.
+    push_dialog: Option<push_dialog::PushDialog>,
+    /// Open branch name/confirmation dialog.
+    git_dialog: Option<branches_popup::GitDialog>,
+    /// Open gutter change-marker popup.
+    change_popup: Option<change_popup::ChangePopup>,
+    deploy_balloon: android_run_ui::DeployBalloon,
 }
 
 impl IdeApp {
@@ -158,22 +190,16 @@ impl IdeApp {
         if check_updates && state.settings.bool(ids::CHECK_UPDATES).unwrap_or(true) {
             let _ = commands.execute("app.checkForUpdates", &mut state, json!({"silent": true}));
         }
-        let run_label = state.project.as_ref().and_then(|project| {
-            jetthing_runner::TaskPlan::detect_run(project.root())
-                .or_else(|_| jetthing_runner::TaskPlan::detect_build(project.root()))
-                .ok()
-                .map(|plan| plan.name)
-        });
         Self {
             state,
             commands,
             palette: palette::Palette::default(),
             terminal_selection: None,
             search_input: String::new(),
+            find_options: jetthing_core::SearchOptions::default(),
             tree_selection: None,
-            completion_selected: 0,
+            tree_revealed: None,
             caret_screen_pos: None,
-            run_label,
             last_shift_release: None,
             shift_tainted: false,
             last_bottom: None,
@@ -185,6 +211,9 @@ impl IdeApp {
             commit_message: String::new(),
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
+            pending_chord: None,
+            menu_bar_open: false,
+            menu_bar_popup_seen: false,
             control: None,
             android_sdk: android_sdk::SdkPage::default(),
             logcat: logcat_ui::LogcatView::default(),
@@ -194,6 +223,11 @@ impl IdeApp {
             plugin_commands: Vec::new(),
             plugin_generation: u64::MAX,
             plugins_window: None,
+            change_popup: None,
+            git_dialog: None,
+            push_dialog: None,
+            deploy_balloon: android_run_ui::DeployBalloon::default(),
+            commit_amend: false,
         }
     }
 
@@ -259,17 +293,12 @@ impl IdeApp {
     fn project_opened(&mut self, ctx: &egui::Context) {
         self.dispatch("plugin.refresh", Value::Null);
         self.tree_selection = None;
+        self.tree_revealed = None;
         self.commit_overrides.clear();
         self.commit_message.clear();
         self.search_input.clear();
         self.terminal_selection = None;
         self.find = findbar::FindBar::default();
-        self.run_label = self.state.project.as_ref().and_then(|project| {
-            jetthing_runner::TaskPlan::detect_run(project.root())
-                .or_else(|_| jetthing_runner::TaskPlan::detect_build(project.root()))
-                .ok()
-                .map(|plan| plan.name)
-        });
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
             "{} – Jetthing",
             self.project_name()
@@ -324,13 +353,11 @@ impl IdeApp {
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         use egui::{Key, Modifiers};
-        // Tool window activation uses ⌘N on macOS and Alt+N elsewhere.
-        let tool_modifier = if cfg!(target_os = "macos") {
-            Modifiers::COMMAND
-        } else {
-            Modifiers::ALT
-        };
-        let completion_open = !self.state.lsp.completions().is_empty();
+        let completion_open = self
+            .state
+            .completion
+            .as_ref()
+            .is_some_and(|session| session.visible());
         let consumed_chord = std::cell::Cell::new(false);
         // Exact modifier matching: egui's consume_key ignores extra Shift/Alt, which
         // would let ⌘F swallow ⇧⌘F.
@@ -351,136 +378,88 @@ impl IdeApp {
             }
             hit
         };
+        if popup_owns_keyboard(ctx) {
+            return;
+        }
         if completion_open
             && !self.palette.open
             && self.dialog.is_none()
             && self.editor_focused(ctx)
         {
-            let count = self
-                .state
-                .lsp
-                .completions()
-                .len()
-                .min(editor::COMPLETION_LIMIT);
-            if consume(Modifiers::NONE, Key::ArrowDown) && count > 0 {
-                self.completion_selected = (self.completion_selected + 1) % count;
+            for (key, delta) in [
+                (Key::ArrowDown, 1),
+                (Key::ArrowUp, -1),
+                (Key::PageDown, 10),
+                (Key::PageUp, -10),
+            ] {
+                if consume(Modifiers::NONE, key) {
+                    self.state.move_completion_selection(delta);
+                }
             }
-            if consume(Modifiers::NONE, Key::ArrowUp) && count > 0 {
-                self.completion_selected = (self.completion_selected + count - 1) % count;
+            if consume(Modifiers::NONE, Key::Enter) {
+                self.dispatch("completion.accept", json!({"replace": false}));
             }
-            if consume(Modifiers::NONE, Key::Enter) || consume(Modifiers::NONE, Key::Tab) {
-                self.accept_completion(self.completion_selected);
+            if consume(Modifiers::NONE, Key::Tab) {
+                self.dispatch("completion.accept", json!({"replace": true}));
             }
-        }
-        let mac = cfg!(target_os = "macos");
-        // Settings: ⌘, on macOS, Ctrl+Alt+S elsewhere.
-        if (mac && consume(Modifiers::COMMAND, Key::Comma))
-            || (!mac && consume(Modifiers::CTRL | Modifiers::ALT, Key::S))
+        } else if self.state.snippet.is_some()
+            && !self.palette.open
+            && self.dialog.is_none()
+            && self.editor_focused(ctx)
         {
-            self.dispatch("settings.open", Value::Null);
+            if consume(Modifiers::NONE, Key::Tab) || consume(Modifiers::NONE, Key::Enter) {
+                self.dispatch("snippet.next", Value::Null);
+            }
+            if consume(Modifiers::SHIFT, Key::Tab) {
+                self.dispatch("snippet.previous", Value::Null);
+            }
         }
         if self.settings_dialog.is_some() || self.state.settings_request.is_some() {
             // The dialog is modal and handles its own keys (Escape closes it).
             return;
         }
-        if ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
+        let terminal_focused = ctx
+            .memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
             && self.dialog.is_none()
-            && !self.palette.open
-        {
-            if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::A) {
-                self.palette.show_tab(palette::Tab::Actions);
-            }
-            if consume(Modifiers::COMMAND, Key::O) {
-                self.open_project_dialog();
-            }
-            if consume(Modifiers::ALT, Key::F12) || consume(Modifiers::CTRL, Key::Backtick) {
-                self.toggle_tool_window(ToolWindow::Terminal);
-            }
-            self.detect_double_shift(ctx);
-            if consumed_chord.get() {
-                ctx.input_mut(|input| {
-                    input
-                        .events
-                        .retain(|event| !matches!(event, egui::Event::Text(_)))
-                });
-            }
-            return;
+            && !self.palette.open;
+        if self.dispatch_keymap(ctx, terminal_focused) {
+            consumed_chord.set(true);
         }
+        // Jetthing additions that the reference keymaps leave unbound.
         if consume(Modifiers::COMMAND, Key::O) {
             self.open_project_dialog();
         }
-        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::A) {
-            self.palette.show_tab(palette::Tab::Actions);
-        }
-        // Go to File: ⇧⌘O on macOS, Ctrl+Shift+N elsewhere.
-        if (mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::O))
-            || (!mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::N))
-        {
-            self.palette.show_tab(palette::Tab::Files);
-        }
-        if consume(Modifiers::COMMAND, Key::E) {
-            self.open_dialog(popups::Dialog::Recent {
-                query: String::new(),
-                selected: usize::from(self.state.recent_files.len() > 1),
-            });
-        }
-        let diff_tab = self.state.diff_active && self.state.diff.is_some();
-        if diff_tab && self.dialog.is_none() && !self.palette.open {
-            if consume(Modifiers::NONE, Key::F7) {
-                self.dispatch("diff.nextChange", Value::Null);
-            }
-            if consume(Modifiers::SHIFT, Key::F7) {
-                self.dispatch("diff.previousChange", Value::Null);
-            }
-        }
-        if self.state.active_document.is_some() && !diff_tab {
-            // Go to Line: ⌘L on macOS, Ctrl+G elsewhere.
-            if (mac && consume(Modifiers::COMMAND, Key::L))
-                || (!mac && consume(Modifiers::COMMAND, Key::G))
-            {
-                self.open_dialog(popups::Dialog::GotoLine {
-                    input: String::new(),
-                });
-            }
-            if consume(Modifiers::COMMAND, Key::F) {
-                let selection = self.primary_selection_text();
-                self.find.show(false, selection);
-            }
-            if consume(Modifiers::COMMAND, Key::R) {
-                let selection = self.primary_selection_text();
-                self.find.show(true, selection);
-            }
-            let next =
-                consume(Modifiers::NONE, Key::F3) || (mac && consume(Modifiers::COMMAND, Key::G));
-            let previous = consume(Modifiers::SHIFT, Key::F3)
-                || (mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::G));
-            if (next || previous) && !self.find.query.is_empty() {
-                let id = if next {
-                    "editor.findNext"
-                } else {
-                    "editor.findPrevious"
-                };
-                self.dispatch(id, self.find.params());
-            }
+        if consume(Modifiers::CTRL, Key::Backtick) {
+            self.toggle_tool_window(ToolWindow::Terminal);
         }
         self.detect_double_shift(ctx);
-        if consume(Modifiers::CTRL, Key::Space) {
-            self.dispatch("language.complete", Value::Null);
-        }
-        if consume(Modifiers::NONE, Key::Escape) {
-            if self.state.about_open {
+        if !terminal_focused && consume(Modifiers::NONE, Key::Escape) {
+            if egui::Popup::is_any_open(ctx) {
+                // Context menus and main-menu dropdowns close first.
+                egui::Popup::close_all(ctx);
+            } else if self.menu_bar_open {
+                self.menu_bar_open = false;
+            } else if self.state.about_open {
                 self.state.about_open = false;
             } else if self.dialog.is_some() {
                 self.dialog = None;
+            } else if self.git_dialog.is_some() {
+                self.git_dialog = None;
+            } else if self.push_dialog.is_some() {
+                self.push_dialog = None;
+            } else if self.change_popup.is_some() {
+                self.change_popup = None;
             } else if self.palette.open {
                 self.palette.open = false;
+            } else if self.state.completion.is_some() {
+                self.dispatch("completion.close", Value::Null);
+            } else if self.state.snippet.is_some() {
+                self.dispatch("snippet.exit", Value::Null);
             } else if self.find.open
                 && (self.editor_focused(ctx) || ctx.memory(|m| m.has_focus(findbar::query_id())))
             {
                 self.find.open = false;
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
-            } else if !self.state.lsp.completions().is_empty() {
-                self.state.lsp.clear_completions();
             } else if self.state.tool_windows.visible(Anchor::Bottom).is_some()
                 && !self.palette.open
             {
@@ -488,63 +467,11 @@ impl IdeApp {
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
             }
         }
-        if consume(Modifiers::COMMAND, Key::S) {
-            self.autosave();
+        // Unbound Alt chords (e.g. Alt+7) must not type their digit either; the
+        // terminal gets them as shell input.
+        if !terminal_focused {
+            ctx.input_mut(|input| keys::strip_alt_chord_text(&mut input.events));
         }
-        // Reload All from Disk: ⌥⌘Y on macOS, Ctrl+Alt+Y elsewhere.
-        if consume(Modifiers::COMMAND | Modifiers::ALT, Key::Y) {
-            self.dispatch("file.synchronize", Value::Null);
-        }
-        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z) {
-            self.dispatch("editor.redo", Value::Null);
-        }
-        if consume(Modifiers::COMMAND, Key::Z) {
-            self.dispatch("editor.undo", Value::Null);
-        }
-        let close_tab = consume(Modifiers::COMMAND, Key::W)
-            || consume(Modifiers::COMMAND, Key::F4)
-            || consume(Modifiers::CTRL, Key::F4);
-        if close_tab && diff_tab {
-            self.dispatch("diff.close", Value::Null);
-        } else if close_tab && self.state.active_document.is_some() {
-            self.dispatch("editor.close", Value::Null);
-        }
-        if consume(Modifiers::COMMAND, Key::F9) {
-            self.dispatch("build.project", Value::Null);
-        }
-        // Run: ⌃R on macOS, Shift+F10 elsewhere (Ctrl+R is Replace there).
-        if (mac && consume(Modifiers::CTRL, Key::R)) || consume(Modifiers::SHIFT, Key::F10) {
-            self.dispatch("run.project", Value::Null);
-        }
-        if consume(Modifiers::COMMAND, Key::F2) && self.state.runner.is_running() {
-            self.dispatch("run.cancel", Value::Null);
-        }
-        if consume(Modifiers::CTRL, Key::Backtick) || consume(Modifiers::ALT, Key::F12) {
-            self.toggle_tool_window(ToolWindow::Terminal);
-        }
-        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::F) {
-            self.dispatch("toolwindow.activate.find", Value::Null);
-            self.search_focus_requested(ctx);
-        }
-        if consume(Modifiers::COMMAND, Key::K) {
-            self.dispatch("toolwindow.activate.commit", Value::Null);
-        }
-        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::F12) {
-            self.dispatch("toolwindow.hideAll", Value::Null);
-        }
-        for (key, window) in [
-            (Key::Num1, ToolWindow::Project),
-            (Key::Num0, ToolWindow::Commit),
-            (Key::Num3, ToolWindow::Find),
-            (Key::Num4, ToolWindow::Build),
-            (Key::Num6, ToolWindow::Problems),
-        ] {
-            if consume(tool_modifier, key) {
-                self.toggle_tool_window(window);
-            }
-        }
-        // Unbound Alt chords (e.g. Alt+7) must not type their digit either.
-        ctx.input_mut(|input| keys::strip_alt_chord_text(&mut input.events));
         // Some platforms also emit the chord's character as text (e.g. Alt+1 → "1");
         // a consumed shortcut must not type into the focused field.
         if consumed_chord.get() {
@@ -610,26 +537,37 @@ impl IdeApp {
                 .last_shift_release
                 .is_some_and(|last| now.duration_since(last) < Duration::from_millis(400))
             {
-                self.palette.show();
+                self.run_double_modifier(jetthing_keymap::Modifier::Shift, ctx);
                 self.last_shift_release = None;
             } else {
                 self.last_shift_release = Some(now);
             }
         }
     }
+}
 
-    fn accept_completion(&mut self, index: usize) {
-        let Some(item) = self.state.lsp.completions().get(index).cloned() else {
-            return;
-        };
-        let text = item.insert_text.unwrap_or(item.label);
-        self.dispatch(
-            "editor.insertText",
-            json!({"position": self.state.active_caret().unwrap_or(0), "text": text}),
-        );
-        self.state.lsp.clear_completions();
-        self.completion_selected = 0;
+/// An open menu (main menu, context menu, toolbar widget popup) owns the
+/// keyboard, as in the reference IDE: Escape closes it, and no workbench
+/// shortcut fires underneath it. Returns whether a popup was open.
+fn popup_owns_keyboard(ctx: &egui::Context) -> bool {
+    if !egui::Popup::is_any_open(ctx) {
+        return false;
     }
+    let escape = ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    if escape {
+        egui::Popup::close_all(ctx);
+    }
+    // Chords pressed while a menu is open must not reach the workbench either.
+    ctx.input_mut(|input| {
+        input.events.retain(|event| {
+            !matches!(
+                event,
+                egui::Event::Key { modifiers, pressed: true, .. }
+                    if modifiers.alt || modifiers.ctrl || modifiers.command
+            )
+        })
+    });
+    true
 }
 
 impl eframe::App for IdeApp {
@@ -642,6 +580,22 @@ impl eframe::App for IdeApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.frame(ctx);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.state.shutdown_plugins();
+        if self.state.project.is_some() {
+            self.autosave();
+            self.dispatch("workspace.save", Value::Null);
+        }
+    }
+}
+
+impl IdeApp {
+    /// Builds one workbench frame. Separate from `eframe::App::update` so a
+    /// headless `egui::Context` can drive it (typing-latency bench).
+    pub fn frame(&mut self, ctx: &egui::Context) {
         if !self.waker_installed {
             let ctx = ctx.clone();
             self.state.waker.set(move || ctx.request_repaint());
@@ -667,6 +621,7 @@ impl eframe::App for IdeApp {
         if self.state.toolchains.service.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
+        self.state.poll_remote();
         if self.state.lsp.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(100));
         } else if !self.state.lsp.servers().is_empty() || self.state.android.devices.is_tracking() {
@@ -725,14 +680,19 @@ impl eframe::App for IdeApp {
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }
-        editor::completion_popup(self, ctx);
+        change_popup::show(self, ctx);
+        branches_popup::show_dialog(self, ctx);
+        push_dialog::show(self, ctx);
+        completion_ui::show(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
         settings_dialog::show(self, ctx);
         android_sdk::show(self, ctx);
+        merged_manifest_ui::show(self, ctx);
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
         about::show(self, ctx);
+        android_run_ui::show(self, ctx);
         lsp_status::notices(self, ctx);
         plugin_ui::plugins_window(self, ctx);
         plugin_ui::notifications(self, ctx);
@@ -744,18 +704,53 @@ impl eframe::App for IdeApp {
         self.control_after_frame(ctx);
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.state.shutdown_plugins();
-        if self.state.project.is_some() {
-            self.autosave();
-            self.dispatch("workspace.save", Value::Null);
-        }
+    /// Read-only view of the IDE state (tests, benches, automation).
+    pub fn state(&self) -> &IdeState {
+        &self.state
+    }
+
+    /// Gives keyboard focus to the editor surface.
+    pub fn focus_editor(&self, ctx: &egui::Context) {
+        ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escape_closes_an_open_menu_and_shortcuts_do_not_run_under_it() {
+        let ctx = egui::Context::default();
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let menu = egui::Id::new("tree_context_menu");
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::Popup::open_id(ctx, menu)
+        });
+        assert!(egui::Popup::is_any_open(&ctx));
+        let input = egui::RawInput {
+            events: vec![
+                key(egui::Key::Num6, egui::Modifiers::ALT),
+                key(egui::Key::Escape, egui::Modifiers::NONE),
+            ],
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            assert!(popup_owns_keyboard(ctx));
+            let left = ctx.input(|input| input.events.len());
+            assert_eq!(left, 0, "Alt+6 and Escape were consumed by the menu");
+        });
+        assert!(!egui::Popup::is_any_open(&ctx));
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            assert!(!popup_owns_keyboard(ctx), "no menu, shortcuts run normally");
+        });
+    }
 
     #[test]
     fn parameterless_commands_are_detected_from_their_schema() {

@@ -323,6 +323,13 @@ fn base_label(tab: &DiffTab) -> String {
     }
 }
 
+/// Label of the new side: a commit hash, or the working copy.
+fn new_label(tab: &DiffTab) -> String {
+    tab.new_revision
+        .clone()
+        .unwrap_or_else(|| "Current version".to_owned())
+}
+
 fn side_by_side(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: Option<usize>) {
     let diff = &tab.diff;
     let old = Side::new(&diff.old_text, &tab.old_analysis);
@@ -359,7 +366,7 @@ fn side_by_side(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: O
             pos2(right_pane.left(), area.top()),
             pos2(area.right(), left_pane.top()),
         ),
-        "Current version",
+        &new_label(tab),
         None,
     );
     painter.hline(
@@ -596,7 +603,7 @@ fn unified(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: Option
     header(
         &painter,
         Rect::from_min_max(area.min, pos2(area.right(), pane.top())),
-        &format!("{}  vs  Current version", base_label(tab)),
+        &format!("{}  vs  {}", base_label(tab), new_label(tab)),
         Some(Icon::Commit),
     );
     painter.hline(

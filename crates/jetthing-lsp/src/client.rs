@@ -11,12 +11,12 @@ use crate::{LspError, transport};
 use lsp_types::{
     ClientCapabilities, ClientInfo, CompletionClientCapabilities, CompletionItemCapability,
     CompletionItemCapabilityResolveSupport, CompletionItemKind, CompletionItemKindCapability,
-    GeneralClientCapabilities, HoverClientCapabilities, InitializeParams, InitializeResult,
-    MarkupKind, ParameterInformationSettings, PositionEncodingKind,
+    DiagnosticTag, GeneralClientCapabilities, HoverClientCapabilities, InitializeParams,
+    InitializeResult, MarkupKind, ParameterInformationSettings, PositionEncodingKind,
     PublishDiagnosticsClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
-    SignatureInformationSettings, TextDocumentClientCapabilities,
-    TextDocumentSyncClientCapabilities, WindowClientCapabilities, WorkspaceFolder,
-    request::Request,
+    SignatureInformationSettings, TagSupport, TextDocumentClientCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncClientCapabilities, WindowClientCapabilities,
+    WorkspaceFolder, request::Request,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -27,6 +27,7 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
         Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver},
     },
     thread,
@@ -76,11 +77,21 @@ pub enum ServerState {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LspDiagnostic {
     pub message: String,
+    /// LSP `DiagnosticSeverity`: 1 error, 2 warning, 3 information, 4 hint.
     pub severity: Option<u8>,
+    /// Positions are LSP UTF-16 line/character pairs.
     pub start_line: usize,
     pub start_character: usize,
     pub end_line: usize,
     pub end_character: usize,
+    /// Diagnostic code (`E0425`, `unused_variables`, a jdtls problem id).
+    pub code: Option<String>,
+    /// Which tool produced it (`rustc`, `rust-analyzer`, `Java`).
+    pub source: Option<String>,
+    /// Code is unused (`DiagnosticTag.Unnecessary`).
+    pub unnecessary: bool,
+    /// Code is deprecated (`DiagnosticTag.Deprecated`).
+    pub deprecated: bool,
 }
 
 /// A `$/progress` work-done report that has begun and not yet ended.
@@ -145,6 +156,7 @@ pub struct LspService {
     queued_documents: BTreeMap<PathBuf, QueuedDocument>,
     open_documents: HashMap<PathBuf, i32>,
     diagnostics: HashMap<PathBuf, Vec<LspDiagnostic>>,
+    diagnostics_revision: u64,
     progress: BTreeMap<String, WorkProgress>,
     status_message: Option<String>,
     shown_messages: Vec<ServerMessage>,
@@ -226,6 +238,7 @@ impl LspService {
             queued_documents: BTreeMap::new(),
             open_documents: HashMap::new(),
             diagnostics: HashMap::new(),
+            diagnostics_revision: 0,
             progress: BTreeMap::new(),
             status_message: None,
             shown_messages: Vec::new(),
@@ -264,6 +277,11 @@ impl LspService {
         &self.diagnostics
     }
     /// Work-done progress currently running on the server, by token.
+    /// Changes whenever the server publishes diagnostics; unique across services.
+    pub fn diagnostics_revision(&self) -> u64 {
+        self.diagnostics_revision
+    }
+
     pub fn progress(&self) -> &BTreeMap<String, WorkProgress> {
         &self.progress
     }
@@ -365,6 +383,23 @@ impl LspService {
         version: i32,
     ) -> Result<(), LspError> {
         self.sync_document(path, "rust", text, version)
+    }
+
+    /// Sends `textDocument/didSave` for an open document when the server asked
+    /// for save notifications (rust-analyzer runs `cargo check` on save).
+    pub fn save_document(&mut self, path: &Path) -> Result<(), LspError> {
+        let wants_save = match &self.capabilities.text_document_sync {
+            Some(TextDocumentSyncCapability::Options(options)) => options.save.is_some(),
+            _ => false,
+        };
+        if !wants_save || !self.open_documents.contains_key(path) {
+            return Ok(());
+        }
+        self.send(
+            &json!({"jsonrpc":"2.0","method":"textDocument/didSave","params":{
+                "textDocument":{"uri":file_uri(path)?}
+            }}),
+        )
     }
 
     pub fn close_document(&mut self, path: &Path) -> Result<(), LspError> {
@@ -594,8 +629,10 @@ impl LspService {
                     .into_iter()
                     .flatten()
                     .filter_map(parse_diagnostic)
-                    .collect();
+                    .collect::<Vec<_>>();
+                // An empty list is kept: it records that the file was checked.
                 self.diagnostics.insert(path, diagnostics);
+                self.diagnostics_revision = next_revision();
             }
             "$/progress" => self.handle_progress(params),
             "window/showMessage" => {
@@ -708,8 +745,7 @@ fn workspace_folder(root: &Path) -> Result<WorkspaceFolder, LspError> {
     })
 }
 
-/// The capabilities Jetthing advertises. Snippets stay off until the editor
-/// can expand tab stops.
+/// The capabilities Jetthing advertises.
 pub fn client_capabilities() -> ClientCapabilities {
     let markup = Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]);
     ClientCapabilities {
@@ -723,16 +759,21 @@ pub fn client_capabilities() -> ClientCapabilities {
         }),
         text_document: Some(TextDocumentClientCapabilities {
             synchronization: Some(TextDocumentSyncClientCapabilities {
-                did_save: Some(false),
+                did_save: Some(true),
                 ..Default::default()
             }),
             publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                 related_information: Some(true),
+                tag_support: Some(TagSupport {
+                    value_set: vec![DiagnosticTag::UNNECESSARY, DiagnosticTag::DEPRECATED],
+                }),
+                code_description_support: Some(true),
                 ..Default::default()
             }),
             completion: Some(CompletionClientCapabilities {
                 completion_item: Some(CompletionItemCapability {
-                    snippet_support: Some(false),
+                    snippet_support: Some(true),
+                    insert_replace_support: Some(true),
                     documentation_format: markup.clone(),
                     deprecated_support: Some(true),
                     label_details_support: Some(true),
@@ -795,11 +836,33 @@ fn initialize_params(
     })
 }
 
+/// Revisions come from one counter so a restarted server never repeats one.
+fn next_revision() -> u64 {
+    static REVISION: AtomicU64 = AtomicU64::new(1);
+    REVISION.fetch_add(1, Ordering::Relaxed)
+}
+
 fn parse_diagnostic(value: &Value) -> Option<LspDiagnostic> {
     let range = value.get("range")?;
     let start = range.get("start")?;
     let end = range.get("end")?;
+    let tags: Vec<u64> = value
+        .get("tags")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_u64)
+        .collect();
+    let code = match value.get("code") {
+        Some(Value::String(code)) => Some(code.clone()),
+        Some(Value::Number(code)) => Some(code.to_string()),
+        _ => None,
+    };
     Some(LspDiagnostic {
+        code,
+        source: value.get("source").and_then(Value::as_str).map(Into::into),
+        unnecessary: tags.contains(&1),
+        deprecated: tags.contains(&2),
         message: value.get("message")?.as_str()?.into(),
         severity: value
             .get("severity")

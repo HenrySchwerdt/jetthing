@@ -291,3 +291,72 @@ async fn connection_errors_are_actionable() {
         .unwrap_err();
     assert!(err.to_string().starts_with("MongoDB error"), "{err}");
 }
+
+#[tokio::test]
+async fn builtin_shell_and_mongosh() {
+    let Some((conn, db)) = common::connect("shell").await else {
+        return;
+    };
+    let mut current = db.clone();
+    let out = conn
+        .eval_builtin(
+            &mut current,
+            "db.items.insertMany([{n: 1}, {n: 2}, {n: 3}])\ndb.items.find({n: {$gte: 2}}, {_id: 0}).sort({n: -1}).limit(1)\ndb.items.countDocuments()",
+        )
+        .await;
+    assert_eq!(out.len(), 3, "{out:?}");
+    assert_eq!(
+        out[1].result,
+        Ok(Bson::Array(vec![Bson::Document(doc! {"n": 3})]))
+    );
+    assert_eq!(out[2].result, Ok(Bson::Int64(3)));
+    let out = conn
+        .eval_builtin(
+            &mut current,
+            "show collections\ndb.items.nope()\ndb.items.drop()",
+        )
+        .await;
+    assert_eq!(out.len(), 2, "evaluation stops at the first error");
+    assert!(
+        out[1]
+            .result
+            .as_ref()
+            .unwrap_err()
+            .contains("install mongosh")
+    );
+    let out = conn.eval_builtin(&mut current, "use other_db").await;
+    assert_eq!(current, "other_db");
+    assert!(out[0].result.is_ok());
+
+    if let Some(mongosh) = mongo_raabit_core::mongosh::find_mongosh() {
+        let output = conn
+            .run_mongosh(
+                &mongosh,
+                &db,
+                "print('hi'); db.items.find({}, {_id: 0}).sort({n: 1}).toArray()",
+                std::time::Duration::from_secs(30),
+            )
+            .await
+            .unwrap();
+        assert!(output.success, "{output:?}");
+        assert!(output.stdout.starts_with("hi"));
+        let Some(Bson::Array(items)) = output.value else {
+            panic!("{output:?}")
+        };
+        assert_eq!(items.len(), 3);
+        let failed = conn
+            .run_mongosh(
+                &mongosh,
+                &db,
+                "this is not js(",
+                std::time::Duration::from_secs(30),
+            )
+            .await
+            .unwrap();
+        assert!(!failed.success);
+        assert!(failed.stderr.contains("SyntaxError") || failed.stdout.contains("SyntaxError"));
+    } else {
+        eprintln!("mongosh not on PATH; skipping the mongosh half of builtin_shell_and_mongosh");
+    }
+    conn.drop_database(&db).await.unwrap();
+}

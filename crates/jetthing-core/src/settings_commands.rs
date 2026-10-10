@@ -47,6 +47,7 @@ impl IdeState {
         if let Err(error) = self.settings.store.load_application(dir) {
             self.status = format!("{error}. Using defaults; the file is left unchanged.");
         }
+        self.refresh_keymap();
     }
 
     pub(crate) fn load_project_settings(&mut self, root: &Path) {
@@ -55,7 +56,9 @@ impl IdeState {
         }
     }
 
-    fn persist_settings(&self) -> Result<(), CommandError> {
+    /// Saves the settings and updates state derived from them (the keymap).
+    fn persist_settings(&mut self) -> Result<(), CommandError> {
+        self.refresh_keymap();
         self.settings
             .store
             .save()
