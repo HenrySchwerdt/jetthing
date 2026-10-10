@@ -70,7 +70,11 @@ fn dist() -> Result<()> {
     Ok(())
 }
 
-const PARITY_DOCS: [&str; 2] = ["docs/parity/platform.md", "docs/parity/android-studio.md"];
+const PARITY_DOCS: [&str; 3] = [
+    "docs/parity/platform.md",
+    "docs/parity/android-studio.md",
+    "docs/parity/nexus-http.md",
+];
 const STATUSES: [&str; 5] = ["Missing", "Planned", "Partial", "Implemented", "Verified"];
 
 /// Validates the parity tables and, unless `check` is set, rewrites the dashboard.
