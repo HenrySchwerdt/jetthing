@@ -1,4 +1,5 @@
 mod parity;
+mod scenes;
 
 use anyhow::{Context, Result, anyhow, bail};
 use std::{
@@ -7,7 +8,8 @@ use std::{
     process::Command,
 };
 
-const USAGE: &str = "usage: cargo xtask parity [--check] | cargo xtask dist";
+const USAGE: &str =
+    "usage: cargo xtask parity [--check] | dist | scenes [--only 01,05] [--out DIR] [--release]";
 
 fn workspace_root() -> PathBuf {
     // Prefer the current directory when it holds the inventory (normal `cargo run`
@@ -34,6 +36,7 @@ fn main() -> Result<()> {
             parity(check)
         }
         Some("dist") => dist(),
+        Some("scenes") => scenes::run(args),
         _ => bail!(USAGE),
     }
 }
