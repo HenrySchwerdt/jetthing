@@ -108,7 +108,9 @@ reports together with **Help → About → Copy**.
 
 ## Keyboard
 
-Shortcuts follow the default keymap of the reference IDE (macOS / Windows & Linux):
+Shortcuts come from the reference IDE's bundled keymaps (`docs/spec/data/keymaps.json`).
+The default follows the desktop (macOS, Windows, GNOME, KDE, XWin); pick another keymap or
+change shortcuts in **Settings › Keymap**. Common defaults (macOS / Windows & Linux):
 
 | Action | macOS | Windows / Linux |
 |---|---|---|

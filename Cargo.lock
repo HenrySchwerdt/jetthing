@@ -2361,6 +2361,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jetthing-actions"
+version = "0.0.2"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jetthing-android"
 version = "0.0.2"
 dependencies = [
@@ -2417,9 +2425,11 @@ name = "jetthing-core"
 version = "0.0.2"
 dependencies = [
  "flate2",
+ "jetthing-actions",
  "jetthing-android",
  "jetthing-command",
  "jetthing-git",
+ "jetthing-keymap",
  "jetthing-language",
  "jetthing-lsp",
  "jetthing-plugins",
@@ -2441,6 +2451,15 @@ name = "jetthing-git"
 version = "0.0.2"
 dependencies = [
  "similar",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "jetthing-keymap"
+version = "0.0.2"
+dependencies = [
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -2550,6 +2569,7 @@ version = "0.0.2"
 name = "jetthing-settings"
 version = "0.0.2"
 dependencies = [
+ "jetthing-keymap",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2598,11 +2618,13 @@ version = "0.0.2"
 dependencies = [
  "eframe",
  "egui",
+ "jetthing-actions",
  "jetthing-android",
  "jetthing-command",
  "jetthing-control",
  "jetthing-core",
  "jetthing-git",
+ "jetthing-keymap",
  "jetthing-language",
  "jetthing-lsp",
  "jetthing-plugins",

@@ -20,6 +20,7 @@ mod diagnostic_commands;
 pub mod diagnostics;
 mod disk_sync;
 mod editor_commands;
+pub mod keymap_commands;
 mod lsp_commands;
 mod plugin_host;
 mod problems;
@@ -111,6 +112,7 @@ pub struct IdeState {
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
     pub settings: Settings,
+    pub keymap: keymap_commands::KeymapState,
     /// Settings page the UI should open (set by `settings.open`, taken by the UI).
     pub settings_request: Option<String>,
     pub android: AndroidState,
@@ -666,6 +668,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     diagnostic_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     settings_commands::register(&mut registry);
+    keymap_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
     vcs::register(&mut registry);
     plugin_host::register(&mut registry);

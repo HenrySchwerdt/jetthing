@@ -19,15 +19,18 @@ mod editor;
 mod editor_keys;
 mod findbar;
 mod icons;
+mod keybindings;
 mod keys;
 mod logcat_ui;
 mod lsp_status;
+mod main_menu;
 mod notifications;
 mod palette;
 mod plugin_ui;
 mod popups;
 mod settings_dialog;
 mod problems_ui;
+mod settings_keymap;
 mod syntax;
 mod terminal_ui;
 mod theme;
@@ -72,6 +75,11 @@ pub struct IdeApp {
     /// unversioned files are not.
     commit_overrides: std::collections::HashMap<PathBuf, bool>,
     window_focused: bool,
+    /// First stroke of a two-stroke chord waiting for its second stroke.
+    pending_chord: Option<jetthing_keymap::KeyStroke>,
+    /// The main menu titles are expanded in the toolbar.
+    menu_bar_open: bool,
+    menu_bar_popup_seen: bool,
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
     android_sdk: android_sdk::SdkPage,
@@ -184,6 +192,9 @@ impl IdeApp {
             commit_message: String::new(),
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
+            pending_chord: None,
+            menu_bar_open: false,
+            menu_bar_popup_seen: false,
             control: None,
             android_sdk: android_sdk::SdkPage::default(),
             logcat: logcat_ui::LogcatView::default(),
@@ -323,12 +334,6 @@ impl IdeApp {
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         use egui::{Key, Modifiers};
-        // Tool window activation uses ⌘N on macOS and Alt+N elsewhere.
-        let tool_modifier = if cfg!(target_os = "macos") {
-            Modifiers::COMMAND
-        } else {
-            Modifiers::ALT
-        };
         let completion_open = self
             .state
             .completion
@@ -387,108 +392,26 @@ impl IdeApp {
                 self.dispatch("snippet.previous", Value::Null);
             }
         }
-        let mac = cfg!(target_os = "macos");
-        // Settings: ⌘, on macOS, Ctrl+Alt+S elsewhere.
-        if (mac && consume(Modifiers::COMMAND, Key::Comma))
-            || (!mac && consume(Modifiers::CTRL | Modifiers::ALT, Key::S))
-        {
-            self.dispatch("settings.open", Value::Null);
-        }
         if self.settings_dialog.is_some() || self.state.settings_request.is_some() {
             // The dialog is modal and handles its own keys (Escape closes it).
             return;
         }
-        if ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
+        let terminal_focused = ctx
+            .memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
             && self.dialog.is_none()
-            && !self.palette.open
-        {
-            if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::A) {
-                self.palette.show_tab(palette::Tab::Actions);
-            }
-            if consume(Modifiers::COMMAND, Key::O) {
-                self.open_project_dialog();
-            }
-            if consume(Modifiers::ALT, Key::F12) || consume(Modifiers::CTRL, Key::Backtick) {
-                self.toggle_tool_window(ToolWindow::Terminal);
-            }
-            self.detect_double_shift(ctx);
-            if consumed_chord.get() {
-                ctx.input_mut(|input| {
-                    input
-                        .events
-                        .retain(|event| !matches!(event, egui::Event::Text(_)))
-                });
-            }
-            return;
+            && !self.palette.open;
+        if self.dispatch_keymap(ctx, terminal_focused) {
+            consumed_chord.set(true);
         }
+        // Jetthing additions that the reference keymaps leave unbound.
         if consume(Modifiers::COMMAND, Key::O) {
             self.open_project_dialog();
         }
-        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::A) {
-            self.palette.show_tab(palette::Tab::Actions);
-        }
-        // Go to File: ⇧⌘O on macOS, Ctrl+Shift+N elsewhere.
-        if (mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::O))
-            || (!mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::N))
-        {
-            self.palette.show_tab(palette::Tab::Files);
-        }
-        if consume(Modifiers::COMMAND, Key::E) {
-            self.open_dialog(popups::Dialog::Recent {
-                query: String::new(),
-                selected: usize::from(self.state.recent_files.len() > 1),
-            });
-        }
-        let diff_tab = self.state.diff_active && self.state.diff.is_some();
-        if diff_tab && self.dialog.is_none() && !self.palette.open {
-            if consume(Modifiers::NONE, Key::F7) {
-                self.dispatch("diff.nextChange", Value::Null);
-            }
-            if consume(Modifiers::SHIFT, Key::F7) {
-                self.dispatch("diff.previousChange", Value::Null);
-            }
-        }
-        if self.state.active_document.is_some() && !diff_tab {
-            // Go to Line: ⌘L on macOS, Ctrl+G elsewhere.
-            if (mac && consume(Modifiers::COMMAND, Key::L))
-                || (!mac && consume(Modifiers::COMMAND, Key::G))
-            {
-                self.open_dialog(popups::Dialog::GotoLine {
-                    input: String::new(),
-                });
-            }
-            if consume(Modifiers::COMMAND, Key::F) {
-                let selection = self.primary_selection_text();
-                self.find.show(false, selection);
-            }
-            if consume(Modifiers::COMMAND, Key::R) {
-                let selection = self.primary_selection_text();
-                self.find.show(true, selection);
-            }
-            if consume(Modifiers::NONE, Key::F2) {
-                self.dispatch("editor.nextProblem", Value::Null);
-            }
-            if consume(Modifiers::SHIFT, Key::F2) {
-                self.dispatch("editor.previousProblem", Value::Null);
-            }
-            let next =
-                consume(Modifiers::NONE, Key::F3) || (mac && consume(Modifiers::COMMAND, Key::G));
-            let previous = consume(Modifiers::SHIFT, Key::F3)
-                || (mac && consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::G));
-            if (next || previous) && !self.find.query.is_empty() {
-                let id = if next {
-                    "editor.findNext"
-                } else {
-                    "editor.findPrevious"
-                };
-                self.dispatch(id, self.find.params());
-            }
+        if consume(Modifiers::CTRL, Key::Backtick) {
+            self.toggle_tool_window(ToolWindow::Terminal);
         }
         self.detect_double_shift(ctx);
-        if consume(Modifiers::CTRL, Key::Space) {
-            self.dispatch("language.complete", Value::Null);
-        }
-        if consume(Modifiers::NONE, Key::Escape) {
+        if !terminal_focused && consume(Modifiers::NONE, Key::Escape) {
             if self.state.about_open {
                 self.state.about_open = false;
             } else if self.dialog.is_some() {
@@ -511,63 +434,11 @@ impl IdeApp {
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
             }
         }
-        if consume(Modifiers::COMMAND, Key::S) {
-            self.autosave();
+        // Unbound Alt chords (e.g. Alt+7) must not type their digit either; the
+        // terminal gets them as shell input.
+        if !terminal_focused {
+            ctx.input_mut(|input| keys::strip_alt_chord_text(&mut input.events));
         }
-        // Reload All from Disk: ⌥⌘Y on macOS, Ctrl+Alt+Y elsewhere.
-        if consume(Modifiers::COMMAND | Modifiers::ALT, Key::Y) {
-            self.dispatch("file.synchronize", Value::Null);
-        }
-        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z) {
-            self.dispatch("editor.redo", Value::Null);
-        }
-        if consume(Modifiers::COMMAND, Key::Z) {
-            self.dispatch("editor.undo", Value::Null);
-        }
-        let close_tab = consume(Modifiers::COMMAND, Key::W)
-            || consume(Modifiers::COMMAND, Key::F4)
-            || consume(Modifiers::CTRL, Key::F4);
-        if close_tab && diff_tab {
-            self.dispatch("diff.close", Value::Null);
-        } else if close_tab && self.state.active_document.is_some() {
-            self.dispatch("editor.close", Value::Null);
-        }
-        if consume(Modifiers::COMMAND, Key::F9) {
-            self.dispatch("build.project", Value::Null);
-        }
-        // Run: ⌃R on macOS, Shift+F10 elsewhere (Ctrl+R is Replace there).
-        if (mac && consume(Modifiers::CTRL, Key::R)) || consume(Modifiers::SHIFT, Key::F10) {
-            self.dispatch("run.project", Value::Null);
-        }
-        if consume(Modifiers::COMMAND, Key::F2) && self.state.runner.is_running() {
-            self.dispatch("run.cancel", Value::Null);
-        }
-        if consume(Modifiers::CTRL, Key::Backtick) || consume(Modifiers::ALT, Key::F12) {
-            self.toggle_tool_window(ToolWindow::Terminal);
-        }
-        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::F) {
-            self.dispatch("toolwindow.activate.find", Value::Null);
-            self.search_focus_requested(ctx);
-        }
-        if consume(Modifiers::COMMAND, Key::K) {
-            self.dispatch("toolwindow.activate.commit", Value::Null);
-        }
-        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::F12) {
-            self.dispatch("toolwindow.hideAll", Value::Null);
-        }
-        for (key, window) in [
-            (Key::Num1, ToolWindow::Project),
-            (Key::Num0, ToolWindow::Commit),
-            (Key::Num3, ToolWindow::Find),
-            (Key::Num4, ToolWindow::Build),
-            (Key::Num6, ToolWindow::Problems),
-        ] {
-            if consume(tool_modifier, key) {
-                self.toggle_tool_window(window);
-            }
-        }
-        // Unbound Alt chords (e.g. Alt+7) must not type their digit either.
-        ctx.input_mut(|input| keys::strip_alt_chord_text(&mut input.events));
         // Some platforms also emit the chord's character as text (e.g. Alt+1 → "1");
         // a consumed shortcut must not type into the focused field.
         if consumed_chord.get() {
@@ -633,7 +504,7 @@ impl IdeApp {
                 .last_shift_release
                 .is_some_and(|last| now.duration_since(last) < Duration::from_millis(400))
             {
-                self.palette.show();
+                self.run_double_modifier(jetthing_keymap::Modifier::Shift, ctx);
                 self.last_shift_release = None;
             } else {
                 self.last_shift_release = Some(now);

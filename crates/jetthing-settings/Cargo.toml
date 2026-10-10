@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+jetthing-keymap = { path = "../jetthing-keymap" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

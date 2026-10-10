@@ -41,7 +41,8 @@
 - [x] Release packaging (`cargo xtask dist`) and CI/release workflows
 - [x] Typed settings model and Settings dialog with search, Apply/Reset and Advanced Settings
 - [x] Theme engine from spec data with live Islands Dark / Islands Light switching
-- [ ] Keymap switching and bundled icon set beyond the core actions
+- [x] Keymap engine loading all bundled keymaps, keymap-driven shortcuts and Keymap settings page
+- [ ] Bundled icon set beyond the core actions
 - [x] Native installers: MSI, DMG (`Jetthing.app`) and `.deb`, smoke-tested in CI
 - [ ] Code signing and notarization with project certificates (pipeline supports it)
 - [x] Editor actions: duplicate/delete/comment/move lines, pairing, smart Enter, word moves
