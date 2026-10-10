@@ -123,119 +123,145 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     let mut toggle = None;
     let mut open = None;
     let mut dialog = None;
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show_rows(ui, widgets::ROW_HEIGHT, entries.len() + 1, |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for row in range {
-                if row == 0 {
-                    let (rect, response) = list_row(ui, false);
-                    tree_context_menu(&response, Path::new(""), true, &mut dialog, &mut open);
-                    let mut x = rect.left() + 12.0 + 16.0;
-                    icons::paint(
-                        ui.painter(),
-                        Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-                        Icon::Folder,
-                        icons::ICON,
-                    );
-                    x += 22.0;
-                    x = row_text(
-                        ui,
-                        rect,
-                        x,
-                        &root_name,
-                        theme::semibold(theme::UI_FONT_SIZE),
-                        theme::TEXT_BRIGHT,
-                    );
-                    row_text(
-                        ui,
-                        rect,
-                        x + 8.0,
-                        &root_path,
-                        egui::FontId::proportional(theme::UI_FONT_SIZE),
-                        theme::TEXT_INFO,
-                    );
-                    continue;
-                }
-                let (path, is_dir) = &entries[row - 1];
-                let depth = path.components().count();
-                let selected = app.tree_selection.as_deref() == Some(path.as_path());
-                let (rect, response) = list_row(ui, selected);
-                let mut x = rect.left() + 12.0 + depth as f32 * TREE_INDENT;
-                let chevron =
-                    Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0));
-                if *is_dir {
-                    let expanded = app.state.expanded_dirs.contains(path);
-                    icons::paint(
-                        ui.painter(),
-                        chevron,
-                        if expanded {
-                            Icon::ChevronDown
-                        } else {
-                            Icon::ChevronRight
-                        },
-                        theme::TEXT_SECONDARY,
-                    );
-                }
-                x += 16.0;
-                let name = IdeApp::file_name(path);
-                let icon = if *is_dir {
-                    Icon::Folder
-                } else {
-                    Icon::for_file(&name)
-                };
+    // Like "Always Select Opened File": the selection follows the active
+    // editor and the row scrolls into view when it is off-screen.
+    let active = app
+        .state
+        .active_document
+        .and_then(|index| app.state.documents.get(index))
+        .map(|document| document.path.clone());
+    let mut scroll_target = None;
+    if active.is_some() && active != app.tree_revealed {
+        app.tree_revealed = active.clone();
+        if let Some(path) = active
+            && let Some(row) = entries.iter().position(|(entry, _)| *entry == path)
+        {
+            app.tree_selection = Some(path);
+            let id = ui.make_persistent_id("project_tree");
+            let offset = egui::scroll_area::State::load(ui.ctx(), id)
+                .map(|state| state.offset.y)
+                .unwrap_or(0.0);
+            scroll_target =
+                reveal_offset(row + 1, widgets::ROW_HEIGHT, offset, ui.available_height());
+        }
+    }
+    let mut area = egui::ScrollArea::vertical()
+        .id_salt("project_tree")
+        .auto_shrink([false, false]);
+    if let Some(target) = scroll_target {
+        area = area.vertical_scroll_offset(target);
+    }
+    area.show_rows(ui, widgets::ROW_HEIGHT, entries.len() + 1, |ui, range| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for row in range {
+            if row == 0 {
+                let (rect, response) = list_row(ui, false);
+                tree_context_menu(&response, Path::new(""), true, &mut dialog, &mut open);
+                let mut x = rect.left() + 12.0 + 16.0;
                 icons::paint(
                     ui.painter(),
                     Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-                    icon,
+                    Icon::Folder,
                     icons::ICON,
                 );
                 x += 22.0;
-                let kind = colors.get(path).copied().or_else(|| {
-                    is_dir
-                        .then(|| {
-                            colors
-                                .keys()
-                                .any(|changed| changed.starts_with(path))
-                                .then_some(ChangeKind::Modified)
-                        })
-                        .flatten()
-                });
-                let (_, elided) = widgets::row_text_elided(
+                x = row_text(
                     ui,
                     rect,
                     x,
-                    &name,
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    change_color(kind),
+                    &root_name,
+                    theme::semibold(theme::UI_FONT_SIZE),
+                    theme::TEXT_BRIGHT,
                 );
-                let response = if elided {
-                    response.on_hover_text(&name)
-                } else {
-                    response
-                };
-                if response.secondary_clicked() {
-                    app.tree_selection = Some(path.clone());
-                }
-                tree_context_menu(&response, path, *is_dir, &mut dialog, &mut open);
-                if response.clicked() {
-                    app.tree_selection = Some(path.clone());
-                    let on_chevron = response
-                        .interact_pointer_pos()
-                        .is_some_and(|pos| chevron.expand(4.0).contains(pos));
-                    if *is_dir && on_chevron {
-                        toggle = Some(path.clone());
-                    }
-                }
-                if response.double_clicked() {
-                    if *is_dir {
-                        toggle = Some(path.clone());
+                row_text(
+                    ui,
+                    rect,
+                    x + 8.0,
+                    &root_path,
+                    egui::FontId::proportional(theme::UI_FONT_SIZE),
+                    theme::TEXT_INFO,
+                );
+                continue;
+            }
+            let (path, is_dir) = &entries[row - 1];
+            let depth = path.components().count();
+            let selected = app.tree_selection.as_deref() == Some(path.as_path());
+            let (rect, response) = list_row(ui, selected);
+            let mut x = rect.left() + 12.0 + depth as f32 * TREE_INDENT;
+            let chevron =
+                Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0));
+            if *is_dir {
+                let expanded = app.state.expanded_dirs.contains(path);
+                icons::paint(
+                    ui.painter(),
+                    chevron,
+                    if expanded {
+                        Icon::ChevronDown
                     } else {
-                        open = Some(path.clone());
-                    }
+                        Icon::ChevronRight
+                    },
+                    theme::TEXT_SECONDARY,
+                );
+            }
+            x += 16.0;
+            let name = IdeApp::file_name(path);
+            let icon = if *is_dir {
+                Icon::Folder
+            } else {
+                Icon::for_file(&name)
+            };
+            icons::paint(
+                ui.painter(),
+                Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
+                icon,
+                icons::ICON,
+            );
+            x += 22.0;
+            let kind = colors.get(path).copied().or_else(|| {
+                is_dir
+                    .then(|| {
+                        colors
+                            .keys()
+                            .any(|changed| changed.starts_with(path))
+                            .then_some(ChangeKind::Modified)
+                    })
+                    .flatten()
+            });
+            let (_, elided) = widgets::row_text_elided(
+                ui,
+                rect,
+                x,
+                &name,
+                egui::FontId::proportional(theme::UI_FONT_SIZE),
+                change_color(kind),
+            );
+            let response = if elided {
+                response.on_hover_text(&name)
+            } else {
+                response
+            };
+            if response.secondary_clicked() {
+                app.tree_selection = Some(path.clone());
+            }
+            tree_context_menu(&response, path, *is_dir, &mut dialog, &mut open);
+            if response.clicked() {
+                app.tree_selection = Some(path.clone());
+                let on_chevron = response
+                    .interact_pointer_pos()
+                    .is_some_and(|pos| chevron.expand(4.0).contains(pos));
+                if *is_dir && on_chevron {
+                    toggle = Some(path.clone());
                 }
             }
-        });
+            if response.double_clicked() {
+                if *is_dir {
+                    toggle = Some(path.clone());
+                } else {
+                    open = Some(path.clone());
+                }
+            }
+        }
+    });
     if ui.ui_contains_pointer()
         && ui.memory(|m| m.focused().is_none())
         && ui.input(|input| input.key_pressed(egui::Key::Enter))
@@ -294,6 +320,16 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     if let Some(path) = open {
         app.dispatch("editor.openFile", json!({"path": path}));
     }
+}
+
+/// Scroll offset that centres `row`, or `None` when it is already fully visible.
+fn reveal_offset(row: usize, row_height: f32, offset: f32, viewport: f32) -> Option<f32> {
+    let top = row as f32 * row_height;
+    let bottom = top + row_height;
+    if top >= offset && bottom <= offset + viewport {
+        return None;
+    }
+    Some((top + row_height / 2.0 - viewport / 2.0).max(0.0))
 }
 
 fn new_entry_parent(path: &Path, is_dir: bool) -> PathBuf {
@@ -671,13 +707,12 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.y = 0.0;
             for result in &results[range] {
                 let (rect, response) = list_row(ui, false);
-                let mono = egui::FontId::monospace(theme::EDITOR_FONT_SIZE);
-                let x = row_text(
-                    ui,
-                    rect,
-                    rect.left() + 16.0,
-                    result.preview.trim(),
-                    mono,
+                let job = highlighted_preview(&result.preview, &result.highlights);
+                let galley = ui.painter().layout_job(job);
+                let x = rect.left() + 16.0 + galley.size().x;
+                ui.painter().with_clip_rect(rect).galley(
+                    egui::pos2(rect.left() + 16.0, rect.center().y - galley.size().y / 2.0),
+                    galley,
                     theme::editor::TEXT,
                 );
                 let location = format!("{} {}", IdeApp::file_name(&result.path), result.line);
@@ -697,13 +732,62 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
                     .on_hover_text(result.path.display().to_string())
                     .clicked()
                 {
-                    open = Some(result.path.clone());
+                    open = Some(result.clone());
                 }
             }
         });
-    if let Some(path) = open {
-        app.dispatch("editor.openFile", json!({"path": path}));
+    if let Some(result) = open {
+        app.dispatch(
+            "editor.openFile",
+            json!({
+                "path": result.path,
+                "line": result.line,
+                "column": result.column,
+                "length": result.length,
+            }),
+        );
+        ui.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
     }
+}
+
+/// Result preview with every occurrence on a search-result background.
+fn highlighted_preview(
+    preview: &str,
+    highlights: &[std::ops::Range<usize>],
+) -> egui::text::LayoutJob {
+    let plain = egui::TextFormat {
+        font_id: egui::FontId::monospace(theme::EDITOR_FONT_SIZE),
+        color: theme::editor::TEXT,
+        ..Default::default()
+    };
+    let matched = egui::TextFormat {
+        background: theme::editor::SEARCH_RESULT,
+        color: theme::TEXT_BRIGHT,
+        ..plain.clone()
+    };
+    let chars: Vec<char> = preview.chars().collect();
+    let mut job = egui::text::LayoutJob::default();
+    let mut cursor = 0;
+    for range in highlights {
+        let start = range.start.min(chars.len()).max(cursor);
+        let end = range.end.min(chars.len());
+        if start >= end {
+            continue;
+        }
+        job.append(
+            &chars[cursor..start].iter().collect::<String>(),
+            0.0,
+            plain.clone(),
+        );
+        job.append(
+            &chars[start..end].iter().collect::<String>(),
+            0.0,
+            matched.clone(),
+        );
+        cursor = end;
+    }
+    job.append(&chars[cursor..].iter().collect::<String>(), 0.0, plain);
+    job
 }
 
 fn build(app: &mut IdeApp, ui: &mut egui::Ui) {
@@ -894,6 +978,35 @@ fn terminal(app: &mut IdeApp, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_preview_highlights_each_occurrence() {
+        let job = highlighted_preview("val greeting = greet(name)", &[4..9, 15..20]);
+        let texts: Vec<&str> = job
+            .sections
+            .iter()
+            .map(|section| &job.text[section.byte_range.clone()])
+            .collect();
+        assert_eq!(texts, ["val ", "greet", "ing = ", "greet", "(name)"]);
+        assert_eq!(
+            job.sections[1].format.background,
+            theme::editor::SEARCH_RESULT
+        );
+        assert_eq!(job.sections[2].format.background, Color32::TRANSPARENT);
+        // Out-of-range or overlapping highlights never panic.
+        let job = highlighted_preview("ab", &[1..9, 0..1]);
+        assert_eq!(job.text, "ab");
+    }
+
+    #[test]
+    fn reveal_scrolls_only_when_the_row_is_hidden() {
+        assert_eq!(reveal_offset(3, 24.0, 0.0, 400.0), None);
+        assert_eq!(
+            reveal_offset(40, 24.0, 0.0, 400.0),
+            Some(40.0 * 24.0 + 12.0 - 200.0)
+        );
+        assert_eq!(reveal_offset(0, 24.0, 300.0, 400.0), Some(0.0));
+    }
 
     #[test]
     fn stderr_lines_are_only_red_for_errors() {

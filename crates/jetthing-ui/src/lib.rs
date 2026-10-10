@@ -42,6 +42,8 @@ pub struct IdeApp {
     terminal_selection: Option<(terminal_ui::GridPoint, terminal_ui::GridPoint)>,
     search_input: String,
     tree_selection: Option<PathBuf>,
+    /// Active editor file last revealed in the Project tree.
+    tree_revealed: Option<PathBuf>,
     completion_selected: usize,
     caret_screen_pos: Option<egui::Pos2>,
     run_label: Option<String>,
@@ -118,6 +120,7 @@ impl IdeApp {
             terminal_selection: None,
             search_input: String::new(),
             tree_selection: None,
+            tree_revealed: None,
             completion_selected: 0,
             caret_screen_pos: None,
             run_label,
@@ -180,6 +183,7 @@ impl IdeApp {
     fn project_opened(&mut self, ctx: &egui::Context) {
         self.dispatch("plugin.refresh", Value::Null);
         self.tree_selection = None;
+        self.tree_revealed = None;
         self.commit_overrides.clear();
         self.commit_message.clear();
         self.search_input.clear();
