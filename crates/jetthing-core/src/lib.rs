@@ -63,6 +63,12 @@ pub struct IdeState {
     pub status: String,
 }
 
+/// Status bar summary after a Git refresh: "1 change on main", "3 changes on main".
+pub fn changes_summary(count: usize, branch: &str) -> String {
+    let noun = if count == 1 { "change" } else { "changes" };
+    format!("{count} {noun} on {branch}")
+}
+
 impl IdeState {
     pub fn open_project(&mut self, path: &Path) -> Result<(), String> {
         let project = Project::open(path).map_err(|e| e.to_string())?;
@@ -323,7 +329,7 @@ impl IdeState {
         let root = self.project.as_ref().ok_or("no project is open")?.root();
         self.git = Some(RepositoryStatus::load(root).map_err(|error| error.to_string())?);
         if let Some(git) = &self.git {
-            self.status = format!("{} changes on {}", git.changes.len(), git.branch);
+            self.status = changes_summary(git.changes.len(), &git.branch);
         }
         Ok(())
     }
@@ -834,7 +840,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
         .expect("unique built-in id");
     registry
         .register(Command::new(
-            spec("editor.save", "Save", "Editor", Some("⌘S"), "{}"),
+            spec("editor.save", "Save", "Editor", None, "{}"),
             |s: &IdeState| s.active_document.is_some(),
             |state: &mut IdeState, _| {
                 state
@@ -850,7 +856,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
         .expect("unique built-in id");
     registry
         .register(Command::new(
-            spec("editor.saveAll", "Save All", "Editor", Some("⌥⌘S"), "{}"),
+            spec("editor.saveAll", "Save All", "Editor", Some("⌘S"), "{}"),
             |s: &IdeState| s.documents.iter().any(|d| d.text.is_dirty()),
             |state: &mut IdeState, _| {
                 for index in 0..state.documents.len() {
@@ -1040,6 +1046,13 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn change_summary_uses_singular_for_one_change() {
+        assert_eq!(super::changes_summary(1, "master"), "1 change on master");
+        assert_eq!(super::changes_summary(0, "main"), "0 changes on main");
+        assert_eq!(super::changes_summary(2, "main"), "2 changes on main");
+    }
+
     use super::*;
     use std::{
         thread,

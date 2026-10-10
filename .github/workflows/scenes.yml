@@ -1,0 +1,36 @@
+name: Parity scenes
+
+# Manual only, to keep GitHub Actions usage low: replays docs/parity/scenes/*.json
+# headless (Xvfb + glow) over the control socket and uploads the PNGs.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  scenes:
+    name: parity scenes (Xvfb, glow)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Xvfb and Mesa
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libxkbcommon-x11-0 libgl1-mesa-dri libegl1 libgl1
+      # Starts its own Xvfb, replays docs/parity/scenes/*.json over the control
+      # socket and asserts workbench state; the PNGs are uploaded for review.
+      - run: cargo run -p xtask -- scenes --out target/scenes/out
+        env:
+          JETTHING_RENDERER: glow
+          LIBGL_ALWAYS_SOFTWARE: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parity-scenes
+          path: |
+            target/scenes/out/*.png
+            target/scenes/*/app.log
+          if-no-files-found: warn
