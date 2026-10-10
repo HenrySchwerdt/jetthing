@@ -11,6 +11,7 @@ pub mod logcat;
 pub mod project;
 mod properties;
 pub mod sdk;
+pub mod view;
 
 pub use adb::{
     Adb, AdbError, Device, DeviceProperties, DeviceState, DeviceTracker, TrackEvent, find_adb,

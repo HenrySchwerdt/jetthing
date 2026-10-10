@@ -6,6 +6,7 @@
 //! dispatched through the typed command registry.
 
 mod android_sdk;
+mod android_view;
 mod chrome;
 mod device_manager;
 mod editor;
@@ -56,6 +57,7 @@ pub struct IdeApp {
     window_focused: bool,
     android_sdk: android_sdk::SdkPage,
     logcat: logcat_ui::LogcatView,
+    android_view: android_view::AndroidViewState,
 }
 
 impl IdeApp {
@@ -120,6 +122,7 @@ impl IdeApp {
             window_focused: true,
             android_sdk: android_sdk::SdkPage::default(),
             logcat: logcat_ui::LogcatView::default(),
+            android_view: android_view::AndroidViewState::default(),
         }
     }
 

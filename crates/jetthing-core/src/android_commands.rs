@@ -21,12 +21,15 @@ pub struct AndroidState {
     pub sdk_manager_open: bool,
     pub devices: crate::android_devices::DeviceHub,
     pub logcat: crate::android_logcat::LogcatState,
+    /// Project tool window shows the Android view (default for Android projects).
+    pub android_view: bool,
 }
 
 impl AndroidState {
     pub(crate) fn project_opened(&mut self, root: &Path) {
         self.root = Some(root.to_owned());
         self.project = AndroidProject::detect(root);
+        self.android_view = self.project.is_some();
         self.sdk = None;
         if self.project.is_some() {
             self.detect_sdk(Some(root));
@@ -66,6 +69,22 @@ impl IdeState {
     }
 }
 
+impl IdeState {
+    /// The Android project view, computed from the project tree's file index.
+    pub fn android_view_nodes(&self) -> Vec<jetthing_android::view::ViewNode> {
+        let Some(project) = &self.android.project else {
+            return Vec::new();
+        };
+        let files: Vec<PathBuf> = self
+            .files
+            .iter()
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| entry.relative_path.clone())
+            .collect();
+        jetthing_android::view::android_view(project, &files)
+    }
+}
+
 fn detection_json(detection: &SdkDetection) -> Value {
     json!({
         "sdk": detection.sdk,
@@ -75,6 +94,43 @@ fn detection_json(detection: &SdkDetection) -> Value {
 }
 
 pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
+    registry
+        .register(Command::new(
+            spec(
+                "android.projectView.select",
+                "Select Project View",
+                "Android",
+                None,
+                r#"{"view":"android|project"}"#,
+            ),
+            |state: &IdeState| state.android.project.is_some(),
+            |state: &mut IdeState, params| {
+                state.android.android_view = match string_param(&params, "view")?.as_str() {
+                    "android" => true,
+                    "project" => false,
+                    other => {
+                        return Err(CommandError::InvalidParams(format!(
+                            "unknown project view `{other}`; expected android or project"
+                        )));
+                    }
+                };
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "android.projectView.tree",
+                "Android Project View",
+                "Android",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.android.project.is_some(),
+            |state: &mut IdeState, _| Ok(json!({ "nodes": state.android_view_nodes() })),
+        ))
+        .expect("unique built-in id");
     registry
         .register(Command::new(
             spec(
@@ -236,6 +292,30 @@ mod tests {
         assert_eq!(result["sdk"]["packages"][0]["path"], "platforms;android-35");
         assert_eq!(result["problem"], serde_json::Value::Null);
 
+        assert!(state.android.android_view, "Android view is the default");
+        let view = commands
+            .execute("android.projectView.tree", &mut state, json!({}))
+            .unwrap();
+        assert_eq!(view["nodes"][0]["label"], "app");
+        assert_eq!(view["nodes"][0]["children"][0]["label"], "manifests");
+        assert_eq!(view["nodes"][1]["label"], "Gradle Scripts");
+        commands
+            .execute(
+                "android.projectView.select",
+                &mut state,
+                json!({"view": "project"}),
+            )
+            .unwrap();
+        assert!(!state.android.android_view);
+        assert!(
+            commands
+                .execute(
+                    "android.projectView.select",
+                    &mut state,
+                    json!({"view": "packages"})
+                )
+                .is_err()
+        );
         let project_json = commands
             .execute("android.project.detect", &mut state, json!({}))
             .unwrap();
