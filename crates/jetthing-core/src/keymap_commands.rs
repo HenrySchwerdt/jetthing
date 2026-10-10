@@ -14,6 +14,8 @@ pub enum BindingScope {
     Global,
     /// Only while the editor has keyboard focus (text fields keep their own keys).
     Editor,
+    /// Only from menus: the focused widget handles the key itself (clipboard, Tab).
+    Menu,
 }
 
 /// An IntelliJ action id that Jetthing implements as a command.
@@ -36,6 +38,15 @@ const fn global(
         command,
         params,
         scope: BindingScope::Global,
+    }
+}
+
+const fn menu(action: &'static str, command: &'static str) -> ActionCommand {
+    ActionCommand {
+        action,
+        command,
+        params: "{}",
+        scope: BindingScope::Menu,
     }
 }
 
@@ -96,6 +107,13 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     editor("CommentByLineComment", "editor.commentLine"),
     editor("MoveLineUp", "editor.moveLineUp"),
     editor("MoveLineDown", "editor.moveLineDown"),
+    menu("$Copy", "editor.copy"),
+    menu("$Cut", "editor.cut"),
+    menu("$SelectAll", "editor.selectAll"),
+    menu("EditorIndentSelection", "editor.indent"),
+    menu("EditorUnindentSelection", "editor.unindent"),
+    menu("About", "app.about"),
+    menu("CheckForUpdate", "app.checkForUpdates"),
 ];
 
 pub fn command_for_action(action: &str) -> Option<&'static ActionCommand> {
@@ -400,10 +418,22 @@ mod tests {
                 binding.action,
                 binding.command
             );
+            if binding.scope != BindingScope::Menu {
+                assert!(
+                    windows.bindings.contains_key(binding.action)
+                        || mac.bindings.contains_key(binding.action),
+                    "{} has no default shortcut",
+                    binding.action
+                );
+            }
+            // Executor actions (Run, Debug) are registered at runtime and only
+            // appear in the keymaps.
             assert!(
-                windows.bindings.contains_key(binding.action)
-                    || mac.bindings.contains_key(binding.action),
-                "{} has no default shortcut",
+                jetthing_actions::Catalog::shared()
+                    .get(binding.action)
+                    .is_some()
+                    || windows.bindings.contains_key(binding.action),
+                "{} is not a reference action id",
                 binding.action
             );
             assert!(serde_json::from_str::<Value>(binding.params).is_ok());
