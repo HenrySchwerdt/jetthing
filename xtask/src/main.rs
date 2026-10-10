@@ -1,11 +1,12 @@
 mod dist;
+mod manifests;
 mod parity;
 mod scenes;
 
 use anyhow::{Result, anyhow, bail};
 use std::path::{Path, PathBuf};
 
-const USAGE: &str = "usage: cargo xtask parity [--check] | dist [--installer] [--target <triple>] | scenes [--only 01,05] [--out DIR] [--release]";
+const USAGE: &str = "usage: cargo xtask parity [--check] | dist [--installer] [--target <triple>] | manifests --dir DIR [--version X.Y.Z] | scenes [--only 01,05] [--out DIR] [--release]";
 
 fn workspace_root() -> PathBuf {
     // Prefer the current directory when it holds the inventory (normal `cargo run`
@@ -32,6 +33,7 @@ fn main() -> Result<()> {
             parity(check)
         }
         Some("dist") => dist::dist(dist::Options::parse(args.into_iter().skip(1))?),
+        Some("manifests") => manifests::run(manifests::Options::parse(args.into_iter().skip(1))?),
         Some("scenes") => scenes::run(args.into_iter().skip(1)),
         _ => bail!(USAGE),
     }

@@ -38,6 +38,13 @@ pub fn current_version() -> Version {
 /// Only release layouts (`jetthing` executable from a distribution archive) can
 /// update themselves; development builds (`target/*/jetthing-app`) cannot.
 pub fn installable_executable() -> Result<std::path::PathBuf, String> {
+    // Inside an AppImage the binary runs from a temporary mount; the runtime
+    // names the real file in `$APPIMAGE`, which is what updates replace.
+    if let Some(appimage) = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from)
+        && appimage.is_file()
+    {
+        return Ok(appimage);
+    }
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     if exe.file_stem().and_then(|s| s.to_str()) == Some("jetthing") {
         Ok(exe)
