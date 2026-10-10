@@ -34,6 +34,15 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
     let vars = variables_for(state, id);
     let sending = state.sending_id() == Some(id);
     let connected = state.stream_connected(id);
+    let mut gql = match state.schemas.get(id) {
+        Some(s) => GqlContext {
+            schema: s.schema.clone(),
+            loading: s.loading(),
+            error: s.error.clone(),
+            fetch: false,
+        },
+        None => GqlContext::default(),
+    };
     let tab = &mut state.request_tab;
     let mut current_tab = *tab;
     let Some(request) = state.request_mut(id) else {
@@ -171,7 +180,7 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
                 RequestTab::Body if request.protocol == Protocol::WebSocket => {
                     changed |= message_tab(ui, &mut request.body, &vars, connected, actions);
                 }
-                RequestTab::Body => changed |= body_tab(ui, &mut request.body, &vars),
+                RequestTab::Body => changed |= body_tab(ui, &mut request.body, &vars, &mut gql),
                 RequestTab::Auth => changed |= auth_tab(ui, &mut request.auth, &vars, actions),
                 RequestTab::Tests => changed |= tests_tab(ui, &mut request.assertions),
                 RequestTab::Settings => changed |= settings_tab(ui, request),
@@ -179,6 +188,9 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
         });
 
     state.request_tab = current_tab;
+    if gql.fetch {
+        state.fetch_schema(id);
+    }
     if changed {
         state.touch();
     }
@@ -193,6 +205,15 @@ pub fn variables_for(state: &NexusState, id: &Id) -> Map<String, Value> {
         ws.active_environment(),
         &folders,
     )
+}
+
+/// GraphQL schema state handed to the body tab.
+#[derive(Default)]
+struct GqlContext {
+    schema: Option<std::sync::Arc<nexus_http_core::graphql::Schema>>,
+    loading: bool,
+    error: Option<String>,
+    fetch: bool,
 }
 
 struct TabCounts {
@@ -400,7 +421,7 @@ impl BodyKind {
     }
 }
 
-fn body_tab(ui: &mut Ui, body: &mut Body, vars: &Map<String, Value>) -> bool {
+fn body_tab(ui: &mut Ui, body: &mut Body, vars: &Map<String, Value>, gql: &mut GqlContext) -> bool {
     let pal = Palette::of(ui);
     let mut changed = false;
     let current = BodyKind::of(body);
@@ -502,14 +523,16 @@ fn body_tab(ui: &mut Ui, body: &mut Body, vars: &Map<String, Value>) -> bool {
             variables,
             operation_name: _,
         } => {
-            let h = ui.available_height();
-            caption(ui, "Query");
-            ui.allocate_ui(vec2(ui.available_width(), h * 0.6), |ui| {
-                changed |= editor_box(ui, query, Syntax::Plain, vars, "gql");
-            });
-            ui.add_space(6.0);
-            caption(ui, "Variables (JSON)");
-            changed |= editor_box(ui, variables, Syntax::Json, vars, "gqlvars");
+            changed |= crate::graphql_ui::body(
+                ui,
+                query,
+                variables,
+                vars,
+                gql.schema.as_deref(),
+                gql.loading,
+                gql.error.as_deref(),
+                &mut gql.fetch,
+            );
         }
     }
     changed

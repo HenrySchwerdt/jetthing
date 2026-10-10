@@ -627,3 +627,44 @@ fn talks_websocket() {
     session.close();
     wait_for(&mut session, "close", Direction::Info);
 }
+
+#[test]
+fn introspects_graphql_schema() {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let port = server.server_addr().to_ip().unwrap().port();
+    thread::spawn(move || {
+        if let Ok(mut request) = server.recv() {
+            let mut body = String::new();
+            let _ = std::io::Read::read_to_string(request.as_reader(), &mut body);
+            assert!(body.contains("__schema"));
+            let schema = json!({"data": {"__schema": {
+                "queryType": {"name": "Query"},
+                "types": [{"kind": "OBJECT", "name": "Query", "fields": [
+                    {"name": "hello", "args": [], "type": {"kind": "SCALAR", "name": "String", "ofType": null}}
+                ]}]
+            }}});
+            let _ = request.respond(
+                tiny_http::Response::from_string(schema.to_string())
+                    .with_header(header("Content-Type", "application/json")),
+            );
+        }
+    });
+    let mut ws = Workspace::new("G");
+    let req = Request::new(
+        "gql",
+        Method::Post,
+        format!("http://127.0.0.1:{port}/graphql"),
+    );
+    let id = req.id.clone();
+    ws.items.push(Item::Request(req));
+    let schema = nexus_http_core::graphql::fetch_schema(
+        &ws,
+        &id,
+        Path::new("."),
+        &client(),
+        &History::default(),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(schema.types["Query"].fields[0].name, "hello");
+}

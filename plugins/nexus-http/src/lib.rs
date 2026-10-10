@@ -6,6 +6,7 @@
 //! UI-independent controller.
 
 pub mod complete;
+pub mod graphql_ui;
 pub mod oauth;
 pub mod state;
 pub mod theme;

@@ -14,6 +14,7 @@ pub mod codegen;
 pub mod cookies;
 pub mod exec;
 pub mod filter;
+pub mod graphql;
 pub mod history;
 pub mod import;
 pub mod model;

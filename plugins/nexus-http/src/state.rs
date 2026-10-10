@@ -103,6 +103,20 @@ impl StreamState {
     }
 }
 
+/// A fetched (or loading) GraphQL schema for a request.
+#[derive(Default)]
+pub struct SchemaState {
+    pub schema: Option<Arc<nexus_http_core::graphql::Schema>>,
+    pub error: Option<String>,
+    rx: Option<Receiver<Result<nexus_http_core::graphql::Schema, String>>>,
+}
+
+impl SchemaState {
+    pub fn loading(&self) -> bool {
+        self.rx.is_some()
+    }
+}
+
 /// Events kept per stream before the oldest are dropped.
 const MAX_STREAM_EVENTS: usize = 5_000;
 
@@ -132,6 +146,7 @@ pub struct NexusState {
     pub notice: Option<(String, Instant)>,
     inflight: Option<InFlight>,
     pub streams: std::collections::HashMap<Id, StreamState>,
+    pub schemas: std::collections::HashMap<Id, SchemaState>,
     dirty_since: Option<Instant>,
     history_dirty: bool,
 }
@@ -186,6 +201,7 @@ impl NexusState {
             notice: None,
             inflight: None,
             streams: Default::default(),
+            schemas: Default::default(),
             dirty_since: None,
             history_dirty: false,
         }
@@ -507,6 +523,30 @@ impl NexusState {
             .is_some_and(|s| s.send_text(rendered))
     }
 
+    /// Fetches the GraphQL schema of request `id` by introspection.
+    pub fn fetch_schema(&mut self, id: &Id) {
+        let workspace = self.workspace.clone();
+        let history = self.history.clone();
+        let base_dir = self.base_dir.clone();
+        let request_id = id.clone();
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let client = Client::new(workspace.settings.clone());
+            let result = nexus_http_core::graphql::fetch_schema(
+                &workspace,
+                &request_id,
+                &base_dir,
+                &client,
+                &history,
+                &AtomicBool::new(false),
+            );
+            let _ = tx.send(result);
+        });
+        let entry = self.schemas.entry(id.clone()).or_default();
+        entry.rx = Some(rx);
+        entry.error = None;
+    }
+
     pub fn stream_connected(&self, id: &Id) -> bool {
         self.streams.get(id).is_some_and(StreamState::connected)
     }
@@ -555,6 +595,23 @@ impl NexusState {
             }
         }
         let mut streaming = false;
+        for schema in self.schemas.values_mut() {
+            if let Some(rx) = &schema.rx {
+                match rx.try_recv() {
+                    Ok(Ok(s)) => {
+                        schema.schema = Some(Arc::new(s));
+                        schema.error = None;
+                        schema.rx = None;
+                    }
+                    Ok(Err(e)) => {
+                        schema.error = Some(e);
+                        schema.rx = None;
+                    }
+                    Err(TryRecvError::Empty) => streaming = true,
+                    Err(TryRecvError::Disconnected) => schema.rx = None,
+                }
+            }
+        }
         for stream in self.streams.values_mut() {
             if let Some(session) = &mut stream.session {
                 stream.events.extend(session.poll());

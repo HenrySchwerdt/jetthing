@@ -26,13 +26,14 @@ Environment variables pick the scene (see the example's doc comment), e.g.
 | `16-websocket.png` | WebSocket request: message composer with a template tag, two sent messages, acknowledgements and server-pushed updates |
 | `17-server-sent-events.png` | Server-Sent Events price feed with event names and ids |
 | `18-variable-autocomplete.png` | Typing `{{` in the URL opens variable completion with value previews (secret values are masked) |
+| `19-graphql-schema-completion.png` | GraphQL: schema fetched by introspection, explorer expanded, field completion for `Product` at the caret |
 | `15-collection-runner-workspace.png` | Whole-workspace run in the light theme; the multipart request fails with an actionable missing-file error |
 
 ## Differences from the reference client
 
 - The response preview renders HTML as source and does not render images
   (it shows type and size).
-- There is no GraphQL schema introspection or autocomplete yet, and no gRPC
-  (planned).
+- GraphQL argument and enum completion and query validation are not
+  implemented, and there is no gRPC support yet (planned).
 - These screenshots come from the development host. They will be retaken in
   `jetthing --app nexus-http` once the plugin API (#48 / #65) is merged.

@@ -85,6 +85,11 @@ impl eframe::App for Host {
             if std::env::var_os("NEXUS_SEND").is_some() {
                 self.app.send_selected();
             }
+            if std::env::var_os("NEXUS_SCHEMA").is_some()
+                && let Some(id) = self.app.state.selected.clone()
+            {
+                self.app.state.fetch_schema(&id);
+            }
             if let Ok(n) = std::env::var("NEXUS_MESSAGES") {
                 self.messages = n.parse().unwrap_or(0);
             }
@@ -465,6 +470,7 @@ fn demo_server() -> u16 {
                 ("POST", "/v1/products") => (201, serde_json::from_str(&body).unwrap_or(json!({}))),
                 ("PATCH", _) => (200, json!({"sku": "KB-042", "price": 169.0})),
                 ("DELETE", _) => (204, json!(null)),
+                ("POST", "/graphql") if body.contains("__schema") => (200, demo_schema()),
                 ("POST", "/graphql") => (
                     200,
                     json!({"data": {"products": [{"sku": "KB-001", "name": "Mechanical Keyboard", "stock": 12}]}}),
@@ -626,4 +632,57 @@ fn demo_websocket_server() -> u16 {
         }
     });
     port
+}
+
+/// Introspection result of the demo GraphQL API.
+fn demo_schema() -> serde_json::Value {
+    let t = |kind: &str, name: &str| json!({"kind": kind, "name": name, "ofType": null});
+    let nn = |inner: serde_json::Value| json!({"kind": "NON_NULL", "name": null, "ofType": inner});
+    let list = |inner: serde_json::Value| json!({"kind": "LIST", "name": null, "ofType": inner});
+    let field = |name: &str, ty: serde_json::Value, args: serde_json::Value, description: &str| json!({"name": name, "type": ty, "args": args, "description": description, "isDeprecated": false});
+    let arg = |name: &str, ty: serde_json::Value| json!({"name": name, "type": ty});
+    json!({"data": {"__schema": {
+        "queryType": {"name": "Query"},
+        "mutationType": {"name": "Mutation"},
+        "subscriptionType": null,
+        "types": [
+            {"kind": "OBJECT", "name": "Query", "fields": [
+                field("products", nn(list(nn(t("OBJECT", "Product")))), json!([arg("first", t("SCALAR", "Int")), arg("category", t("SCALAR", "String"))]), "Products, newest first"),
+                field("product", t("OBJECT", "Product"), json!([arg("sku", nn(t("SCALAR", "String")))]), "One product by SKU"),
+                field("orders", nn(list(nn(t("OBJECT", "Order")))), json!([arg("status", t("ENUM", "OrderStatus"))]), "Orders of the current user"),
+                field("me", t("OBJECT", "User"), json!([]), "The signed-in user")
+            ]},
+            {"kind": "OBJECT", "name": "Mutation", "fields": [
+                field("createProduct", t("OBJECT", "Product"), json!([arg("input", nn(t("INPUT_OBJECT", "ProductInput")))]), "Adds a product"),
+                field("cancelOrder", t("OBJECT", "Order"), json!([arg("id", nn(t("SCALAR", "ID")))]), "Cancels an open order")
+            ]},
+            {"kind": "OBJECT", "name": "Product", "fields": [
+                field("sku", nn(t("SCALAR", "String")), json!([]), "Stock keeping unit"),
+                field("name", nn(t("SCALAR", "String")), json!([]), ""),
+                field("price", t("SCALAR", "Float"), json!([]), "Gross price in EUR"),
+                field("stock", t("SCALAR", "Int"), json!([]), "Units in the warehouse"),
+                field("supplier", t("OBJECT", "Supplier"), json!([]), ""),
+                field("tags", nn(list(nn(t("SCALAR", "String")))), json!([]), "")
+            ]},
+            {"kind": "OBJECT", "name": "Supplier", "fields": [
+                field("name", t("SCALAR", "String"), json!([]), ""),
+                field("country", t("SCALAR", "String"), json!([]), "ISO 3166 code")
+            ]},
+            {"kind": "OBJECT", "name": "Order", "fields": [
+                field("id", nn(t("SCALAR", "ID")), json!([]), ""),
+                field("status", t("ENUM", "OrderStatus"), json!([]), ""),
+                field("items", nn(list(nn(t("OBJECT", "Product")))), json!([]), "")
+            ]},
+            {"kind": "OBJECT", "name": "User", "fields": [
+                field("id", nn(t("SCALAR", "ID")), json!([]), ""),
+                field("email", t("SCALAR", "String"), json!([]), ""),
+                field("roles", nn(list(nn(t("SCALAR", "String")))), json!([]), "")
+            ]},
+            {"kind": "INPUT_OBJECT", "name": "ProductInput", "fields": null, "inputFields": [
+                {"name": "sku", "type": nn(t("SCALAR", "String"))},
+                {"name": "name", "type": nn(t("SCALAR", "String"))}
+            ]},
+            {"kind": "ENUM", "name": "OrderStatus", "fields": null, "enumValues": [{"name": "OPEN"}, {"name": "SHIPPED"}, {"name": "CANCELLED"}]}
+        ]
+    }}})
 }
