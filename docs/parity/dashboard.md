@@ -11,22 +11,22 @@ rows. Rows tagged `[Ultimate]` are IntelliJ IDEA Ultimate-only features.
 
 | Metric | Value |
 |---|---:|
-| Areas | 13 |
-| Rows | 665 |
-| Total weight | 1479 |
-| **Weighted % implemented** | **9.5%** |
+| Areas | 15 |
+| Rows | 699 |
+| Total weight | 1525 |
+| **Weighted % implemented** | **10.8%** |
 | **Weighted % verified** | **0.0%** |
 
 ## Status counts
 
 | Status | Rows | Weight |
 |---|---:|---:|
-| Missing | 588 | 1251 |
+| Missing | 594 | 1257 |
 | Planned | 1 | 1 |
-| Partial | 59 | 173 |
-| Implemented | 17 | 54 |
+| Partial | 78 | 204 |
+| Implemented | 26 | 63 |
 | Verified | 0 | 0 |
-| **Total** | **665** | **1479** |
+| **Total** | **699** | **1525** |
 
 ## By area
 
@@ -44,11 +44,13 @@ rows. Rows tagged `[Ultimate]` are IntelliJ IDEA Ultimate-only features.
 | IntelliJ IDEA parity: tool windows | [intellij-tool-windows.md](intellij-tool-windows.md) | 42 | 114 | 37 | 0 | 5 | 0 | 0 | 10.1% | 0.0% |
 | IntelliJ IDEA parity: frameworks, databases, and integrations | [intellij-ultimate.md](intellij-ultimate.md) | 43 | 57 | 42 | 0 | 1 | 0 | 0 | 0.9% | 0.0% |
 | IntelliJ IDEA parity: version control | [intellij-vcs.md](intellij-vcs.md) | 58 | 139 | 53 | 0 | 3 | 2 | 0 | 10.8% | 0.0% |
-| Platform parity | [platform.md](platform.md) | 25 | 25 | 1 | 0 | 18 | 6 | 0 | 60.0% | 0.0% |
+| nexus-http parity | [nexus-http.md](nexus-http.md) | 17 | 17 | 6 | 0 | 11 | 0 | 0 | 32.4% | 0.0% |
+| Platform parity | [platform.md](platform.md) | 38 | 38 | 1 | 0 | 22 | 15 | 0 | 68.4% | 0.0% |
+| Toolchain provisioning parity | [toolchains.md](toolchains.md) | 4 | 16 | 0 | 0 | 4 | 0 | 0 | 50.0% | 0.0% |
 
 ## By edition
 
 | Edition scope | Rows | Weight | % implemented | % verified |
 |---|---:|---:|---:|---:|
-| Community / platform (untagged) | 613 | 1409 | 9.9% | 0.0% |
+| Community / platform (untagged) | 647 | 1455 | 11.3% | 0.0% |
 | Ultimate-only (`[Ultimate]`) | 52 | 70 | 0.7% | 0.0% |
