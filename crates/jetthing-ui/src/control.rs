@@ -12,7 +12,7 @@ use jetthing_command::CommandError;
 use jetthing_control::{Chord, ControlServer, Pending, Request, Response, WaitCondition};
 use jetthing_core::{Anchor, ToolWindow};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -28,6 +28,20 @@ pub struct Control {
     screenshots: HashMap<u64, (Pending, PathBuf)>,
     next_screenshot: u64,
     frames_since_input: u32,
+    /// Injected input, one entry per frame; gestures such as Double Shift
+    /// span several frames.
+    input: VecDeque<InputFrame>,
+    /// Set by the first injected input: from then on the window counts as
+    /// focused, so injected keys reach widgets even when no window manager
+    /// gives the window OS focus (Xvfb, CI).
+    owns_focus: bool,
+}
+
+/// Input applied during one frame; `done` is answered after its frame ran.
+pub(crate) struct InputFrame {
+    modifiers: egui::Modifiers,
+    events: Vec<egui::Event>,
+    done: Option<Pending>,
 }
 
 impl Control {
@@ -39,11 +53,16 @@ impl Control {
             screenshots: HashMap::new(),
             next_screenshot: 0,
             frames_since_input: 0,
+            input: VecDeque::new(),
+            owns_focus: false,
         }
     }
 
     fn busy(&self) -> bool {
-        !self.after_frame.is_empty() || !self.waits.is_empty() || !self.screenshots.is_empty()
+        !self.after_frame.is_empty()
+            || !self.waits.is_empty()
+            || !self.screenshots.is_empty()
+            || !self.input.is_empty()
     }
 }
 
@@ -117,24 +136,20 @@ impl IdeApp {
                     let state = self.control_state(ctx);
                     pending.respond(Response::ok(state));
                 }
-                Request::Key { chord } => match key_events(&chord) {
-                    Ok((modifiers, events)) => {
-                        raw_input.modifiers = modifiers;
-                        raw_input.events.extend(events);
-                        control.frames_since_input = 0;
-                        control
-                            .after_frame
-                            .push((pending, Response::ok(Value::Null)));
+                Request::Key { chord } => match key_frames(&chord) {
+                    Ok(mut frames) => {
+                        if let Some(last) = frames.last_mut() {
+                            last.done = Some(pending);
+                        }
+                        control.input.extend(frames);
                     }
                     Err(error) => pending.respond(Response::error(error)),
                 },
-                Request::Type { text } => {
-                    raw_input.events.push(egui::Event::Text(text));
-                    control.frames_since_input = 0;
-                    control
-                        .after_frame
-                        .push((pending, Response::ok(Value::Null)));
-                }
+                Request::Type { text } => control.input.push_back(InputFrame {
+                    modifiers: egui::Modifiers::NONE,
+                    events: vec![egui::Event::Text(text)],
+                    done: Some(pending),
+                }),
                 Request::Screenshot { path } => {
                     let id = control.next_screenshot;
                     control.next_screenshot += 1;
@@ -154,6 +169,20 @@ impl IdeApp {
                     }
                 }
             }
+        }
+        if let Some(frame) = control.input.pop_front() {
+            control.owns_focus = true;
+            raw_input.modifiers = frame.modifiers;
+            raw_input.events.extend(frame.events);
+            control.frames_since_input = 0;
+            if let Some(pending) = frame.done {
+                control
+                    .after_frame
+                    .push((pending, Response::ok(Value::Null)));
+            }
+        }
+        if control.owns_focus {
+            raw_input.focused = true;
         }
         if control.busy() {
             ctx.request_repaint();
@@ -234,8 +263,18 @@ impl IdeApp {
         !self.state.lsp.completions().is_empty()
     }
 
+    fn terminal_text(&self) -> Option<String> {
+        self.state
+            .terminal
+            .as_ref()
+            .map(|terminal| terminal.screen().contents())
+    }
+
     fn shows_text(&self, text: &str) -> bool {
         self.state.status.contains(text)
+            || self
+                .terminal_text()
+                .is_some_and(|screen| screen.contains(text))
             || self
                 .state
                 .active_document
@@ -307,6 +346,7 @@ impl IdeApp {
             },
             "focus": focus,
             "editor": editor,
+            "terminal": self.terminal_text(),
             "popups": {
                 "searchEverywhere": self.palette.open.then(|| self.palette.tab_name()),
                 "dialog": self.dialog.as_ref().map(|dialog| dialog.kind()),
@@ -320,10 +360,32 @@ impl IdeApp {
     }
 }
 
+/// Frames for a chord. `DoubleShift` is the modifier-only Search Everywhere
+/// gesture: Shift pressed and released twice on consecutive frames.
+pub(crate) fn key_frames(chord: &str) -> Result<Vec<InputFrame>, String> {
+    let frame = |modifiers, events| InputFrame {
+        modifiers,
+        events,
+        done: None,
+    };
+    if chord.trim().eq_ignore_ascii_case("doubleshift") {
+        let shift = egui::Modifiers::SHIFT;
+        let none = egui::Modifiers::NONE;
+        return Ok(vec![
+            frame(shift, Vec::new()),
+            frame(none, Vec::new()),
+            frame(shift, Vec::new()),
+            frame(none, Vec::new()),
+        ]);
+    }
+    let (modifiers, events) = key_events(chord)?;
+    Ok(vec![frame(modifiers, events)])
+}
+
 /// Translates a chord into the modifiers and key events egui-winit would
 /// produce, including the text event for printable keys typed without
 /// Ctrl/⌘ (platforms emit Alt+digit text too, which shortcuts must swallow).
-pub(crate) fn key_events(chord: &str) -> Result<(egui::Modifiers, Vec<egui::Event>), String> {
+fn key_events(chord: &str) -> Result<(egui::Modifiers, Vec<egui::Event>), String> {
     let chord = Chord::parse(chord).map_err(|error| error.to_string())?;
     let key = egui::Key::from_name(&chord.key)
         .ok_or_else(|| format!("unknown key {:?} in chord", chord.key))?;
@@ -392,6 +454,25 @@ mod tests {
         assert_eq!(key_events("Escape").unwrap().1.len(), 2);
         assert!(key_events("Ctrl+Bogus").is_err());
         assert!(key_events("Hyper+A").is_err());
+        let frames = key_frames("DoubleShift").unwrap();
+        assert_eq!(frames.len(), 4);
+        assert!(frames[0].modifiers.shift_only() && frames[2].modifiers.shift_only());
+        assert!(frames.iter().all(|frame| frame.events.is_empty()));
+    }
+
+    #[test]
+    fn double_shift_frames_open_search_everywhere() {
+        let mut app = IdeApp::with_update_check(None, Vec::new(), false);
+        let ctx = egui::Context::default();
+        for frame in key_frames("DoubleShift").unwrap() {
+            let input = egui::RawInput {
+                modifiers: frame.modifiers,
+                events: frame.events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| app.detect_double_shift(ctx));
+        }
+        assert!(app.palette.open);
     }
 
     #[test]
