@@ -5,14 +5,10 @@
   "fixture": "java-gradle",
   "open": ["src/main/java/com/example/App.java"],
   "steps": [
-    {"op": "execute", "command": "project.toggleDirectory", "args": {"path": "src"}},
-    {"op": "execute", "command": "project.toggleDirectory", "args": {"path": "src/main"}},
-    {"op": "execute", "command": "project.toggleDirectory", "args": {"path": "src/main/java"}},
-    {"op": "execute", "command": "project.toggleDirectory", "args": {"path": "src/main/java/com"}},
-    {"op": "execute", "command": "project.toggleDirectory", "args": {"path": "src/main/java/com/example"}},
     {"op": "wait", "until": "idle"},
     {"op": "assert", "pointer": "/activeTab", "equals": "src/main/java/com/example/App.java"},
     {"op": "assert", "pointer": "/toolWindows/left", "equals": "project"},
+    {"op": "assert", "pointer": "/projectTree/selected", "equals": "src/main/java/com/example/App.java"},
     {"op": "assert", "pointer": "/editor/text", "contains": "public static void main"},
     {"op": "screenshot", "name": "04-editor-project-tree.png"}
   ]
