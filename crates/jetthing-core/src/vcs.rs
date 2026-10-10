@@ -181,6 +181,7 @@ impl IdeState {
         let count = diff.hunks.len();
         self.diff = Some(DiffTab::new(path.to_owned(), diff, viewer));
         self.diff_active = true;
+        self.plugin_host.active_tab = None;
         self.status = format!(
             "{}: {count} difference{}",
             path.display(),
@@ -303,6 +304,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             |state: &IdeState| state.diff.is_some(),
             |state: &mut IdeState, _| {
                 state.diff_active = true;
+                state.plugin_host.active_tab = None;
                 Ok(Value::Null)
             },
         ))

@@ -14,6 +14,7 @@ jetthing-core = { path = "../jetthing-core" }
 jetthing-git = { path = "../jetthing-git" }
 jetthing-language = { path = "../jetthing-language" }
 jetthing-lsp = { path = "../jetthing-lsp" }
+jetthing-plugins = { path = "../jetthing-plugins" }
 jetthing-runner = { path = "../jetthing-runner" }
 jetthing-settings = { path = "../jetthing-settings" }
 jetthing-text = { path = "../jetthing-text" }

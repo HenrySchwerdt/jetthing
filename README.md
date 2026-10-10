@@ -13,6 +13,8 @@ window islands, Search Everywhere, and a status bar with navigation breadcrumbs.
 cargo run -p jetthing-app                           # welcome screen, Open Project
 cargo run -p jetthing-app -- .                      # open a project
 cargo run -p jetthing-app -- . src/main.rs          # open a project and files
+cargo run -p jetthing-app --features example-plugins -- --app dev.jetthing.hello
+                                                    # a plugin as a standalone app
 cargo run -p jetthing-cli -- commands               # headless command discovery
 cargo run -p xtask -- parity                        # regenerate the parity dashboard
 ```
@@ -43,6 +45,13 @@ cargo run -p jetthing-cli -- ui state
 ```
 
 See `docs/parity/evidence/ui-control-socket.md` for the protocol.
+## Plugins
+
+Plugins add commands, menu items, keybindings, settings, tool windows, editor
+tabs and status bar widgets. Manage them in **File → Plugins…**. Run a plugin
+that declares an `[app]` view on its own with `jetthing --app <plugin-id>`. See
+`docs/plugins/api.md`; `plugins/hello` is the example plugin (bundled with
+`--features example-plugins`).
 
 ## Builds, releases and updates
 

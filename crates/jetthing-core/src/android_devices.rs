@@ -214,6 +214,8 @@ impl AndroidState {
 
 impl IdeState {
     pub(crate) fn device_manager_opened(&mut self) {
+        // The Device Manager shares the right anchor with plugin tool windows.
+        self.plugin_host.tool_window = None;
         self.android.refresh_avds();
         let _ = self.android.ensure_device_tracking();
     }

@@ -143,6 +143,10 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
                     app.open_project_dialog();
                     ui.close();
                 }
+                if menu.title == "File" && ui.button("Plugins…").clicked() {
+                    app.plugins_window = Some(Default::default());
+                    ui.close();
+                }
                 for spec in menu_commands(menu, &specs) {
                     let enabled = app.commands.is_enabled(&spec.id, &app.state);
                     let button = egui::Button::new(&spec.label)
@@ -152,6 +156,7 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
                         ui.close();
                     }
                 }
+                crate::plugin_ui::menu_items(app, ui, menu.title);
             });
         }
         ui.separator();
@@ -231,9 +236,15 @@ fn project_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         ui.label(
             egui::RichText::new(widgets::pluralize(
-                app.state.plugins.len(),
-                "plugin loaded",
-                "plugins loaded",
+                app.state
+                    .plugin_host
+                    .registry
+                    .entries()
+                    .iter()
+                    .filter(|entry| entry.is_active())
+                    .count(),
+                "plugin active",
+                "plugins active",
             ))
             .color(theme::TEXT_INFO),
         );
@@ -341,7 +352,7 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
     }
 }
 
-fn window_controls(ui: &mut egui::Ui) {
+pub(crate) fn window_controls(ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let control = |ui: &mut egui::Ui, kind: u8, hover: Color32| {
         let (rect, response) = ui.allocate_exact_size(vec2(40.0, TOOLBAR_HEIGHT), Sense::click());
@@ -465,7 +476,7 @@ pub fn window_resize_handles(ctx: &egui::Context) {
         });
 }
 
-fn stripe_button(app: &mut IdeApp, ui: &mut egui::Ui, window: ToolWindow, icon: Icon) {
+pub(crate) fn stripe_button(app: &mut IdeApp, ui: &mut egui::Ui, window: ToolWindow, icon: Icon) {
     let selected = app.state.tool_windows.is_visible(window);
     let (rect, response) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
     let fill = if selected {
@@ -554,12 +565,17 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
         });
 }
 
+/// Whether the right stripe offers the Device Manager (Android projects).
+pub(crate) fn shows_device_manager(app: &IdeApp) -> bool {
+    app.state.android.project.is_some()
+        || app.state.tool_windows.is_visible(ToolWindow::DeviceManager)
+}
+
 /// Right tool window stripe. Without right-anchored tool windows (non-Android
 /// projects) it is a narrow gutter so the editor island keeps its rounded edge.
+/// Plugin tool windows join this stripe (`plugin_ui::right_side`).
 pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
-    let android = app.state.android.project.is_some()
-        || app.state.tool_windows.is_visible(ToolWindow::DeviceManager);
-    if !android {
+    if !shows_device_manager(app) {
         egui::SidePanel::right("right_stripe")
             .exact_width(6.0)
             .resizable(false)
@@ -647,6 +663,7 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::plugin_ui::status_widgets(app, ui, &font);
                     let secondary = *theme::TEXT_SECONDARY;
                     crate::lsp_status::status_widget(app, ui, font.clone());
                     let active = app

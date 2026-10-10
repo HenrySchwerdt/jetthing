@@ -23,27 +23,26 @@ no crate below `jetthing-ui` imports UI types.
   it delegates repository semantics to the installed Git executable.
 - `jetthing-runner`: detected build plans and cancellable child-process execution with
   streamed, separated stdout/stderr and explicit exit state.
-<<<<<<< HEAD
 - `jetthing-android`: Android SDK discovery (IDE setting, `local.properties`, `ANDROID_HOME`,
   `ANDROID_SDK_ROOT`, OS default), installed-package inventory, and Android Gradle project
   detection; host access goes through the `HostEnvironment` trait so tests use fakes.
-- `jetthing-lsp`: JSON-RPC framing, language-server lifecycle, document synchronization,
-  diagnostics, and completion transport; providers remain behind platform abstractions.
-=======
 - `jetthing-lsp`: JSON-RPC framing (`transport`), one server process with typed
   request/response plumbing, cancellation, `$/progress` and diagnostics (`client`), the
   server registry behind the `LanguageServerProvider` trait with PATH/`lsp.toml` discovery
   (`registry`), and `LspManager`, which starts servers lazily per workspace root and
   restarts crashed ones (`manager`). Uses `lsp-types`; no UI code. Popups live in
   `jetthing-ui`. `jetthing-fake-lsp` is a scriptable test server.
->>>>>>> origin/main
-- `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,
-  and validation. Executable/Wasm loading is deliberately not claimed yet.
+- `jetthing-plugin-api`: the toolkit-free plugin contract (`Plugin`, contributions,
+  `PluginHost`, `jetthing-plugin.toml` manifest, opaque `ViewFrame`); see `docs/plugins/api.md`.
+- `jetthing-plugins`: plugin registry: discovery, activation order, enable/disable and
+  settings persistence. Lua/Wasm loading is deliberately not claimed yet.
+- `jetthing-plugin-ui`: egui helpers for plugin views (UI layer, used by plugin crates).
 - `jetthing-settings`: typed settings registry (bool/int/float/text/path/enum/list with
   defaults and validation), the Settings tree keyed by the reference configurable ids in
   `docs/spec/data/settings.json`, application/project layering, TOML persistence,
   search, and the dialog's draft/Apply/Reset model. No UI types.
-- `jetthing-core`: application state, tool window layout model (one visible tool window
+- `jetthing-core`: application state, the plugin host (scoped `PluginHost`, command
+  routing, plugin tool window/tab state), tool window layout model (one visible tool window
   per anchor), and built-in command handlers.
 - `jetthing-ui`: native workbench shell split into `chrome` (main toolbar, stripe, status
   bar, window controls), `toolwindows` (Project, Commit, Find, Build/Run, Problems,

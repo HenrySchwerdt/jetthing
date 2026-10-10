@@ -46,6 +46,11 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 app.caret_screen_pos = None;
                 return;
             }
+            if app.state.plugin_host.active_tab.is_some() {
+                crate::plugin_ui::active_tab_body(app, ui);
+                app.caret_screen_pos = None;
+                return;
+            }
             if app.state.active_document.is_none() {
                 empty_state(ui);
                 app.caret_screen_pos = None;
@@ -163,7 +168,9 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     for index in 0..app.state.documents.len() {
         let doc = &app.state.documents[index];
         let name = IdeApp::file_name(&doc.path);
-        let active = app.state.active_document == Some(index) && !app.state.diff_active;
+        let active = app.state.active_document == Some(index)
+            && !app.state.diff_active
+            && app.state.plugin_host.active_tab.is_none();
         let color = if active {
             *theme::TEXT_BRIGHT
         } else {
@@ -242,13 +249,16 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     if let Some(tab) = app.state.diff.as_ref() {
         let title = crate::diff_ui::tab_title(tab);
         let tooltip = format!("Diff of {} against HEAD", tab.path.display());
-        let (clicked, closed) = diff_tab(ui, bar, x, &title, &tooltip, app.state.diff_active);
+        let (clicked, closed, end) =
+            diff_tab(ui, bar, x, &title, &tooltip, app.state.diff_active);
+        x = end;
         if closed {
             app.dispatch("diff.close", Value::Null);
         } else if clicked {
             app.dispatch("diff.activate", Value::Null);
         }
     }
+    crate::plugin_ui::editor_tabs(app, ui, bar, x);
     if let Some(index) = close {
         app.dispatch("editor.close", json!({"index": index}));
     } else if let Some(index) = activate {
@@ -287,7 +297,8 @@ impl TabLayout {
     }
 }
 
-/// The diff viewer's tab, after the document tabs. Returns (clicked, closed).
+/// The diff viewer's tab, after the document tabs. Returns (clicked, closed, x after
+/// the tab).
 fn diff_tab(
     ui: &mut egui::Ui,
     bar: Rect,
@@ -295,7 +306,7 @@ fn diff_tab(
     title: &str,
     tooltip: &str,
     active: bool,
-) -> (bool, bool) {
+) -> (bool, bool, f32) {
     let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
     let color = if active {
         *theme::TEXT_BRIGHT
@@ -306,7 +317,7 @@ fn diff_tab(
     let width = 10.0 + 16.0 + 6.0 + galley.size().x + 6.0 + 16.0 + 8.0;
     let rect = Rect::from_min_size(egui::pos2(x, bar.top() + 5.0), vec2(width, 28.0));
     if rect.left() > bar.right() {
-        return (false, false);
+        return (false, false, rect.right() + 2.0);
     }
     let response = ui.interact(rect, egui::Id::new("editor_diff_tab"), Sense::click());
     let fill = if active {
@@ -360,6 +371,7 @@ fn diff_tab(
     (
         clicked && !on_close,
         (clicked && on_close) || response.middle_clicked(),
+        rect.right() + 2.0,
     )
 }
 
