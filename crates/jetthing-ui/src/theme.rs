@@ -27,7 +27,8 @@ pub const ISLAND_RADIUS: u8 = 10;
 pub const ISLAND_GAP: f32 = 2.0;
 
 pub mod editor {
-    //! Editor color scheme attributes of the active theme.
+    //! Editor colors of the active theme's color scheme. Syntax colors are resolved
+    //! by text-attribute key in `crate::syntax`, from the same scheme.
     use crate::theme_engine::Token;
     use crate::theme_engine::tokens as t;
 
@@ -42,12 +43,6 @@ pub mod editor {
     pub const SEARCH_RESULT: Token = t::EDITOR_SEARCH_RESULT;
     pub const MATCHED_BRACE: Token = t::EDITOR_MATCHED_BRACE;
     pub const INDENT_GUIDE: Token = t::EDITOR_INDENT_GUIDE;
-    pub const KEYWORD: Token = t::EDITOR_KEYWORD;
-    pub const STRING: Token = t::EDITOR_STRING;
-    pub const NUMBER: Token = t::EDITOR_NUMBER;
-    pub const COMMENT: Token = t::EDITOR_COMMENT;
-    pub const DOC_COMMENT: Token = t::EDITOR_DOC_COMMENT;
-    pub const FUNCTION: Token = t::EDITOR_FUNCTION;
     pub const ERROR_EFFECT: Token = t::EDITOR_ERROR_EFFECT;
     pub const WARNING_EFFECT: Token = t::EDITOR_WARNING_EFFECT;
 }

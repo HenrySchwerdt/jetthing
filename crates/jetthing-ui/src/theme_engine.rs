@@ -157,18 +157,6 @@ pub mod tokens {
         EDITOR_MATCHED_BRACE = ["attr:MATCHED_BRACE_ATTRIBUTES.BACKGROUND"] or 0x43454A;
         /// `INDENT_GUIDE`.
         EDITOR_INDENT_GUIDE = ["color:INDENT_GUIDE"] or 0x323438;
-        /// `DEFAULT_KEYWORD`.
-        EDITOR_KEYWORD = ["attr:DEFAULT_KEYWORD.FOREGROUND"] or 0xCF8E6D;
-        /// `DEFAULT_STRING`.
-        EDITOR_STRING = ["attr:DEFAULT_STRING.FOREGROUND"] or 0x6AAB73;
-        /// `DEFAULT_NUMBER`.
-        EDITOR_NUMBER = ["attr:DEFAULT_NUMBER.FOREGROUND"] or 0x2AACB8;
-        /// `DEFAULT_LINE_COMMENT`.
-        EDITOR_COMMENT = ["attr:DEFAULT_LINE_COMMENT.FOREGROUND"] or 0x7A7E85;
-        /// `DEFAULT_DOC_COMMENT` (italic).
-        EDITOR_DOC_COMMENT = ["attr:DEFAULT_DOC_COMMENT.FOREGROUND"] or 0x5F826B;
-        /// `DEFAULT_FUNCTION_DECLARATION`.
-        EDITOR_FUNCTION = ["attr:DEFAULT_FUNCTION_DECLARATION.FOREGROUND"] or 0x56A8F5;
         /// `ERRORS_ATTRIBUTES` effect color.
         EDITOR_ERROR_EFFECT = ["attr:ERRORS_ATTRIBUTES.EFFECT_COLOR"] or 0xFA6675;
         /// `WARNING_ATTRIBUTES` effect (or error-stripe) color.
@@ -180,6 +168,8 @@ pub mod tokens {
 #[derive(Debug, Clone)]
 pub struct Palette {
     pub dark: bool,
+    /// Editor color scheme the editor tokens (and `crate::syntax`) use.
+    pub scheme: String,
     pub colors: Vec<Color32>,
     /// Token names that fell back to the built-in value (empty for complete data;
     /// asserted by the tests).
@@ -262,6 +252,7 @@ impl Palette {
     pub fn builtin_dark() -> Self {
         Self {
             dark: true,
+            scheme: "Islands Dark".into(),
             colors: tokens::SPECS
                 .iter()
                 .map(|spec| fallback_color(spec.fallback))
@@ -353,6 +344,7 @@ impl Palette {
             .collect();
         Ok(Self {
             dark: data.dark,
+            scheme: scheme_name.unwrap_or("Islands Dark").to_owned(),
             colors,
             missing,
         })
@@ -449,12 +441,8 @@ mod tests {
         );
         assert_eq!(palette.get(tokens::ISLAND), Color32::WHITE);
         assert_eq!(palette.get(tokens::TEXT), Color32::BLACK);
-        // Editor scheme "Light": TEXT foreground 080808, keyword 0033B3.
+        // Editor scheme "Light": TEXT foreground 080808.
         assert_eq!(palette.get(tokens::EDITOR_TEXT), Color32::from_rgb(8, 8, 8));
-        assert_eq!(
-            palette.get(tokens::EDITOR_KEYWORD),
-            Color32::from_rgb(0, 0x33, 0xB3)
-        );
         assert_eq!(
             palette.get(tokens::HOVER),
             Color32::from_rgba_unmultiplied(0, 0, 0, 0x12)
