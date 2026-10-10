@@ -16,7 +16,9 @@
 //! - project pinning from `.jetthing/toolchains.toml`, `rust-toolchain.toml`,
 //!   `.bazelversion`, Gradle toolchains, `.nvmrc`, `.python-version` and `go.mod`
 //!   ([`pinning`]);
-//! - a background install service with progress and cancellation ([`service`]).
+//! - a background install service with progress and cancellation ([`service`]);
+//! - the built-in catalog: JDK (foojay), jdtls, rust-analyzer, bazelisk, taplo
+//!   ([`providers`]).
 //!
 //! Nothing here downloads on its own: installs only start from an explicit
 //! [`service::ToolchainService::install`] call, which the IDE issues from a user
@@ -28,6 +30,7 @@ pub mod download;
 pub mod extract;
 pub mod pinning;
 pub mod platform;
+pub mod providers;
 pub mod service;
 pub mod settings;
 pub mod store;
