@@ -48,6 +48,8 @@ navigation, formatting, cancellation, and persistent caches. First verified inte
 Rust via rust-analyzer.
 
 - [x] JSON-RPC/LSP process transport and initialization
+- [x] Multi-language server registry (provider trait, PATH/`lsp.toml` discovery), lazy start per
+      workspace root, crash restart with backoff, `$/progress` status widget, missing-server notices
 - [x] Rust document open/change synchronization and published diagnostics
 - [x] Completion request transport and result modeling
 - [x] Completion popup, UTF-16 caret integration, and transactional insertion

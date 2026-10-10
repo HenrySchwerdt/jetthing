@@ -4,9 +4,9 @@ Generated from `docs/parity/*.md`.
 
 | Status | Count |
 |---|---:|
-| Missing | 10 |
+| Missing | 9 |
 | Planned | 1 |
-| Partial | 16 |
+| Partial | 17 |
 | Implemented | 6 |
 | Verified | 0 |
 | **Total** | **33** |
