@@ -25,6 +25,11 @@ pub fn restart(app: &mut IdeApp, ctx: &egui::Context) -> Result<(), String> {
     Ok(())
 }
 
+/// Layer of every notification balloon: above the workbench and tool windows,
+/// below dialogs, popups and menus (all `Order::Foreground`), so a balloon
+/// never covers a modal.
+pub const BALLOON_ORDER: egui::Order = egui::Order::Middle;
+
 pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     if !app.state.update_notification {
         return;
@@ -36,7 +41,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     let mut do_restart = false;
     let mut do_install = false;
     egui::Area::new(egui::Id::new("notification_balloon"))
-        .order(egui::Order::Foreground)
+        .order(crate::notifications::BALLOON_ORDER)
         .fixed_pos(egui::pos2(
             screen.right() - width - 16.0,
             screen.bottom() - 150.0 - crate::chrome::STATUS_BAR_HEIGHT,

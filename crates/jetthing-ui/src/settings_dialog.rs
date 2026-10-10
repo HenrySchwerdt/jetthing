@@ -31,7 +31,8 @@ pub struct SettingsDialog {
     error: Option<String>,
     focus_search: bool,
     keymap_page: crate::settings_keymap::KeymapPage,
-    plugins_page: crate::settings_plugins::PluginsPage,
+    /// Settings › Plugins (`preferences.pluginManager`).
+    pub(crate) plugins_page: crate::plugin_manager::PluginManager,
 }
 
 enum Outcome {
@@ -101,6 +102,16 @@ pub fn take_request(app: &mut IdeApp) {
     }
 }
 
+fn backdrop_id() -> egui::Id {
+    egui::Id::new("settings_backdrop")
+}
+
+/// Keeps the dimming backdrop above notification balloons (which share its
+/// layer order) while the dialog is open; called after the balloons are shown.
+pub fn backdrop_to_top(ctx: &egui::Context) {
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, backdrop_id()));
+}
+
 pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     take_request(app);
     let Some(mut dialog) = app.settings_dialog.take() else {
@@ -113,15 +124,20 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
             registry: &app.state.settings.registry,
             store: &app.state.settings.store,
             keymap: &app.state.keymap,
-            plugins: &app.state.plugin_host.registry,
-            project: app.state.project.as_ref().map(|p| p.root()),
+            state: &app.state,
             requests: &mut requests,
         },
         ctx,
     );
     // Pages that edit through commands (Keymap) queue them while drawing.
     for (id, params) in requests {
-        if let Err(error) = app.commands.execute(&id, &mut app.state, params) {
+        let result = app.commands.execute(&id, &mut app.state, params);
+        if id == "plugin.install" {
+            // The Plugins page shows install errors next to the path field.
+            dialog
+                .plugins_page
+                .install_finished(result.map_err(|error| error.to_string()));
+        } else if let Err(error) = result {
             dialog.error = Some(error.to_string());
         }
     }
@@ -160,8 +176,8 @@ struct PageContext<'a> {
     registry: &'a SettingsRegistry,
     store: &'a SettingsStore,
     keymap: &'a jetthing_core::keymap_commands::KeymapState,
-    plugins: &'a jetthing_plugins::PluginRegistry,
-    project: Option<&'a std::path::Path>,
+    /// Read-only IDE state for pages that show more than settings (Plugins).
+    state: &'a jetthing_core::IdeState,
     requests: &'a mut Vec<(String, serde_json::Value)>,
 }
 
@@ -170,8 +186,7 @@ fn draw(dialog: &mut SettingsDialog, context: PageContext<'_>, ctx: &egui::Conte
         registry,
         store,
         keymap,
-        plugins,
-        project,
+        state,
         requests,
     } = context;
     let mut outcome = Outcome::Keep;
@@ -183,7 +198,7 @@ fn draw(dialog: &mut SettingsDialog, context: PageContext<'_>, ctx: &egui::Conte
     }
     let screen = ctx.content_rect();
     // Dim and block the workbench behind the dialog.
-    egui::Area::new(egui::Id::new("settings_backdrop"))
+    egui::Area::new(backdrop_id())
         .order(egui::Order::Middle)
         .fixed_pos(screen.min)
         .show(ctx, |ui| {
@@ -267,8 +282,7 @@ fn draw(dialog: &mut SettingsDialog, context: PageContext<'_>, ctx: &egui::Conte
                     registry,
                     store,
                     keymap,
-                    plugins,
-                    project,
+                    state,
                     requests,
                 },
                 &search,
@@ -503,8 +517,7 @@ fn page(
         registry,
         store,
         keymap,
-        plugins,
-        project,
+        state,
         requests,
     } = context;
     let page_id = dialog.page.clone();
@@ -555,7 +568,11 @@ fn page(
         return;
     }
     if page_id == "preferences.pluginManager" {
-        crate::settings_plugins::show(ui, &mut dialog.plugins_page, plugins, project, requests);
+        crate::plugin_manager::page(
+            ui,
+            &mut dialog.plugins_page,
+            &mut crate::plugin_manager::PageContext { state, requests },
+        );
         return;
     }
     let settings = registry.page_settings(&page_id);

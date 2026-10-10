@@ -64,10 +64,12 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     };
     let running = app.state.runner.is_running();
     let hide = tool_window_header(ui, title, |ui| {
+        // "Fix with AI" next to a failed build/run (AI Assistant).
+        crate::ai_actions::build_link(app, ui);
         if let Some(plan) = &plan {
             ui.label(
                 RichText::new(&plan.name)
-                    .color(theme::TEXT_SECONDARY)
+                    .color(*theme::TEXT_SECONDARY)
                     .size(theme::UI_FONT_SIZE),
             );
         }
@@ -78,7 +80,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     let Some(plan) = plan else {
         ui.add_space(16.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("Nothing has run yet").color(theme::TEXT_SECONDARY));
+            ui.label(RichText::new("Nothing has run yet").color(*theme::TEXT_SECONDARY));
             let hint = match &app.state.detected_build {
                 Some(build) => format!(
                     "{} project · Build Project or Run from the toolbar",
@@ -90,7 +92,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                 }
                 None => "Open a project to build it".into(),
             };
-            ui.label(RichText::new(hint).color(theme::TEXT_INFO));
+            ui.label(RichText::new(hint).color(*theme::TEXT_INFO));
         });
         return;
     };
@@ -112,7 +114,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     ui.allocate_rect(available, egui::Sense::hover());
     ui.painter().line_segment(
         [tree_rect.right_top(), tree_rect.right_bottom()],
-        egui::Stroke::new(1.0_f32, theme::TOOLBAR_SEPARATOR),
+        egui::Stroke::new(1.0_f32, *theme::TOOLBAR_SEPARATOR),
     );
 
     let mut toolbar = ui.new_child(
@@ -130,9 +132,9 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         app.dispatch("run.rerun", Value::Null);
     }
     let stop_color = if running {
-        theme::STOP_RED
+        *theme::STOP_RED
     } else {
-        theme::TEXT_DISABLED
+        *theme::TEXT_DISABLED
     };
     if toolbar
         .add_enabled_ui(running, |ui| {
@@ -142,6 +144,20 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         .clicked()
     {
         app.dispatch("run.cancel", Value::Null);
+    }
+
+    let test_mode = kind == TaskKind::Test && (running || !app.state.runner.tests().is_empty());
+    if test_mode {
+        let failed = app.commands.is_enabled("test.rerunFailed", &app.state);
+        if toolbar
+            .add_enabled_ui(failed, |ui| {
+                icons::button_colored(ui, Icon::Rerun, *theme::ERROR, "Rerun Failed Tests", false)
+            })
+            .inner
+            .clicked()
+        {
+            app.dispatch("test.rerunFailed", Value::Null);
+        }
     }
 
     let project_name = app.project_name();
@@ -155,134 +171,59 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
             .max_rect(tree_rect.shrink2(vec2(0.0, 4.0)))
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
-    egui::ScrollArea::both()
-        .id_salt("build_tree")
-        .auto_shrink([false, false])
-        .show(&mut tree, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            let state = app.state.runner.state().clone();
-            let events = app.state.runner.events();
-            let (icon, verb) = match &state {
-                TaskState::Running | TaskState::Idle => (None, "running…".to_owned()),
-                TaskState::Exited(0) => (
-                    Some((Icon::Success, theme::SUCCESS)),
-                    match kind {
-                        TaskKind::Build => "build finished".into(),
-                        TaskKind::Sync => "sync finished".into(),
-                        _ => "successful".into(),
-                    },
-                ),
-                TaskState::Exited(code) => (
-                    Some((Icon::Error, theme::ERROR)),
-                    match kind {
-                        TaskKind::Build => format!("build failed (exit code {code})"),
-                        TaskKind::Sync => format!("sync failed (exit code {code})"),
-                        _ => format!("failed (exit code {code})"),
-                    },
-                ),
-                TaskState::Cancelled => (Some((Icon::Stop, theme::WARNING)), "cancelled".into()),
-                TaskState::Failed(_) => {
-                    (Some((Icon::Error, theme::ERROR)), "could not start".into())
-                }
-            };
-            let subject = match kind {
-                TaskKind::Build | TaskKind::Sync => project_name.clone(),
-                _ => format!("{project_name} [{}]", plan.name),
-            };
-            let (rect, response) = list_row(ui, view.selected == Some(0));
-            let mut x = rect.left() + 10.0;
-            match icon {
-                Some((icon, color)) => {
-                    icons::paint(
-                        ui.painter(),
-                        egui::Rect::from_min_size(
-                            egui::pos2(x, rect.center().y - 7.0),
-                            vec2(14.0, 14.0),
-                        ),
-                        icon,
-                        color,
-                    );
-                }
-                None => {
-                    let spinner = egui::Rect::from_min_size(
-                        egui::pos2(x, rect.center().y - 6.0),
-                        vec2(12.0, 12.0),
-                    );
-                    ui.put(
-                        spinner,
-                        egui::Spinner::new().size(12.0).color(theme::ACCENT),
-                    );
-                }
-            }
-            x += 20.0;
-            x = row_text(
-                ui,
-                rect,
-                x,
-                &format!("{subject}: "),
-                theme::semibold(theme::UI_FONT_SIZE),
-                theme::TEXT_BRIGHT,
-            );
-            x = row_text(
-                ui,
-                rect,
-                x,
-                &verb,
-                egui::FontId::proportional(theme::UI_FONT_SIZE),
-                theme::TEXT,
-            );
-            if let Some(elapsed) = app.state.runner.elapsed() {
-                row_text(
-                    ui,
-                    rect,
-                    x + 8.0,
-                    &format_duration(elapsed),
-                    egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                    theme::TEXT_INFO,
-                );
-            }
-            if response.clicked() {
-                action = Some(Action::Select(0, Some(0)));
-            }
-            if let TaskState::Failed(reason) = &state {
-                message_row(ui, 1, Icon::Error, *theme::ERROR, reason, None, false);
-            }
-            let messages = events.messages();
-            let paths = Paths {
-                root: project_root.as_deref(),
-                cwd: &plan.cwd,
-            };
-            for &id in events.orphan_messages() {
-                if let Some(clicked) = message_node(ui, &view, id, &messages[id], 1, &paths) {
-                    action = Some(clicked);
-                }
-            }
-            for (index, step) in events.steps().iter().enumerate() {
-                let node = 1 + index;
-                let (rect, response) = list_row(ui, view.selected == Some(node));
-                let mut x = rect.left() + 10.0 + TREE_INDENT;
-                let (icon, color) = match step.outcome {
-                    StepOutcome::Failed => (Some(Icon::Error), theme::ERROR),
-                    StepOutcome::Running => (None, theme::TEXT),
-                    _ if step
-                        .messages
-                        .iter()
-                        .any(|&id| messages[id].kind == MessageKind::Warning) =>
-                    {
-                        (Some(Icon::Warning), theme::WARNING)
-                    }
-                    _ => (Some(Icon::Success), theme::SUCCESS),
-                };
-                match icon {
-                    Some(icon) => icons::paint(
-                        ui.painter(),
-                        egui::Rect::from_min_size(
-                            egui::pos2(x, rect.center().y - 7.0),
-                            vec2(14.0, 14.0),
-                        ),
-                        icon,
-                        color,
+    if test_mode {
+        crate::test_view::tree(app, &mut tree, running);
+    } else {
+        egui::ScrollArea::both()
+            .id_salt("build_tree")
+            .auto_shrink([false, false])
+            .show(&mut tree, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let state = app.state.runner.state().clone();
+                let events = app.state.runner.events();
+                let (icon, verb) = match &state {
+                    TaskState::Running | TaskState::Idle => (None, "running…".to_owned()),
+                    TaskState::Exited(0) => (
+                        Some((Icon::Success, *theme::SUCCESS)),
+                        match kind {
+                            TaskKind::Build => "build finished".into(),
+                            TaskKind::Sync => "sync finished".into(),
+                            _ => "successful".into(),
+                        },
                     ),
+                    TaskState::Exited(code) => (
+                        Some((Icon::Error, *theme::ERROR)),
+                        match kind {
+                            TaskKind::Build => format!("build failed (exit code {code})"),
+                            TaskKind::Sync => format!("sync failed (exit code {code})"),
+                            _ => format!("failed (exit code {code})"),
+                        },
+                    ),
+                    TaskState::Cancelled => {
+                        (Some((Icon::Stop, *theme::WARNING)), "cancelled".into())
+                    }
+                    TaskState::Failed(_) => {
+                        (Some((Icon::Error, *theme::ERROR)), "could not start".into())
+                    }
+                };
+                let subject = match kind {
+                    TaskKind::Build | TaskKind::Sync => project_name.clone(),
+                    _ => format!("{project_name} [{}]", plan.name),
+                };
+                let (rect, response) = list_row(ui, view.selected == Some(0));
+                let mut x = rect.left() + 10.0;
+                match icon {
+                    Some((icon, color)) => {
+                        icons::paint(
+                            ui.painter(),
+                            egui::Rect::from_min_size(
+                                egui::pos2(x, rect.center().y - 7.0),
+                                vec2(14.0, 14.0),
+                            ),
+                            icon,
+                            color,
+                        );
+                    }
                     None => {
                         let spinner = egui::Rect::from_min_size(
                             egui::pos2(x, rect.center().y - 6.0),
@@ -290,7 +231,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                         );
                         ui.put(
                             spinner,
-                            egui::Spinner::new().size(12.0).color(theme::ACCENT),
+                            egui::Spinner::new().size(12.0).color(*theme::ACCENT),
                         );
                     }
                 }
@@ -299,51 +240,133 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     ui,
                     rect,
                     x,
-                    &step.name,
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    theme::TEXT,
+                    &format!("{subject}: "),
+                    theme::semibold(theme::UI_FONT_SIZE),
+                    *theme::TEXT_BRIGHT,
                 );
-                if let Some(label) = step.outcome.label() {
-                    x = row_text(
-                        ui,
-                        rect,
-                        x + 6.0,
-                        label,
-                        egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                        theme::TEXT_INFO,
-                    );
-                }
-                if let Some(duration) = step.duration().filter(|d| !d.is_zero()) {
+                x = row_text(
+                    ui,
+                    rect,
+                    x,
+                    &verb,
+                    egui::FontId::proportional(theme::UI_FONT_SIZE),
+                    *theme::TEXT,
+                );
+                if let Some(elapsed) = app.state.runner.elapsed() {
                     row_text(
                         ui,
                         rect,
                         x + 8.0,
-                        &format_duration(duration),
+                        &format_duration(elapsed),
                         egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                        theme::TEXT_INFO,
+                        *theme::TEXT_INFO,
                     );
                 }
                 if response.clicked() {
-                    action = Some(Action::Select(node, Some(step.console_line)));
+                    action = Some(Action::Select(0, Some(0)));
                 }
-                for &id in &step.messages {
-                    if let Some(clicked) = message_node(ui, &view, id, &messages[id], 2, &paths) {
+                if let TaskState::Failed(reason) = &state {
+                    message_row(ui, 1, Icon::Error, *theme::ERROR, reason, None, false);
+                }
+                let messages = events.messages();
+                let paths = Paths {
+                    root: project_root.as_deref(),
+                    cwd: &plan.cwd,
+                };
+                for &id in events.orphan_messages() {
+                    if let Some(clicked) = message_node(ui, &view, id, &messages[id], 1, &paths) {
                         action = Some(clicked);
                     }
                 }
-            }
-            if let Some(summary) = events.summary() {
-                let (rect, _) = list_row(ui, false);
-                row_text(
-                    ui,
-                    rect,
-                    rect.left() + 10.0 + TREE_INDENT,
-                    summary,
-                    egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                    theme::TEXT_INFO,
-                );
-            }
-        });
+                for (index, step) in events.steps().iter().enumerate() {
+                    let node = 1 + index;
+                    let (rect, response) = list_row(ui, view.selected == Some(node));
+                    let mut x = rect.left() + 10.0 + TREE_INDENT;
+                    let (icon, color) = match step.outcome {
+                        StepOutcome::Failed => (Some(Icon::Error), *theme::ERROR),
+                        StepOutcome::Running => (None, *theme::TEXT),
+                        _ if step
+                            .messages
+                            .iter()
+                            .any(|&id| messages[id].kind == MessageKind::Warning) =>
+                        {
+                            (Some(Icon::Warning), *theme::WARNING)
+                        }
+                        _ => (Some(Icon::Success), *theme::SUCCESS),
+                    };
+                    match icon {
+                        Some(icon) => icons::paint(
+                            ui.painter(),
+                            egui::Rect::from_min_size(
+                                egui::pos2(x, rect.center().y - 7.0),
+                                vec2(14.0, 14.0),
+                            ),
+                            icon,
+                            color,
+                        ),
+                        None => {
+                            let spinner = egui::Rect::from_min_size(
+                                egui::pos2(x, rect.center().y - 6.0),
+                                vec2(12.0, 12.0),
+                            );
+                            ui.put(
+                                spinner,
+                                egui::Spinner::new().size(12.0).color(*theme::ACCENT),
+                            );
+                        }
+                    }
+                    x += 20.0;
+                    x = row_text(
+                        ui,
+                        rect,
+                        x,
+                        &step.name,
+                        egui::FontId::proportional(theme::UI_FONT_SIZE),
+                        *theme::TEXT,
+                    );
+                    if let Some(label) = step.outcome.label() {
+                        x = row_text(
+                            ui,
+                            rect,
+                            x + 6.0,
+                            label,
+                            egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
+                            *theme::TEXT_INFO,
+                        );
+                    }
+                    if let Some(duration) = step.duration().filter(|d| !d.is_zero()) {
+                        row_text(
+                            ui,
+                            rect,
+                            x + 8.0,
+                            &format_duration(duration),
+                            egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
+                            *theme::TEXT_INFO,
+                        );
+                    }
+                    if response.clicked() {
+                        action = Some(Action::Select(node, Some(step.console_line)));
+                    }
+                    for &id in &step.messages {
+                        if let Some(clicked) = message_node(ui, &view, id, &messages[id], 2, &paths)
+                        {
+                            action = Some(clicked);
+                        }
+                    }
+                }
+                if let Some(summary) = events.summary() {
+                    let (rect, _) = list_row(ui, false);
+                    row_text(
+                        ui,
+                        rect,
+                        rect.left() + 10.0 + TREE_INDENT,
+                        summary,
+                        egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
+                        *theme::TEXT_INFO,
+                    );
+                }
+            });
+    }
 
     let mut console = ui.new_child(
         egui::UiBuilder::new()
@@ -355,7 +378,15 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     } else {
         plan.command_line()
     };
-    console_view(app, &mut console, &command_line, view.reveal.take());
+    if test_mode {
+        crate::test_view::header(app, &mut console);
+        match crate::test_view::selected_case(app, ui.ctx()) {
+            Some(case) => crate::test_view::details(&mut console, &case),
+            None => console_view(app, &mut console, &command_line, view.reveal.take()),
+        }
+    } else {
+        console_view(app, &mut console, &command_line, view.reveal.take());
+    }
 
     match action {
         Some(Action::Select(node, reveal)) => {
@@ -460,7 +491,7 @@ fn message_row(
         x,
         text,
         egui::FontId::proportional(theme::UI_FONT_SIZE),
-        theme::TEXT,
+        *theme::TEXT,
     );
     if let Some(location) = location {
         row_text(
@@ -469,7 +500,7 @@ fn message_row(
             x + 8.0,
             location,
             egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-            theme::TEXT_INFO,
+            *theme::TEXT_INFO,
         );
     }
     response.on_hover_text(text)
@@ -508,7 +539,7 @@ fn console_view(app: &IdeApp, ui: &mut egui::Ui, command_line: &str, reveal: Opt
     let font = egui::FontId::monospace(theme::UI_FONT_SIZE - 0.5);
     if let TaskState::Failed(reason) = app.state.runner.state() {
         // Nothing ran; show the complete, wrapped reason instead of an empty console.
-        ui.label(RichText::new(reason).font(font).color(theme::ERROR));
+        ui.label(RichText::new(reason).font(font).color(*theme::ERROR));
         return;
     }
     area.show_rows(ui, CONSOLE_ROW, total, |ui, range| {

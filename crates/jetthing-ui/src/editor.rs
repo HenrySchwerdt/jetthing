@@ -1,6 +1,7 @@
 //! Editor island: tabs and the viewport-native text surface.
 
 use crate::editor_keys;
+use crate::folding::{CollapsedRow, FoldView};
 use crate::icons::{self, Icon};
 use crate::markdown_ui;
 use crate::problems_ui;
@@ -14,7 +15,7 @@ use jetthing_text::ops;
 use serde_json::{Value, json};
 
 const TAB_BAR_HEIGHT: f32 = 38.0;
-const ROW_HEIGHT: f32 = 20.0;
+pub(crate) const ROW_HEIGHT: f32 = 20.0;
 const TEXT_LEFT_PADDING: f32 = 14.0;
 
 /// Work the editor surface hands back to the app: named actions go through the
@@ -30,17 +31,22 @@ pub enum EditorRequest {
     ShowChange(usize, egui::Pos2),
     /// A blame annotation was clicked: commit hash.
     ShowCommit(String),
+    /// Click on a gutter run icon (line, screen position for the popup).
+    Gutter(usize, egui::Pos2),
 }
 
 pub struct EditorOutput {
     pub changed: bool,
     pub caret_pos: Option<egui::Pos2>,
+    /// Where the lightbulb goes: left of the caret line's text, if visible.
+    pub bulb_anchor: Option<egui::Pos2>,
     pub requests: Vec<EditorRequest>,
     /// Text typed this frame (drives completion auto-popup and filtering).
     pub typed: String,
-    /// Vertical scroll offset after this frame and the row height (Markdown scroll sync).
+    /// Char offset and screen position under the resting mouse pointer.
+    pub hover: Option<(usize, egui::Pos2)>,
+    /// Vertical scroll offset after this frame (Markdown scroll sync).
     pub scroll_y: f32,
-    pub row_height: f32,
 }
 
 pub fn editor_id() -> egui::Id {
@@ -51,6 +57,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
     let mut changed_document = None;
     let mut requests = Vec::new();
     let mut typed = String::new();
+    let mut hover = None;
     let caret_before = app.state.active_caret();
     egui::CentralPanel::default()
         .frame(island_frame())
@@ -67,11 +74,14 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 return;
             }
             if app.state.active_document.is_none() {
+                // Offer toolchain setup as soon as the project opens.
+                crate::toolchain_banner::show(app, ui);
                 empty_state(ui);
                 app.caret_screen_pos = None;
                 return;
             }
             crate::disk_banner::show(app, ui);
+            crate::toolchain_banner::show(app, ui);
             let md_layout = app.state.markdown_layout();
             let full = ui.available_rect_before_wrap();
             if let Some(layout) = md_layout
@@ -125,16 +135,20 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let text_rect = available.with_max_x(stripe_rect.left());
             ui.allocate_rect(available, Sense::hover());
             let line_count = app.state.documents[index].text.len_lines();
+            let row_height =
+                theme::editor_row_height(ui.ctx(), &theme::editor_font(ui.style()), ROW_HEIGHT);
             if let Some((line, column)) =
-                problems_ui::error_stripe(ui, stripe_rect, &problems, line_count, ROW_HEIGHT)
+                problems_ui::error_stripe(ui, stripe_rect, &problems, line_count, row_height)
             {
                 move_caret_to(app, line, column);
                 ui.memory_mut(|memory| memory.request_focus(editor_id()));
             }
+            let navigable = app.state.active_has_language_server();
             let mut text_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
             let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
             let changes = app.state.document_changes(index).to_vec();
             let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
+            let gutter = run_icons(app, ui.ctx());
             let doc_path = app.state.absolute_path(&app.state.documents[index].path);
             if md_layout.is_some() {
                 app.markdown_ui.reset_for(&doc_path);
@@ -147,8 +161,12 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 &problems,
                 &highlights,
                 &context_model,
-                &changes,
-                blame.as_deref(),
+                GutterData {
+                    changes: &changes,
+                    blame: blame.as_deref(),
+                    run: &gutter,
+                },
+                navigable,
                 editor_scroll,
             );
             let counts = jetthing_core::ProblemCounts::of(&problems);
@@ -172,24 +190,28 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 ),
                 None => {}
             }
-            let mut editor_metrics = None;
+            let mut bulb = None;
+            let mut editor_scroll_y = None;
             let doc = &mut app.state.documents[index];
             match surface {
                 Ok(EditorOutput {
                     changed,
                     caret_pos,
+                    bulb_anchor,
                     requests: editor_requests,
                     typed: typed_text,
+                    hover: hovered,
                     scroll_y,
-                    row_height,
                 }) => {
-                    editor_metrics = Some((scroll_y, row_height));
+                    editor_scroll_y = Some(scroll_y);
+                    hover = hovered;
                     app.caret_screen_pos = caret_pos;
+                    bulb = bulb_anchor;
                     requests.extend(editor_requests);
                     typed = typed_text;
                     if changed {
                         let snapshot = doc.text.text();
-                        doc.analysis = jetthing_language::analyze(&doc.path, &snapshot);
+                        doc.refresh_analysis(&snapshot);
                         changed_document = Some((
                             doc.path.clone(),
                             snapshot,
@@ -214,7 +236,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     lines,
                     pending,
                 );
-                if let Some((editor_y, row_height)) = editor_metrics
+                if let Some(editor_y) = editor_scroll_y
                     && app.markdown_ui.sync(
                         editor_y,
                         row_height,
@@ -234,17 +256,22 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             {
                 requests.push(EditorRequest::Command(command, params));
             }
+            crate::intentions_ui::lightbulb(app, ui, bulb);
+            crate::ai_inline::paint(app, ui);
         });
     if let Some((path, text, version)) = changed_document {
         app.state.sync_document_lsp(&path, &text, version);
         app.state.snippet_after_change();
         app.state.completion_after_typing(&typed);
+        app.state.signature_after_typing(&typed);
     } else if app.state.active_caret() != caret_before {
         app.state.snippet_after_caret_move();
+        app.state.signature_after_caret_move();
         if app.state.completion.is_some() {
             app.state.refresh_completion();
         }
     }
+    crate::doc_ui::track_hover(app, ctx, hover);
     for request in requests {
         handle_request(app, ctx, request);
     }
@@ -279,6 +306,7 @@ pub(crate) fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: Edi
         EditorRequest::ContextAction(action) => {
             app.run_context_action(&action, &crate::context_menus::Target::Editor, ctx)
         }
+        EditorRequest::Gutter(line, position) => crate::gutter_popup::open(ctx, line, position),
         EditorRequest::Paste(text) => {
             let whole_line = app.clipboard_line.as_deref() == Some(text.as_str());
             app.dispatch(
@@ -637,6 +665,55 @@ pub(crate) fn highlighted_line_job(
     job
 }
 
+/// Paints a collapsed region's placeholder box and the text after the region
+/// on its last line, starting at `origin` (top-left of the placeholder).
+fn paint_collapsed_tail(
+    painter: &egui::Painter,
+    document: &Document,
+    row: &CollapsedRow,
+    origin: egui::Pos2,
+    char_width: f32,
+    font: &egui::FontId,
+    row_height: f32,
+) {
+    let folded = crate::syntax::attributes("FOLDED_TEXT_ATTRIBUTES");
+    let width = row.placeholder.chars().count() as f32 * char_width;
+    let to_color = |rgba: jetthing_language::Rgba| Color32::from_rgb(rgba.r, rgba.g, rgba.b);
+    painter.rect_filled(
+        Rect::from_min_size(origin + vec2(0.0, 3.0), vec2(width, row_height - 6.0)),
+        3.0,
+        folded
+            .background
+            .map_or(*theme::editor::MATCHED_BRACE, to_color),
+    );
+    painter.text(
+        origin + vec2(0.0, row_height / 2.0),
+        egui::Align2::LEFT_CENTER,
+        &row.placeholder,
+        font.clone(),
+        folded
+            .foreground
+            .map_or(*theme::editor::LINE_NUMBER_CARET, to_color),
+    );
+    let end_line_start = document.text.line_to_char(row.end_line).unwrap_or(0);
+    let end_text = document.text.line(row.end_line).unwrap_or_default();
+    let end_content = end_text.trim_end_matches(['\r', '\n']);
+    let skip = row.end_char.saturating_sub(end_line_start);
+    let start = end_content
+        .char_indices()
+        .nth(skip)
+        .map_or(end_content.len(), |(index, _)| index);
+    let tail = &end_content[start..];
+    if tail.is_empty() {
+        return;
+    }
+    let tail_byte = document.text.line_to_byte(row.end_line).unwrap_or(0) + start;
+    let job = highlighted_line_job(tail, tail_byte, &document.analysis, font);
+    let galley = painter.layout_job(job);
+    let text_y = origin.y + (row_height - galley.size().y) / 2.0;
+    painter.galley(egui::pos2(origin.x + width, text_y), galley, Color32::WHITE);
+}
+
 /// Moves the primary caret to a zero-based line/column and focuses the editor.
 pub fn move_caret_to(app: &mut IdeApp, line: usize, column: usize) {
     let Some(index) = app.state.active_document else {
@@ -661,13 +738,15 @@ fn line_length(document: &Document, line: usize) -> usize {
         .count()
 }
 
-/// Character offset for moving `head` vertically by `delta` lines, keeping the column.
-fn vertical_target(document: &Document, head: usize, delta: isize) -> usize {
+/// Character offset for moving `head` vertically by `delta` visual rows
+/// (collapsed regions count as one row), keeping the column.
+fn vertical_target(document: &Document, folds: &FoldView, head: usize, delta: isize) -> usize {
     let Ok((line, column)) = document.text.char_to_line_column(head) else {
         return head;
     };
-    let last = document.text.len_lines().saturating_sub(1) as isize;
-    let target = (line as isize + delta).clamp(0, last) as usize;
+    let last_row = folds.row_count(document.text.len_lines()).saturating_sub(1) as isize;
+    let row = (folds.line_to_row(line) as isize + delta).clamp(0, last_row) as usize;
+    let target = folds.row_to_line(row);
     if target == line {
         return if delta < 0 {
             document.text.line_to_char(line).unwrap_or(0)
@@ -684,6 +763,89 @@ fn move_primary(document: &mut Document, head: usize, extend: bool) {
     document.selections.set_single(Selection { anchor, head });
 }
 
+/// Horizontal layout of the editor gutter. Left to right: blame annotations,
+/// line numbers, run icons (when the file has any), folding markers, the
+/// change bar, then the text.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct GutterLayout {
+    /// Right edge of the right-aligned line numbers.
+    numbers_right: f32,
+    /// Center of the run-icon column (equal to `numbers_right` without icons).
+    run_center: f32,
+    run_width: f32,
+    /// Center of the folding-marker column.
+    fold_center: f32,
+    /// Total gutter width; the change bar sits just inside it.
+    width: f32,
+}
+
+impl GutterLayout {
+    const FOLD_COLUMN: f32 = 14.0;
+    const RUN_COLUMN: f32 = 16.0;
+    /// Space for the change bar (`change_popup` paints it 7 px inside the edge).
+    const CHANGE_COLUMN: f32 = 14.0;
+
+    fn new(blame_width: f32, numbers_width: f32, run_icons: bool) -> Self {
+        let numbers_right = blame_width + 20.0 + numbers_width;
+        let run_width = if run_icons { Self::RUN_COLUMN } else { 0.0 };
+        let run_left = numbers_right + 4.0;
+        let fold_left = run_left + run_width;
+        Self {
+            numbers_right,
+            run_center: run_left + run_width / 2.0,
+            run_width,
+            fold_center: fold_left + Self::FOLD_COLUMN / 2.0,
+            width: fold_left + Self::FOLD_COLUMN + Self::CHANGE_COLUMN,
+        }
+    }
+
+    fn in_run_column(&self, x: f32) -> bool {
+        self.run_width > 0.0 && (x - self.run_center).abs() <= self.run_width / 2.0
+    }
+
+    fn in_fold_column(&self, x: f32) -> bool {
+        (x - self.fold_center).abs() <= Self::FOLD_COLUMN / 2.0
+    }
+}
+
+/// Run icons are recomputed this long after the latest edit; until then the
+/// previous icons stay (finding runnables walks the whole syntax tree, too slow
+/// for every keystroke in large files).
+const RUN_ICONS_STALE_FOR: f64 = 0.25;
+
+/// Gutter run icons of the active editor, refreshed once typing pauses.
+fn run_icons(app: &mut IdeApp, ctx: &egui::Context) -> Vec<jetthing_core::GutterMark> {
+    let id = egui::Id::new("run_icons_last_edit");
+    let revision = app
+        .state
+        .active_document
+        .and_then(|index| app.state.documents.get(index))
+        .map(|document| document.text.revision());
+    let now = ctx.input(|input| input.time);
+    let (seen, last_edit) = ctx
+        .data(|data| data.get_temp::<(Option<u64>, f64)>(id))
+        .unwrap_or((None, f64::NEG_INFINITY));
+    let last_edit = if seen != revision { now } else { last_edit };
+    ctx.data_mut(|data| data.insert_temp(id, (revision, last_edit)));
+    if now - last_edit < RUN_ICONS_STALE_FOR
+        && let Some(marks) = app.state.cached_gutter_marks()
+    {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(RUN_ICONS_STALE_FOR));
+        return marks;
+    }
+    app.state.gutter_marks()
+}
+
+/// What the gutter shows next to the line numbers.
+struct GutterData<'a> {
+    /// Change markers against `HEAD`.
+    changes: &'a [jetthing_git::Hunk],
+    /// Blame annotations, when shown.
+    blame: Option<&'a [jetthing_git::BlameLine]>,
+    /// Run icons (mains, tests, Bazel rules).
+    run: &'a [jetthing_core::GutterMark],
+}
+
 #[allow(clippy::too_many_arguments)] // paint inputs of one editor frame
 fn editor_surface(
     ui: &mut egui::Ui,
@@ -691,10 +853,15 @@ fn editor_surface(
     problems: &[jetthing_core::Problem],
     highlights: &[(usize, usize)],
     context_model: &crate::context_menus::Model,
-    changes: &[jetthing_git::Hunk],
-    blame: Option<&[jetthing_git::BlameLine]>,
+    gutter_data: GutterData<'_>,
+    navigable: bool,
     scroll_to: Option<f32>,
 ) -> Result<EditorOutput, String> {
+    let GutterData {
+        changes,
+        blame,
+        run: gutter,
+    } = gutter_data;
     let mut requests = Vec::new();
     let font = theme::editor_font(ui.style());
     // Rows scale with Settings | Editor | Font (size and line height).
@@ -711,13 +878,18 @@ fn editor_surface(
     );
     let char_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'm'));
     let line_count = document.text.len_lines();
+    // Carets never stay inside collapsed text (Go to Line, Find, arrows).
+    document.reveal_carets();
+    let folds = FoldView::new(document);
+    let row_count = folds.row_count(line_count);
     let digits = line_count.max(1).to_string().len().max(2);
     let blame_width = if blame.is_some() {
         crate::blame_gutter::WIDTH
     } else {
         0.0
     };
-    let gutter_width = blame_width + 20.0 + digits as f32 * char_width + 18.0;
+    let layout = GutterLayout::new(blame_width, digits as f32 * char_width, !gutter.is_empty());
+    let gutter_width = layout.width;
     let text_left = gutter_width + TEXT_LEFT_PADDING;
     let caret_line = document
         .text
@@ -725,13 +897,25 @@ fn editor_surface(
         .map(|(line, _)| line)
         .unwrap_or(0);
     let mut caret_pos = None;
+    let mut bulb_anchor = None;
+    let mut hover = None;
     let brace_pair: Vec<usize> = {
         let head = document.selections.primary().head;
-        ops::matching_bracket(&document.text, head)
-            .or_else(|| {
-                head.checked_sub(1)
-                    .and_then(|h| ops::matching_bracket(&document.text, h))
-            })
+        // Structural matching from the syntax tree when the language has a
+        // grammar (brackets in strings/comments never match); text otherwise.
+        let find = |offset: usize| {
+            if document.analysis.syntax.is_some() {
+                let byte = document.text.char_to_byte(offset);
+                document
+                    .analysis
+                    .matching_bracket(byte)
+                    .map(|(a, b)| (document.text.byte_to_char(a), document.text.byte_to_char(b)))
+            } else {
+                ops::matching_bracket(&document.text, offset)
+            }
+        };
+        find(head)
+            .or_else(|| head.checked_sub(1).and_then(find))
             .into_iter()
             .flat_map(|(a, b)| [a, b])
             .collect()
@@ -744,7 +928,7 @@ fn editor_surface(
         let longest = 400.0_f32;
         let content_size = egui::vec2(
             ui.available_width().max(text_left + longest * char_width),
-            line_count as f32 * row_height + ui.available_height() * 0.5,
+            row_count as f32 * row_height + ui.available_height() * 0.5,
         );
         let (rect, response) = ui.allocate_exact_size(content_size, Sense::click_and_drag());
         let response = ui
@@ -754,9 +938,12 @@ fn editor_surface(
         if response.clicked() || response.drag_started() {
             response.request_focus();
         }
+        let row_at = |position: egui::Pos2| {
+            (((position.y - rect.top()) / row_height).floor().max(0.0) as usize)
+                .min(row_count.saturating_sub(1))
+        };
         let position_to_offset = |position: egui::Pos2| {
-            let line = (((position.y - rect.top()) / row_height).floor().max(0.0) as usize)
-                .min(line_count.saturating_sub(1));
+            let line = folds.row_to_line(row_at(position));
             let line_text = document.text.line(line).unwrap_or_default();
             let content = line_text.trim_end_matches(['\r', '\n']);
             let column = (((position.x - rect.left() - text_left) / char_width)
@@ -767,29 +954,46 @@ fn editor_surface(
         };
         // Line/column under the pointer; the column may lie past the line end.
         let position_to_point = |position: egui::Pos2| jetthing_text::multicaret::BlockPoint {
-            line: (((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize)
-                .min(line_count.saturating_sub(1)),
+            line: folds.row_to_line(row_at(position)),
             column: ((position.x - rect.left() - text_left) / char_width)
                 .round()
                 .max(0.0) as usize,
         };
         let block_drag_id = editor_id().with("block_drag_anchor");
+        // The character under the pointer (not the nearest boundary),
+        // only over text, for hover documentation.
+        hover = response.hover_pos().and_then(|position| {
+            let line = ((position.y - rect.top()) / row_height).floor();
+            if line < 0.0 || line as usize >= line_count {
+                return None;
+            }
+            let line = line as usize;
+            let line_text = document.text.line(line).unwrap_or_default();
+            let length = line_text.trim_end_matches(['\r', '\n']).chars().count();
+            let column = (position.x - rect.left() - text_left) / char_width;
+            (column >= 0.0 && (column as usize) < length).then(|| {
+                (
+                    document.text.line_to_char(line).unwrap_or(0) + column as usize,
+                    egui::pos2(position.x, rect.top() + (line + 1) as f32 * row_height),
+                )
+            })
+        });
         // Clicking a change marker opens the change popup instead of
         // moving the caret.
         let marker_hit = response
             .interact_pointer_pos()
             .filter(|position| {
-                crate::change_popup::in_marker_column(position.x - rect.left(), gutter_width)
+                crate::change_popup::in_marker_column(position.x - rect.left(), layout.width)
             })
             .and_then(|position| {
-                let line = ((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize;
+                let line = folds.row_to_line(row_at(position));
                 jetthing_core::hunk_at_line(changes, line).map(|hunk| (hunk, position))
             });
         let blame_line = response
             .hover_pos()
             .or(response.interact_pointer_pos())
             .filter(|position| position.x - rect.left() < blame_width)
-            .map(|position| ((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize);
+            .map(|position| folds.row_to_line(row_at(position)));
         if let (Some(lines), Some(line)) = (blame, blame_line) {
             if let Some(text) = crate::blame_gutter::tooltip(lines, line) {
                 response.clone().on_hover_text_at_pointer(text);
@@ -800,18 +1004,68 @@ fn editor_surface(
                 requests.push(EditorRequest::ShowCommit(entry.hash.clone()));
             }
         }
+        // Run icons sit between the line numbers and the text.
+        let gutter_hit = response
+            .interact_pointer_pos()
+            .filter(|position| layout.in_run_column(position.x - rect.left()))
+            .and_then(|position| {
+                let line = folds.row_to_line(row_at(position));
+                gutter
+                    .iter()
+                    .any(|mark| mark.line == line)
+                    .then_some((line, position))
+            });
+        // Fold markers sit in the gutter just left of the text; placeholders
+        // expand their region when clicked.
+        let fold_click = response
+            .clicked()
+            .then(|| response.interact_pointer_pos())
+            .flatten()
+            .and_then(|position| {
+                let line = folds.row_to_line(row_at(position));
+                let x = position.x - rect.left();
+                let in_marker_column = layout.in_fold_column(x);
+                let on_placeholder = folds.collapsed_on(line).is_some_and(|row| {
+                    let line_start = document.text.line_to_char(line).unwrap_or(0);
+                    let column = (x - text_left) / char_width;
+                    let start = (row.start_char - line_start) as f32;
+                    column >= start && column <= start + row.placeholder.chars().count() as f32
+                });
+                (in_marker_column || on_placeholder).then_some(line)
+            });
         if response.clicked() && blame_line.is_some() {
             // Handled above: annotation clicks never move the caret.
+        } else if let Some(line) = fold_click {
+            requests.push(EditorRequest::Command(
+                "editor.toggleFold",
+                serde_json::json!({ "line": line }),
+            ));
         } else if response.clicked()
             && let Some((hunk, position)) = marker_hit
         {
             requests.push(EditorRequest::ShowChange(hunk, position));
         } else if response.clicked()
+            && let Some((line, position)) = gutter_hit
+        {
+            requests.push(EditorRequest::Gutter(line, position));
+        } else if response.clicked()
             && let Some(position) = response.interact_pointer_pos()
         {
             let offset = position_to_offset(position);
             let modifiers = ui.input(|input| input.modifiers);
-            if modifiers.alt && modifiers.shift {
+            if modifiers.command && navigable {
+                // Ctrl/⌘+click: Go to Declaration; with Shift the type
+                // declaration, with Alt the implementations.
+                document.selections.set_single(Selection::caret(offset));
+                let id = if modifiers.shift {
+                    "navigate.typeDeclaration"
+                } else if modifiers.alt {
+                    "navigate.implementation"
+                } else {
+                    "navigate.declaration"
+                };
+                requests.push(EditorRequest::Command(id, Value::Null));
+            } else if modifiers.alt && modifiers.shift {
                 editor_keys::toggle_caret(&mut document.selections, offset);
             } else if modifiers.shift {
                 let anchor = document.selections.primary().anchor;
@@ -887,6 +1141,11 @@ fn editor_surface(
                     }
                 }
             });
+            ui.separator();
+            if let Some((id, params)) = crate::ai_actions::editor_menu(ui) {
+                requests.push(EditorRequest::Command(id, params));
+                ui.close();
+            }
         });
         let block_anchor: Option<jetthing_text::multicaret::BlockPoint> =
             ui.data(|data| data.get_temp(block_drag_id)).flatten();
@@ -916,15 +1175,36 @@ fn editor_surface(
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |duration| duration.as_secs() as i64);
         // Gutter background matches the editor in Islands; draw caret row first.
-        let first_line = ((viewport.top() / row_height).floor().max(0.0) as usize).min(line_count);
-        let last_line = ((viewport.bottom() / row_height).ceil() as usize + 1).min(line_count);
+        let first_row = ((viewport.top() / row_height).floor().max(0.0) as usize).min(row_count);
+        let last_row = ((viewport.bottom() / row_height).ceil() as usize + 1).min(row_count);
+        // Gutter fold markers for regions starting in the viewport.
+        let gutter_hovered = ui
+            .input(|input| input.pointer.hover_pos())
+            .is_some_and(|pos| rect.contains(pos) && pos.x - rect.left() < layout.width + 4.0);
+        let markers: Vec<(usize, bool)> = if first_row < last_row {
+            let first_line = folds.row_to_line(first_row);
+            let last_line = folds.row_to_line(last_row - 1);
+            let start = document.text.line_to_char(first_line).unwrap_or(0);
+            let end = document
+                .text
+                .line_to_char(last_line + 1)
+                .unwrap_or(document.text.len_chars());
+            document
+                .folds_in_chars(start, end)
+                .iter()
+                .map(|fold| (fold.start_line, document.folds.is_collapsed(fold)))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let focused = response.has_focus();
         let blink_on = {
             let time = ui.input(|input| input.time);
             (time * 2.0) as i64 % 2 == 0
         };
-        for line in first_line..last_line {
-            let y = rect.top() + line as f32 * row_height;
+        for row_index in first_row..last_row {
+            let line = folds.row_to_line(row_index);
+            let y = rect.top() + row_index as f32 * row_height;
             let line_start = document.text.line_to_char(line).unwrap_or(0);
             let line_text = document.text.line(line).unwrap_or_default();
             let content = line_text.trim_end_matches(['\r', '\n']);
@@ -935,7 +1215,7 @@ fn editor_surface(
                 painter.rect_filled(row, 0.0, theme::editor::CARET_ROW);
             }
             painter.text(
-                egui::pos2(rect.left() + gutter_width - 18.0, y + row_height / 2.0),
+                egui::pos2(rect.left() + layout.numbers_right, y + row_height / 2.0),
                 egui::Align2::RIGHT_CENTER,
                 format!("{}", line + 1),
                 font.clone(),
@@ -951,7 +1231,7 @@ fn editor_surface(
                     lines,
                     line,
                     egui::pos2(rect.left(), y),
-                    ROW_HEIGHT,
+                    row_height,
                     now,
                 );
             }
@@ -960,8 +1240,25 @@ fn editor_surface(
                 changes,
                 line,
                 egui::pos2(rect.left() + gutter_width, y),
-                ROW_HEIGHT,
+                row_height,
             );
+            if let Some(mark) = gutter.iter().find(|mark| mark.line == line) {
+                crate::gutter_popup::paint_icon(
+                    &painter,
+                    egui::pos2(rect.left() + layout.run_center, y + row_height / 2.0),
+                    mark.kind,
+                );
+            }
+            if let Some(&(_, collapsed)) = markers.iter().find(|(start, _)| *start == line)
+                && (collapsed || gutter_hovered)
+            {
+                crate::folding::paint_marker(
+                    &painter,
+                    egui::pos2(rect.left() + layout.fold_center, y + row_height / 2.0),
+                    collapsed,
+                    *theme::editor::LINE_NUMBER_CARET,
+                );
+            }
             // Indent guides every four columns of leading whitespace.
             let indent = content.chars().take_while(|c| *c == ' ').count();
             for level in (4..=indent.saturating_sub(1)).step_by(4) {
@@ -1017,7 +1314,21 @@ fn editor_surface(
                 }
             }
             let line_start_byte = document.text.line_to_byte(line).unwrap_or(0);
-            let job = highlighted_line_job(content, line_start_byte, &document.analysis, &font);
+            let collapsed = folds.collapsed_on(line);
+            // A collapsed region shows the text before it, its placeholder,
+            // then the rest of its last line.
+            let visible = match collapsed {
+                Some(row) => {
+                    let prefix_chars = row.start_char.saturating_sub(line_start);
+                    let end = content
+                        .char_indices()
+                        .nth(prefix_chars)
+                        .map_or(content.len(), |(index, _)| index);
+                    &content[..end]
+                }
+                None => content,
+            };
+            let job = highlighted_line_job(visible, line_start_byte, &document.analysis, &font);
             let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
             let text_y = y + (row_height - galley.size().y) / 2.0;
             painter.galley(
@@ -1025,6 +1336,20 @@ fn editor_surface(
                 galley,
                 Color32::WHITE,
             );
+            if let Some(row) = collapsed {
+                paint_collapsed_tail(
+                    &painter,
+                    document,
+                    row,
+                    egui::pos2(
+                        rect.left() + text_left + visible.chars().count() as f32 * char_width,
+                        y,
+                    ),
+                    char_width,
+                    &font,
+                    row_height,
+                );
+            }
 
             let column_x = |column: usize| rect.left() + text_left + column as f32 * char_width;
             problems_ui::paint_line(
@@ -1040,6 +1365,10 @@ fn editor_surface(
                     let x = column_x(selection.head - line_start);
                     if *selection == document.selections.primary() {
                         caret_pos = Some(egui::pos2(x, y + row_height));
+                        bulb_anchor = Some(egui::pos2(
+                            rect.left() + gutter_width + 2.0,
+                            y + row_height / 2.0,
+                        ));
                     }
                     if focused && blink_on {
                         painter.line_segment(
@@ -1051,7 +1380,7 @@ fn editor_surface(
             }
         }
         if let Some(pointer) = response.hover_pos() {
-            let line = ((pointer.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize;
+            let line = folds.row_to_line(row_at(pointer));
             let column = (pointer.x - rect.left() - text_left) / char_width;
             if line < line_count && column >= 0.0 {
                 let line_len = document
@@ -1068,6 +1397,23 @@ fn editor_surface(
                     column.floor() as usize,
                     line_len,
                 );
+                // Ctrl/⌘+hover turns the identifier into a link.
+                let column = column.floor() as usize;
+                if navigable && ui.input(|input| input.modifiers.command) && column < line_len {
+                    let line_start = document.text.line_to_char(line).unwrap_or(0);
+                    let (start, end) = ops::word_at(&document.text, line_start + column);
+                    if start < end && (start..end).contains(&(line_start + column)) {
+                        let y = rect.top() + (line + 1) as f32 * ROW_HEIGHT - 3.0;
+                        let x = |offset: usize| {
+                            rect.left() + text_left + (offset - line_start) as f32 * char_width
+                        };
+                        painter.line_segment(
+                            [egui::pos2(x(start), y), egui::pos2(x(end), y)],
+                            Stroke::new(1.0_f32, crate::navigation_ui::LINK),
+                        );
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                }
             }
         }
         if focused {
@@ -1097,10 +1443,11 @@ fn editor_surface(
         return Ok(EditorOutput {
             changed: false,
             caret_pos,
+            bulb_anchor,
             requests,
             typed: String::new(),
+            hover,
             scroll_y,
-            row_height,
         });
     }
     ui.memory_mut(|memory| {
@@ -1110,7 +1457,9 @@ fn editor_surface(
                 tab: true,
                 horizontal_arrows: true,
                 vertical_arrows: true,
-                escape: false,
+                // egui surrenders focus on Escape by default; the workbench's
+                // Escape handler closes popups instead and the editor keeps focus.
+                escape: true,
             },
         )
     });
@@ -1270,18 +1619,22 @@ fn editor_surface(
                     (s.head + 1).min(len)
                 }
             }),
-            egui::Key::ArrowUp => {
-                editor_keys::move_carets(document, extend, |d, s| vertical_target(d, s.head, -1))
-            }
-            egui::Key::ArrowDown => {
-                editor_keys::move_carets(document, extend, |d, s| vertical_target(d, s.head, 1))
-            }
-            egui::Key::PageUp => {
-                move_primary(document, vertical_target(document, head, -page), extend)
-            }
-            egui::Key::PageDown => {
-                move_primary(document, vertical_target(document, head, page), extend)
-            }
+            egui::Key::ArrowUp => editor_keys::move_carets(document, extend, |d, s| {
+                vertical_target(d, &folds, s.head, -1)
+            }),
+            egui::Key::ArrowDown => editor_keys::move_carets(document, extend, |d, s| {
+                vertical_target(d, &folds, s.head, 1)
+            }),
+            egui::Key::PageUp => move_primary(
+                document,
+                vertical_target(document, &folds, head, -page),
+                extend,
+            ),
+            egui::Key::PageDown => move_primary(
+                document,
+                vertical_target(document, &folds, head, page),
+                extend,
+            ),
             egui::Key::Home if modifiers.command => move_primary(document, 0, extend),
             egui::Key::Home => editor_keys::move_carets(document, extend, |d, s| {
                 let line = d.text.char_to_line(s.head);
@@ -1317,15 +1670,40 @@ fn editor_surface(
     Ok(EditorOutput {
         changed: document.text.revision() != initial_revision,
         caret_pos,
+        bulb_anchor,
         requests,
         typed,
+        hover,
         scroll_y,
-        row_height,
     })
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gutter_columns_follow_the_reference_order() {
+        let plain = super::GutterLayout::new(0.0, 20.0, false);
+        assert!(!plain.in_run_column(plain.numbers_right + 2.0));
+        assert!(plain.numbers_right < plain.fold_center);
+        assert!(
+            plain.fold_center + super::GutterLayout::FOLD_COLUMN / 2.0 <= plain.width - 7.0 - 4.0
+        );
+        let full = super::GutterLayout::new(70.0, 20.0, true);
+        // blame | line numbers | run icons | folding | change bar | text
+        assert!(70.0 < full.numbers_right);
+        assert!(full.numbers_right < full.run_center);
+        assert!(full.run_center < full.fold_center);
+        assert!(full.in_run_column(full.run_center));
+        assert!(!full.in_fold_column(full.run_center));
+        assert!(full.in_fold_column(full.fold_center));
+        // The change bar (4 px wide, 7 px inside the edge) is right of the fold column.
+        assert!(full.fold_center + super::GutterLayout::FOLD_COLUMN / 2.0 <= full.width - 11.0);
+        assert!(!crate::change_popup::in_marker_column(
+            full.fold_center,
+            full.width
+        ));
+    }
+
     use super::*;
 
     #[test]
@@ -1356,7 +1734,7 @@ mod tests {
                     key: "DEFAULT_KEYWORD",
                 },
             ]),
-            diagnostics: Vec::new(),
+            ..Default::default()
         };
         let job = highlighted_line_job("ä", 0, &analysis, &egui::FontId::monospace(13.0));
         assert_eq!(job.text, "ä");

@@ -9,13 +9,15 @@
 
 use crate::{LspError, transport};
 use lsp_types::{
-    ClientCapabilities, ClientInfo, CompletionClientCapabilities, CompletionItemCapability,
-    CompletionItemCapabilityResolveSupport, CompletionItemKind, CompletionItemKindCapability,
-    DiagnosticTag, GeneralClientCapabilities, HoverClientCapabilities, InitializeParams,
-    InitializeResult, MarkupKind, ParameterInformationSettings, PositionEncodingKind,
-    PublishDiagnosticsClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
-    SignatureInformationSettings, TagSupport, TextDocumentClientCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncClientCapabilities, WindowClientCapabilities,
+    ClientCapabilities, ClientInfo, CodeActionCapabilityResolveSupport,
+    CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
+    CompletionClientCapabilities, CompletionItemCapability, CompletionItemCapabilityResolveSupport,
+    CompletionItemKind, CompletionItemKindCapability, DiagnosticTag, GeneralClientCapabilities,
+    HoverClientCapabilities, InitializeParams, InitializeResult, MarkupKind,
+    ParameterInformationSettings, PositionEncodingKind, PublishDiagnosticsClientCapabilities,
+    ServerCapabilities, SignatureHelpClientCapabilities, SignatureInformationSettings, TagSupport,
+    TextDocumentClientCapabilities, TextDocumentSyncCapability, TextDocumentSyncClientCapabilities,
+    WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
     WorkspaceFolder, request::Request,
 };
 use serde::Serialize;
@@ -92,6 +94,18 @@ pub struct LspDiagnostic {
     pub unnecessary: bool,
     /// Code is deprecated (`DiagnosticTag.Deprecated`).
     pub deprecated: bool,
+    /// The diagnostic as published, sent back in code action requests.
+    #[serde(skip)]
+    pub raw: Value,
+}
+
+/// A `workspace/applyEdit` request from the server, waiting for the IDE.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApplyEditRequest {
+    pub id: Value,
+    pub label: Option<String>,
+    /// The `WorkspaceEdit`.
+    pub edit: Value,
 }
 
 /// A `$/progress` work-done report that has begun and not yet ended.
@@ -160,6 +174,7 @@ pub struct LspService {
     progress: BTreeMap<String, WorkProgress>,
     status_message: Option<String>,
     shown_messages: Vec<ServerMessage>,
+    apply_edits: Vec<ApplyEditRequest>,
     pending: HashMap<u64, PendingRequest>,
     responses: HashMap<u64, LspResponse>,
     latencies: HashMap<String, Duration>,
@@ -242,6 +257,7 @@ impl LspService {
             progress: BTreeMap::new(),
             status_message: None,
             shown_messages: Vec::new(),
+            apply_edits: Vec::new(),
             pending: HashMap::new(),
             responses: HashMap::new(),
             latencies: HashMap::new(),
@@ -383,6 +399,24 @@ impl LspService {
         version: i32,
     ) -> Result<(), LspError> {
         self.sync_document(path, "rust", text, version)
+    }
+
+    /// `workspace/applyEdit` requests received since the last call.
+    pub fn take_apply_edits(&mut self) -> Vec<ApplyEditRequest> {
+        std::mem::take(&mut self.apply_edits)
+    }
+
+    /// Answers a `workspace/applyEdit` request.
+    pub fn respond_apply_edit(
+        &mut self,
+        id: Value,
+        result: Result<(), String>,
+    ) -> Result<(), LspError> {
+        let result = match result {
+            Ok(()) => json!({"applied": true}),
+            Err(reason) => json!({"applied": false, "failureReason": reason}),
+        };
+        self.send(&json!({"jsonrpc":"2.0","id":id,"result":result}))
     }
 
     /// Sends `textDocument/didSave` for an open document when the server asked
@@ -601,7 +635,13 @@ impl LspService {
             }
             "workspace/workspaceFolders" => json!([workspace_folder(&self.root)?]),
             "workspace/applyEdit" => {
-                json!({"applied": false, "failureReason": "not supported yet"})
+                // Answered by the IDE once it applied the edit.
+                self.apply_edits.push(ApplyEditRequest {
+                    id,
+                    label: params.get("label").and_then(Value::as_str).map(Into::into),
+                    edit: params.get("edit").cloned().unwrap_or(Value::Null),
+                });
+                return Ok(());
             }
             _ => {
                 return self.send(&json!({"jsonrpc":"2.0","id":id,"error":{
@@ -757,6 +797,14 @@ pub fn client_capabilities() -> ClientCapabilities {
             work_done_progress: Some(true),
             ..Default::default()
         }),
+        workspace: Some(WorkspaceClientCapabilities {
+            apply_edit: Some(true),
+            workspace_edit: Some(WorkspaceEditClientCapabilities {
+                document_changes: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
         text_document: Some(TextDocumentClientCapabilities {
             synchronization: Some(TextDocumentSyncClientCapabilities {
                 did_save: Some(true),
@@ -778,7 +826,11 @@ pub fn client_capabilities() -> ClientCapabilities {
                     deprecated_support: Some(true),
                     label_details_support: Some(true),
                     resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                        properties: vec!["documentation".into(), "detail".into()],
+                        properties: vec![
+                            "documentation".into(),
+                            "detail".into(),
+                            "additionalTextEdits".into(),
+                        ],
                     }),
                     ..Default::default()
                 }),
@@ -792,6 +844,32 @@ pub fn client_capabilities() -> ClientCapabilities {
                     ),
                 }),
                 context_support: Some(true),
+                ..Default::default()
+            }),
+            code_action: Some(CodeActionClientCapabilities {
+                code_action_literal_support: Some(CodeActionLiteralSupport {
+                    code_action_kind: CodeActionKindLiteralSupport {
+                        value_set: [
+                            "",
+                            "quickfix",
+                            "refactor",
+                            "refactor.extract",
+                            "refactor.inline",
+                            "refactor.rewrite",
+                            "source",
+                            "source.organizeImports",
+                        ]
+                        .into_iter()
+                        .map(String::from)
+                        .collect(),
+                    },
+                }),
+                is_preferred_support: Some(true),
+                disabled_support: Some(true),
+                data_support: Some(true),
+                resolve_support: Some(CodeActionCapabilityResolveSupport {
+                    properties: vec!["edit".into()],
+                }),
                 ..Default::default()
             }),
             hover: Some(HoverClientCapabilities {
@@ -859,6 +937,7 @@ fn parse_diagnostic(value: &Value) -> Option<LspDiagnostic> {
         _ => None,
     };
     Some(LspDiagnostic {
+        raw: value.clone(),
         code,
         source: value.get("source").and_then(Value::as_str).map(Into::into),
         unnecessary: tags.contains(&1),
@@ -875,7 +954,8 @@ fn parse_diagnostic(value: &Value) -> Option<LspDiagnostic> {
     })
 }
 
-pub(crate) fn file_uri(path: &Path) -> Result<Url, LspError> {
+/// `file://` URI of `path` (canonicalized when it exists).
+pub fn file_uri(path: &Path) -> Result<Url, LspError> {
     let absolute = path.canonicalize().unwrap_or_else(|_| path.to_owned());
     Url::from_file_path(&absolute).map_err(|_| LspError::InvalidPath(path.to_owned()))
 }

@@ -52,6 +52,7 @@ pub fn left(app: &mut IdeApp, ctx: &egui::Context) {
                 ToolWindow::Project => project_tree(app, ui),
                 ToolWindow::Commit => commit(app, ui),
                 ToolWindow::BuildVariants => crate::build_variants_ui::show(app, ui),
+                ToolWindow::Structure => crate::structure_view::tool_window(app, ui),
                 _ => {}
             }
         });
@@ -749,6 +750,9 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     ))
                     .color(theme::TEXT_INFO),
                 );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::ai_vcs::commit_message_button(app, ui, &selected);
+                });
             });
         });
     if commit_now
@@ -785,16 +789,28 @@ pub fn commit_message_id() -> egui::Id {
     egui::Id::new("commit_message")
 }
 
-fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
-    let hide = tool_window_header(ui, "Find in Files", |ui| {
-        if app.state.search.is_running()
-            && icons::button_colored(ui, Icon::Stop, *theme::STOP_RED, "Cancel", false).clicked()
-        {
-            app.dispatch("search.cancel", Value::Null);
+impl IdeApp {
+    /// Copies the query and toggles of a search started outside the Find
+    /// inputs into them; typing an unsubmitted query is left alone.
+    fn sync_find_inputs(&mut self) {
+        let state = (&self.state.search_query, &self.state.search_options);
+        if state == (&self.find_synced.0, &self.find_synced.1) {
+            return;
         }
-    });
-    if hide {
-        app.toggle_tool_window(ToolWindow::Find);
+        self.find_synced = (
+            self.state.search_query.clone(),
+            self.state.search_options.clone(),
+        );
+        self.search_input = self.state.search_query.clone();
+        self.find_options = self.state.search_options.clone();
+    }
+}
+
+fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
+    app.sync_find_inputs();
+    if crate::navigation_ui::find_header(app, ui) {
+        crate::navigation_ui::usages_view(app, ui);
+        return;
     }
     ui.horizontal(|ui| {
         ui.add_space(12.0);
@@ -831,6 +847,7 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
         );
         submit |= mask.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if submit && !app.search_input.is_empty() {
+            app.state.navigation.usages_selected = false;
             app.dispatch(
                 "search.project",
                 find_params(&app.search_input, &app.find_options),
@@ -865,27 +882,26 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
                     app.file_icon(&result.path),
                     icons::ICON,
                 );
+                // The location stays visible at the right; the preview (already
+                // elided around the match by the search engine) is clipped before it.
+                let location = ui
+                    .painter()
+                    .layout_job(location_job(&result.path, result.line));
+                let location_x =
+                    (rect.right() - location.size().x - 16.0).max(rect.left() + rect.width() * 0.5);
                 let job = highlighted_preview(&result.preview, &result.highlights);
                 let galley = ui.painter().layout_job(job);
-                let x = rect.left() + 34.0 + galley.size().x;
-                ui.painter().with_clip_rect(rect).galley(
-                    egui::pos2(rect.left() + 34.0, rect.center().y - galley.size().y / 2.0),
-                    galley,
-                    *theme::editor::TEXT,
-                );
-                let location = format!("{} {}", IdeApp::file_name(&result.path), result.line);
-                let galley = ui.painter().layout_no_wrap(
-                    location,
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    *theme::TEXT_INFO,
-                );
-                let pos = egui::pos2(
-                    (rect.right() - galley.size().x - 16.0).max(x + 16.0),
-                    rect.center().y - galley.size().y / 2.0,
-                );
+                ui.painter()
+                    .with_clip_rect(rect.with_max_x(location_x - 12.0))
+                    .galley(
+                        egui::pos2(rect.left() + 34.0, rect.center().y - galley.size().y / 2.0),
+                        galley,
+                        *theme::editor::TEXT,
+                    );
+                let pos = egui::pos2(location_x, rect.center().y - location.size().y / 2.0);
                 ui.painter()
                     .with_clip_rect(rect)
-                    .galley(pos, galley, *theme::TEXT_INFO);
+                    .galley(pos, location, *theme::TEXT_INFO);
                 if response
                     .on_hover_text(result.path.display().to_string())
                     .clicked()
@@ -917,6 +933,36 @@ fn find_params(query: &str, options: &jetthing_core::SearchOptions) -> Value {
         "regex": options.regex,
         "fileMask": options.file_mask,
     })
+}
+
+/// Location column of a result: `name line`, then the project-relative
+/// directory when the file is not in the project root (so the generated
+/// `build/scripts/java-gradle` is told apart from the root `gradlew`).
+fn result_location(path: &std::path::Path, line: usize) -> (String, Option<String>) {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(|parent| parent.display().to_string());
+    (format!("{name} {line}"), directory)
+}
+
+fn location_job(path: &std::path::Path, line: usize) -> egui::text::LayoutJob {
+    let (name, directory) = result_location(path, line);
+    let format = |color| egui::TextFormat {
+        font_id: egui::FontId::proportional(theme::UI_FONT_SIZE),
+        color,
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    job.append(&name, 0.0, format(*theme::TEXT_INFO));
+    if let Some(directory) = directory {
+        job.append(&directory, 8.0, format(*theme::TEXT_DISABLED));
+    }
+    job
 }
 
 /// Result preview with every occurrence on a search-result background.
@@ -1021,6 +1067,43 @@ mod tests {
         for key in ["matchCase", "wholeWords", "regex", "fileMask"] {
             assert!(spec.params.contains(key), "{key} documented in the schema");
         }
+    }
+
+    #[test]
+    fn a_search_started_by_command_fills_the_find_inputs() {
+        let (mut app, _ctx) = crate::tests::headless_app("find-sync", "a.txt", "needle\n");
+        app.dispatch(
+            "search.project",
+            json!({"query": "ne+dle", "regex": true, "matchCase": true}),
+        );
+        app.sync_find_inputs();
+        assert_eq!(app.search_input, "ne+dle");
+        assert!(app.find_options.regex && app.find_options.match_case);
+        assert!(!app.find_options.whole_words);
+        // A query being typed is not overwritten while the last search is unchanged.
+        app.search_input = "typing".into();
+        app.sync_find_inputs();
+        assert_eq!(app.search_input, "typing");
+    }
+
+    #[test]
+    fn result_locations_name_the_file_and_its_directory() {
+        use std::path::Path;
+        assert_eq!(
+            result_location(Path::new("gradlew"), 12),
+            ("gradlew 12".to_owned(), None)
+        );
+        assert_eq!(
+            result_location(Path::new("gradlew.bat"), 10),
+            ("gradlew.bat 10".to_owned(), None)
+        );
+        assert_eq!(
+            result_location(Path::new("build/scripts/java-gradle"), 12),
+            (
+                "java-gradle 12".to_owned(),
+                Some("build/scripts".to_owned())
+            )
+        );
     }
 
     #[test]

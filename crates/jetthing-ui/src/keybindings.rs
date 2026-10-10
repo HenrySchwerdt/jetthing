@@ -21,6 +21,7 @@ pub enum UiAction {
     GotoFile,
     RecentFiles,
     GotoLine,
+    FileStructure,
     Find,
     Replace,
     FindNext,
@@ -44,6 +45,7 @@ pub fn ui_action(action: &str) -> Option<UiAction> {
         "GotoFile" => UiAction::GotoFile,
         "RecentFiles" => UiAction::RecentFiles,
         "GotoLine" => UiAction::GotoLine,
+        "FileStructurePopup" => UiAction::FileStructure,
         "Find" => UiAction::Find,
         "Replace" => UiAction::Replace,
         "FindNext" => UiAction::FindNext,
@@ -190,7 +192,9 @@ impl IdeApp {
     fn ui_action_available(&self, action: UiAction) -> bool {
         let document = self.state.active_document.is_some();
         match action {
-            UiAction::GotoLine | UiAction::Find | UiAction::Replace => document,
+            UiAction::GotoLine | UiAction::FileStructure | UiAction::Find | UiAction::Replace => {
+                document
+            }
             UiAction::FindNext | UiAction::FindPrevious => document && !self.find.query.is_empty(),
             UiAction::NewFile
             | UiAction::NewDirectory
@@ -212,6 +216,10 @@ impl IdeApp {
             }),
             UiAction::GotoLine => self.open_dialog(popups::Dialog::GotoLine {
                 input: String::new(),
+            }),
+            UiAction::FileStructure => self.open_dialog(popups::Dialog::FileStructure {
+                query: String::new(),
+                selected: None,
             }),
             UiAction::Find | UiAction::Replace => {
                 let selection = self.primary_selection_text();
@@ -290,14 +298,20 @@ impl IdeApp {
             if binding.command.starts_with("diff.") && !diff_tab {
                 continue;
             }
-            // Go to Declaration only resolves Android resource references so far.
-            if binding.command.starts_with("android.resources.")
-                && self.state.android.project.is_none()
-            {
-                continue;
-            }
             let params = serde_json::from_str(binding.params).unwrap_or(Value::Null);
-            if binding.command == "editor.close" && diff_tab {
+            if binding.command == "navigate.declaration"
+                && self.state.android.project.is_some()
+                && self.state.resource_at_caret().is_some()
+            {
+                // `R.x.y` references resolve against the merged Android resources.
+                self.dispatch("android.resources.gotoDeclaration", Value::Null);
+            } else if binding.command == "code.showIntentions" {
+                crate::intentions_ui::reset_selection(ctx);
+                self.dispatch(binding.command, params);
+            } else if matches!(binding.command, "navigate.back" | "navigate.forward") {
+                self.dispatch(binding.command, params);
+                ctx.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
+            } else if binding.command == "editor.close" && diff_tab {
                 self.dispatch("diff.close", Value::Null);
             } else if binding.command == "run.project" && self.state.android.project.is_some() {
                 // Android apps run by deploying 'app' (like the toolbar Run button).

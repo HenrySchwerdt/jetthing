@@ -257,18 +257,10 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
 mod tests {
     use super::*;
     use crate::built_in_commands;
-    use jetthing_text::{SelectionSet, TextDocument};
 
     fn state_with(path: &str, text: &str) -> IdeState {
         let mut state = IdeState::default();
-        state.documents.push(Document {
-            path: path.into(),
-            analysis: jetthing_language::analyze(std::path::Path::new(path), text),
-            text: TextDocument::new(text),
-            selections: SelectionSet::single(0),
-            disk_hash: 0,
-            conflict: None,
-        });
+        state.documents.push(Document::new(path.into(), text));
         state.active_document = Some(0);
         state
     }

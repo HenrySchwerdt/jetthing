@@ -9,7 +9,6 @@
 
 use crate::{IdeState, spec, usize_param};
 use jetthing_command::{Command, CommandError, CommandRegistry};
-use jetthing_language::analyze;
 use jetthing_project::ProjectWatcher;
 use serde_json::{Value, json};
 use std::hash::{Hash, Hasher};
@@ -193,7 +192,7 @@ impl IdeState {
         document.conflict = None;
         let len = document.text.len_chars();
         document.selections.clamp(len);
-        document.analysis = analyze(&document.path, disk);
+        document.refresh_analysis(disk);
         let path = document.path.clone();
         let version = document.text.revision().min(i32::MAX as u64) as i32;
         self.sync_document_lsp(&path, disk, version);

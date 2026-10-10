@@ -60,7 +60,7 @@ impl IdeState {
             if document.text.replace_from_snapshot(&disk).is_ok() {
                 document.text.mark_saved();
                 document.selections.clamp(document.text.len_chars());
-                document.analysis = jetthing_language::analyze(&document.path, &disk);
+                document.refresh_analysis(&disk);
                 let version = document.text.revision().min(i32::MAX as u64) as i32;
                 reloaded.push((document.path.clone(), disk, version));
             }
