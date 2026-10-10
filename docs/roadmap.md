@@ -42,7 +42,7 @@
 - [x] Project tree New/Rename/Delete, commit with message and file selection
 - [x] Workspace restore (`.jetthing/workspace.json`), autosave on focus loss
 - [x] Check for Updates with verified self-update from GitHub releases
-- [x] Versioned release pipeline (0.0.1) publishing on every version bump
+- [x] Versioned release pipeline (0.0.2) publishing on every version bump
 
 ## M2 — language intelligence
 
