@@ -353,7 +353,10 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
         });
         if response.clicked() {
             if pointer_on_close && pinned {
-                tab_action = Some(("PinActiveTabToggle".to_owned(), crate::context_menus::Target::Tab(index)));
+                tab_action = Some((
+                    "PinActiveTabToggle".to_owned(),
+                    crate::context_menus::Target::Tab(index),
+                ));
             } else if pointer_on_close {
                 close = Some(index);
             } else {

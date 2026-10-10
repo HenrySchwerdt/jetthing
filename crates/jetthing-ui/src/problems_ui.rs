@@ -288,7 +288,8 @@ pub fn inspection_widget(
         if count == 0 {
             continue;
         }
-        let galley = painter.layout_no_wrap(count.to_string(), font.clone(), *theme::TEXT_SECONDARY);
+        let galley =
+            painter.layout_no_wrap(count.to_string(), font.clone(), *theme::TEXT_SECONDARY);
         let width = 14.0 + 3.0 + galley.size().x;
         let start = x - width;
         icons::paint(

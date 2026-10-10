@@ -6,14 +6,14 @@
 //! dispatched through the typed command registry.
 
 mod about;
+mod android_run_ui;
 mod android_sdk;
 mod android_view;
 mod blame_gutter;
 mod branches_popup;
-mod change_popup;
-mod build_window;
-mod android_run_ui;
 mod build_variants_ui;
+mod build_window;
+mod change_popup;
 mod chrome;
 mod completion_ui;
 mod context_menus;
@@ -37,10 +37,10 @@ mod notifications;
 mod palette;
 mod plugin_ui;
 mod popups;
-mod settings_dialog;
 mod problems_ui;
-mod settings_keymap;
 mod push_dialog;
+mod settings_dialog;
+mod settings_keymap;
 mod settings_plugins;
 mod syntax;
 mod terminal_ui;

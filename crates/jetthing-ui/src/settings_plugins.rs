@@ -70,23 +70,25 @@ pub fn rows(registry: &PluginRegistry) -> Vec<PluginRow> {
             }
         })
         .collect();
-    rows.extend(registry.problems.iter().map(|(path, error)| PluginRow {
-        id: None,
-        name: path
-            .parent()
-            .and_then(|dir| dir.file_name())
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "plugin".into()),
-        version: String::new(),
-        source: "Failed to load".into(),
-        description: String::new(),
-        capabilities: Vec::new(),
-        api_version: None,
-        status: None,
-        enabled: false,
-        can_toggle: false,
-        path: Some(path.clone()),
-        error: Some(error.to_string()),
+    rows.extend(registry.problems.iter().map(|(path, error)| {
+        PluginRow {
+            id: None,
+            name: path
+                .parent()
+                .and_then(|dir| dir.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "plugin".into()),
+            version: String::new(),
+            source: "Failed to load".into(),
+            description: String::new(),
+            capabilities: Vec::new(),
+            api_version: None,
+            status: None,
+            enabled: false,
+            can_toggle: false,
+            path: Some(path.clone()),
+            error: Some(error.to_string()),
+        }
     }));
     rows
 }
@@ -340,8 +342,10 @@ fn details(ui: &mut egui::Ui, entry: &PluginRow) {
         ui.add_space(10.0);
         ui.label(RichText::new("Location").color(theme::TEXT_BRIGHT));
         ui.add(
-            egui::Label::new(RichText::new(path.display().to_string()).color(theme::TEXT_SECONDARY))
-                .wrap(),
+            egui::Label::new(
+                RichText::new(path.display().to_string()).color(theme::TEXT_SECONDARY),
+            )
+            .wrap(),
         );
     }
 }
@@ -376,7 +380,8 @@ mod tests {
 
     #[test]
     fn rows_list_discovered_and_failed_manifests() {
-        let root = std::env::temp_dir().join(format!("jetthing-plugins-page-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("jetthing-plugins-page-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let good = root.join("good");
         let bad = root.join("bad");
@@ -398,7 +403,10 @@ mod tests {
         assert_eq!(good_row.name, "Good");
         assert!(good_row.enabled && good_row.can_toggle);
         assert!(matches(good_row, "lang"));
-        let failed = rows.iter().find(|row| row.id.is_none()).expect("failed row");
+        let failed = rows
+            .iter()
+            .find(|row| row.id.is_none())
+            .expect("failed row");
         assert_eq!(failed.name, "bad");
         assert!(failed.error.is_some());
         let _ = std::fs::remove_dir_all(root);
