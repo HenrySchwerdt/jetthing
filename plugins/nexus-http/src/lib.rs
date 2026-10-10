@@ -31,6 +31,9 @@ pub struct NexusApp {
     sidebar: views::sidebar::SidebarUi,
     response: views::response::ResponseUi,
     overlays: OverlayUi,
+    runner: views::runner::RunnerUi,
+    /// The collection runner replaces the request/response islands.
+    pub runner_open: bool,
     sidebar_width: f32,
     /// Fraction of the editor area used by the request pane.
     split: f32,
@@ -49,10 +52,24 @@ impl NexusApp {
             sidebar: Default::default(),
             response: Default::default(),
             overlays: Default::default(),
+            runner: Default::default(),
+            runner_open: false,
             sidebar_width: 270.0,
             split: 0.5,
             token_job: None,
         }
+    }
+
+    /// Shows the collection runner scoped to a folder (or the whole workspace).
+    pub fn open_runner(&mut self, scope: Option<nexus_http_core::model::Id>) {
+        self.runner.set_scope(scope);
+        self.runner_open = true;
+    }
+
+    /// Starts the collection runner with its current options.
+    pub fn start_run(&mut self) {
+        self.runner_open = true;
+        self.runner.start(&self.state);
     }
 
     pub fn open_overlay(&mut self, overlay: Overlay) {
@@ -90,7 +107,8 @@ impl NexusApp {
                 Err(e) => self.state.notify(format!("Token request failed: {e}")),
             }
         }
-        self.state.poll() || self.token_job.is_some()
+        let running = self.runner.poll(&mut self.state);
+        self.state.poll() || self.token_job.is_some() || running
     }
 
     fn start_token_fetch(&mut self) {
@@ -232,16 +250,30 @@ impl NexusApp {
 
         let mut req_actions = views::request::RequestActions::default();
         let selected = self.state.selected_request().map(|r| r.id.clone());
-        island(ui, request, &mut |ui| match &selected {
-            Some(id) => views::request::show(ui, &mut self.state, id, &mut req_actions),
-            None => welcome(ui, &pal),
-        });
-        island(ui, response, &mut |ui| {
-            if let Some(id) = &selected {
-                views::response::show(ui, &mut self.state, id, &mut self.response);
+        if self.runner_open {
+            let mut close = false;
+            island(ui, editor, &mut |ui| {
+                views::runner::show(ui, &mut self.state, &mut self.runner, &mut close);
+                toast(ui, &mut self.state, &pal);
+            });
+            if close {
+                self.runner_open = false;
             }
-            toast(ui, &mut self.state, &pal);
-        });
+        } else {
+            island(ui, request, &mut |ui| match &selected {
+                Some(id) => views::request::show(ui, &mut self.state, id, &mut req_actions),
+                None => welcome(ui, &pal),
+            });
+            island(ui, response, &mut |ui| {
+                if let Some(id) = &selected {
+                    views::response::show(ui, &mut self.state, id, &mut self.response);
+                }
+                toast(ui, &mut self.state, &pal);
+            });
+        }
+        if let Some(scope) = side_actions.run.take() {
+            self.open_runner(scope);
+        }
 
         if side_actions.open_import {
             self.overlays.open(Overlay::Import);

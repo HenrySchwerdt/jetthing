@@ -417,3 +417,89 @@ fn cancels_before_sending() {
     .unwrap_err();
     assert!(matches!(err, ExecError::Cancelled));
 }
+
+#[test]
+fn runs_collections_with_chaining_assertions_and_bail() {
+    use nexus_http_core::runner::{RunOptions, run};
+    let server = start();
+    let mut ws = workspace(&server);
+    let mut login = Request::new("login", Method::Post, "{{base}}/login");
+    login.assertions.push(Assertion::new(
+        Source::JsonPath("$.token".into()),
+        Operator::Equals,
+        "tok-123",
+    ));
+    let mut me = Request::new("me", Method::Get, "{{base}}/echo").with_auth(Auth::Bearer {
+        token: format!("{{% response 'body', '{}', '$.token' %}}", login.id),
+        prefix: "Bearer".into(),
+    });
+    me.assertions.push(Assertion::new(
+        Source::JsonPath("$.headers.authorization".into()),
+        Operator::Equals,
+        "Bearer tok-123",
+    ));
+    let mut broken = Request::new("broken", Method::Get, "{{base}}/echo");
+    broken
+        .assertions
+        .push(Assertion::new(Source::Status, Operator::Equals, "500"));
+    let after = Request::new("after", Method::Get, "{{base}}/echo");
+    for r in [login, me, broken, after] {
+        ws.items.push(Item::Request(r));
+    }
+    let mut jar = CookieJar::default();
+    let mut history = History::default();
+    let mut seen = 0;
+    let summary = run(
+        &ws,
+        &RunOptions {
+            iterations: 2,
+            ..Default::default()
+        },
+        Path::new("."),
+        &client(),
+        &mut jar,
+        &mut history,
+        &AtomicBool::new(false),
+        |_| seen += 1,
+    );
+    assert_eq!(summary.steps.len(), 8);
+    assert_eq!(seen, 8);
+    assert_eq!(
+        summary.failed(),
+        2,
+        "{:?}",
+        summary
+            .steps
+            .iter()
+            .map(|s| (&s.name, s.passed()))
+            .collect::<Vec<_>>()
+    );
+    assert!(summary.steps[1].passed(), "{:?}", summary.steps[1]);
+    assert_eq!(summary.assertions(), (4, 6));
+
+    let bailed = run(
+        &ws,
+        &RunOptions {
+            bail: true,
+            ..Default::default()
+        },
+        Path::new("."),
+        &client(),
+        &mut jar,
+        &mut history,
+        &AtomicBool::new(false),
+        |_| {},
+    );
+    assert_eq!(bailed.steps.len(), 3);
+    let cancelled = run(
+        &ws,
+        &RunOptions::default(),
+        Path::new("."),
+        &client(),
+        &mut jar,
+        &mut history,
+        &AtomicBool::new(true),
+        |_| {},
+    );
+    assert!(cancelled.cancelled && cancelled.steps.is_empty());
+}

@@ -510,6 +510,11 @@ impl NexusState {
         }
     }
 
+    /// History changed outside [`Self::poll`] (e.g. by the collection runner).
+    pub fn mark_history_dirty(&mut self) {
+        self.history_dirty = true;
+    }
+
     /// Replaces the workspace (after an import) and saves it.
     pub fn replace_workspace(&mut self, workspace: Workspace) {
         self.flush();

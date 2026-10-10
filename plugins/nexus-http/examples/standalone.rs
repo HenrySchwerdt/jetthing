@@ -9,7 +9,8 @@
 //! Demo options (environment): `NEXUS_LIGHT=1` light theme, `NEXUS_SEND=1` send
 //! the selected request on start, `NEXUS_SELECT=<request name>`,
 //! `NEXUS_REQUEST_TAB=<tab>`, `NEXUS_RESPONSE_TAB=<tab>`,
-//! `NEXUS_OVERLAY=env|switcher|import|export|code`.
+//! `NEXUS_OVERLAY=env|switcher|import|export|code`, `NEXUS_RUN=<top-level folder or empty>`
+//! opens the collection runner and starts a run.
 
 use eframe::egui;
 use nexus_http::NexusApp;
@@ -69,9 +70,23 @@ struct Host {
 
 impl eframe::App for Host {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if !self.sent && std::env::var_os("NEXUS_SEND").is_some() {
+        if !self.sent {
             self.sent = true;
-            self.app.send_selected();
+            if std::env::var_os("NEXUS_SEND").is_some() {
+                self.app.send_selected();
+            }
+            if let Ok(scope) = std::env::var("NEXUS_RUN") {
+                let folder = self
+                    .app
+                    .state
+                    .workspace
+                    .items
+                    .iter()
+                    .find(|i| i.name() == scope)
+                    .map(|i| i.id().clone());
+                self.app.open_runner(folder);
+                self.app.start_run();
+            }
         }
         egui::CentralPanel::default()
             .frame(egui::Frame::new())
@@ -288,11 +303,18 @@ fn demo_workspace(port: u16) -> Workspace {
         Operator::LessThan,
         "500",
     ));
-    let get = Request::new(
+    let mut get = Request::new(
         "Get product",
         Method::Get,
         "{{ base_url }}/{{ api_version }}/products/KB-001",
     );
+    get.assertions
+        .push(Assertion::new(Source::Status, Operator::Equals, "200"));
+    get.assertions.push(Assertion::new(
+        Source::JsonPath("$.price".into()),
+        Operator::LessThan,
+        "100",
+    ));
     let create = Request::new("Create product", Method::Post, "{{ base_url }}/{{ api_version }}/products")
         .with_body(Body::Json {
             text: "{\n  \"sku\": \"KB-042\",\n  \"name\": \"Split Keyboard\",\n  \"price\": 189.0,\n  \"tags\": [\"ergonomic\", \"wireless\"],\n  \"in_stock\": true\n}".into(),

@@ -13,6 +13,7 @@ const INDENT: f32 = 14.0;
 #[derive(Default)]
 pub struct SidebarUi {
     renaming: Option<(Id, String, bool)>,
+    run_request: Option<Id>,
 }
 
 #[derive(Default)]
@@ -20,6 +21,8 @@ pub struct SidebarActions {
     pub open_import: bool,
     pub open_environments: bool,
     pub export: bool,
+    /// Open the collection runner for a folder (`Some(None)` = whole workspace).
+    pub run: Option<Option<Id>>,
 }
 
 /// Where a dragged item lands.
@@ -55,6 +58,9 @@ pub fn show(
             egui::Popup::menu(&more).width(200.0).show(|ui| {
                 if ui.button("Import…").clicked() {
                     actions.open_import = true;
+                }
+                if ui.button("Run collection…").clicked() {
+                    actions.run = Some(None);
                 }
                 if ui.button("Export workspace…").clicked() {
                     actions.export = true;
@@ -139,6 +145,9 @@ pub fn show(
 
     if let Some((dragged, target)) = drop {
         apply_drop(state, &dragged, target);
+    }
+    if let Some(folder) = local.run_request.take() {
+        actions.run = Some(Some(folder));
     }
 }
 
@@ -400,6 +409,9 @@ fn tree_item(
             if ui.button("New Folder").clicked() {
                 let new = state.new_folder(Some(&id));
                 local.renaming = Some((new, "New Folder".into(), true));
+            }
+            if ui.button("Run folder…").clicked() {
+                local.run_request = Some(id.clone());
             }
             ui.separator();
         } else if ui.button("Send").clicked() {
