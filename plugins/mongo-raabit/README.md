@@ -6,7 +6,7 @@ plugin API (#48) lands.
 
 | Crate | Path | Purpose |
 |---|---|---|
-| `mongo-raabit-core` | `core/` | headless: connection profiles, SSH tunnels, secrets, metadata, query/paging/CRUD, explain, index/user management |
+| `mongo-raabit-core` | `core/` | headless: connection profiles, SSH tunnels, secrets, metadata, query/paging/CRUD, explain, index/user management, aggregation stages with preview, schema sampler, SQL → MQL, query code generation, import/export |
 
 The core is built on the official [`mongodb`](https://crates.io/crates/mongodb) driver.
 External tools (`ssh`, later `mongosh`) are discovered on `PATH` at runtime and never
