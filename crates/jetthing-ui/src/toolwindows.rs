@@ -537,7 +537,8 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     if response.clicked() && on_check {
                         toggles.push((path.clone(), !is_included));
                     }
-                    if response.double_clicked() && *kind != ChangeKind::Deleted {
+                    // Like the reference IDE, double-click shows the diff.
+                    if response.double_clicked() {
                         open = Some(path.clone());
                     }
                 }
@@ -619,7 +620,7 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
     }
     if let Some(path) = open {
-        app.dispatch("editor.openFile", json!({"path": path}));
+        app.dispatch("git.showDiff", json!({"path": path}));
     }
 }
 
