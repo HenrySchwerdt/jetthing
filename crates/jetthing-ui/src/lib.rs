@@ -5,6 +5,7 @@
 //! islands and a status bar with navigation breadcrumbs. Every user action is
 //! dispatched through the typed command registry.
 
+mod android_run_ui;
 mod android_sdk;
 mod android_view;
 mod chrome;
@@ -60,6 +61,7 @@ pub struct IdeApp {
     android_sdk: android_sdk::SdkPage,
     logcat: logcat_ui::LogcatView,
     android_view: android_view::AndroidViewState,
+    deploy_balloon: android_run_ui::DeployBalloon,
 }
 
 impl IdeApp {
@@ -125,6 +127,7 @@ impl IdeApp {
             android_sdk: android_sdk::SdkPage::default(),
             logcat: logcat_ui::LogcatView::default(),
             android_view: android_view::AndroidViewState::default(),
+            deploy_balloon: android_run_ui::DeployBalloon::default(),
         }
     }
 
@@ -570,6 +573,7 @@ impl eframe::App for IdeApp {
         popups::show(self, ctx);
         android_sdk::show(self, ctx);
         notifications::show(self, ctx);
+        android_run_ui::show(self, ctx);
         lsp_status::notices(self, ctx);
         // Include operations started by controls in this frame, and keep
         // polling even when their notification balloon is hidden.

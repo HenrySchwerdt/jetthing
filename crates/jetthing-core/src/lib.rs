@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod android_commands;
+mod android_deploy;
 mod android_devices;
 mod android_logcat;
 mod editor_commands;
@@ -22,6 +23,7 @@ mod terminal_commands;
 mod toolwindow;
 mod update_commands;
 pub use android_commands::AndroidState;
+pub use android_deploy::{DeployPhase, DeployState};
 pub use android_devices::DeviceHub;
 pub use android_logcat::LogcatState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
@@ -588,6 +590,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
     android_commands::register(&mut registry);
     android_devices::register(&mut registry);
+    android_deploy::register(&mut registry);
     android_logcat::register(&mut registry);
     editor_commands::register(&mut registry);
     project_commands::register(&mut registry);

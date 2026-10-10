@@ -21,6 +21,7 @@ pub struct AndroidState {
     pub sdk_manager_open: bool,
     pub devices: crate::android_devices::DeviceHub,
     pub logcat: crate::android_logcat::LogcatState,
+    pub deploy: crate::android_deploy::DeployState,
     /// Project tool window shows the Android view (default for Android projects).
     pub android_view: bool,
 }
