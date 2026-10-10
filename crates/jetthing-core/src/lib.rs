@@ -20,6 +20,7 @@ mod diagnostic_commands;
 pub mod diagnostics;
 mod disk_sync;
 mod editor_commands;
+mod gradle_commands;
 mod lsp_commands;
 mod plugin_host;
 mod project_commands;
@@ -87,6 +88,9 @@ pub struct IdeState {
     pub build_systems: BuildSystems,
     /// Build system of the open project, detected on open (`build.detect` refreshes it).
     pub detected_build: Option<DetectedBuild>,
+    /// Gradle model from the last sync (cached in `.jetthing/gradle/model.json`).
+    pub gradle_model: Option<jetthing_gradle::GradleModel>,
+    pub gradle_error: Option<String>,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -168,6 +172,7 @@ impl IdeState {
         self.start_watcher();
         self.vcs_stale = false;
         self.detect_build();
+        self.load_gradle_model();
         self.restore_workspace();
         Ok(())
     }
@@ -633,6 +638,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     build_commands::register(&mut registry);
     editor_commands::register(&mut registry);
     disk_sync::register(&mut registry);
+    gradle_commands::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
     diagnostic_commands::register(&mut registry);

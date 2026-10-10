@@ -15,6 +15,7 @@ pub struct Workspace {
     pub expanded_dirs: Vec<PathBuf>,
     pub left_tool_window: Option<String>,
     pub bottom_tool_window: Option<String>,
+    pub right_tool_window: Option<String>,
     pub recent_files: Vec<PathBuf>,
 }
 
@@ -179,6 +180,10 @@ impl IdeState {
                 .tool_windows
                 .visible(Anchor::Bottom)
                 .map(|window| window.id().to_owned()),
+            right_tool_window: self
+                .tool_windows
+                .visible(Anchor::Right)
+                .map(|window| window.id().to_owned()),
             recent_files: self.recent_files.clone(),
         }
     }
@@ -229,9 +234,13 @@ impl IdeState {
         }
         self.recent_files = recent;
         self.tool_windows.hide_all();
-        for id in [&workspace.left_tool_window, &workspace.bottom_tool_window]
-            .into_iter()
-            .flatten()
+        for id in [
+            &workspace.left_tool_window,
+            &workspace.bottom_tool_window,
+            &workspace.right_tool_window,
+        ]
+        .into_iter()
+        .flatten()
         {
             // The terminal is not restored automatically: it would spawn a shell.
             if let Some(window) = ToolWindow::parse(id).filter(|w| *w != ToolWindow::Terminal) {

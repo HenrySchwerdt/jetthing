@@ -18,6 +18,7 @@ mod disk_banner;
 mod editor;
 mod editor_keys;
 mod findbar;
+mod gradle_window;
 mod icons;
 mod keys;
 mod logcat_ui;
@@ -709,6 +710,7 @@ impl eframe::App for IdeApp {
             plugin_ui::right_side(self, ctx);
             toolwindows::left(self, ctx);
             device_manager::right(self, ctx);
+            gradle_window::show(self, ctx);
             toolwindows::bottom(self, ctx);
             editor::central(self, ctx);
         }

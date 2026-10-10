@@ -562,17 +562,11 @@ pub(crate) fn stripe_button(app: &mut IdeApp, ui: &mut egui::Ui, window: ToolWin
         ui.painter()
             .circle_filled(rect.right_top() + vec2(-7.0, 7.0), 3.0, color);
     }
-    if response
-        .on_hover_text(format!(
-            "{}{}",
-            window.title(),
-            match window.shortcut() {
-                "" => String::new(),
-                shortcut => format!(" ({})", keys::display(shortcut)),
-            }
-        ))
-        .clicked()
-    {
+    let tooltip = match window.shortcut() {
+        "" => window.title().to_owned(),
+        shortcut => format!("{} ({})", window.title(), keys::display(shortcut)),
+    };
+    if response.on_hover_text(tooltip).clicked() {
         app.toggle_tool_window(window);
     }
 }
@@ -609,17 +603,26 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
         });
 }
 
-/// Whether the right stripe offers the Device Manager (Android projects).
-pub(crate) fn shows_device_manager(app: &IdeApp) -> bool {
-    app.state.android.project.is_some()
+/// Built-in right-anchored tool windows offered for the open project, top to bottom.
+pub(crate) fn right_stripe_windows(app: &IdeApp) -> Vec<(ToolWindow, Icon)> {
+    let mut windows = Vec::new();
+    if app.state.is_gradle_project() || app.state.tool_windows.is_visible(ToolWindow::Gradle) {
+        windows.push((ToolWindow::Gradle, Icon::Model));
+    }
+    if app.state.android.project.is_some()
         || app.state.tool_windows.is_visible(ToolWindow::DeviceManager)
+    {
+        windows.push((ToolWindow::DeviceManager, Icon::Device));
+    }
+    windows
 }
 
-/// Right tool window stripe. Without right-anchored tool windows (non-Android
-/// projects) it is a narrow gutter so the editor island keeps its rounded edge.
-/// Plugin tool windows join this stripe (`plugin_ui::right_side`).
+/// Right tool window stripe. Without right-anchored tool windows it is a narrow
+/// gutter so the editor island keeps its rounded edge. Plugin tool windows join
+/// this stripe (`plugin_ui::right_side`).
 pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
-    if !shows_device_manager(app) {
+    let windows = right_stripe_windows(app);
+    if windows.is_empty() {
         egui::SidePanel::right("right_stripe")
             .exact_width(6.0)
             .resizable(false)
@@ -635,7 +638,9 @@ pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
         .frame(chrome_frame().inner_margin(egui::Margin::symmetric(4, 6)))
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            stripe_button(app, ui, ToolWindow::DeviceManager, Icon::Device);
+            for (window, icon) in windows {
+                stripe_button(app, ui, window, icon);
+            }
         });
 }
 

@@ -76,7 +76,7 @@ workspace layout persistence, plugin manager, and recovery.
 - [ ] Diff editor, history, blame, commit, branches, fetch/pull/push, and worktrees
 - [x] Universal process runner and detected project build command
 - [x] Build-system provider trait; Build/Run window with step tree, timings and error navigation
-- [ ] Gradle sync model and Gradle tool window
+- [x] Gradle sync model (init script) and Gradle tool window
 - [ ] Persistent run configurations, test tree, debug-before-run, and compound tasks
 
 ## M4 — web/JVM/Android bundles

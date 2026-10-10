@@ -145,6 +145,16 @@ impl IdeState {
             return;
         }
         if was_running && !self.runner.is_running() {
+            if self
+                .runner
+                .plan()
+                .is_some_and(|plan| plan.kind == TaskKind::Sync)
+            {
+                self.finish_gradle_sync();
+                if matches!(self.runner.state(), TaskState::Exited(0)) {
+                    return;
+                }
+            }
             let name = self
                 .runner
                 .plan()

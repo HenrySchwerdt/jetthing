@@ -4,6 +4,10 @@
 //! so it never executes build logic of an untrusted project. The precise project
 //! model comes from a Gradle sync, which runs the user's Gradle.
 
+pub mod model;
+
+pub use model::{GradleModel, ProjectModel, TaskModel};
+
 use jetthing_runner::{
     BuildSystem, BuildSystemKind, RunnerError, TaskKind, TaskPlan, build_system::require_program,
 };

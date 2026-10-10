@@ -2450,6 +2450,8 @@ name = "jetthing-gradle"
 version = "0.0.2"
 dependencies = [
  "jetthing-runner",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2612,6 +2614,7 @@ dependencies = [
  "jetthing-control",
  "jetthing-core",
  "jetthing-git",
+ "jetthing-gradle",
  "jetthing-language",
  "jetthing-lsp",
  "jetthing-plugins",

@@ -22,10 +22,11 @@ pub enum ToolWindow {
     Terminal,
     DeviceManager,
     Logcat,
+    Gradle,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 8] = [
+    pub const ALL: [ToolWindow; 9] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Find,
@@ -34,6 +35,7 @@ impl ToolWindow {
         ToolWindow::Terminal,
         ToolWindow::DeviceManager,
         ToolWindow::Logcat,
+        ToolWindow::Gradle,
     ];
 
     pub fn id(self) -> &'static str {
@@ -46,6 +48,7 @@ impl ToolWindow {
             ToolWindow::Terminal => "terminal",
             ToolWindow::DeviceManager => "deviceManager",
             ToolWindow::Logcat => "logcat",
+            ToolWindow::Gradle => "gradle",
         }
     }
 
@@ -59,10 +62,12 @@ impl ToolWindow {
             ToolWindow::Terminal => "Terminal",
             ToolWindow::DeviceManager => "Device Manager",
             ToolWindow::Logcat => "Logcat",
+            ToolWindow::Gradle => "Gradle",
         }
     }
 
-    /// Default activation shortcut (macOS notation, see `docs/spec/toolwindows.md`).
+    /// Default activation shortcut (macOS notation, see `docs/spec/toolwindows.md`);
+    /// empty when the reference assigns none.
     pub fn shortcut(self) -> &'static str {
         match self {
             ToolWindow::Project => "⌘1",
@@ -72,7 +77,7 @@ impl ToolWindow {
             ToolWindow::Problems => "⌘6",
             ToolWindow::Terminal => "⌥F12",
             // Unbound by default, like the reference IDE.
-            ToolWindow::DeviceManager | ToolWindow::Logcat => "",
+            ToolWindow::DeviceManager | ToolWindow::Logcat | ToolWindow::Gradle => "",
         }
     }
 
@@ -84,7 +89,7 @@ impl ToolWindow {
             | ToolWindow::Problems
             | ToolWindow::Terminal
             | ToolWindow::Logcat => Anchor::Bottom,
-            ToolWindow::DeviceManager => Anchor::Right,
+            ToolWindow::DeviceManager | ToolWindow::Gradle => Anchor::Right,
         }
     }
 
@@ -183,6 +188,9 @@ mod tests {
             layout.is_visible(ToolWindow::Commit),
             "anchors are independent"
         );
+        layout.show(ToolWindow::Gradle);
+        assert_eq!(layout.visible(Anchor::Right), Some(ToolWindow::Gradle));
+        assert!(layout.is_visible(ToolWindow::Commit));
         layout.hide_all();
         assert_eq!(layout.visible(Anchor::Right), None);
     }
