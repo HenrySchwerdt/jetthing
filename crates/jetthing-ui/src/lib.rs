@@ -5,6 +5,7 @@
 //! islands and a status bar with navigation breadcrumbs. Every user action is
 //! dispatched through the typed command registry.
 
+mod about;
 mod chrome;
 mod control;
 mod editor;
@@ -31,6 +32,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+pub use jetthing_core::build_info;
 pub use theme::install as install_theme;
 
 pub struct IdeApp {
@@ -368,7 +370,9 @@ impl IdeApp {
             self.dispatch("language.complete", Value::Null);
         }
         if consume(Modifiers::NONE, Key::Escape) {
-            if self.dialog.is_some() {
+            if self.state.about_open {
+                self.state.about_open = false;
+            } else if self.dialog.is_some() {
                 self.dialog = None;
             } else if self.palette.open {
                 self.palette.open = false;
@@ -580,6 +584,7 @@ impl eframe::App for IdeApp {
         palette::show(self, ctx);
         popups::show(self, ctx);
         notifications::show(self, ctx);
+        about::show(self, ctx);
         lsp_status::notices(self, ctx);
         // Include operations started by controls in this frame, and keep
         // polling even when their notification balloon is hidden.
