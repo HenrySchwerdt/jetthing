@@ -125,6 +125,23 @@ pub fn handle_keybindings(app: &mut IdeApp, ctx: &egui::Context) {
     }
 }
 
+/// Whether active plugins contribute items to `menu`.
+pub fn has_menu_items(app: &IdeApp, menu: &str) -> bool {
+    app.state
+        .plugin_host
+        .registry
+        .entries()
+        .iter()
+        .filter(|entry| entry.is_active())
+        .any(|entry| {
+            entry
+                .contributions
+                .menus
+                .iter()
+                .any(|item| item.menu.title() == menu)
+        })
+}
+
 /// Contributed items of `menu` in the main menu.
 pub fn menu_items(app: &mut IdeApp, ui: &mut egui::Ui, menu: &str) {
     let items: Vec<(String, String, Option<String>)> = app

@@ -129,6 +129,13 @@ fn main_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
         ui.set_min_width(180.0);
         let specs = app.commands.specs();
         for menu in &MENUS {
+            // Hide a menu with neither commands nor plugin contributions.
+            if menu.title != "File"
+                && menu_commands(menu, &specs).is_empty()
+                && !crate::plugin_ui::has_menu_items(app, menu.title)
+            {
+                continue;
+            }
             ui.menu_button(menu.title, |ui| {
                 ui.set_min_width(240.0);
                 if menu.title == "File" && ui.button("New Project…").clicked() {

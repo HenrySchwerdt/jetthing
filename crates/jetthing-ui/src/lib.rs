@@ -673,6 +673,7 @@ impl eframe::App for IdeApp {
             plugin_ui::app_window(self, ctx, &plugin);
             palette::show(self, ctx);
             plugin_ui::notifications(self, ctx);
+            self.control_after_frame(ctx);
             return;
         }
         if self.state.search.is_running() || self.state.runner.is_running() {
