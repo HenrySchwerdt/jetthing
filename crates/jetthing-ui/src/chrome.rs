@@ -18,7 +18,7 @@ pub fn custom_title_bar() -> bool {
 }
 
 /// Menu groups of the main menu, mapping command categories to menus.
-const MENUS: [(&str, &[&str]); 9] = [
+const MENUS: [(&str, &[&str]); 10] = [
     ("File", &["Project", "Plugins"]),
     ("Edit", &["Editor"]),
     ("View", &["Window"]),
@@ -26,6 +26,7 @@ const MENUS: [(&str, &[&str]); 9] = [
     ("Code", &["Language"]),
     ("Build", &["Build"]),
     ("Run", &["Run"]),
+    ("Tools", &["Android"]),
     ("Git", &["Git"]),
     ("Help", &["Help"]),
 ];

@@ -5,6 +5,7 @@
 //! islands and a status bar with navigation breadcrumbs. Every user action is
 //! dispatched through the typed command registry.
 
+mod android_sdk;
 mod chrome;
 mod editor;
 mod findbar;
@@ -51,6 +52,7 @@ pub struct IdeApp {
     /// unversioned files are not.
     commit_overrides: std::collections::HashMap<PathBuf, bool>,
     window_focused: bool,
+    android_sdk: android_sdk::SdkPage,
 }
 
 impl IdeApp {
@@ -113,6 +115,7 @@ impl IdeApp {
             commit_message: String::new(),
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
+            android_sdk: android_sdk::SdkPage::default(),
         }
     }
 
@@ -559,6 +562,7 @@ impl eframe::App for IdeApp {
         editor::completion_popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);
+        android_sdk::show(self, ctx);
         notifications::show(self, ctx);
         // Include operations started by controls in this frame, and keep
         // polling even when their notification balloon is hidden.

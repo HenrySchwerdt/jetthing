@@ -21,6 +21,9 @@ no crate below `jetthing-ui` imports UI types.
   it delegates repository semantics to the installed Git executable.
 - `jetthing-runner`: detected build plans and cancellable child-process execution with
   streamed, separated stdout/stderr and explicit exit state.
+- `jetthing-android`: Android SDK discovery (IDE setting, `local.properties`, `ANDROID_HOME`,
+  `ANDROID_SDK_ROOT`, OS default), installed-package inventory, and Android Gradle project
+  detection; host access goes through the `HostEnvironment` trait so tests use fakes.
 - `jetthing-lsp`: JSON-RPC framing, language-server lifecycle, document synchronization,
   diagnostics, and completion transport; providers remain behind platform abstractions.
 - `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,

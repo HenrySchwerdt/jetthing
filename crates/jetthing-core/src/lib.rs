@@ -12,11 +12,13 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod android_commands;
 mod editor_commands;
 mod project_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
+pub use android_commands::AndroidState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -59,6 +61,7 @@ pub struct IdeState {
     update_silent: bool,
     /// Original install path, retained when the running binary is renamed.
     update_executable: Option<PathBuf>,
+    pub android: AndroidState,
     pub status: String,
 }
 
@@ -106,6 +109,7 @@ impl IdeState {
         self.tool_windows = ToolWindowLayout::default();
         self.tool_windows.show(ToolWindow::Project);
         self.status = format!("Opened {}", project.root().display());
+        self.android.project_opened(project.root());
         self.project = Some(project);
         self.restore_workspace();
         Ok(())
@@ -586,6 +590,7 @@ pub(crate) fn usize_param(params: &Value, name: &str) -> Result<usize, CommandEr
 
 pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
+    android_commands::register(&mut registry);
     editor_commands::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);

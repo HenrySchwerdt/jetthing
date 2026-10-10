@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+jetthing-android = { path = "../jetthing-android" }
 jetthing-command = { path = "../jetthing-command" }
 jetthing-git = { path = "../jetthing-git" }
 jetthing-language = { path = "../jetthing-language" }
