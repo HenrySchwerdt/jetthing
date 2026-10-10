@@ -2,7 +2,7 @@
 
 | ID | Reference | Feature | Status | Commands | Tests | Limitations / evidence |
 |---|---|---|---|---|---|---|
-| PLAT-001 | IntelliJ Platform | Native application window | Implemented | `toolwindow.hideAll` | manual launch, Xvfb screenshot | merged toolbar/title bar with own window controls on Windows/Linux, native traffic lights on macOS; wgpu with automatic OpenGL fallback; Linux evidence in `docs/parity/evidence/` |
+| PLAT-001 | IntelliJ Platform | Native application window | Implemented | `toolwindow.hideAll` | manual launch, Xvfb screenshot | merged toolbar/title bar with own window controls on Windows/Linux; standard native title bar on macOS with toolbar below; wgpu with automatic OpenGL fallback; Linux evidence in `docs/parity/evidence/` |
 | PLAT-002 | IntelliJ Platform | Project opening | Implemented | `project.open` | command unit test | startup path/CLI; picker pending |
 | PLAT-003 | IntelliJ Platform | Project tree | Partial | `project.open`, `project.toggleDirectory`, `editor.openFile` | project tree + expansion unit tests | directories-first sorting, collapsible nodes, VCS file colors; lazy refresh/watchers pending |
 | PLAT-004 | IntelliJ Platform | Editable tabs | Partial | `editor.openFile`, `editor.activate`, `editor.close`, `editor.save`, `editor.saveAll`, `editor.undo`, `editor.redo`, `editor.duplicate`, `editor.deleteLine`, `editor.commentLine`, `editor.moveLineUp/Down`, `editor.indent/unindent`, `editor.copy/cut/paste`, `editor.gotoLine` | rope + ops unit tests, command tests | multi-cursor editing, whole-line copy/cut/paste, bracket/quote pairing, smart Enter, word navigation, double/triple click, matching brace highlight, autosave on focus loss; IME, rectangular selection, code folding pending |

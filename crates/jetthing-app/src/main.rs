@@ -10,11 +10,9 @@ fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOpti
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([800.0, 500.0]);
     viewport = if cfg!(target_os = "macos") {
-        // Native traffic lights over a full-size content view, like the reference IDE.
-        viewport
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false)
+        // Keep native window controls in the OS title bar. The toolbar below it
+        // starts at the content edge and needs no traffic-light spacer.
+        viewport.with_title_shown(false)
     } else {
         // The main toolbar doubles as the title bar.
         viewport.with_decorations(false)
