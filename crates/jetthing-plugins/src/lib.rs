@@ -47,6 +47,28 @@ impl PluginManifest {
     }
 }
 
+/// Like [`discover`], with the manifest path of each result, sorted by path.
+pub fn discover_with_paths(
+    root: &Path,
+) -> Vec<(std::path::PathBuf, Result<PluginManifest, PluginError>)> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut found: Vec<_> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("plugin.toml"))
+        .filter(|path| path.is_file())
+        .map(|path| {
+            let result = fs::read_to_string(&path)
+                .map_err(PluginError::from)
+                .and_then(|s| PluginManifest::parse(&s));
+            (path, result)
+        })
+        .collect();
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found
+}
+
 pub fn discover(root: &Path) -> Vec<Result<PluginManifest, PluginError>> {
     let Ok(entries) = fs::read_dir(root) else {
         return Vec::new();

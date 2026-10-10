@@ -45,6 +45,8 @@ pub mod ids {
     pub const SMOOTH_SCROLLING: &str = "appearance.smoothScrolling";
     pub const COMPACT_MODE: &str = "appearance.compactMode";
     pub const KEYMAP: &str = "keymap.active";
+    /// Ids of disabled manifest plugins.
+    pub const DISABLED_PLUGINS: &str = "plugins.disabled";
     /// User shortcut changes, one `keymap<TAB>action<TAB>shortcut…` line per action.
     pub const KEYMAP_OVERRIDES: &str = "keymap.overrides";
     pub const EDITOR_FONT_FAMILY: &str = "editor.font.family";
@@ -400,6 +402,13 @@ fn add_definitions(registry: &mut SettingsRegistry) {
             ids::KEYMAP_OVERRIDES,
             "preferences.keymap",
             "Modified shortcuts",
+            SettingKind::List,
+            SettingValue::List(Vec::new()),
+        ),
+        SettingDef::new(
+            ids::DISABLED_PLUGINS,
+            "preferences.pluginManager",
+            "Disabled plugins",
             SettingKind::List,
             SettingValue::List(Vec::new()),
         ),

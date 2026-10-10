@@ -31,6 +31,7 @@ pub struct SettingsDialog {
     error: Option<String>,
     focus_search: bool,
     keymap_page: crate::settings_keymap::KeymapPage,
+    plugins_page: crate::settings_plugins::PluginsPage,
 }
 
 enum Outcome {
@@ -52,6 +53,7 @@ impl SettingsDialog {
             error: None,
             focus_search: true,
             keymap_page: Default::default(),
+            plugins_page: Default::default(),
         };
         dialog.select(registry, page);
         dialog.back.clear();
@@ -111,6 +113,8 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
             registry: &app.state.settings.registry,
             store: &app.state.settings.store,
             keymap: &app.state.keymap,
+            plugins: &app.state.plugin_entries,
+            project: app.state.project.as_ref().map(|p| p.root()),
             requests: &mut requests,
         },
         ctx,
@@ -156,6 +160,8 @@ struct PageContext<'a> {
     registry: &'a SettingsRegistry,
     store: &'a SettingsStore,
     keymap: &'a jetthing_core::keymap_commands::KeymapState,
+    plugins: &'a [jetthing_core::plugin_commands::PluginEntry],
+    project: Option<&'a std::path::Path>,
     requests: &'a mut Vec<(String, serde_json::Value)>,
 }
 
@@ -164,6 +170,8 @@ fn draw(dialog: &mut SettingsDialog, context: PageContext<'_>, ctx: &egui::Conte
         registry,
         store,
         keymap,
+        plugins,
+        project,
         requests,
     } = context;
     let mut outcome = Outcome::Keep;
@@ -259,6 +267,8 @@ fn draw(dialog: &mut SettingsDialog, context: PageContext<'_>, ctx: &egui::Conte
                     registry,
                     store,
                     keymap,
+                    plugins,
+                    project,
                     requests,
                 },
                 &search,
@@ -493,6 +503,8 @@ fn page(
         registry,
         store,
         keymap,
+        plugins,
+        project,
         requests,
     } = context;
     let page_id = dialog.page.clone();
@@ -540,6 +552,10 @@ fn page(
     ui.add_space(6.0);
     if page_id == "preferences.keymap" {
         keymap_page(ui, dialog, registry, store, keymap, requests);
+        return;
+    }
+    if page_id == "preferences.pluginManager" {
+        crate::settings_plugins::show(ui, &mut dialog.plugins_page, plugins, project, requests);
         return;
     }
     let settings = registry.page_settings(&page_id);

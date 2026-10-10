@@ -56,6 +56,17 @@ fn dist() -> Result<()> {
         };
         fs::copy(file, out.join(target_name)).with_context(|| format!("copy {file}"))?;
     }
+    // Bundled manifest plugins are discovered next to the executable.
+    for entry in fs::read_dir("plugins").context("read plugins/")? {
+        let entry = entry?;
+        let manifest = entry.path().join("plugin.toml");
+        if manifest.is_file() {
+            let target = out.join("plugins").join(entry.file_name());
+            fs::create_dir_all(&target)?;
+            fs::copy(&manifest, target.join("plugin.toml"))
+                .with_context(|| format!("copy {}", manifest.display()))?;
+        }
+    }
     let fonts = out.join("licenses");
     fs::create_dir_all(&fonts)?;
     for license in ["Inter-OFL.txt", "JetBrainsMono-OFL.txt"] {

@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 mod editor_commands;
 pub mod keymap_commands;
 mod lsp_commands;
+pub mod plugin_commands;
 mod project_commands;
 mod settings_commands;
 mod terminal_commands;
@@ -40,7 +41,10 @@ pub struct IdeState {
     pub files: Vec<FileEntry>,
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
+    /// Enabled, valid plugin manifests.
     pub plugins: Vec<PluginManifest>,
+    /// Every discovered manifest, including disabled and invalid ones.
+    pub plugin_entries: Vec<plugin_commands::PluginEntry>,
     pub terminal: Option<TerminalSession>,
     pub search: SearchService,
     pub search_results: Vec<TextMatch>,
@@ -609,6 +613,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     terminal_commands::register(&mut registry);
     settings_commands::register(&mut registry);
     keymap_commands::register(&mut registry);
+    plugin_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
     registry
         .register(Command::new(
@@ -1042,23 +1047,6 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .toggle_directory(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"expanded": expanded}))
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec("plugin.refresh", "Refresh Plugins", "Plugins", None, "{}"),
-            |_| true,
-            |state: &mut IdeState, _| {
-                let root = state.project.as_ref().map(|p| p.root().join("plugins"));
-                state.plugins = root
-                    .as_deref()
-                    .map(jetthing_plugins::discover)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(Result::ok)
-                    .collect();
-                Ok(json!({"count": state.plugins.len()}))
             },
         ))
         .expect("unique built-in id");

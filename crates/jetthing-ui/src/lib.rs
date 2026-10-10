@@ -20,6 +20,7 @@ mod palette;
 mod popups;
 mod settings_dialog;
 mod settings_keymap;
+mod settings_plugins;
 mod syntax;
 mod terminal_ui;
 mod theme;
@@ -89,13 +90,13 @@ impl IdeApp {
         if let Some(dir) = jetthing_settings::default_config_dir() {
             state.load_user_settings(&dir);
         }
-        if let Some(path) = project {
-            if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
-            {
-                state.status = error.to_string();
-            }
-            let _ = commands.execute("plugin.refresh", &mut state, Value::Null);
+        if let Some(path) = project
+            && let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
+        {
+            state.status = error.to_string();
         }
+        // Bundled and user plugins are listed even without a project.
+        let _ = commands.execute("plugin.refresh", &mut state, Value::Null);
         for file in files {
             let relative = state
                 .project
