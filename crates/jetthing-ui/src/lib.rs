@@ -41,6 +41,7 @@ mod settings_dialog;
 mod problems_ui;
 mod settings_keymap;
 mod push_dialog;
+mod settings_plugins;
 mod syntax;
 mod terminal_ui;
 mod theme;

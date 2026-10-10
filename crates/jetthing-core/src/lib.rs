@@ -50,7 +50,8 @@ pub use disk_sync::{DiskConflict, Waker, content_hash};
 pub use settings_commands::Settings;
 mod vcs;
 pub use plugin_host::{
-    PluginHostState, PluginStatusWidget, PluginTab, sync_plugin_commands, user_plugin_dir,
+    PluginHostState, PluginStatusWidget, PluginTab, plugin_dirs, sync_plugin_commands,
+    user_plugin_dir,
 };
 pub use completion::CompletionSession;
 pub use snippet_session::SnippetSession;
