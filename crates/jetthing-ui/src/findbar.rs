@@ -14,6 +14,7 @@ pub struct FindBar {
     pub replacement: String,
     pub match_case: bool,
     pub whole_words: bool,
+    pub regex: bool,
     focus_requested: bool,
 }
 
@@ -36,7 +37,15 @@ impl FindBar {
         FindOptions {
             match_case: self.match_case,
             whole_words: self.whole_words,
+            regex: self.regex,
         }
+    }
+
+    /// Why the query cannot run (an invalid regular expression), if it can't.
+    pub fn error(&self) -> Option<String> {
+        ops::validate_query(&self.query, self.options())
+            .err()
+            .map(|error| error.to_string())
     }
 
     pub fn matches(&self, text: &str) -> Vec<(usize, usize)> {
@@ -49,6 +58,7 @@ impl FindBar {
             "replacement": self.replacement,
             "matchCase": self.match_case,
             "wholeWords": self.whole_words,
+            "regex": self.regex,
         })
     }
 }
@@ -56,9 +66,9 @@ impl FindBar {
 fn toggle(ui: &mut egui::Ui, label: &str, on: &mut bool, tooltip: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(24.0, 22.0), egui::Sense::click());
     let fill = if *on {
-        *theme::SELECTION
+        theme::SELECTION
     } else if response.hovered() {
-        *theme::HOVER
+        theme::HOVER
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -69,9 +79,9 @@ fn toggle(ui: &mut egui::Ui, label: &str, on: &mut bool, tooltip: &str) -> bool 
         label,
         theme::semibold(theme::UI_FONT_SIZE - 1.0),
         if *on {
-            *theme::TEXT_BRIGHT
+            theme::TEXT_BRIGHT
         } else {
-            *theme::TEXT_SECONDARY
+            theme::TEXT_SECONDARY
         },
     );
     let clicked = response.on_hover_text(tooltip).clicked();
@@ -93,12 +103,12 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         .position(|&(s, e)| s == primary.start() && e == primary.end());
     let mut action: Option<(&'static str, Value)> = None;
     egui::Frame::new()
-        .fill(*theme::editor::BACKGROUND_PANEL)
+        .fill(theme::editor::BACKGROUND_PANEL)
         .inner_margin(egui::Margin::symmetric(10, 4))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                icons::show(ui, Icon::Search, 14.0, *theme::TEXT_SECONDARY);
+                icons::show(ui, Icon::Search, 14.0, theme::TEXT_SECONDARY);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut app.find.query)
                         .id(query_id())
@@ -125,7 +135,11 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                 }
                 toggle(ui, "Cc", &mut app.find.match_case, "Match Case");
                 toggle(ui, "W", &mut app.find.whole_words, "Words");
-                let summary = if app.find.query.is_empty() {
+                toggle(ui, ".*", &mut app.find.regex, "Regex");
+                let error = app.find.error();
+                let summary = if let Some(error) = &error {
+                    error.clone()
+                } else if app.find.query.is_empty() {
                     String::new()
                 } else if matches.is_empty() {
                     "0 results".into()
@@ -135,9 +149,9 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     format!("{} results", matches.len())
                 };
                 let color = if !app.find.query.is_empty() && matches.is_empty() {
-                    *theme::ERROR
+                    theme::ERROR
                 } else {
-                    *theme::TEXT_SECONDARY
+                    theme::TEXT_SECONDARY
                 };
                 ui.label(RichText::new(summary).color(color));
                 if icons::button(ui, Icon::ChevronUp, "Previous Occurrence (⇧Enter)").clicked() {
@@ -208,5 +222,21 @@ mod tests {
         assert_eq!(bar.matches("a needle, Needle").len(), 2);
         bar.match_case = true;
         assert_eq!(bar.matches("a needle, Needle").len(), 1);
+    }
+
+    #[test]
+    fn regex_toggle_reaches_matches_params_and_errors() {
+        let mut bar = FindBar {
+            query: r"ne+dle\b".into(),
+            regex: true,
+            ..Default::default()
+        };
+        assert_eq!(bar.matches("needle neeedles neeedle").len(), 2);
+        assert_eq!(bar.params()["regex"], true);
+        assert_eq!(bar.error(), None);
+        bar.query = "(".into();
+        assert!(bar.error().unwrap().contains("invalid regular expression"));
+        bar.regex = false;
+        assert_eq!(bar.error(), None, "plain text is never invalid");
     }
 }
