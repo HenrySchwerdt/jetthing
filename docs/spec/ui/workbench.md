@@ -1262,8 +1262,9 @@ IntelliJ IDEA 2026.2 install and say why.
 | 28 | Deferred | Notification timing is code. |
 | 29 | Partly resolved (data) | `ide.remember.last.search.scope` = false, `ide.usages.page.size` = 100, `ide.find.result.count.warning.limit` = 1000. Filter labels and pin: deferred. |
 
-`docs/spec/settings-tree.md` (the issue's "settings.md") has no open-questions section; its page
-tree is generated from `settings.json`, so nothing there is open.
+`docs/spec/settings-tree.md` has no open-questions section (its page tree is generated from
+`settings.json`); the open questions of [../settings.md](../settings.md) carry their own
+resolution table.
 
 ### Questions
 

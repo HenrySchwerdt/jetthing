@@ -1641,6 +1641,20 @@ Sources:
 
 ## Open questions
 
+### Resolution status
+
+Checked on 2026-10-10 against [data/settings.json](data/settings.json) (Apache-2.0 facts from
+`idea/262.10968.63`). Only items the extracted descriptors answer are listed; the others still
+need a real IntelliJ IDEA 2026.2 install.
+
+| # | Status | Answer / reason |
+|---|---|---|
+| 1 | Partly resolved (data) | Advanced setting `ide.ui.non.modal.settings.window` defaults to `true`: Settings opens as a non-modal window by default. Whether a tab-hosted mode is user-selectable: deferred. |
+| 5 | Partly resolved (data) | None of the "(inferred)" ids for Editor › General subpages, Code Style › Java, the Version Control subpages or Shelf appear as configurable ids in the descriptors, so they are registered in code and stay unverified. Directory Mappings is registered in a descriptor as `project.propVCSSupport.Mappings` (not `project.propVCSSupport.DirectoryMappings`); Code Style's root is `preferences.sourceCode`. |
+| other | Deferred | Visual treatment, labels and code-defined defaults need an install. |
+
+### Questions
+
 1. **Settings in a tab.** 2026.2 bundles contain "Settings tab" strings. Is there a user-visible
    option (Advanced Settings? registry?) that opens Settings as an editor tab instead of a
    dialog, and is it the default? Verify in a clean install.
