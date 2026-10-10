@@ -18,10 +18,12 @@ mod project_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
+mod vcs;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
 };
+pub use vcs::{DiffTab, DiffViewer, RepaintHook};
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -45,6 +47,14 @@ pub struct IdeState {
     pub search_files_scanned: usize,
     pub search_truncated: bool,
     pub git: Option<RepositoryStatus>,
+    /// Background status refresh for external changes.
+    git_watcher: Option<jetthing_git::StatusWatcher>,
+    /// The diff viewer tab, if open.
+    pub diff: Option<DiffTab>,
+    /// Whether the diff tab (rather than a document) is the selected editor tab.
+    pub diff_active: bool,
+    /// Lets background services wake the UI.
+    pub repaint: RepaintHook,
     pub runner: TaskService,
     /// Language servers of the open project, started lazily per language.
     pub lsp: LspManager,
@@ -101,6 +111,8 @@ impl IdeState {
         self.plugins.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
         self.lsp.set_project(Some(project.root()));
+        self.start_git_watcher();
+        self.close_diff();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -113,6 +125,7 @@ impl IdeState {
     pub fn open_file(&mut self, path: &Path) -> Result<(), String> {
         if let Some(index) = self.documents.iter().position(|d| d.path == path) {
             self.active_document = Some(index);
+            self.diff_active = false;
             self.touch_recent(path);
             return Ok(());
         }
@@ -125,6 +138,7 @@ impl IdeState {
             selections: SelectionSet::default(),
         });
         self.active_document = Some(self.documents.len() - 1);
+        self.diff_active = false;
         self.touch_recent(path);
         self.status = format!("Opened {}", path.display());
         self.sync_document_lsp(path, &text, 0);
@@ -173,6 +187,7 @@ impl IdeState {
             return Err("document does not exist".into());
         }
         self.active_document = Some(index);
+        self.diff_active = false;
         let path = self.documents[index].path.clone();
         self.touch_recent(&path);
         self.lsp.clear_completions();
@@ -331,6 +346,7 @@ impl IdeState {
         if let Some(git) = &self.git {
             self.status = changes_summary(git.changes.len(), &git.branch);
         }
+        self.refresh_diff();
         Ok(())
     }
 
@@ -589,6 +605,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     update_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
+    vcs::register(&mut registry);
     registry
         .register(Command::new(
             spec(

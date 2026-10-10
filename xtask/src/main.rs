@@ -70,7 +70,11 @@ fn dist() -> Result<()> {
     Ok(())
 }
 
-const PARITY_DOCS: [&str; 2] = ["docs/parity/platform.md", "docs/parity/android-studio.md"];
+const PARITY_DOCS: [&str; 3] = [
+    "docs/parity/platform.md",
+    "docs/parity/vcs.md",
+    "docs/parity/android-studio.md",
+];
 const STATUSES: [&str; 5] = ["Missing", "Planned", "Partial", "Implemented", "Verified"];
 
 /// Validates the parity tables and, unless `check` is set, rewrites the dashboard.
@@ -121,11 +125,14 @@ fn parity(check: bool) -> Result<()> {
 
 /// Matches row IDs such as `PLAT-001` or `AND-010`.
 fn is_parity_id(cell: &str) -> bool {
-    let Some((prefix, number)) = cell.split_once('-') else {
+    // Prefixes may have several parts, e.g. the spec's `PLATFORM-VCS-020`.
+    let Some((prefix, number)) = cell.rsplit_once('-') else {
         return false;
     };
     !prefix.is_empty()
-        && prefix.chars().all(|c| c.is_ascii_uppercase())
+        && prefix
+            .split('-')
+            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_uppercase()))
         && !number.is_empty()
         && number.chars().all(|c| c.is_ascii_digit())
 }

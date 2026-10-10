@@ -41,6 +41,11 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
         .frame(island_frame())
         .show(ctx, |ui| {
             tabs(app, ui);
+            if app.state.diff_active && app.state.diff.is_some() {
+                crate::diff_ui::show(app, ui);
+                app.caret_screen_pos = None;
+                return;
+            }
             if app.state.active_document.is_none() {
                 empty_state(ui);
                 app.caret_screen_pos = None;
@@ -157,7 +162,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     for index in 0..app.state.documents.len() {
         let doc = &app.state.documents[index];
         let name = IdeApp::file_name(&doc.path);
-        let active = app.state.active_document == Some(index);
+        let active = app.state.active_document == Some(index) && !app.state.diff_active;
         let color = if active {
             theme::TEXT_BRIGHT
         } else {
@@ -233,6 +238,16 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             close = Some(index);
         }
     }
+    if let Some(tab) = app.state.diff.as_ref() {
+        let title = crate::diff_ui::tab_title(tab);
+        let tooltip = format!("Diff of {} against HEAD", tab.path.display());
+        let (clicked, closed) = diff_tab(ui, bar, x, &title, &tooltip, app.state.diff_active);
+        if closed {
+            app.dispatch("diff.close", Value::Null);
+        } else if clicked {
+            app.dispatch("diff.activate", Value::Null);
+        }
+    }
     if let Some(index) = close {
         app.dispatch("editor.close", json!({"index": index}));
     } else if let Some(index) = activate {
@@ -271,7 +286,83 @@ impl TabLayout {
     }
 }
 
-fn highlighted_line_job(
+/// The diff viewer's tab, after the document tabs. Returns (clicked, closed).
+fn diff_tab(
+    ui: &mut egui::Ui,
+    bar: Rect,
+    x: f32,
+    title: &str,
+    tooltip: &str,
+    active: bool,
+) -> (bool, bool) {
+    let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
+    let color = if active {
+        theme::TEXT_BRIGHT
+    } else {
+        theme::TEXT_SECONDARY
+    };
+    let galley = ui.painter().layout_no_wrap(title.to_owned(), font, color);
+    let width = 10.0 + 16.0 + 6.0 + galley.size().x + 6.0 + 16.0 + 8.0;
+    let rect = Rect::from_min_size(egui::pos2(x, bar.top() + 5.0), vec2(width, 28.0));
+    if rect.left() > bar.right() {
+        return (false, false);
+    }
+    let response = ui.interact(rect, egui::Id::new("editor_diff_tab"), Sense::click());
+    let fill = if active {
+        Color32::from_rgb(0x23, 0x35, 0x58)
+    } else if response.hovered() {
+        theme::HOVER
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(rect, 6.0, fill);
+    if active {
+        ui.painter().rect_stroke(
+            rect,
+            6.0,
+            Stroke::new(1.0_f32, Color32::from_rgb(0x2E, 0x4D, 0x89)),
+            egui::StrokeKind::Inside,
+        );
+    }
+    icons::paint(
+        ui.painter(),
+        Rect::from_min_size(rect.left_center() + vec2(10.0, -8.0), vec2(16.0, 16.0)),
+        Icon::Commit,
+        icons::ICON,
+    );
+    ui.painter().galley(
+        rect.left_center() + vec2(32.0, -galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    let close_rect = Rect::from_min_size(
+        egui::pos2(rect.right() - 24.0, rect.center().y - 8.0),
+        vec2(16.0, 16.0),
+    );
+    let on_close = response
+        .hover_pos()
+        .is_some_and(|pos| close_rect.expand(2.0).contains(pos));
+    if response.hovered() || active {
+        if on_close {
+            ui.painter()
+                .rect_filled(close_rect.expand(2.0), 4.0, theme::HOVER);
+        }
+        icons::paint(
+            ui.painter(),
+            close_rect.shrink(2.0),
+            Icon::Close,
+            theme::TEXT_SECONDARY,
+        );
+    }
+    let response = response.on_hover_text(tooltip);
+    let clicked = response.clicked();
+    (
+        clicked && !on_close,
+        (clicked && on_close) || response.middle_clicked(),
+    )
+}
+
+pub(crate) fn highlighted_line_job(
     text: &str,
     line_start_byte: usize,
     analysis: &LanguageAnalysis,
