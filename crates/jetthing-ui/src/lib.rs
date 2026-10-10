@@ -8,6 +8,7 @@
 mod about;
 mod android_sdk;
 mod android_view;
+mod build_window;
 mod chrome;
 mod control;
 mod crash_notice;
@@ -57,7 +58,6 @@ pub struct IdeApp {
     tree_selection: Option<PathBuf>,
     completion_selected: usize,
     caret_screen_pos: Option<egui::Pos2>,
-    run_label: Option<String>,
     last_shift_release: Option<Instant>,
     shift_tainted: bool,
     last_bottom: Option<ToolWindow>,
@@ -158,12 +158,6 @@ impl IdeApp {
         if check_updates && state.settings.bool(ids::CHECK_UPDATES).unwrap_or(true) {
             let _ = commands.execute("app.checkForUpdates", &mut state, json!({"silent": true}));
         }
-        let run_label = state.project.as_ref().and_then(|project| {
-            jetthing_runner::TaskPlan::detect_run(project.root())
-                .or_else(|_| jetthing_runner::TaskPlan::detect_build(project.root()))
-                .ok()
-                .map(|plan| plan.name)
-        });
         Self {
             state,
             commands,
@@ -173,7 +167,6 @@ impl IdeApp {
             tree_selection: None,
             completion_selected: 0,
             caret_screen_pos: None,
-            run_label,
             last_shift_release: None,
             shift_tainted: false,
             last_bottom: None,
@@ -264,12 +257,6 @@ impl IdeApp {
         self.search_input.clear();
         self.terminal_selection = None;
         self.find = findbar::FindBar::default();
-        self.run_label = self.state.project.as_ref().and_then(|project| {
-            jetthing_runner::TaskPlan::detect_run(project.root())
-                .or_else(|_| jetthing_runner::TaskPlan::detect_build(project.root()))
-                .ok()
-                .map(|plan| plan.name)
-        });
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
             "{} – Jetthing",
             self.project_name()

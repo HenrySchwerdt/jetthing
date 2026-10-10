@@ -3,7 +3,7 @@ use jetthing_git::RepositoryStatus;
 use jetthing_language::{LanguageAnalysis, analyze};
 use jetthing_lsp::{LspDiagnostic, LspManager};
 use jetthing_project::{FileEntry, Project};
-use jetthing_runner::{TaskPlan, TaskService, TaskState};
+use jetthing_runner::TaskService;
 use jetthing_search::{SearchEvent, SearchService, TextMatch};
 use jetthing_terminal::TerminalSession;
 use jetthing_text::{Selection, SelectionSet, TextDocument};
@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 mod android_commands;
 mod android_devices;
 mod android_logcat;
+mod build_commands;
 pub mod build_info;
 mod diagnostic_commands;
 pub mod diagnostics;
@@ -33,6 +34,7 @@ pub use android_logcat::LogcatState;
 pub use disk_sync::{DiskConflict, Waker, content_hash};
 pub use settings_commands::Settings;
 mod vcs;
+pub use build_commands::{BuildSystems, DetectedBuild};
 pub use plugin_host::{
     PluginHostState, PluginStatusWidget, PluginTab, sync_plugin_commands, user_plugin_dir,
 };
@@ -82,6 +84,9 @@ pub struct IdeState {
     pub lsp: LspManager,
     /// Toolchain provisioning: discovery, pins and background installs.
     pub toolchains: ToolchainState,
+    pub build_systems: BuildSystems,
+    /// Build system of the open project, detected on open (`build.detect` refreshes it).
+    pub detected_build: Option<DetectedBuild>,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -162,6 +167,7 @@ impl IdeState {
         self.project = Some(project);
         self.start_watcher();
         self.vcs_stale = false;
+        self.detect_build();
         self.restore_workspace();
         Ok(())
     }
@@ -430,47 +436,6 @@ impl IdeState {
         self.refresh_git()
     }
 
-    pub fn start_build(&mut self) -> Result<(), String> {
-        let root = self.project.as_ref().ok_or("no project is open")?.root();
-        let plan = TaskPlan::detect_build(root).map_err(|error| error.to_string())?;
-        let name = plan.name.clone();
-        self.runner.start(plan).map_err(|error| error.to_string())?;
-        self.tool_windows.show(ToolWindow::Build);
-        self.status = format!("Running {name}");
-        Ok(())
-    }
-
-    pub fn start_run(&mut self) -> Result<(), String> {
-        let root = self.project.as_ref().ok_or("no project is open")?.root();
-        let plan = TaskPlan::detect_run(root).map_err(|error| error.to_string())?;
-        let name = plan.name.clone();
-        self.runner.start(plan).map_err(|error| error.to_string())?;
-        self.tool_windows.show(ToolWindow::Build);
-        self.status = format!("Running {name}");
-        Ok(())
-    }
-
-    pub fn poll_runner(&mut self) {
-        let was_running = self.runner.is_running();
-        if let Err(error) = self.runner.poll() {
-            self.status = error.to_string();
-            return;
-        }
-        if was_running && !self.runner.is_running() {
-            let name = self
-                .runner
-                .plan()
-                .map(|plan| plan.name.clone())
-                .unwrap_or_else(|| "Task".into());
-            self.status = match self.runner.state() {
-                TaskState::Exited(0) => format!("{name} finished successfully"),
-                TaskState::Exited(code) => format!("{name} failed with exit code {code}"),
-                TaskState::Cancelled => format!("{name} cancelled"),
-                _ => self.status.clone(),
-            };
-        }
-    }
-
     /// Pumps the language servers and re-opens documents on restarted servers.
     pub fn poll_lsp(&mut self) {
         let restarted = self.lsp.poll();
@@ -665,6 +630,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_commands::register(&mut registry);
     android_devices::register(&mut registry);
     android_logcat::register(&mut registry);
+    build_commands::register(&mut registry);
     editor_commands::register(&mut registry);
     disk_sync::register(&mut registry);
     project_commands::register(&mut registry);
@@ -710,73 +676,6 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 state
                     .insert_active_text(position, &text)
                     .map_err(CommandError::Failed)?;
-                Ok(Value::Null)
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec("build.project", "Build Project", "Build", Some("⌘F9"), "{}"),
-            |state: &IdeState| state.project.is_some() && !state.runner.is_running(),
-            |state: &mut IdeState, _| {
-                state.start_build().map_err(CommandError::Failed)?;
-                Ok(Value::Null)
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec("run.project", "Run", "Run", Some("⌃R"), "{}"),
-            |state: &IdeState| state.project.is_some() && !state.runner.is_running(),
-            |state: &mut IdeState, _| {
-                state.start_run().map_err(CommandError::Failed)?;
-                Ok(Value::Null)
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec(
-                "run.task",
-                "Run Task",
-                "Run",
-                None,
-                r#"{"program":"string","args":["string"]}"#,
-            ),
-            |state: &IdeState| state.project.is_some() && !state.runner.is_running(),
-            |state: &mut IdeState, params| {
-                let program = string_param(&params, "program")?;
-                let args = string_array_param(&params, "args")?;
-                let cwd = state
-                    .project
-                    .as_ref()
-                    .ok_or_else(|| CommandError::Disabled("run.task".into()))?
-                    .root()
-                    .to_owned();
-                state
-                    .runner
-                    .start(TaskPlan {
-                        name: program.clone(),
-                        program,
-                        args,
-                        cwd,
-                    })
-                    .map_err(|error| CommandError::Failed(error.to_string()))?;
-                state.tool_windows.show(ToolWindow::Build);
-                Ok(Value::Null)
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec("run.cancel", "Stop Running Task", "Run", None, "{}"),
-            |state: &IdeState| state.runner.is_running(),
-            |state: &mut IdeState, _| {
-                state
-                    .runner
-                    .cancel()
-                    .map_err(|error| CommandError::Failed(error.to_string()))?;
-                state.status = "Task cancelled".into();
                 Ok(Value::Null)
             },
         ))

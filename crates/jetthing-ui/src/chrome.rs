@@ -325,52 +325,72 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
     {
         app.dispatch("run.cancel", Value::Null);
     }
-    let can_start = !running && app.state.project.is_some();
-    let build = ui.add_enabled_ui(can_start, |ui| {
-        icons::button(
-            ui,
-            Icon::Build,
-            &format!("Build Project ({})", keys::display("⌘F9")),
-        )
-    });
+    let detected = app.state.detected_build.clone();
+    let can_build = app.commands.is_enabled("build.project", &app.state);
+    let build_tip = match &detected {
+        None if app.state.project.is_some() => "No supported build system detected".to_owned(),
+        _ => format!("Build Project ({})", keys::display("⌘F9")),
+    };
+    let build = ui.add_enabled_ui(can_build, |ui| icons::button(ui, Icon::Build, &build_tip));
     if build.inner.clicked() {
         app.dispatch("build.project", Value::Null);
     }
-    let run_color = if can_start {
+    let can_run = app.commands.is_enabled("run.project", &app.state);
+    let run_color = if can_run {
         *theme::RUN_GREEN
     } else {
         *theme::TEXT_DISABLED
     };
-    let run = ui.add_enabled_ui(can_start, |ui| {
-        icons::button_colored(
-            ui,
-            Icon::Run,
-            run_color,
-            &format!("Run ({})", keys::display("⌃R")),
-            false,
-        )
+    let run_tip = match &detected {
+        Some(build) if build.run_unavailable.is_some() => {
+            format!(
+                "Run unavailable: {}",
+                build.run_unavailable.as_deref().unwrap_or_default()
+            )
+        }
+        None if app.state.project.is_some() => "No supported build system detected".to_owned(),
+        _ => format!("Run ({})", keys::display("⌃R")),
+    };
+    let run = ui.add_enabled_ui(can_run, |ui| {
+        icons::button_colored(ui, Icon::Run, run_color, &run_tip, false)
     });
-    if run.inner.clicked() {
+    // Disabled widgets do not show the normal tooltip; keep the reason discoverable.
+    if !can_run {
+        run.response.on_disabled_hover_text(&run_tip);
+    } else if run.inner.clicked() {
         app.dispatch("run.project", Value::Null);
     }
-    if let Some(label) = app.run_label.clone() {
+    if let Some(build) = detected {
         let response = widgets::flat_widget(
             ui,
             None,
-            &label,
+            &build.run_label,
             egui::FontId::proportional(theme::UI_FONT_SIZE),
             *theme::TEXT_BRIGHT,
             true,
             28.0,
         );
         egui::Popup::menu(&response).show(|ui| {
-            ui.set_min_width(200.0);
-            for (id, label) in [("run.project", "Run"), ("build.project", "Build Project")] {
+            ui.set_min_width(220.0);
+            for (id, label) in [
+                ("run.project", "Run"),
+                ("build.project", "Build Project"),
+                ("test.project", "Run All Tests"),
+                ("run.rerun", "Rerun Last Task"),
+            ] {
                 let enabled = app.commands.is_enabled(id, &app.state);
                 if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
                     app.dispatch(id, Value::Null);
                     ui.close();
                 }
+            }
+            if let Some(reason) = &build.run_unavailable {
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!("Run unavailable: {reason}"))
+                        .color(theme::TEXT_INFO)
+                        .size(theme::UI_FONT_SIZE - 1.0),
+                );
             }
         });
     }

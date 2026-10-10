@@ -7,7 +7,6 @@ use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, RichText, vec2};
 use jetthing_core::{Anchor, ToolWindow};
 use jetthing_git::ChangeKind;
-use jetthing_runner::{OutputStream, TaskState};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -69,7 +68,7 @@ pub fn bottom(app: &mut IdeApp, ctx: &egui::Context) {
         .frame(island_frame())
         .show(ctx, |ui| match window {
             ToolWindow::Find => find(app, ui),
-            ToolWindow::Build => build(app, ui),
+            ToolWindow::Build => crate::build_window::show(app, ui),
             ToolWindow::Problems => problems(app, ui),
             ToolWindow::Terminal => terminal(app, ui),
             ToolWindow::Logcat => crate::logcat_ui::show(app, ui),
@@ -716,84 +715,6 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
     }
 }
 
-fn build(app: &mut IdeApp, ui: &mut egui::Ui) {
-    let title = app
-        .state
-        .runner
-        .plan()
-        .map(|plan| plan.name.clone())
-        .unwrap_or_else(|| "Build".into());
-    let running = app.state.runner.is_running();
-    let hide = tool_window_header(ui, &title, |ui| {
-        if running {
-            if icons::button_colored(ui, Icon::Stop, *theme::STOP_RED, "Stop", false).clicked() {
-                app.dispatch("run.cancel", Value::Null);
-            }
-        } else if app.state.project.is_some() {
-            if icons::button(ui, Icon::Build, "Build Project").clicked() {
-                app.dispatch("build.project", Value::Null);
-            }
-            if icons::button_colored(ui, Icon::Run, *theme::RUN_GREEN, "Run", false).clicked() {
-                app.dispatch("run.project", Value::Null);
-            }
-        }
-    });
-    if hide {
-        app.toggle_tool_window(ToolWindow::Build);
-    }
-    let (state_text, state_color) = match app.state.runner.state() {
-        TaskState::Idle => ("Nothing has run yet".to_owned(), theme::TEXT_INFO),
-        TaskState::Running => ("Running…".to_owned(), theme::TEXT_SECONDARY),
-        TaskState::Exited(0) => ("Finished successfully".to_owned(), theme::SUCCESS),
-        TaskState::Exited(code) => (format!("Failed with exit code {code}"), theme::ERROR),
-        TaskState::Cancelled => ("Cancelled".to_owned(), theme::WARNING),
-    };
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        if running {
-            ui.add(egui::Spinner::new().size(12.0).color(theme::ACCENT));
-        }
-        ui.label(RichText::new(state_text).color(state_color));
-        if let Some(plan) = app.state.runner.plan() {
-            ui.label(
-                RichText::new(format!("{} {}", plan.program, plan.args.join(" ")))
-                    .monospace()
-                    .color(theme::TEXT_INFO),
-            );
-        }
-    });
-    egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 4))
-        .show(ui, |ui| {
-            egui::ScrollArea::both()
-                .auto_shrink([false, false])
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    for chunk in app.state.runner.output() {
-                        for line in chunk.text.trim_end_matches('\n').split('\n') {
-                            let color = match chunk.stream {
-                                OutputStream::Stdout => *theme::editor::TEXT,
-                                OutputStream::Stderr => console_stderr_color(line),
-                            };
-                            ui.label(RichText::new(line).monospace().color(color));
-                        }
-                    }
-                });
-        });
-}
-
-/// Cargo writes progress to stderr; only highlight lines that are real errors/warnings.
-fn console_stderr_color(text: &str) -> Color32 {
-    let trimmed = text.trim_start();
-    if trimmed.starts_with("error") {
-        *theme::ERROR
-    } else if trimmed.starts_with("warning") {
-        *theme::WARNING
-    } else {
-        *theme::editor::TEXT
-    }
-}
-
 fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
     if tool_window_header(ui, "Problems", |_| {}) {
         app.toggle_tool_window(ToolWindow::Problems);
@@ -899,21 +820,4 @@ fn problems(app: &mut IdeApp, ui: &mut egui::Ui) {
 
 fn terminal(app: &mut IdeApp, ui: &mut egui::Ui) {
     crate::terminal_ui::show(app, ui);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stderr_lines_are_only_red_for_errors() {
-        assert_eq!(
-            console_stderr_color("error[E0308]: mismatched"),
-            *theme::ERROR
-        );
-        assert_eq!(
-            console_stderr_color("   Compiling foo"),
-            *theme::editor::TEXT
-        );
-    }
 }

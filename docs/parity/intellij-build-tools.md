@@ -16,7 +16,7 @@ Statuses describe Jetthing, conservatively: nothing in this catalog is `Verified
 
 | ID | Reference | Feature | Status | Weight | Commands | Tests | Limitations / evidence |
 |---|---|---|---|---:|---|---|---|
-| IJ-BLD-001 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Detect Gradle project (settings.gradle[.kts], build.gradle[.kts]) | Partial | 5 | `build.project` | — | detected only when a `gradlew` wrapper exists; builds via `gradlew build`; no model import |
+| IJ-BLD-001 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Detect Gradle project (settings.gradle[.kts], build.gradle[.kts]) | Partial | 5 | `build.detect`, `build.project` | `jetthing-gradle` detection tests | settings/build scripts, included projects, wrapper version and applied plugins detected statically (no build logic runs); Android apps build with `assembleDebug`; model import pending; `evidence/build-run.md` |
 | IJ-BLD-002 | [work-with-gradle-projects](https://www.jetbrains.com/help/idea/work-with-gradle-projects.html) | Import Gradle project model (modules, source sets, dependencies) | Missing | 5 | — | — | not started |
 | IJ-BLD-003 | [work-with-gradle-projects](https://www.jetbrains.com/help/idea/work-with-gradle-projects.html) | Reload Gradle project / auto-reload on script changes | Missing | 3 | — | — | not started |
 | IJ-BLD-004 | [work-with-gradle-tasks](https://www.jetbrains.com/help/idea/work-with-gradle-tasks.html) | Gradle tool window: task tree and run task | Missing | 3 | — | — | not started |
@@ -24,7 +24,7 @@ Statuses describe Jetthing, conservatively: nothing in this catalog is `Verified
 | IJ-BLD-006 | [gradle-jvm-selection](https://www.jetbrains.com/help/idea/gradle-jvm-selection.html) | Gradle JVM selection | Missing | 2 | — | — | not started |
 | IJ-BLD-007 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Delegate build and run to Gradle vs IDE builder | Missing | 2 | — | — | not started |
 | IJ-BLD-008 | [work-with-tests-in-gradle](https://www.jetbrains.com/help/idea/work-with-tests-in-gradle.html) | Run tests through Gradle with test tree | Missing | 3 | — | — | not started |
-| IJ-BLD-009 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Gradle wrapper support (gradlew) | Partial | 3 | `build.project` | — | `gradlew build` is used; projects without a wrapper are not detected |
+| IJ-BLD-009 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Gradle wrapper support (gradlew) | Partial | 3 | `build.project` | wrapper/PATH plan tests | wrapper preferred, else `gradle` on PATH with an actionable error; wrapper version read from `gradle-wrapper.properties` |
 | IJ-BLD-010 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Offline mode and build scans | Missing | 1 | — | — | not started |
 | IJ-BLD-011 | [gradle](https://www.jetbrains.com/help/idea/gradle.html) | Kotlin DSL / Groovy DSL editing assistance | Missing | 3 | — | — | not started |
 | IJ-BLD-012 | [migrate-gradle-build-scripts-to-kotlin-dsl](https://www.jetbrains.com/help/idea/migrate-gradle-build-scripts-to-kotlin-dsl.html) | Version catalogs (libs.versions.toml) support | Missing | 2 | — | — | not started |
@@ -46,4 +46,4 @@ Statuses describe Jetthing, conservatively: nothing in this catalog is `Verified
 | IJ-BLD-041 | [package-search](https://www.jetbrains.com/help/idea/package-search.html) | Dependency search and add from editor | Missing | 1 | — | — | not started |
 | IJ-BLD-042 | [ant](https://www.jetbrains.com/help/idea/ant.html) | Ant build files | Missing | 1 | — | — | not started |
 | IJ-BLD-043 | [sbt-support](https://www.jetbrains.com/help/idea/sbt-support.html) | sbt (Scala plugin) | Missing | 1 | — | — | not started |
-| IJ-BLD-044 | [build-overview](https://www.jetbrains.com/help/idea/build-overview.html) | Build output with clickable compiler errors | Missing | 3 | — | — | not started |
+| IJ-BLD-044 | [build-overview](https://www.jetbrains.com/help/idea/build-overview.html) | Build output with clickable compiler errors | Partial | 3 | `build.project` | build-event parser tests (javac, kotlinc, rustc, Maven, Bazel, Go) | Build window tree of steps (Gradle tasks, Cargo crates, Maven mojos) with outcomes and durations; errors/warnings open the file at the line; `evidence/build-run/16b-build-output-failed.png` |
