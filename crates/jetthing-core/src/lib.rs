@@ -18,6 +18,7 @@ mod lsp_commands;
 mod navigation;
 mod problems;
 mod project_commands;
+mod refactor;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
@@ -25,6 +26,7 @@ mod workspace_edit;
 pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
+pub use refactor::{RefactorState, Refactoring, RenameSession};
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -62,6 +64,8 @@ pub struct IdeState {
     pub navigation: NavigationState,
     /// Quick fixes and intentions at the caret (Alt+Enter).
     pub code_actions: CodeActionState,
+    /// Rename and the other server-backed refactorings.
+    pub refactor: RefactorState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -117,6 +121,7 @@ impl IdeState {
         self.lsp.set_project(Some(project.root()));
         self.navigation = NavigationState::default();
         self.code_actions = CodeActionState::default();
+        self.refactor = RefactorState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -417,6 +422,7 @@ impl IdeState {
         self.refresh_problems();
         self.poll_navigation();
         self.poll_code_actions();
+        self.poll_refactor();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };
@@ -613,6 +619,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     problems::register(&mut registry);
     navigation::register(&mut registry);
     code_actions::register(&mut registry);
+    refactor::register(&mut registry);
     registry
         .register(Command::new(
             spec(

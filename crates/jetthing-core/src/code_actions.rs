@@ -24,11 +24,11 @@ pub struct CodeActionItem {
     /// Why the action cannot run now, shown greyed out.
     pub disabled: Option<String>,
     #[serde(skip)]
-    raw: Value,
+    pub(crate) raw: Value,
 }
 
 impl CodeActionItem {
-    fn parse(raw: &Value) -> Option<Self> {
+    pub(crate) fn parse(raw: &Value) -> Option<Self> {
         let title = raw.get("title")?.as_str()?.to_owned();
         let kind = raw.get("kind").and_then(Value::as_str).map(String::from);
         let has_diagnostics = raw
@@ -191,7 +191,11 @@ impl IdeState {
         self.run_code_action(&item.raw, &path)
     }
 
-    fn run_code_action(&mut self, raw: &Value, path: &std::path::Path) -> Result<(), String> {
+    pub(crate) fn run_code_action(
+        &mut self,
+        raw: &Value,
+        path: &std::path::Path,
+    ) -> Result<(), String> {
         // A bare `Command`.
         if raw.get("command").is_some_and(Value::is_string) {
             return self.execute_lsp_command(raw, path);
@@ -328,7 +332,7 @@ impl IdeState {
     }
 }
 
-fn file_uri(path: &std::path::Path) -> Result<String, String> {
+pub(crate) fn file_uri(path: &std::path::Path) -> Result<String, String> {
     let absolute = path.canonicalize().unwrap_or_else(|_| path.to_owned());
     url::Url::from_file_path(&absolute)
         .map(|url| url.to_string())
