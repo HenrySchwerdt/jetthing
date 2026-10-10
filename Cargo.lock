@@ -1558,6 +1558,7 @@ name = "jetthing-core"
 version = "0.1.0"
 dependencies = [
  "jetthing-command",
+ "jetthing-git",
  "jetthing-language",
  "jetthing-plugins",
  "jetthing-project",
@@ -1565,6 +1566,13 @@ dependencies = [
  "jetthing-terminal",
  "jetthing-text",
  "serde_json",
+]
+
+[[package]]
+name = "jetthing-git"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1623,6 +1631,7 @@ dependencies = [
  "egui",
  "jetthing-command",
  "jetthing-core",
+ "jetthing-git",
  "jetthing-language",
  "serde_json",
 ]

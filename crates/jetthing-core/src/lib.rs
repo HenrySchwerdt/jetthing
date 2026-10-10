@@ -1,4 +1,5 @@
 use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
+use jetthing_git::RepositoryStatus;
 use jetthing_language::{LanguageAnalysis, analyze};
 use jetthing_plugins::PluginManifest;
 use jetthing_project::{FileEntry, Project};
@@ -30,6 +31,8 @@ pub struct IdeState {
     pub search_visible: bool,
     pub search_files_scanned: usize,
     pub search_truncated: bool,
+    pub git: Option<RepositoryStatus>,
+    pub git_visible: bool,
     pub status: String,
 }
 
@@ -41,6 +44,7 @@ impl IdeState {
         self.active_document = None;
         self.search.cancel();
         self.search_results.clear();
+        self.git = RepositoryStatus::load(project.root()).ok();
         self.status = format!("Opened {}", project.root().display());
         self.project = Some(project);
         Ok(())
@@ -160,6 +164,33 @@ impl IdeState {
             }
         }
     }
+
+    pub fn refresh_git(&mut self) -> Result<(), String> {
+        let root = self.project.as_ref().ok_or("no project is open")?.root();
+        self.git = Some(RepositoryStatus::load(root).map_err(|error| error.to_string())?);
+        if let Some(git) = &self.git {
+            self.status = format!("{} changes on {}", git.changes.len(), git.branch);
+        }
+        Ok(())
+    }
+
+    pub fn stage_path(&mut self, path: &Path) -> Result<(), String> {
+        self.git
+            .as_ref()
+            .ok_or("project is not a Git repository")?
+            .stage(path)
+            .map_err(|error| error.to_string())?;
+        self.refresh_git()
+    }
+
+    pub fn unstage_path(&mut self, path: &Path) -> Result<(), String> {
+        self.git
+            .as_ref()
+            .ok_or("project is not a Git repository")?
+            .unstage(path)
+            .map_err(|error| error.to_string())?;
+        self.refresh_git()
+    }
 }
 
 fn spec(
@@ -202,6 +233,52 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .open_project(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"root": state.project.as_ref().unwrap().root()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("git.refresh", "Refresh Git Status", "Git", None, "{}"),
+            |state: &IdeState| state.project.is_some(),
+            |state: &mut IdeState, _| {
+                state.refresh_git().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "git.stage",
+                "Stage File",
+                "Git",
+                None,
+                r#"{"path":"string"}"#,
+            ),
+            |state: &IdeState| state.git.is_some(),
+            |state: &mut IdeState, params| {
+                state
+                    .stage_path(Path::new(&string_param(&params, "path")?))
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "git.unstage",
+                "Unstage File",
+                "Git",
+                None,
+                r#"{"path":"string"}"#,
+            ),
+            |state: &IdeState| state.git.is_some(),
+            |state: &mut IdeState, params| {
+                state
+                    .unstage_path(Path::new(&string_param(&params, "path")?))
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
             },
         ))
         .expect("unique built-in id");

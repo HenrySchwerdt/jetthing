@@ -9,5 +9,6 @@ eframe.workspace = true
 egui.workspace = true
 jetthing-command = { path = "../jetthing-command" }
 jetthing-core = { path = "../jetthing-core" }
+jetthing-git = { path = "../jetthing-git" }
 jetthing-language = { path = "../jetthing-language" }
 serde_json.workspace = true

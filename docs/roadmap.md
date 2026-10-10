@@ -36,6 +36,9 @@ Rust via rust-analyzer.
 Git, search/replace, build/run configurations, test UI, DAP debugger, terminal,
 workspace layout persistence, plugin manager, and recovery.
 
+- [x] Repository detection, branch/status view, stage, and unstage
+- [ ] Diff editor, history, blame, commit, branches, fetch/pull/push, and worktrees
+
 ## M4 — web/JVM/Android bundles
 
 Product-neutral bundles start with Web and Rust, then Java/Kotlin/Gradle and Android.

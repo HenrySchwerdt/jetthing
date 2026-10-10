@@ -1,6 +1,7 @@
 use eframe::egui::{self, Color32, RichText};
 use jetthing_command::CommandRegistry;
 use jetthing_core::{IdeState, built_in_commands};
+use jetthing_git::ChangeKind;
 use jetthing_language::{LanguageAnalysis, SyntaxKind};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -134,6 +135,9 @@ impl eframe::App for IdeApp {
                     }
                     if ui.button("Find in Files").clicked() {
                         self.state.search_visible = true;
+                    }
+                    if ui.button("Git").clicked() {
+                        self.state.git_visible = !self.state.git_visible;
                     }
                     ui.add_space(12.0);
                     let root = self
@@ -269,6 +273,79 @@ impl eframe::App for IdeApp {
                         self.dispatch("terminal.sendText", json!({"text": command}));
                         input.request_focus();
                     }
+                });
+        }
+        if self.state.git_visible {
+            egui::SidePanel::right("git")
+                .default_width(330.0)
+                .min_width(220.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong("Version Control");
+                        if ui.button("Refresh").clicked() {
+                            self.dispatch("git.refresh", Value::Null);
+                        }
+                        if ui.small_button("×").clicked() {
+                            self.state.git_visible = false;
+                        }
+                    });
+                    ui.separator();
+                    let Some(git) = self.state.git.clone() else {
+                        ui.label("The project is not a Git repository.");
+                        return;
+                    };
+                    ui.label(format!("Branch: {}", git.branch));
+                    ui.label(format!("{} changed files", git.changes.len()));
+                    ui.separator();
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for change in git.changes {
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+                                    let marker = match change.kind {
+                                        ChangeKind::Untracked => "?",
+                                        ChangeKind::Modified => "M",
+                                        ChangeKind::Added => "A",
+                                        ChangeKind::Deleted => "D",
+                                        ChangeKind::Renamed => "R",
+                                        ChangeKind::Conflicted => "!",
+                                    };
+                                    if ui
+                                        .selectable_label(
+                                            false,
+                                            format!("{marker} {}", change.path.display()),
+                                        )
+                                        .clicked()
+                                        && change.kind != ChangeKind::Deleted
+                                    {
+                                        self.dispatch(
+                                            "editor.openFile",
+                                            json!({"path": change.path.clone()}),
+                                        );
+                                    }
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if change.unstaged && ui.small_button("Stage").clicked()
+                                            {
+                                                self.dispatch(
+                                                    "git.stage",
+                                                    json!({"path": change.path.clone()}),
+                                                );
+                                            }
+                                            if change.staged && ui.small_button("Unstage").clicked()
+                                            {
+                                                self.dispatch(
+                                                    "git.unstage",
+                                                    json!({"path": change.path.clone()}),
+                                                );
+                                            }
+                                        },
+                                    );
+                                });
+                            });
+                        }
+                    });
                 });
         }
         egui::SidePanel::left("project")

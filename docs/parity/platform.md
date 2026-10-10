@@ -15,6 +15,7 @@
 | PLAT-011 | IntelliJ Platform | Syntax parsing/highlighting | Partial | editor edit pipeline | Rust parser tests | Rust only; full reparse pending incremental edits |
 | PLAT-012 | IntelliJ Platform | Parse diagnostics | Partial | editor edit pipeline | malformed Rust test | syntax errors only; no semantic diagnostics |
 | PLAT-013 | IntelliJ Platform | Find in Files | Partial | `search.project`, `search.cancel`, `editor.openFile` | async search tests | opens matching file; exact caret navigation pending |
+| PLAT-014 | IntelliJ Platform | Git changes | Partial | `git.refresh`, `git.stage`, `git.unstage` | real repository integration test | status/staging only; diff/history/remotes pending |
 
 Statuses are intentionally conservative. “Implemented” means the listed scope works;
 only “Verified” will count as independently parity-validated.

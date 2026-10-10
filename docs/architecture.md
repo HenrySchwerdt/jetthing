@@ -16,6 +16,8 @@ no crate below `jetthing-ui` imports UI types.
 - `jetthing-terminal`: native PTY process lifecycle, asynchronous output, input, and resizing.
 - `jetthing-search`: cancellable generation-based background text search with streamed,
   bounded results and binary/large-file exclusion.
+- `jetthing-git`: repository/branch/status modeling and argument-safe Git operations;
+  it delegates repository semantics to the installed Git executable.
 - `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,
   and validation. Executable/Wasm loading is deliberately not claimed yet.
 - `jetthing-core`: application state and built-in command handlers.
