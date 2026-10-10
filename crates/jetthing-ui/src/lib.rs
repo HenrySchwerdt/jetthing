@@ -519,6 +519,11 @@ impl eframe::App for IdeApp {
         palette::show(self, ctx);
         popups::show(self, ctx);
         notifications::show(self, ctx);
+        // Include operations started by controls in this frame, and keep
+        // polling even when their notification balloon is hidden.
+        if self.state.updates.is_busy() {
+            ctx.request_repaint_after(Duration::from_millis(200));
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

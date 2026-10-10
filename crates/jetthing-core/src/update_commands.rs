@@ -58,7 +58,11 @@ impl IdeState {
         let UpdateState::Available { version, release } = &self.update_state else {
             return Err("no update is available".into());
         };
-        let exe = installable_executable()?;
+        let exe = self
+            .update_executable
+            .clone()
+            .map_or_else(installable_executable, Ok)?;
+        self.update_executable = Some(exe.clone());
         let version = version.clone();
         self.updates
             .install(UpdateSource::from_env(), (**release).clone(), exe);
@@ -106,9 +110,34 @@ impl IdeState {
             }
         };
     }
+
+    /// On Linux, current_exe follows the running inode into the `.old` backup.
+    /// Use the installation target captured before replacement instead.
+    pub fn update_restart_target(&self) -> Option<&std::path::Path> {
+        self.update_executable.as_deref()
+    }
 }
 
 pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
+    registry
+        .register(Command::new(
+            spec(
+                "app.prepareRestart",
+                "Save Session for Restart",
+                "Help",
+                None,
+                "{}",
+            ),
+            |_| true,
+            |state: &mut IdeState, _| {
+                if state.project.is_some() {
+                    state.save_all().map_err(CommandError::Failed)?;
+                    state.save_workspace().map_err(CommandError::Failed)?;
+                }
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
     registry
         .register(Command::new(
             spec(
@@ -177,6 +206,43 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
 mod tests {
     use super::*;
     use jetthing_update::parse_release;
+
+    #[test]
+    fn restart_preparation_saves_dirty_files_and_propagates_save_errors() {
+        let root = std::env::temp_dir().join(format!("jetthing-restart-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("notes.txt");
+        std::fs::write(&path, "old").unwrap();
+        let commands = crate::built_in_commands();
+        let mut state = IdeState::default();
+        state.open_project(&root).unwrap();
+        state.open_file(std::path::Path::new("notes.txt")).unwrap();
+        state.documents[0].text.edit(0, 3, "saved").unwrap();
+        commands
+            .execute("app.prepareRestart", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "saved");
+        assert!(root.join(".jetthing/workspace.json").is_file());
+        assert!(!state.documents[0].text.is_dirty());
+        state.documents[0].text.edit(0, 5, "keep this").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(
+            commands
+                .execute("app.prepareRestart", &mut state, Value::Null)
+                .is_err()
+        );
+        assert!(state.documents[0].text.is_dirty());
+        assert_eq!(state.documents[0].text.text(), "keep this");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn welcome_session_can_prepare_for_restart() {
+        crate::built_in_commands()
+            .execute("app.prepareRestart", &mut IdeState::default(), Value::Null)
+            .unwrap();
+    }
 
     #[test]
     fn version_comes_from_the_workspace() {
