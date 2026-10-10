@@ -94,6 +94,8 @@ pub struct IdeApp {
     last_bottom: Option<ToolWindow>,
     /// Right-anchored tool window seen last frame (Gradle, Bazel, Device Manager).
     last_right: Option<ToolWindow>,
+    /// Active editor file seen last frame; opening another one focuses the editor.
+    last_active_file: Option<PathBuf>,
     find: findbar::FindBar,
     /// Text of the last whole-line copy, so pasting it inserts a line.
     clipboard_line: Option<String>,
@@ -225,6 +227,7 @@ impl IdeApp {
             shift_tainted: false,
             last_bottom: None,
             last_right: None,
+            last_active_file: None,
             find: findbar::FindBar::default(),
             clipboard_line: None,
             dialog: None,
@@ -515,6 +518,19 @@ impl IdeApp {
     /// Activating a tool window moves keyboard focus into it; hiding it returns
     /// focus to the editor.
     fn follow_tool_window_focus(&mut self, ctx: &egui::Context) {
+        // Opening or switching to a file (tree, Go to File, search results,
+        // automation) moves keyboard focus into its editor, as in the reference.
+        let active = self
+            .state
+            .active_document
+            .and_then(|index| self.state.documents.get(index))
+            .map(|document| document.path.clone());
+        if active != self.last_active_file {
+            if active.is_some() && self.dialog.is_none() && !self.palette.open {
+                ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
+            }
+            self.last_active_file = active;
+        }
         // Hiding a right-anchored tool window also hands focus back to the editor.
         let right = self.state.tool_windows.visible(Anchor::Right);
         if right != self.last_right {
@@ -905,6 +921,25 @@ mod tests {
         };
         let _ = ctx.run(frame_input(vec![close]), |ctx| app.frame(ctx));
         assert!(app.state.documents.is_empty(), "Ctrl+F4 closes the tab");
+    }
+
+    #[test]
+    fn opening_a_file_by_command_focuses_its_editor() {
+        let (mut app, ctx) = headless_app("open-focus", "a.txt", "hello\n");
+        let root = app.state.project.as_ref().unwrap().root().to_owned();
+        std::fs::write(root.join("b.txt"), "other\n").unwrap();
+        let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        ctx.memory_mut(|m| m.surrender_focus(editor::editor_id()));
+        app.dispatch("editor.openFile", json!({"path": "b.txt"}));
+        for _ in 0..2 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        assert!(ctx.memory(|m| m.has_focus(editor::editor_id())));
+        let _ = ctx.run(frame_input(vec![egui::Event::Text("x".into())]), |ctx| {
+            app.frame(ctx)
+        });
+        let active = app.state.active_document.unwrap();
+        assert_eq!(app.state.documents[active].text.text(), "xother\n");
     }
 
     #[test]
