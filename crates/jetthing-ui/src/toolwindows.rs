@@ -556,6 +556,7 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
     }
     // Commit message and actions.
     let mut commit_now = false;
+    let mut push_after = false;
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(10, 6))
         .show(ui, |ui| {
@@ -596,6 +597,14 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                 {
                     commit_now = true;
                 }
+                if ui
+                    .add_enabled(enabled, egui::Button::new("Commit and Push…"))
+                    .on_hover_text("Commit, then open the Push dialog")
+                    .clicked()
+                {
+                    commit_now = true;
+                    push_after = true;
+                }
                 ui.label(
                     RichText::new(widgets::pluralize(
                         selected.len(),
@@ -616,6 +625,9 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
             Ok(_) => {
                 app.commit_message.clear();
                 app.commit_overrides.clear();
+                if push_after {
+                    crate::push_dialog::open(app);
+                }
             }
             Err(error) => app.state.status = error.to_string(),
         }

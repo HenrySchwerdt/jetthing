@@ -22,6 +22,7 @@ mod lsp_status;
 mod notifications;
 mod palette;
 mod popups;
+mod push_dialog;
 mod syntax;
 mod terminal_ui;
 mod theme;
@@ -66,6 +67,8 @@ pub struct IdeApp {
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
     repaint_hook_installed: bool,
+    /// Open push dialog.
+    push_dialog: Option<push_dialog::PushDialog>,
     /// Open branch name/confirmation dialog.
     branch_dialog: Option<branches_popup::BranchDialog>,
     /// Open gutter change-marker popup.
@@ -149,6 +152,7 @@ impl IdeApp {
             repaint_hook_installed: false,
             change_popup: None,
             branch_dialog: None,
+            push_dialog: None,
         }
     }
 
@@ -415,6 +419,8 @@ impl IdeApp {
                 self.dialog = None;
             } else if self.branch_dialog.is_some() {
                 self.branch_dialog = None;
+            } else if self.push_dialog.is_some() {
+                self.push_dialog = None;
             } else if self.change_popup.is_some() {
                 self.change_popup = None;
             } else if self.palette.open {
@@ -466,6 +472,12 @@ impl IdeApp {
         if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::F) {
             self.dispatch("toolwindow.activate.find", Value::Null);
             self.search_focus_requested(ctx);
+        }
+        if consume(Modifiers::COMMAND | Modifiers::SHIFT, Key::K) && self.state.git.is_some() {
+            push_dialog::open(self);
+        }
+        if consume(Modifiers::COMMAND, Key::T) {
+            self.dispatch("git.pull", Value::Null);
         }
         if consume(Modifiers::COMMAND, Key::K) {
             self.dispatch("toolwindow.activate.commit", Value::Null);
@@ -600,6 +612,7 @@ impl eframe::App for IdeApp {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
         self.state.poll_git();
+        self.state.poll_remote();
         if self.state.lsp.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(100));
         } else if !self.state.lsp.servers().is_empty() {
@@ -640,6 +653,7 @@ impl eframe::App for IdeApp {
         }
         change_popup::show(self, ctx);
         branches_popup::show_dialog(self, ctx);
+        push_dialog::show(self, ctx);
         editor::completion_popup(self, ctx);
         palette::show(self, ctx);
         popups::show(self, ctx);

@@ -21,6 +21,7 @@ mod git_log;
 mod line_changes;
 mod lsp_commands;
 mod project_commands;
+mod remote_commands;
 mod terminal_commands;
 mod toolchain_commands;
 mod toolwindow;
@@ -62,6 +63,12 @@ pub struct IdeState {
     git_watcher: Option<jetthing_git::StatusWatcher>,
     /// Interrupted merge/rebase/cherry-pick, if any.
     pub git_pending: Option<jetthing_git::PendingOperation>,
+    /// Running fetch/pull/push.
+    pub remote_job: Option<jetthing_git::RemoteJob>,
+    /// Latest progress line of the running remote operation.
+    pub remote_progress: Option<String>,
+    /// Message of the last failed remote operation.
+    pub remote_error: Option<String>,
     /// Git tool window Log tab.
     pub git_log: GitLogState,
     /// The diff viewer tab, if open.
@@ -640,6 +647,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     line_changes::register(&mut registry);
     git_log::register(&mut registry);
     branch_commands::register(&mut registry);
+    remote_commands::register(&mut registry);
     registry
         .register(Command::new(
             spec(
