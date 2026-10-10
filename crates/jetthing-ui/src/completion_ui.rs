@@ -132,10 +132,15 @@ fn row_for(item: &CompletionItem, matched: &[usize]) -> Row {
 /// Shows the popup; returns its screen rect for the documentation panel.
 pub fn show(app: &mut IdeApp, ctx: &egui::Context) -> Option<Rect> {
     let session = app.state.completion.as_ref()?;
-    if !session.visible() {
+    if !session.visible() && !session.indexing_only() {
         return None;
     }
     let caret = app.caret_screen_pos?;
+    let indexing = session.indexing.clone();
+    if indexing.is_some() {
+        // Re-query and refresh the notice when the server finishes.
+        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+    }
     let rows: Vec<Row> = session
         .ranked
         .iter()
@@ -163,7 +168,8 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) -> Option<Rect> {
             ICON_COLUMN + 8.0 + label + detail + kind + 16.0
         })
         .fold(MIN_WIDTH, f32::max)
-        .min(MAX_WIDTH);
+        .min(MAX_WIDTH)
+        .max(if indexing.is_some() { 360.0 } else { 0.0 });
     let visible = rows.len().min(VISIBLE_ROWS);
     let height = visible as f32 * ROW_HEIGHT + FOOTER_HEIGHT + 2.0;
     let screen = ctx.content_rect();
@@ -214,7 +220,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) -> Option<Rect> {
                                 }
                             }
                         });
-                    footer(ui, &small);
+                    footer(ui, &small, indexing.as_deref());
                 });
         });
     if let Some(row) = clicked {
@@ -284,7 +290,10 @@ fn paint_row(ui: &egui::Ui, rect: Rect, row: &Row, selected: bool, hovered: bool
     }
 }
 
-fn footer(ui: &mut egui::Ui, font: &FontId) {
+/// The footer hint, or the indexing notice while the language server is
+/// still importing the project (`indexing` is its progress, e.g.
+/// "jdtls: Building 0%").
+fn footer(ui: &mut egui::Ui, font: &FontId, indexing: Option<&str>) {
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), FOOTER_HEIGHT), Sense::hover());
     let painter = ui.painter();
@@ -293,23 +302,42 @@ fn footer(ui: &mut egui::Ui, font: &FontId) {
         rect.top(),
         Stroke::new(1.0_f32, *theme::POPUP_BORDER),
     );
-    let hint = if cfg!(target_os = "macos") {
-        "⏎ inserts, ⇥ replaces the word at the caret, ⎋ closes"
-    } else {
-        "Enter inserts, Tab replaces the word at the caret, Esc closes"
+    let (hint, color) = match indexing {
+        Some(status) => (indexing_notice(status), *theme::WARNING),
+        None if cfg!(target_os = "macos") => (
+            "⏎ inserts, ⇥ replaces the word at the caret, ⎋ closes".to_owned(),
+            *theme::TEXT_INFO,
+        ),
+        None => (
+            "Enter inserts, Tab replaces the word at the caret, Esc closes".to_owned(),
+            *theme::TEXT_INFO,
+        ),
     };
-    painter.text(
+    painter.with_clip_rect(rect).text(
         pos2(rect.left() + 12.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         hint,
         FontId::proportional(font.size - 0.5),
-        *theme::TEXT_INFO,
+        color,
     );
+}
+
+/// "Indexing… results may be incomplete (jdtls: Building 0%)".
+pub(crate) fn indexing_notice(status: &str) -> String {
+    format!("Indexing… results may be incomplete ({status})")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indexing_notice_names_the_server_activity() {
+        assert_eq!(
+            indexing_notice("jdtls: Building 0%"),
+            "Indexing… results may be incomplete (jdtls: Building 0%)"
+        );
+    }
 
     #[test]
     fn matched_characters_are_split_into_bold_sections() {

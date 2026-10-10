@@ -225,3 +225,33 @@ fn completion_resolves_docs_applies_imports_and_shows_quick_doc() {
     assert!(wait(&mut state, |state| state.signature.popup.is_some()));
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn completion_during_import_says_indexing_and_requeries_when_ready() {
+    let Some(server) = fake_server() else {
+        eprintln!("jetthing-fake-lsp not built; run `cargo test --workspace`");
+        return;
+    };
+    let (root, mut state) = open_fake_project(server, &["--importing", "1"], "importing");
+    let commands = built_in_commands();
+    commands
+        .execute("language.complete", &mut state, json!({}))
+        .unwrap();
+    // The empty answer during "Building 0%" keeps the popup with a notice.
+    assert!(wait(&mut state, |state| {
+        state
+            .completion
+            .as_ref()
+            .is_some_and(|s| !s.waiting && s.indexing_only() && s.requery_when_ready)
+    }));
+    let notice = state.completion.as_ref().unwrap().indexing.clone().unwrap();
+    assert!(notice.contains("Building"), "{notice}");
+    assert_ne!(state.status, "No suggestions");
+    // Once the import ends, the popup asks again and shows the real items.
+    assert!(wait(&mut state, |state| {
+        state.completion.as_ref().is_some_and(|s| {
+            s.visible() && s.indexing.is_none() && s.items.iter().any(|i| i.label == "greeting")
+        })
+    }));
+    std::fs::remove_dir_all(root).unwrap();
+}

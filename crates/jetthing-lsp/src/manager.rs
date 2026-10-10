@@ -672,6 +672,24 @@ impl LspManager {
         self.missing.iter().map(String::as_str)
     }
 
+    /// What the server of `path` is still busy with (starting, importing the
+    /// project, indexing), if anything. Completion answers given meanwhile may
+    /// be empty or incomplete (jdtls answers nothing while "Building 0%").
+    pub fn indexing_status(&self, path: &Path) -> Option<String> {
+        let service = self.server_for(path)?;
+        if let Some(progress) = service.progress().values().next() {
+            return Some(describe_progress(progress));
+        }
+        (service.state() == ServerState::Starting).then(|| format!("{}: starting", service.name()))
+    }
+
+    /// Whether the server of `path` is ready and has no work in progress.
+    pub fn is_idle_for(&self, path: &Path) -> bool {
+        self.server_for(path).is_some_and(|service| {
+            service.state() == ServerState::Ready && service.progress().is_empty()
+        })
+    }
+
     /// Whether any server is starting or reporting progress.
     pub fn is_busy(&self) -> bool {
         self.servers.iter().any(|server| match &server.service {

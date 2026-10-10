@@ -22,6 +22,10 @@
 //! `@hint` and `@unused` marker in the text, or one warning at 0:0 when the
 //! text has no markers.
 //! - `--incomplete`: mark completion lists `isIncomplete`.
+//! - `--importing <n>`: like jdtls importing a Gradle project, report a
+//!   "Building" progress from `initialized` on, answer the first `n`
+//!   completion requests with an empty list, and end the progress 300 ms
+//!   after the last of them.
 //!
 //! Completion lists start with an item `trigger<kind>` naming the request's
 //! `triggerKind`.
@@ -52,6 +56,9 @@ fn main() {
         .and_then(|ms| ms.parse().ok())
         .map(Duration::from_millis);
     let publish = value("--publish");
+    let mut importing: u32 = value("--importing")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
     let mut root = String::new();
     let mut documents: std::collections::BTreeMap<String, String> = Default::default();
     let mut input = BufReader::new(stdin().lock());
@@ -94,6 +101,14 @@ fn main() {
                     "codeActionProvider": {"resolveProvider": true},
                     "executeCommandProvider": {"commands": ["fake.apply"]}
                 },"serverInfo":{"name":"fake"}}}));
+            }
+            ("initialized", None) if importing > 0 => {
+                send(
+                    json!({"jsonrpc":"2.0","id":"p2","method":"window/workDoneProgress/create","params":{"token":"import"}}),
+                );
+                send(
+                    json!({"jsonrpc":"2.0","method":"$/progress","params":{"token":"import","value":{"kind":"begin","title":"Building","percentage":0}}}),
+                );
             }
             ("initialized", None) => {
                 if let Some(file) = &crash_file
@@ -225,6 +240,16 @@ fn main() {
                         "end": {"line": 0, "character": 0}}, "newText": "// applied\n"}]}}}}),
                 );
                 send(json!({"jsonrpc":"2.0","id":id,"result":null}));
+            }
+            ("textDocument/completion", Some(id)) if importing > 0 => {
+                send(json!({"jsonrpc":"2.0","id":id,"result":{"isIncomplete":false,"items":[]}}));
+                importing -= 1;
+                if importing == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    send(
+                        json!({"jsonrpc":"2.0","method":"$/progress","params":{"token":"import","value":{"kind":"end"}}}),
+                    );
+                }
             }
             ("textDocument/completion", Some(id)) => {
                 if let Some(delay) = delay {
