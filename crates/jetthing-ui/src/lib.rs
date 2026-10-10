@@ -576,6 +576,22 @@ impl eframe::App for IdeApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.frame(ctx);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.state.shutdown_plugins();
+        if self.state.project.is_some() {
+            self.autosave();
+            self.dispatch("workspace.save", Value::Null);
+        }
+    }
+}
+
+impl IdeApp {
+    /// Builds one workbench frame. Separate from `eframe::App::update` so a
+    /// headless `egui::Context` can drive it (typing-latency bench).
+    pub fn frame(&mut self, ctx: &egui::Context) {
         if !self.waker_installed {
             let ctx = ctx.clone();
             self.state.waker.set(move || ctx.request_repaint());
@@ -684,12 +700,14 @@ impl eframe::App for IdeApp {
         self.control_after_frame(ctx);
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.state.shutdown_plugins();
-        if self.state.project.is_some() {
-            self.autosave();
-            self.dispatch("workspace.save", Value::Null);
-        }
+    /// Read-only view of the IDE state (tests, benches, automation).
+    pub fn state(&self) -> &IdeState {
+        &self.state
+    }
+
+    /// Gives keyboard focus to the editor surface.
+    pub fn focus_editor(&self, ctx: &egui::Context) {
+        ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
     }
 }
 

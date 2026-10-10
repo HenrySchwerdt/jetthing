@@ -1,6 +1,7 @@
 use ropey::Rope;
 use thiserror::Error;
 
+pub mod format;
 pub mod multicaret;
 pub mod ops;
 pub mod transform;
