@@ -8,8 +8,7 @@ use crate::theme;
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke, epaint::PathShape, vec2};
 
 /// Neutral icon color (palette `Gray11`).
-pub const ICON: Color32 = Color32::from_rgb(0xCE, 0xD0, 0xD6);
-const FOLDER_FILL: Color32 = Color32::from_rgb(0x43, 0x45, 0x4A);
+pub const ICON: theme::Token = theme::ICON;
 const RUST: Color32 = Color32::from_rgb(0xE0, 0x88, 0x55);
 const TOML: Color32 = Color32::from_rgb(0x9D, 0xA0, 0xA8);
 const MARKDOWN: Color32 = Color32::from_rgb(0x6B, 0x9B, 0xFA);
@@ -44,6 +43,12 @@ pub enum Icon {
     Refresh,
     Error,
     Warning,
+    /// Phone outline (devices, Device Manager).
+    Device,
+    Logcat,
+    Pause,
+    ScrollEnd,
+    SoftWrap,
 }
 
 impl Icon {
@@ -86,7 +91,8 @@ impl Grid {
     }
 }
 
-pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
+pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<Color32>) {
+    let color = color.into();
     let g = Grid::new(rect);
     let stroke = Stroke::new(g.len(1.0).max(1.0), color);
     let line = |points: &[(f32, f32)]| {
@@ -126,7 +132,7 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             egui::Align2::CENTER_CENTER,
             text,
             theme::semibold(g.len(6.0)),
-            theme::ISLAND,
+            *theme::ISLAND,
         );
     };
     match icon {
@@ -140,7 +146,7 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::ChevronRight => line(&[(6.5, 4.5), (10.0, 8.0), (6.5, 11.5)]),
         Icon::Folder | Icon::Project => {
             let fill = if icon == Icon::Folder {
-                FOLDER_FILL
+                *theme::FOLDER_FILL
             } else {
                 Color32::TRANSPARENT
             };
@@ -256,6 +262,43 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             line(&[(12.0, 4.0), (4.0, 12.0)]);
         }
         Icon::Minimize => line(&[(3.5, 8.0), (12.5, 8.0)]),
+        Icon::Logcat => {
+            // Log lines of varying length with a level marker.
+            painter.rect_stroke(
+                g.rect(1.5, 2.5, 14.5, 13.5),
+                g.len(2.0),
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+            painter.circle_filled(g.p(4.5, 6.0), g.len(0.9), color);
+            line(&[(6.5, 6.0), (12.0, 6.0)]);
+            painter.circle_filled(g.p(4.5, 10.0), g.len(0.9), color);
+            line(&[(6.5, 10.0), (10.0, 10.0)]);
+        }
+        Icon::Pause => {
+            line(&[(5.5, 3.5), (5.5, 12.5)]);
+            line(&[(10.5, 3.5), (10.5, 12.5)]);
+        }
+        Icon::ScrollEnd => {
+            line(&[(8.0, 2.5), (8.0, 10.5)]);
+            line(&[(4.5, 7.5), (8.0, 11.0), (11.5, 7.5)]);
+            line(&[(3.5, 13.5), (12.5, 13.5)]);
+        }
+        Icon::SoftWrap => {
+            line(&[(2.5, 4.0), (13.5, 4.0)]);
+            line(&[(2.5, 8.0), (12.0, 8.0)]);
+            line(&[(12.0, 8.0), (13.5, 9.5), (12.0, 11.5), (8.5, 11.5)]);
+            line(&[(10.0, 10.0), (8.5, 11.5), (10.0, 13.0)]);
+        }
+        Icon::Device => {
+            painter.rect_stroke(
+                g.rect(4.0, 1.5, 12.0, 14.5),
+                g.len(1.5),
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+            line(&[(7.0, 12.5), (9.0, 12.5)]);
+        }
         Icon::Refresh => {
             let center = g.p(8.0, 8.0);
             let points = (0..=20)
@@ -278,7 +321,7 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Warning => {
             closed(
                 &[(8.0, 1.5), (15.0, 14.0), (1.0, 14.0)],
-                theme::WARNING,
+                *theme::WARNING,
                 Stroke::new(stroke.width, theme::WARNING),
             );
             let dark = Stroke::new(g.len(1.5).max(1.0), theme::ISLAND);
@@ -289,7 +332,7 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
 }
 
 /// Allocates a square icon of `size` points and paints it.
-pub fn show(ui: &mut egui::Ui, icon: Icon, size: f32, color: Color32) -> egui::Response {
+pub fn show(ui: &mut egui::Ui, icon: Icon, size: f32, color: impl Into<Color32>) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), egui::Sense::hover());
     paint(ui.painter(), rect, icon, color);
     response
@@ -297,24 +340,25 @@ pub fn show(ui: &mut egui::Ui, icon: Icon, size: f32, color: Color32) -> egui::R
 
 /// Toolbar-style icon button: transparent until hovered, rounded hover/pressed fill.
 pub fn button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
-    button_colored(ui, icon, ICON, tooltip, false)
+    button_colored(ui, icon, *ICON, tooltip, false)
 }
 
 pub fn button_colored(
     ui: &mut egui::Ui,
     icon: Icon,
-    color: Color32,
+    color: impl Into<Color32>,
     tooltip: &str,
     selected: bool,
 ) -> egui::Response {
+    let color = color.into();
     let size = vec2(26.0, 26.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let fill = if selected {
-        theme::ACCENT
+        *theme::ACCENT
     } else if response.is_pointer_button_down_on() {
-        theme::PRESSED
+        *theme::PRESSED
     } else if response.hovered() {
-        theme::HOVER
+        *theme::HOVER
     } else {
         Color32::TRANSPARENT
     };

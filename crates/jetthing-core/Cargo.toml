@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+jetthing-android = { path = "../jetthing-android" }
 jetthing-command = { path = "../jetthing-command" }
 jetthing-git = { path = "../jetthing-git" }
 jetthing-language = { path = "../jetthing-language" }
@@ -12,6 +13,7 @@ jetthing-lsp = { path = "../jetthing-lsp" }
 jetthing-plugins = { path = "../jetthing-plugins" }
 jetthing-project = { path = "../jetthing-project" }
 jetthing-runner = { path = "../jetthing-runner" }
+jetthing-settings = { path = "../jetthing-settings" }
 jetthing-search = { path = "../jetthing-search" }
 jetthing-terminal = { path = "../jetthing-terminal" }
 jetthing-text = { path = "../jetthing-text" }

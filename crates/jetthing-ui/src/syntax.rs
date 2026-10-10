@@ -1,5 +1,5 @@
 //! Resolves highlight attribute keys to egui text formats through the active
-//! editor color scheme (Islands Dark by default).
+//! editor color scheme (the one the theme engine selected in Settings › Appearance).
 
 use eframe::egui::{self, Color32, Stroke};
 use jetthing_language::{ColorScheme, EffectType, Rgba, TextAttributes};
@@ -10,19 +10,35 @@ fn color(rgba: Rgba) -> Color32 {
     Color32::from_rgba_unmultiplied(rgba.r, rgba.g, rgba.b, rgba.a)
 }
 
-fn scheme() -> &'static ColorScheme {
-    static SCHEME: OnceLock<ColorScheme> = OnceLock::new();
-    SCHEME.get_or_init(ColorScheme::islands_dark)
+/// Bundled scheme by name, parsed once (an unknown name falls back to Islands Dark).
+fn scheme(name: &str) -> &'static ColorScheme {
+    static SCHEMES: OnceLock<Mutex<HashMap<String, &'static ColorScheme>>> = OnceLock::new();
+    let load = || -> &'static ColorScheme {
+        Box::leak(Box::new(
+            ColorScheme::bundled(name).unwrap_or_else(|_| ColorScheme::islands_dark()),
+        ))
+    };
+    match SCHEMES.get_or_init(Default::default).lock() {
+        Ok(mut schemes) => schemes.entry(name.to_owned()).or_insert_with(load),
+        Err(_) => load(),
+    }
 }
 
-/// Resolved attributes for `key`, cached per key.
+/// Resolved attributes for `key` in the active scheme, cached per scheme and key.
 pub fn attributes(key: &'static str) -> TextAttributes {
-    static CACHE: OnceLock<Mutex<HashMap<&'static str, TextAttributes>>> = OnceLock::new();
+    attributes_in(&crate::theme_engine::active().scheme, key)
+}
+
+fn attributes_in(scheme_name: &str, key: &'static str) -> TextAttributes {
+    type Cache = HashMap<(String, &'static str), TextAttributes>;
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
     if let Ok(mut cache) = cache.lock() {
-        return *cache.entry(key).or_insert_with(|| scheme().attributes(key));
+        return *cache
+            .entry((scheme_name.to_owned(), key))
+            .or_insert_with(|| scheme(scheme_name).attributes(key));
     }
-    scheme().attributes(key)
+    scheme(scheme_name).attributes(key)
 }
 
 /// Applies the attributes of `key` on top of the editor's base text format.
@@ -66,5 +82,16 @@ mod tests {
         assert_eq!(doc.color, Color32::from_rgb(0x5F, 0x82, 0x6B));
         assert!(doc.italics);
         assert_eq!(text_format("UNKNOWN_KEY", &base).color, base.color);
+    }
+
+    #[test]
+    fn other_schemes_resolve_their_own_colors() {
+        // Scheme "Light": keyword 0033B3.
+        assert_eq!(
+            attributes_in("Light", "DEFAULT_KEYWORD")
+                .foreground
+                .map(color),
+            Some(Color32::from_rgb(0, 0x33, 0xB3))
+        );
     }
 }

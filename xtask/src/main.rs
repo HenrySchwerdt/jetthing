@@ -1,15 +1,12 @@
+mod dist;
 mod parity;
 mod scenes;
 mod spec;
 
-use anyhow::{Context, Result, anyhow, bail};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use anyhow::{Result, anyhow, bail};
+use std::path::{Path, PathBuf};
 
-const USAGE: &str = "usage: cargo xtask parity [--check | --sync-spec] | dist | scenes [--only 01,05] [--out DIR] [--release]";
+const USAGE: &str = "usage: cargo xtask parity [--check | --sync-spec] | dist [--installer] [--target <triple>] | scenes [--only 01,05] [--out DIR] [--release]";
 
 fn workspace_root() -> PathBuf {
     // Prefer the current directory when it holds the inventory (normal `cargo run`
@@ -36,7 +33,7 @@ fn main() -> Result<()> {
             }
             parity(mode)
         }
-        Some("dist") => dist(),
+        Some("dist") => dist::dist(dist::Options::parse(args.into_iter().skip(1))?),
         Some("scenes") => scenes::run(args.into_iter().skip(1)),
         _ => bail!(USAGE),
     }
@@ -52,60 +49,5 @@ fn parity(mode: parity::Mode) -> Result<()> {
             }
         }
     }
-    Ok(())
-}
-
-/// Builds release binaries and stages a distributable directory under `dist/`.
-fn dist() -> Result<()> {
-    let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-        .args([
-            "build",
-            "--release",
-            "-p",
-            "jetthing-app",
-            "-p",
-            "jetthing-cli",
-        ])
-        .status()
-        .context("run cargo build")?;
-    if !status.success() {
-        bail!("release build failed");
-    }
-    let version = env!("CARGO_PKG_VERSION");
-    let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
-    let name = format!("jetthing-{version}-{target}");
-    let out = Path::new("dist").join(&name);
-    if out.exists() {
-        fs::remove_dir_all(&out)?;
-    }
-    fs::create_dir_all(&out)?;
-    let exe = std::env::consts::EXE_SUFFIX;
-    for (built, shipped) in [
-        ("jetthing-app", "jetthing"),
-        ("jetthing-cli", "jetthing-cli"),
-    ] {
-        let from = Path::new("target/release").join(format!("{built}{exe}"));
-        let to = out.join(format!("{shipped}{exe}"));
-        fs::copy(&from, &to).with_context(|| format!("copy {}", from.display()))?;
-    }
-    for file in ["README.md", "docs/spec/data/NOTICE.md"] {
-        let target_name = if file.ends_with("NOTICE.md") {
-            "NOTICE-intellij-data.md"
-        } else {
-            "README.md"
-        };
-        fs::copy(file, out.join(target_name)).with_context(|| format!("copy {file}"))?;
-    }
-    let fonts = out.join("licenses");
-    fs::create_dir_all(&fonts)?;
-    for license in ["Inter-OFL.txt", "JetBrainsMono-OFL.txt"] {
-        fs::copy(
-            Path::new("crates/jetthing-ui/assets/fonts").join(license),
-            fonts.join(license),
-        )
-        .with_context(|| format!("copy {license}"))?;
-    }
-    // Forward slashes on every platform so CI scripts can parse the path.
-    println!("dist/{name}");
     Ok(())
 }

@@ -7,14 +7,14 @@ use eframe::egui::{self, Color32, Rect, Sense, vec2};
 /// Rounded "island" container used for the editor and docked tool windows.
 pub fn island_frame() -> egui::Frame {
     egui::Frame::new()
-        .fill(theme::ISLAND)
+        .fill(*theme::ISLAND)
         .corner_radius(theme::ISLAND_RADIUS)
         .outer_margin(egui::Margin::same(theme::ISLAND_GAP as i8))
 }
 
 /// Flat frame for chrome areas (toolbar, stripes, status bar).
 pub fn chrome_frame() -> egui::Frame {
-    egui::Frame::new().fill(theme::FRAME)
+    egui::Frame::new().fill(*theme::FRAME)
 }
 
 pub const TOOL_WINDOW_HEADER_HEIGHT: f32 = 31.0;
@@ -57,9 +57,9 @@ pub fn list_row(ui: &mut egui::Ui, selected: bool) -> (Rect, egui::Response) {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
     let fill = if selected {
-        theme::SELECTION
+        *theme::SELECTION
     } else if response.hovered() {
-        theme::HOVER
+        *theme::HOVER
     } else {
         Color32::TRANSPARENT
     };
@@ -77,9 +77,9 @@ pub fn row_text(
     x: f32,
     text: &str,
     font: egui::FontId,
-    color: Color32,
+    color: impl Into<Color32>,
 ) -> f32 {
-    row_text_elided(ui, rect, x, text, font, color).0
+    row_text_elided(ui, rect, x, text, font, color.into()).0
 }
 
 /// Single-line layout that ends in "…" when wider than `max_width`.
@@ -127,19 +127,20 @@ pub fn flat_widget(
     icon: Option<(Icon, Color32)>,
     text: &str,
     font: egui::FontId,
-    color: Color32,
+    color: impl Into<Color32>,
     chevron: bool,
     height: f32,
 ) -> egui::Response {
+    let color = color.into();
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
     let icon_width = if icon.is_some() { 22.0 } else { 0.0 };
     let chevron_width = if chevron { 18.0 } else { 0.0 };
     let width = 8.0 + icon_width + galley.size().x + chevron_width + 8.0;
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
     let fill = if response.is_pointer_button_down_on() {
-        theme::PRESSED
+        *theme::PRESSED
     } else if response.hovered() {
-        theme::HOVER
+        *theme::HOVER
     } else {
         Color32::TRANSPARENT
     };
@@ -162,7 +163,7 @@ pub fn flat_widget(
             ui.painter(),
             Rect::from_min_size(egui::pos2(x + 2.0, rect.center().y - 7.0), vec2(14.0, 14.0)),
             Icon::ChevronDown,
-            theme::TEXT_SECONDARY,
+            *theme::TEXT_SECONDARY,
         );
     }
     response
@@ -177,14 +178,14 @@ pub fn search_field(
     width: f32,
 ) -> egui::Response {
     let frame = egui::Frame::new()
-        .fill(theme::FIELD)
+        .fill(*theme::FIELD)
         .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
         .corner_radius(4)
         .inner_margin(egui::Margin::symmetric(6, 2));
     frame
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                icons::show(ui, Icon::Search, 14.0, theme::TEXT_SECONDARY);
+                icons::show(ui, Icon::Search, 14.0, *theme::TEXT_SECONDARY);
                 ui.add(
                     egui::TextEdit::singleline(text)
                         .id(id)

@@ -80,7 +80,7 @@ impl ToolchainState {
 }
 
 impl IdeState {
-    fn project_root(&self) -> Option<PathBuf> {
+    pub(crate) fn project_root(&self) -> Option<PathBuf> {
         self.project.as_ref().map(|p| p.root().to_owned())
     }
 
