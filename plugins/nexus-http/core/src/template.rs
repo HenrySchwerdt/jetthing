@@ -276,10 +276,10 @@ pub fn tokenize(input: &str) -> Vec<Segment> {
     let mut i = 0;
     let bytes = input.as_bytes();
     while i + 1 < bytes.len() {
-        let open = &input[i..i + 2];
-        let close = match open {
-            "{{" => "}}",
-            "{%" => "%}",
+        // Compare bytes: slicing at arbitrary byte offsets would split UTF-8.
+        let close = match (bytes[i], bytes[i + 1]) {
+            (b'{', b'{') => "}}",
+            (b'{', b'%') => "%}",
             _ => {
                 i += 1;
                 continue;
@@ -601,6 +601,13 @@ mod tests {
         assert_eq!(vars["token"], "t");
         let paths: Vec<_> = variable_paths(&vars).into_iter().map(|(p, _)| p).collect();
         assert!(paths.contains(&"cfg.a".to_owned()));
+    }
+
+    #[test]
+    fn handles_multibyte_text() {
+        let c = ctx(json!({"name": "Zoë"}));
+        assert_eq!(c.render("ünï {{name}} ✓ {").unwrap(), "ünï Zoë ✓ {");
+        assert_eq!(tokenize("Zoë ✓").len(), 1);
     }
 
     #[test]
