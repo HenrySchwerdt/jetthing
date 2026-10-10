@@ -6,14 +6,163 @@
 
 use crate::theme;
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke, epaint::PathShape, vec2};
+use std::path::{Component, Path};
 
 /// Neutral icon color (palette `Gray11`).
 pub const ICON: theme::Token = theme::ICON;
-const RUST: Color32 = Color32::from_rgb(0xE0, 0x88, 0x55);
-const TOML: Color32 = Color32::from_rgb(0x9D, 0xA0, 0xA8);
-const MARKDOWN: Color32 = Color32::from_rgb(0x6B, 0x9B, 0xFA);
-const JSON: Color32 = Color32::from_rgb(0xF2, 0xC5, 0x5C);
-const SCRIPT: Color32 = Color32::from_rgb(0x5F, 0xAD, 0x65);
+const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
+    Color32::from_rgb(r, g, b)
+}
+const SOURCE_ROOT: Color32 = rgb(0x54, 0x8A, 0xF7);
+const TEST_ROOT: Color32 = rgb(0x5F, 0xAD, 0x65);
+const RESOURCES_ROOT: Color32 = rgb(0xB1, 0x8A, 0xDB);
+const EXCLUDED: Color32 = rgb(0xD0, 0x8A, 0x4B);
+const IMAGE: Color32 = rgb(0x5F, 0xAD, 0x65);
+const ARCHIVE: Color32 = rgb(0xD9, 0xB0, 0x4C);
+const HIDDEN: Color32 = rgb(0x6C, 0x70, 0x7E);
+
+/// A page icon with a coloured badge holding one or two letters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Badge {
+    pub label: &'static str,
+    pub color: Color32,
+}
+
+const fn badge(label: &'static str, color: Color32) -> Badge {
+    Badge { label, color }
+}
+
+/// What a folder is for, shown by its colour like the reference IDE's project view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderKind {
+    Plain,
+    /// `src/main/java`, `src/main/kotlin`: blue.
+    Source,
+    /// `src/test/java`, `src/androidTest/kotlin`: green.
+    Test,
+    /// `src/*/resources`, `src/*/res`.
+    Resources,
+    /// `build`, `target`, `out`, `node_modules`: orange.
+    Excluded,
+    /// `.git`, `.idea`, `.gradle`: dimmed.
+    Hidden,
+    /// A directory inside a source root (a Java package).
+    Package,
+}
+
+impl FolderKind {
+    /// Classifies a project-relative directory path.
+    pub fn classify(path: &Path) -> FolderKind {
+        let parts: Vec<String> = path
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect();
+        let Some(last) = parts.last() else {
+            return FolderKind::Plain;
+        };
+        if HIDDEN_DIRS.contains(&last.as_str()) {
+            return FolderKind::Hidden;
+        }
+        if parts.iter().any(|p| EXCLUDED_DIRS.contains(&p.as_str())) {
+            return FolderKind::Excluded;
+        }
+        // `src/<set>/<kind>[/package…]`
+        if let Some(i) = (0..parts.len().saturating_sub(2)).find(|&i| parts[i] == "src") {
+            let set = parts[i + 1].to_ascii_lowercase();
+            let is_test = set.starts_with("test") || set.starts_with("androidtest");
+            let depth = parts.len() - (i + 3);
+            match parts[i + 2].as_str() {
+                "java" | "kotlin" if depth > 0 => return FolderKind::Package,
+                "java" | "kotlin" if is_test => return FolderKind::Test,
+                "java" | "kotlin" => return FolderKind::Source,
+                "resources" | "res" if depth == 0 => return FolderKind::Resources,
+                _ => {}
+            }
+        }
+        FolderKind::Plain
+    }
+
+    fn fill(self) -> Color32 {
+        match self {
+            FolderKind::Plain | FolderKind::Package => *theme::FOLDER_FILL,
+            FolderKind::Source => SOURCE_ROOT.gamma_multiply(0.45),
+            FolderKind::Test => TEST_ROOT.gamma_multiply(0.45),
+            FolderKind::Resources => RESOURCES_ROOT.gamma_multiply(0.45),
+            FolderKind::Excluded => EXCLUDED.gamma_multiply(0.45),
+            FolderKind::Hidden => Color32::TRANSPARENT,
+        }
+    }
+
+    fn outline(self) -> Option<Color32> {
+        match self {
+            FolderKind::Plain | FolderKind::Package => None,
+            FolderKind::Source => Some(SOURCE_ROOT),
+            FolderKind::Test => Some(TEST_ROOT),
+            FolderKind::Resources => Some(RESOURCES_ROOT),
+            FolderKind::Excluded => Some(EXCLUDED),
+            FolderKind::Hidden => Some(HIDDEN),
+        }
+    }
+}
+
+const HIDDEN_DIRS: [&str; 4] = [".git", ".idea", ".gradle", ".jetthing"];
+const EXCLUDED_DIRS: [&str; 5] = ["build", "target", "out", "node_modules", "dist"];
+
+/// Exact (lower-case) file names; checked before extensions.
+const NAME_BADGES: &[(&str, Badge)] = &[
+    ("androidmanifest.xml", badge("An", rgb(0x5F, 0xAD, 0x65))),
+    ("dockerfile", badge("D", rgb(0x4F, 0x9B, 0xE0))),
+    (".gitignore", badge("Gi", rgb(0xE0, 0x70, 0x55))),
+    (".gitattributes", badge("Gi", rgb(0xE0, 0x70, 0x55))),
+    (".editorconfig", badge("Ec", rgb(0x9D, 0xA0, 0xA8))),
+    ("license", badge("Li", rgb(0xD9, 0xB0, 0x4C))),
+    ("licence", badge("Li", rgb(0xD9, 0xB0, 0x4C))),
+    ("copying", badge("Li", rgb(0xD9, 0xB0, 0x4C))),
+    ("license.md", badge("Li", rgb(0xD9, 0xB0, 0x4C))),
+    ("license.txt", badge("Li", rgb(0xD9, 0xB0, 0x4C))),
+    ("readme", badge("Rd", rgb(0x6B, 0x9B, 0xFA))),
+    ("readme.md", badge("Rd", rgb(0x6B, 0x9B, 0xFA))),
+    ("readme.txt", badge("Rd", rgb(0x6B, 0x9B, 0xFA))),
+    ("gradlew", badge("G", rgb(0x4F, 0xA8, 0xA0))),
+    ("gradlew.bat", badge("G", rgb(0x4F, 0xA8, 0xA0))),
+    ("makefile", badge("Mk", rgb(0x9D, 0xA0, 0xA8))),
+];
+
+/// Extensions (lower-case, without the dot) per badge; `gradle.kts` and similar
+/// compound extensions are matched by suffix.
+const EXTENSION_BADGES: &[(&[&str], Badge)] = &[
+    (&["java"], badge("J", rgb(0xE0, 0x88, 0x55))),
+    (&["kt"], badge("K", rgb(0xA9, 0x7B, 0xF0))),
+    (&["kts"], badge("Ks", rgb(0xA9, 0x7B, 0xF0))),
+    (&["gradle", "gradle.kts"], badge("G", rgb(0x4F, 0xA8, 0xA0))),
+    (&["groovy", "gvy"], badge("Gr", rgb(0x4F, 0x9B, 0xE0))),
+    (&["xml", "xsd", "xsl"], badge("<>", rgb(0xE0, 0x9A, 0x55))),
+    (&["json", "jsonc"], badge("{}", rgb(0xF2, 0xC5, 0x5C))),
+    (&["yaml", "yml"], badge("Y", rgb(0xC0, 0x7B, 0x9B))),
+    (&["toml"], badge("T", rgb(0x9D, 0xA0, 0xA8))),
+    (&["properties"], badge("Pr", rgb(0x9D, 0xA0, 0xA8))),
+    (&["lock"], badge("Lk", rgb(0x9D, 0xA0, 0xA8))),
+    (&["md", "markdown"], badge("M", rgb(0x6B, 0x9B, 0xFA))),
+    (&["rs"], badge("RS", rgb(0xE0, 0x88, 0x55))),
+    (&["go"], badge("Go", rgb(0x4F, 0xB8, 0xD0))),
+    (&["py"], badge("Py", rgb(0x5C, 0x8F, 0xD6))),
+    (&["js", "mjs", "cjs"], badge("JS", rgb(0xF2, 0xC5, 0x5C))),
+    (&["ts"], badge("TS", rgb(0x4F, 0x9B, 0xE0))),
+    (&["tsx", "jsx"], badge("Tx", rgb(0x4F, 0xB8, 0xD0))),
+    (&["html", "htm"], badge("H", rgb(0xE0, 0x70, 0x55))),
+    (&["css", "scss"], badge("C", rgb(0x6B, 0x9B, 0xFA))),
+    (&["sh", "bash", "zsh"], badge(">_", rgb(0x5F, 0xAD, 0x65))),
+    (&["bat", "cmd", "ps1"], badge(">_", rgb(0x5F, 0xAD, 0x65))),
+    (&["sql"], badge("Sq", rgb(0xC0, 0x7B, 0x9B))),
+    (&["proto"], badge("Pb", rgb(0x4F, 0xA8, 0xA0))),
+    (&["csv", "tsv"], badge("Cs", rgb(0x5F, 0xAD, 0x65))),
+];
+
+const IMAGE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "svg", "webp", "gif", "ico"];
+const ARCHIVE_EXTENSIONS: [&str; 7] = ["jar", "zip", "tar", "gz", "tgz", "war", "aar"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
@@ -23,11 +172,12 @@ pub enum Icon {
     ChevronRight,
     Folder,
     File,
-    FileRust,
-    FileToml,
-    FileMarkdown,
-    FileJson,
-    FileScript,
+    /// A page with a coloured letter badge (language and config files).
+    FileBadge(Badge),
+    FileImage,
+    FileArchive,
+    /// A folder tinted by its role.
+    FolderKind(FolderKind),
     Project,
     Commit,
     Branch,
@@ -62,17 +212,44 @@ pub enum Icon {
 }
 
 impl Icon {
-    /// File icon by extension or well-known file name.
+    /// File icon by well-known file name, then extension; unknown files get the
+    /// generic page.
     pub fn for_file(name: &str) -> Icon {
         let lower = name.to_ascii_lowercase();
-        let extension = lower.rsplit_once('.').map(|(_, ext)| ext).unwrap_or("");
-        match extension {
-            "rs" => Icon::FileRust,
-            "toml" | "lock" => Icon::FileToml,
-            "md" | "markdown" => Icon::FileMarkdown,
-            "json" | "jsonc" => Icon::FileJson,
-            "sh" | "bash" | "zsh" | "py" | "js" | "ts" => Icon::FileScript,
-            _ => Icon::File,
+        if let Some((_, badge)) = NAME_BADGES.iter().find(|(known, _)| *known == lower) {
+            return Icon::FileBadge(*badge);
+        }
+        // Compound extensions first (`build.gradle.kts` is Gradle, not Kotlin script).
+        let has_ext = |ext: &str| {
+            lower
+                .strip_suffix(ext)
+                .is_some_and(|rest| rest.ends_with('.') && rest.len() > 1)
+        };
+        if IMAGE_EXTENSIONS.iter().any(|e| has_ext(e)) {
+            return Icon::FileImage;
+        }
+        if ARCHIVE_EXTENSIONS.iter().any(|e| has_ext(e)) {
+            return Icon::FileArchive;
+        }
+        EXTENSION_BADGES
+            .iter()
+            .filter_map(|(exts, badge)| {
+                exts.iter()
+                    .filter(|e| has_ext(e))
+                    .map(|e| e.len())
+                    .max()
+                    .map(|len| (len, badge))
+            })
+            .max_by_key(|(len, _)| *len)
+            .map(|(_, badge)| Icon::FileBadge(*badge))
+            .unwrap_or(Icon::File)
+    }
+
+    /// Folder icon by project-relative path.
+    pub fn for_folder(path: &Path) -> Icon {
+        match FolderKind::classify(path) {
+            FolderKind::Plain => Icon::Folder,
+            kind => Icon::FolderKind(kind),
         }
     }
 }
@@ -154,12 +331,20 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
         Icon::ChevronDown => line(&[(4.5, 6.5), (8.0, 10.0), (11.5, 6.5)]),
         Icon::ChevronUp => line(&[(4.5, 9.5), (8.0, 6.0), (11.5, 9.5)]),
         Icon::ChevronRight => line(&[(6.5, 4.5), (10.0, 8.0), (6.5, 11.5)]),
-        Icon::Folder | Icon::Project => {
-            let fill = if icon == Icon::Folder {
-                *theme::FOLDER_FILL
-            } else {
-                Color32::TRANSPARENT
+        Icon::Folder | Icon::Project | Icon::FolderKind(_) => {
+            let kind = match icon {
+                Icon::FolderKind(kind) => kind,
+                _ => FolderKind::Plain,
             };
+            let fill = if icon == Icon::Project {
+                Color32::TRANSPARENT
+            } else {
+                kind.fill()
+            };
+            let outline = kind
+                .outline()
+                .map(|color| Stroke::new(stroke.width, color))
+                .unwrap_or(stroke);
             closed(
                 &[
                     (1.5, 3.5),
@@ -170,10 +355,13 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
                     (1.5, 13.5),
                 ],
                 fill,
-                stroke,
+                outline,
             );
             if icon == Icon::Project {
                 line(&[(1.5, 7.0), (14.5, 7.0)]);
+            }
+            if kind == FolderKind::Package {
+                painter.circle_filled(g.p(8.0, 9.5), g.len(1.6), color);
             }
         }
         Icon::File => {
@@ -182,25 +370,36 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
                 line(&[(5.5, y), (10.5, y)]);
             }
         }
-        Icon::FileRust => {
-            page(Some(RUST));
-            badge_text("RS");
+        Icon::FileBadge(badge) => {
+            page(Some(badge.color));
+            badge_text(badge.label);
         }
-        Icon::FileToml => {
-            page(Some(TOML));
-            badge_text("T");
+        Icon::FileImage => {
+            page(None);
+            painter.circle_filled(g.p(10.0, 8.0), g.len(1.1), IMAGE);
+            closed(
+                &[
+                    (4.5, 13.0),
+                    (7.0, 9.5),
+                    (9.0, 11.5),
+                    (10.5, 10.5),
+                    (11.5, 13.0),
+                ],
+                IMAGE,
+                Stroke::NONE,
+            );
         }
-        Icon::FileMarkdown => {
-            page(Some(MARKDOWN));
-            badge_text("M");
-        }
-        Icon::FileJson => {
-            page(Some(JSON));
-            badge_text("{}");
-        }
-        Icon::FileScript => {
-            page(Some(SCRIPT));
-            badge_text(">_");
+        Icon::FileArchive => {
+            page(None);
+            for y in [5.5, 8.5, 11.5] {
+                line(&[(8.0, y), (8.0, y + 1.5)]);
+            }
+            painter.rect_stroke(
+                g.rect(6.5, 12.0, 9.5, 14.0),
+                g.len(0.5),
+                Stroke::new(stroke.width, ARCHIVE),
+                egui::StrokeKind::Inside,
+            );
         }
         Icon::Commit => {
             painter.circle_stroke(g.p(8.0, 8.0), g.len(3.0), stroke);
@@ -472,12 +671,92 @@ mod tests {
     use super::*;
     use eframe::egui::pos2;
 
+    fn badge_label(name: &str) -> Option<&'static str> {
+        match Icon::for_file(name) {
+            Icon::FileBadge(badge) => Some(badge.label),
+            _ => None,
+        }
+    }
+
     #[test]
-    fn file_icons_follow_extensions() {
-        assert_eq!(Icon::for_file("lib.rs"), Icon::FileRust);
-        assert_eq!(Icon::for_file("Cargo.toml"), Icon::FileToml);
-        assert_eq!(Icon::for_file("README.MD"), Icon::FileMarkdown);
-        assert_eq!(Icon::for_file("Makefile"), Icon::File);
+    fn file_icons_follow_names_then_extensions() {
+        // Languages.
+        for (name, label) in [
+            ("Main.java", "J"),
+            ("A.kt", "K"),
+            ("build.gradle.kts", "G"),
+            ("settings.gradle", "G"),
+            ("x.kts", "Ks"),
+            ("a.groovy", "Gr"),
+            ("pom.xml", "<>"),
+            ("AndroidManifest.xml", "An"),
+            ("a.json", "{}"),
+            ("a.yml", "Y"),
+            ("a.yaml", "Y"),
+            ("Cargo.toml", "T"),
+            ("app.properties", "Pr"),
+            ("a.md", "M"),
+            ("lib.rs", "RS"),
+            ("main.go", "Go"),
+            ("a.py", "Py"),
+            ("a.js", "JS"),
+            ("a.ts", "TS"),
+            ("a.tsx", "Tx"),
+            ("index.html", "H"),
+            ("a.css", "C"),
+            ("a.sh", ">_"),
+            ("a.bat", ">_"),
+            ("a.cmd", ">_"),
+            ("a.ps1", ">_"),
+            ("a.sql", "Sq"),
+            ("a.proto", "Pb"),
+            ("a.csv", "Cs"),
+            // Config files and well-known names.
+            ("Cargo.lock", "Lk"),
+            (".gitignore", "Gi"),
+            (".gitattributes", "Gi"),
+            ("Dockerfile", "D"),
+            (".editorconfig", "Ec"),
+            ("LICENSE", "Li"),
+            ("README", "Rd"),
+            ("README.MD", "Rd"),
+            ("gradlew", "G"),
+            ("gradlew.bat", "G"),
+        ] {
+            assert_eq!(badge_label(name), Some(label), "{name}");
+        }
+        for name in ["a.png", "a.JPG", "a.svg", "a.webp"] {
+            assert_eq!(Icon::for_file(name), Icon::FileImage, "{name}");
+        }
+        for name in ["a.jar", "a.zip"] {
+            assert_eq!(Icon::for_file(name), Icon::FileArchive, "{name}");
+        }
+        // Unknown and plain text files fall back to the generic page.
+        for name in ["notes.txt", "Unknown.xyz", "noextension", ".hidden", "png"] {
+            assert_eq!(Icon::for_file(name), Icon::File, "{name}");
+        }
+    }
+
+    #[test]
+    fn folder_icons_follow_their_role() {
+        let kind = |path: &str| FolderKind::classify(Path::new(path));
+        assert_eq!(kind("src"), FolderKind::Plain);
+        assert_eq!(kind("src/main"), FolderKind::Plain);
+        assert_eq!(kind("src/main/java"), FolderKind::Source);
+        assert_eq!(kind("app/src/main/kotlin"), FolderKind::Source);
+        assert_eq!(kind("src/test/java"), FolderKind::Test);
+        assert_eq!(kind("app/src/androidTest/java"), FolderKind::Test);
+        assert_eq!(kind("src/main/resources"), FolderKind::Resources);
+        assert_eq!(kind("app/src/main/res"), FolderKind::Resources);
+        assert_eq!(kind("src/main/java/com"), FolderKind::Package);
+        assert_eq!(kind("src/test/java/com/example"), FolderKind::Package);
+        assert_eq!(kind("build"), FolderKind::Excluded);
+        assert_eq!(kind("app/build/classes"), FolderKind::Excluded);
+        assert_eq!(kind("target"), FolderKind::Excluded);
+        assert_eq!(kind(".git"), FolderKind::Hidden);
+        assert_eq!(kind(".idea"), FolderKind::Hidden);
+        assert_eq!(kind(""), FolderKind::Plain);
+        assert_eq!(Icon::for_folder(Path::new("docs")), Icon::Folder);
     }
 
     #[test]
