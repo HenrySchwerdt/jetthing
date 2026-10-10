@@ -66,7 +66,11 @@ fn dist() -> Result<()> {
 }
 
 fn parity(check: bool) -> Result<()> {
-    let docs = ["docs/parity/platform.md", "docs/parity/android-studio.md"];
+    let docs = [
+        "docs/parity/platform.md",
+        "docs/parity/android-studio.md",
+        "docs/parity/nexus-http.md",
+    ];
     let mut totals = [0usize; 5];
     for doc in docs {
         let text = fs::read_to_string(doc).with_context(|| format!("read {doc}"))?;
