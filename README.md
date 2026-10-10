@@ -10,6 +10,7 @@ window islands, Search Everywhere, and a status bar with navigation breadcrumbs.
 ## Run
 
 ```bash
+cargo run -p jetthing-app                           # welcome screen, Open Project
 cargo run -p jetthing-app -- .                      # open a project
 cargo run -p jetthing-app -- . src/main.rs          # open a project and files
 cargo run -p jetthing-cli -- commands               # headless command discovery
