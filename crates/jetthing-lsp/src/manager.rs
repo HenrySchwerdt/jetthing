@@ -8,7 +8,9 @@
 use crate::{
     LspError,
     client::{LspDiagnostic, LspService, ServerState, WorkProgress},
-    registry::{LaunchContext, LspSettings, ServerRegistry, cache_dir, workspace_root},
+    registry::{
+        LaunchContext, LspSettings, ProgramResolver, ServerRegistry, cache_dir, workspace_root,
+    },
 };
 use lsp_types::{CompletionItem, CompletionResponse, request::Completion};
 use serde::Serialize;
@@ -16,6 +18,7 @@ use serde_json::json;
 use std::{
     collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -63,6 +66,9 @@ pub struct LspNotice {
     pub title: String,
     pub body: String,
     pub error: bool,
+    /// Toolchain component that a "Set up" action installs (missing servers).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup: Option<String>,
 }
 
 struct ManagedServer {
@@ -97,6 +103,7 @@ pub struct LspManager {
     completion: Option<CompletionRequest>,
     completions: Vec<CompletionItem>,
     completion_incomplete: bool,
+    resolver: Option<Arc<dyn ProgramResolver>>,
 }
 
 impl Default for LspManager {
@@ -119,7 +126,13 @@ impl LspManager {
             completion: None,
             completions: Vec::new(),
             completion_incomplete: false,
+            resolver: None,
         }
+    }
+
+    /// Installs the hook that finds provisioned servers outside `PATH`.
+    pub fn set_resolver(&mut self, resolver: Option<Arc<dyn ProgramResolver>>) {
+        self.resolver = resolver;
     }
 
     pub fn registry(&self) -> &ServerRegistry {
@@ -140,6 +153,7 @@ impl LspManager {
                     title: "Invalid language server settings".into(),
                     body: error.to_string(),
                     error: true,
+                    setup: None,
                 });
                 LspSettings::default()
             }
@@ -208,10 +222,11 @@ impl LspManager {
                 let service = match self.launch(&key) {
                     Ok(service) => Some(service),
                     Err(error @ LspError::ServerNotFound { .. }) => {
-                        let notify = self
-                            .registry
-                            .get(&key.server)
-                            .is_some_and(|provider| provider.spec().notify_missing);
+                        let spec = self.registry.get(&key.server).map(|p| p.spec());
+                        let notify = spec.is_some_and(|spec| spec.notify_missing);
+                        let setup = spec
+                            .zip(self.resolver.as_deref())
+                            .and_then(|(spec, resolver)| resolver.setup_component(spec));
                         self.missing.insert(key.server.clone());
                         if notify {
                             self.push_notice(LspNotice {
@@ -219,6 +234,7 @@ impl LspManager {
                                 title: format!("{language} language server not found"),
                                 body: error.to_string(),
                                 error: false,
+                                setup,
                             });
                         }
                         return Err(error);
@@ -290,6 +306,7 @@ impl LspManager {
             root: &key.root,
             cache_dir: cache_dir(),
             settings: self.settings.servers.get(&key.server),
+            resolver: self.resolver.as_deref(),
         })?;
         LspService::launch(&config, &key.root)
     }
@@ -324,6 +341,7 @@ impl LspManager {
                                 "{reason}\n\nRun \"Restart Language Servers\" after fixing the problem."
                             ),
                             error: true,
+                            setup: None,
                         };
                         self.push_notice(notice);
                         continue;

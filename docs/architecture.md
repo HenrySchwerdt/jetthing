@@ -95,7 +95,14 @@ installs start only from the `toolchain.install` command. Downloads resume with 
 requests, are verified before extraction (a mismatch deletes the file), extract into
 `.staging/` and are renamed into place, so a version directory is either complete or absent.
 
-Commands: `toolchain.list`, `toolchain.locate`, `toolchain.missing`, `toolchain.install`
+Language servers reach managed installs through `jetthing_lsp::ProgramResolver`, a hook the
+`LspManager` consults after an `lsp.toml` command and before `PATH` candidates;
+`jetthing-core` implements it over `Toolchains` (`toolchain_lsp.rs`, e.g. jdtls runs on the
+resolved JDK) and attaches the providing component to missing-server notices, whose **Set up**
+action runs `toolchain.setup` and restarts the servers when it finishes.
+
+Commands: `toolchain.list`, `toolchain.locate`, `toolchain.missing`, `toolchain.setup`
+(component plus missing requirements), `toolchain.install`
 (`wait: true` blocks, for the CLI), `toolchain.cancel`, `toolchain.jobs`, `toolchain.uninstall`,
 `toolchain.usePath` ("use existing installation", stored in the user `toolchains.toml`) and
 `toolchain.pins`. Running installs show in the status bar with a progress bar; clicking it cancels.

@@ -25,6 +25,7 @@ mod project_commands;
 mod settings_commands;
 mod terminal_commands;
 mod toolchain_commands;
+mod toolchain_lsp;
 mod toolwindow;
 mod update_commands;
 pub use android_commands::AndroidState;
@@ -152,6 +153,7 @@ impl IdeState {
         self.start_git_watcher();
         self.close_diff();
         self.toolchains.reload(Some(project.root()));
+        self.refresh_toolchain_resolver();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
