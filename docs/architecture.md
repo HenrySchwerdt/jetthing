@@ -14,6 +14,8 @@ no crate below `jetthing-ui` imports UI types.
 - `jetthing-text`: revisioned rope storage, Unicode-safe transactional edits, and history.
 - `jetthing-language`: language-neutral analysis output with the first Tree-sitter Rust provider.
 - `jetthing-terminal`: native PTY process lifecycle, asynchronous output, input, and resizing.
+- `jetthing-search`: cancellable generation-based background text search with streamed,
+  bounded results and binary/large-file exclusion.
 - `jetthing-plugins`: versioned TOML manifests, capability declarations, discovery,
   and validation. Executable/Wasm loading is deliberately not claimed yet.
 - `jetthing-core`: application state and built-in command handlers.

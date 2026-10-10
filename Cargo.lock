@@ -1561,6 +1561,7 @@ dependencies = [
  "jetthing-language",
  "jetthing-plugins",
  "jetthing-project",
+ "jetthing-search",
  "jetthing-terminal",
  "jetthing-text",
  "serde_json",
@@ -1592,6 +1593,10 @@ dependencies = [
  "thiserror 2.0.21",
  "walkdir",
 ]
+
+[[package]]
+name = "jetthing-search"
+version = "0.1.0"
 
 [[package]]
 name = "jetthing-terminal"

@@ -2,6 +2,7 @@ use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
 use jetthing_language::{LanguageAnalysis, analyze};
 use jetthing_plugins::PluginManifest;
 use jetthing_project::{FileEntry, Project};
+use jetthing_search::{SearchEvent, SearchService, TextMatch};
 use jetthing_terminal::TerminalSession;
 use jetthing_text::TextDocument;
 use serde_json::{Value, json};
@@ -23,6 +24,12 @@ pub struct IdeState {
     pub plugins: Vec<PluginManifest>,
     pub terminal: Option<TerminalSession>,
     pub terminal_visible: bool,
+    pub search: SearchService,
+    pub search_results: Vec<TextMatch>,
+    pub search_query: String,
+    pub search_visible: bool,
+    pub search_files_scanned: usize,
+    pub search_truncated: bool,
     pub status: String,
 }
 
@@ -32,6 +39,8 @@ impl IdeState {
         self.files = project.entries(20_000);
         self.documents.clear();
         self.active_document = None;
+        self.search.cancel();
+        self.search_results.clear();
         self.status = format!("Opened {}", project.root().display());
         self.project = Some(project);
         Ok(())
@@ -100,6 +109,57 @@ impl IdeState {
         self.status = "Terminal ready".into();
         Ok(())
     }
+
+    pub fn start_search(&mut self, query: String) -> Result<u64, String> {
+        if query.is_empty() {
+            return Err("search query cannot be empty".into());
+        }
+        let project = self.project.as_ref().ok_or("no project is open")?;
+        let files = self
+            .files
+            .iter()
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| entry.relative_path.clone())
+            .collect();
+        self.search_results.clear();
+        self.search_files_scanned = 0;
+        self.search_truncated = false;
+        self.search_query = query.clone();
+        self.search_visible = true;
+        let job = self
+            .search
+            .start(project.root().to_owned(), files, query)
+            .map_err(|error| format!("failed to start search: {error}"))?;
+        self.status = format!("Searching project (job {job})");
+        Ok(job)
+    }
+
+    pub fn poll_search(&mut self) {
+        for event in self.search.poll() {
+            match event {
+                SearchEvent::Match(result) => self.search_results.push(result),
+                SearchEvent::Finished {
+                    files_scanned,
+                    truncated,
+                    ..
+                } => {
+                    self.search_files_scanned = files_scanned;
+                    self.search_truncated = truncated;
+                    self.status = format!(
+                        "Found {} result{} in {} files{}",
+                        self.search_results.len(),
+                        if self.search_results.len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        },
+                        files_scanned,
+                        if truncated { " (limit reached)" } else { "" }
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn spec(
@@ -142,6 +202,34 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .open_project(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"root": state.project.as_ref().unwrap().root()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "search.project",
+                "Find in Files",
+                "Search",
+                Some("⇧⌘F"),
+                r#"{"query":"string"}"#,
+            ),
+            |state: &IdeState| state.project.is_some(),
+            |state: &mut IdeState, params| {
+                let query = string_param(&params, "query")?;
+                let job = state.start_search(query).map_err(CommandError::Failed)?;
+                Ok(json!({"job": job}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("search.cancel", "Cancel Search", "Search", None, "{}"),
+            |state: &IdeState| state.search.is_running(),
+            |state: &mut IdeState, _| {
+                state.search.cancel();
+                state.status = "Search cancelled".into();
+                Ok(Value::Null)
             },
         ))
         .expect("unique built-in id");
@@ -300,6 +388,10 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
     #[test]
     fn project_open_command_is_shared_engine_behavior() {
         let root = std::env::temp_dir().join(format!("jetthing-core-{}", std::process::id()));
@@ -311,6 +403,32 @@ mod tests {
             .execute("project.open", &mut state, json!({"path": root}))
             .unwrap();
         assert!(state.project.is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_search_command_streams_results_into_state() {
+        let root =
+            std::env::temp_dir().join(format!("jetthing-core-search-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("sample.txt"), "alpha needle omega\n").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        commands
+            .execute("search.project", &mut state, json!({"query": "needle"}))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while state.search.is_running() && Instant::now() < deadline {
+            state.poll_search();
+            thread::sleep(Duration::from_millis(5));
+        }
+        state.poll_search();
+        assert_eq!(state.search_results.len(), 1);
+        assert_eq!(state.search_results[0].path, Path::new("sample.txt"));
         std::fs::remove_dir_all(root).unwrap();
     }
 }

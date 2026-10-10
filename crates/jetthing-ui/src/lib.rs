@@ -11,6 +11,7 @@ pub struct IdeApp {
     palette_open: bool,
     palette_query: String,
     terminal_input: String,
+    search_input: String,
 }
 
 impl IdeApp {
@@ -27,6 +28,7 @@ impl IdeApp {
             palette_open: false,
             palette_query: String::new(),
             terminal_input: String::new(),
+            search_input: String::new(),
         }
     }
     fn dispatch(&mut self, id: &str, params: Value) {
@@ -89,6 +91,7 @@ impl IdeApp {
 
 impl eframe::App for IdeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.state.poll_search();
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::P)) {
             self.palette_open = true;
         }
@@ -109,6 +112,14 @@ impl eframe::App for IdeApp {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::Backtick)) {
             self.dispatch("terminal.toggle", Value::Null);
         }
+        if ctx.input_mut(|i| {
+            i.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::F,
+            )
+        }) {
+            self.state.search_visible = true;
+        }
         egui::TopBottomPanel::top("toolbar")
             .exact_height(42.0)
             .show(ctx, |ui| {
@@ -120,6 +131,9 @@ impl eframe::App for IdeApp {
                     }
                     if ui.button("Terminal").clicked() {
                         self.dispatch("terminal.toggle", Value::Null);
+                    }
+                    if ui.button("Find in Files").clicked() {
+                        self.state.search_visible = true;
                     }
                     ui.add_space(12.0);
                     let root = self
@@ -156,6 +170,58 @@ impl eframe::App for IdeApp {
                     });
                 });
             });
+        if self.state.search_visible {
+            egui::TopBottomPanel::bottom("project_search")
+                .default_height(260.0)
+                .min_height(120.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong("Find in Files");
+                        let input = ui.add(
+                            egui::TextEdit::singleline(&mut self.search_input)
+                                .desired_width(300.0)
+                                .hint_text("Search project text"),
+                        );
+                        let submit = ui.button("Search").clicked()
+                            || (input.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                        if submit && !self.search_input.is_empty() {
+                            self.dispatch(
+                                "search.project",
+                                json!({"query": self.search_input.clone()}),
+                            );
+                        }
+                        if self.state.search.is_running() && ui.button("Cancel").clicked() {
+                            self.dispatch("search.cancel", Value::Null);
+                        }
+                        ui.label(if self.state.search.is_running() {
+                            format!("{} results…", self.state.search_results.len())
+                        } else {
+                            format!("{} results", self.state.search_results.len())
+                        });
+                        if ui.small_button("×").clicked() {
+                            self.state.search_visible = false;
+                        }
+                    });
+                    ui.separator();
+                    let results = self.state.search_results.clone();
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for result in results {
+                            let label = format!(
+                                "{}:{}:{}  {}",
+                                result.path.display(),
+                                result.line,
+                                result.column,
+                                result.preview
+                            );
+                            if ui.selectable_label(false, label).clicked() {
+                                self.dispatch("editor.openFile", json!({"path": result.path}));
+                            }
+                        }
+                    });
+                });
+        }
         if self.state.terminal_visible {
             egui::TopBottomPanel::bottom("terminal")
                 .default_height(240.0)

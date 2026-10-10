@@ -6,7 +6,7 @@ Generated from `docs/parity/*.md`.
 |---|---:|
 | Missing | 11 |
 | Planned | 1 |
-| Partial | 6 |
+| Partial | 7 |
 | Implemented | 4 |
 | Verified | 0 |
-| **Total** | **22** |
+| **Total** | **23** |

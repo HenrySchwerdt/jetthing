@@ -9,6 +9,7 @@ jetthing-command = { path = "../jetthing-command" }
 jetthing-language = { path = "../jetthing-language" }
 jetthing-plugins = { path = "../jetthing-plugins" }
 jetthing-project = { path = "../jetthing-project" }
+jetthing-search = { path = "../jetthing-search" }
 jetthing-terminal = { path = "../jetthing-terminal" }
 jetthing-text = { path = "../jetthing-text" }
 serde_json.workspace = true
