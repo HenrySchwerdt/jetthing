@@ -170,6 +170,8 @@ mod tests {
             .current_dir(&root)
             .status()
             .unwrap();
+        // Discovery prefers `bazelisk`; shadow a real one (CI runners ship it).
+        std::fs::copy(bin.join("bazel"), bin.join("bazelisk")).unwrap();
         let path = format!(
             "{}:{}",
             bin.display(),
