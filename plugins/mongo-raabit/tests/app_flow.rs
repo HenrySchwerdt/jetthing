@@ -124,3 +124,150 @@ fn renders_every_view_headlessly() {
     }
     assert!(app.manager.is_some());
 }
+
+#[test]
+fn edit_insert_clone_delete_explain_and_code() {
+    use mongo_raabit::app::CellEdit;
+    use mongo_raabit::dialogs::{Dialog, DocumentMode};
+    let (mut profile, _) = ConnectionProfile::from_uri(&uri()).unwrap();
+    profile.connect_timeout_ms = Some(1500);
+    let mut app = MongoRaabit::new(None);
+    let session = app.connect(profile);
+    app.wait_idle(Duration::from_secs(10));
+    let Some(conn) = app.session(session).unwrap().connection().cloned() else {
+        eprintln!(
+            "skipping edit_insert_clone_delete_explain_and_code: no MongoDB server at {}",
+            uri()
+        );
+        return;
+    };
+    let db = "raabit_test_ui_crud";
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let _ = conn.drop_database(db).await;
+        conn.insert_documents(
+            db,
+            "people",
+            vec![
+                doc! {"_id": 1, "name": "Ada", "tier": "pro"},
+                doc! {"_id": 2, "name": "Linus"},
+            ],
+        )
+        .await
+        .unwrap();
+    });
+    app.open_collection(session, db, "people", CollectionKind::Collection);
+    app.wait_idle(Duration::from_secs(10));
+    let tab = app.active_tab_id().unwrap();
+    app.collection_tab_mut(tab).unwrap().selected = Some(0);
+
+    // Edit through the document editor.
+    app.edit_selected(tab);
+    let Some(Dialog::Document(editor)) = &app.dialog else {
+        panic!("editor not open")
+    };
+    assert_eq!(
+        editor.mode,
+        DocumentMode::Edit(mongo_raabit::core::bson::Bson::Int32(1))
+    );
+    app.save_document(
+        tab,
+        DocumentMode::Edit(1.into()),
+        doc! {"_id": 1, "name": "Ada L.", "tier": "pro"},
+    );
+    app.wait_idle(Duration::from_secs(10));
+    assert!(app.dialog.is_none(), "dialog closes after saving");
+    assert_eq!(
+        app.selected_document(tab).unwrap().get_str("name").unwrap(),
+        "Ada L."
+    );
+
+    // A failing save keeps the editor open with the error.
+    app.edit_selected(tab);
+    app.save_document(
+        tab,
+        DocumentMode::Edit(1.into()),
+        doc! {"_id": 99, "name": "x"},
+    );
+    app.wait_idle(Duration::from_secs(10));
+    let Some(Dialog::Document(editor)) = &app.dialog else {
+        panic!("editor closed on error")
+    };
+    assert!(
+        editor
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("_id cannot be changed")
+    );
+    app.dialog = None;
+
+    // Inline edit keeps strings as strings and parses other types.
+    app.collection_tab_mut(tab).unwrap().editing = Some(CellEdit {
+        doc_index: 0,
+        path: "tier".into(),
+        text: "enterprise".into(),
+        original: Some("pro".into()),
+        focus: false,
+    });
+    app.commit_cell_edit(tab);
+    app.wait_idle(Duration::from_secs(10));
+    app.collection_tab_mut(tab).unwrap().editing = Some(CellEdit {
+        doc_index: 0,
+        path: "score".into(),
+        text: "41.5".into(),
+        original: None,
+        focus: false,
+    });
+    app.commit_cell_edit(tab);
+    app.wait_idle(Duration::from_secs(10));
+    let doc = app.selected_document(tab).unwrap();
+    assert_eq!(doc.get_str("tier").unwrap(), "enterprise");
+    assert_eq!(doc.get_f64("score").unwrap(), 41.5);
+
+    // Insert and clone.
+    app.save_document(tab, DocumentMode::Insert, doc! {"name": "Grace"});
+    app.wait_idle(Duration::from_secs(10));
+    app.clone_selected(tab);
+    let Some(Dialog::Document(editor)) = &app.dialog else {
+        panic!("clone editor")
+    };
+    assert_eq!(editor.mode, DocumentMode::Insert);
+    assert!(!editor.text.contains("_id"));
+    let cloned = editor.parse().unwrap();
+    app.save_document(tab, DocumentMode::Insert, cloned);
+    app.wait_idle(Duration::from_secs(10));
+    assert_eq!(app.collection_tab_mut(tab).unwrap().count, Load::Ready(4));
+
+    // Delete with confirmation.
+    app.collection_tab_mut(tab).unwrap().selected = Some(1);
+    app.request_delete(tab);
+    let Some(Dialog::Delete(confirm)) = &app.dialog else {
+        panic!("confirm")
+    };
+    let ids = confirm.ids.clone();
+    app.delete_documents(tab, ids);
+    app.wait_idle(Duration::from_secs(10));
+    assert_eq!(app.collection_tab_mut(tab).unwrap().count, Load::Ready(3));
+
+    // Explain and query code.
+    app.collection_tab_mut(tab).unwrap().query.filter = "{name: 'Ada L.'}".into();
+    app.explain(tab);
+    app.wait_idle(Duration::from_secs(10));
+    let Some(Dialog::Explain(explain)) = &app.dialog else {
+        panic!("explain")
+    };
+    let plan = explain.result.ready().expect("explain finished");
+    assert!(plan.root.has_collection_scan());
+    app.query_code(tab);
+    let Some(Dialog::Code(code)) = &app.dialog else {
+        panic!("code")
+    };
+    assert_eq!(
+        code.shell,
+        "db.getCollection(\"people\").find({ name: \"Ada L.\" })"
+    );
+    rt.block_on(async {
+        conn.drop_database(db).await.unwrap();
+    });
+}

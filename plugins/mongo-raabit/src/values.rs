@@ -90,7 +90,14 @@ pub fn highlight_into(job: &mut LayoutJob, text: &str, p: &Palette, font: FontId
     while i < bytes.len() {
         let c = bytes[i];
         let start = i;
-        let color = if c == b'"' || c == b'\'' {
+        let line_start = start == 0 || bytes[start - 1] == b'\n' || text[..start].ends_with(' ');
+        let color = if (c == b'#' && line_start) || (c == b'/' && bytes.get(i + 1) == Some(&b'/')) {
+            // Line comment (code snippets): until end of line.
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            p.text_info
+        } else if c == b'"' || c == b'\'' {
             i += 1;
             while i < bytes.len() && bytes[i] != c {
                 if bytes[i] == b'\\' {

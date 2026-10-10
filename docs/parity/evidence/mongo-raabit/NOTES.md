@@ -24,7 +24,16 @@ documentation); the look follows the Jetthing Islands theme instead.
 | `drilldown-dark.png` | Table drill-down | `orders` filtered on status/total, drilled into `items` (one row per array element, `#` keeps the source document) |
 | `tree-dark.png` | Tree view | expandable documents with key/value/type columns |
 | `json-dark.png` | JSON view | syntax-colored mongo shell syntax per document |
+| `document-editor-dark.png` | Edit Document | syntax-colored editor with live validation (errors give line and column), Format, Save (`_id`-safe replace) |
+| `inline-edit-dark.png` | Inline cell edit | double-click a scalar cell; Enter/focus loss saves with `$set`, Esc cancels; strings stay strings |
+| `delete-confirm-light.png` | Delete confirmation | lists the `_id`s to delete |
+| `explain-collscan-dark.png`, `explain-index-dark.png` | Explain plan | stats cards, COLLSCAN warning, winning plan as a left-to-right stage flow, raw output toggle |
+| `query-code-dark.png` | Query Code | mongo shell plus 8 driver languages, copy; passwords are replaced by `<password>` |
 
-Known gaps: document editor and inline edit, explain view, aggregation/SQL/shell/schema
-tabs, index manager and import/export wizard are not in this slice; credentials are
-kept in memory only (OS keychain pending).
+```bash
+cargo run -p mongo-raabit --example standalone -- --uri mongodb://127.0.0.1:27017 \
+    --open raabit_shop.orders --dialog edit|insert|delete|explain|code [--edit-cell tier]
+```
+
+Known gaps: aggregation/SQL/shell/schema tabs, index manager and import/export wizard
+are not in these slices; credentials are kept in memory only (OS keychain pending).

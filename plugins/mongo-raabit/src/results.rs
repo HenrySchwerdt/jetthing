@@ -1,6 +1,6 @@
 //! Result views of a collection tab: Table (with nested drill-down), Tree and JSON.
 
-use crate::app::CollectionTab;
+use crate::app::{CellEdit, CollectionTab};
 use crate::icons::{self, Icon};
 use crate::style::Palette;
 use crate::values;
@@ -134,10 +134,78 @@ fn column_width(rows: &[(usize, Bson)], name: &str) -> f32 {
     header.max(content).clamp(64.0, 340.0)
 }
 
+/// Commands on one document, from context menus and the toolbar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocCommand {
+    Edit,
+    Clone,
+    Delete,
+    CopyJson,
+    CopyId,
+}
+
 pub enum TableEvent {
     Drill(String),
     Select(usize),
     Open(usize),
+    Command(DocCommand, usize),
+    CommitEdit,
+}
+
+/// Dotted path of the drill position when it only crosses embedded documents (inline
+/// edits need a unique field path; rows expanded from arrays have none).
+pub fn editable_prefix(doc: &Document, drill: &[String]) -> Option<String> {
+    let mut current = doc;
+    for segment in drill {
+        current = current.get(segment)?.as_document()?;
+    }
+    Some(drill.join("."))
+}
+
+fn join_path(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{prefix}.{name}")
+    }
+}
+
+/// Context menu shared by table and tree rows.
+pub fn document_menu(
+    ui: &mut Ui,
+    doc_index: usize,
+    value: Option<&Bson>,
+    event: &mut Option<TableEvent>,
+) {
+    if ui.button("Edit Document…").clicked() {
+        *event = Some(TableEvent::Command(DocCommand::Edit, doc_index));
+        ui.close();
+    }
+    if ui.button("Clone Document…").clicked() {
+        *event = Some(TableEvent::Command(DocCommand::Clone, doc_index));
+        ui.close();
+    }
+    ui.separator();
+    if let Some(value) = value
+        && ui.button("Copy Value").clicked()
+    {
+        ui.ctx()
+            .copy_text(shell::to_shell_string(value, shell::ShellStyle::Compact));
+        ui.close();
+    }
+    if ui.button("Copy Document").clicked() {
+        *event = Some(TableEvent::Command(DocCommand::CopyJson, doc_index));
+        ui.close();
+    }
+    if ui.button("Copy _id").clicked() {
+        *event = Some(TableEvent::Command(DocCommand::CopyId, doc_index));
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("Delete Document…").clicked() {
+        *event = Some(TableEvent::Command(DocCommand::Delete, doc_index));
+        ui.close();
+    }
 }
 
 /// Breadcrumb for the drill path; returns the new depth when a crumb was clicked.
@@ -177,7 +245,7 @@ pub fn breadcrumb(ui: &mut Ui, p: &Palette, drill: &[String]) -> Option<usize> {
 
 pub fn table(
     ui: &mut Ui,
-    tab: &CollectionTab,
+    tab: &mut CollectionTab,
     docs: &[Document],
     first_index: u64,
 ) -> Option<TableEvent> {
@@ -193,6 +261,8 @@ pub fn table(
         return None;
     }
     let header_bg = p.raised;
+    let mut start_edit: Option<CellEdit> = None;
+    let mut cancel_edit = false;
     egui::ScrollArea::horizontal()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -251,6 +321,10 @@ pub fn table(
                                     .color(p.text_info),
                             );
                         });
+                        let prefix = docs
+                            .get(*doc_index)
+                            .and_then(|doc| editable_prefix(doc, &tab.drill))
+                            .filter(|_| matches!(value, Bson::Document(_)));
                         for name in &columns {
                             row.col(|ui| {
                                 let v = match value {
@@ -258,6 +332,26 @@ pub fn table(
                                     other if name == "value" => Some(other),
                                     _ => None,
                                 };
+                                let path = prefix.as_ref().map(|prefix| join_path(prefix, name));
+                                if let Some(edit) = &mut tab.editing
+                                    && edit.doc_index == *doc_index
+                                    && Some(&edit.path) == path.as_ref()
+                                {
+                                    let r = ui.add(
+                                        egui::TextEdit::singleline(&mut edit.text)
+                                            .font(FontId::monospace(12.5))
+                                            .desired_width(f32::INFINITY),
+                                    );
+                                    if edit.focus {
+                                        r.request_focus();
+                                        edit.focus = false;
+                                    } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                        cancel_edit = true;
+                                    } else if r.lost_focus() {
+                                        event = Some(TableEvent::CommitEdit);
+                                    }
+                                    return;
+                                }
                                 let response = cell(ui, &p, v);
                                 if response.clicked() {
                                     event = Some(
@@ -269,12 +363,42 @@ pub fn table(
                                     );
                                 }
                                 if response.double_clicked() {
-                                    event = Some(TableEvent::Open(*doc_index));
+                                    match (&path, v) {
+                                        (Some(path), None | Some(_))
+                                            if name != "_id"
+                                                && !matches!(
+                                                    v,
+                                                    Some(Bson::Document(_) | Bson::Array(_))
+                                                ) =>
+                                        {
+                                            start_edit = Some(CellEdit {
+                                                doc_index: *doc_index,
+                                                path: path.clone(),
+                                                text: match v {
+                                                    Some(Bson::String(s)) => s.clone(),
+                                                    Some(other) => shell::to_shell_string(
+                                                        other,
+                                                        shell::ShellStyle::Compact,
+                                                    ),
+                                                    None => String::new(),
+                                                },
+                                                original: v.cloned(),
+                                                focus: true,
+                                            });
+                                        }
+                                        _ => event = Some(TableEvent::Open(*doc_index)),
+                                    }
                                 }
+                                response.context_menu(|ui| {
+                                    document_menu(ui, *doc_index, v, &mut event)
+                                });
                             });
                         }
                         let response = row.response();
-                        if response.double_clicked() {
+                        if response.double_clicked()
+                            && start_edit.is_none()
+                            && tab.editing.is_none()
+                        {
                             event = Some(TableEvent::Open(*doc_index));
                         } else if response.clicked() && event.is_none() {
                             event = Some(TableEvent::Select(*doc_index));
@@ -282,6 +406,13 @@ pub fn table(
                     });
                 });
         });
+    if cancel_edit {
+        tab.editing = None;
+    }
+    if let Some(edit) = start_edit {
+        tab.selected = Some(edit.doc_index);
+        tab.editing = Some(edit);
+    }
     event
 }
 
@@ -375,6 +506,7 @@ pub enum TreeEvent {
     Toggle(String),
     Select(usize),
     Open(usize),
+    Command(DocCommand, usize),
 }
 
 pub fn tree(
@@ -457,6 +589,13 @@ pub fn tree(
                     ui.label(RichText::new(shell::type_name(&r.value)).color(p.text_info));
                 });
                 let response = row.response();
+                response.context_menu(|ui| {
+                    let mut menu_event = None;
+                    document_menu(ui, r.doc_index, Some(&r.value), &mut menu_event);
+                    if let Some(TableEvent::Command(command, index)) = menu_event {
+                        event = Some(TreeEvent::Command(command, index));
+                    }
+                });
                 if response.double_clicked() {
                     event = Some(if r.expandable {
                         TreeEvent::Toggle(r.key.clone())

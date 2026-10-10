@@ -253,3 +253,114 @@ pub fn form_row(ui: &mut Ui, label: &str, label_width: f32, add: impl FnOnce(&mu
 pub fn hint(ui: &Ui, text: &str) -> RichText {
     RichText::new(text).color(Palette::of(ui).text_info)
 }
+
+/// Multiline code editor with mongo shell syntax coloring.
+pub fn code_editor(
+    ui: &mut Ui,
+    text: &mut String,
+    rows: usize,
+    id: impl std::hash::Hash,
+) -> Response {
+    let p = Palette::of(ui);
+    let font = FontId::monospace(12.5);
+    let mut layouter = |ui: &Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
+        let mut job = egui::text::LayoutJob::default();
+        crate::values::highlight_into(&mut job, buffer.as_str(), &p, font.clone());
+        job.wrap.max_width = wrap_width;
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
+    egui::Frame::new()
+        .fill(p.field)
+        .stroke(Stroke::new(1.0_f32, p.border))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(text)
+                    .id_salt(id)
+                    .code_editor()
+                    .frame(false)
+                    .desired_rows(rows)
+                    .desired_width(f32::INFINITY)
+                    .layouter(&mut layouter),
+            )
+        })
+        .inner
+}
+
+/// 1-based line and column of a byte offset.
+pub fn line_col(text: &str, offset: usize) -> (usize, usize) {
+    let offset = offset.min(text.len());
+    let before = &text[..text.floor_char_boundary(offset)];
+    let line = before.matches('\n').count() + 1;
+    let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+    (line, col)
+}
+
+/// Shared modal frame: title with icon and close button, then `body`.
+/// Returns `false` when the user closed it (✕ or Esc).
+pub fn modal(
+    ctx: &egui::Context,
+    id: &str,
+    title: &str,
+    icon: Icon,
+    size: Vec2,
+    body: impl FnOnce(&mut Ui),
+) -> bool {
+    let p = Palette::for_dark(ctx.style().visuals.dark_mode);
+    let mut open = true;
+    let screen = ctx.content_rect();
+    let size = vec2(
+        size.x.min(screen.width() - 40.0),
+        size.y.min(screen.height() - 40.0),
+    );
+    let frame = egui::Frame::new()
+        .fill(p.island)
+        .stroke(Stroke::new(1.0_f32, p.border))
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(egui::Margin::same(0))
+        .shadow(egui::Shadow {
+            offset: [0, 8],
+            blur: 28,
+            spread: 0,
+            color: Color32::from_black_alpha(if p.dark { 120 } else { 40 }),
+        });
+    let response = egui::Modal::new(egui::Id::new(id))
+        .frame(frame)
+        .backdrop_color(Color32::from_black_alpha(if p.dark { 110 } else { 60 }))
+        .show(ctx, |ui| {
+            ui.set_width(size.x);
+            ui.set_max_height(size.y);
+            egui::Frame::new()
+                .inner_margin(egui::Margin {
+                    left: 16,
+                    right: 10,
+                    top: 12,
+                    bottom: 10,
+                })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        icons::icon(ui, icon, p.leaf);
+                        ui.label(
+                            RichText::new(title)
+                                .size(15.0)
+                                .strong()
+                                .color(p.text_strong),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if icon_button(ui, Icon::Close, "Close (Esc)").clicked() {
+                                open = false;
+                            }
+                        });
+                    });
+                });
+            separator(ui);
+            egui::Frame::new()
+                .inner_margin(egui::Margin::same(16))
+                .show(ui, |ui| {
+                    ui.set_width(size.x - 32.0);
+                    body(ui);
+                });
+        });
+    !response.should_close() && open
+}

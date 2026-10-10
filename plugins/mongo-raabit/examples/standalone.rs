@@ -19,6 +19,8 @@ struct Args {
     manager: bool,
     filter: Option<String>,
     demo: bool,
+    dialog: Option<String>,
+    edit_cell: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -31,6 +33,8 @@ fn parse_args() -> Args {
         manager: false,
         filter: None,
         demo: false,
+        dialog: None,
+        edit_cell: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -40,6 +44,8 @@ fn parse_args() -> Args {
             "--demo-profiles" => args.demo = true,
             "--uri" => args.uri = it.next(),
             "--filter" => args.filter = it.next(),
+            "--dialog" => args.dialog = it.next(),
+            "--edit-cell" => args.edit_cell = it.next(),
             "--drill" => args.drill.extend(it.next()),
             "--open" => {
                 args.open = it.next().and_then(|v| {
@@ -126,6 +132,45 @@ impl App {
                     }
                 }
                 Err(err) => eprintln!("invalid --uri: {err}"),
+            }
+        }
+        if let Some(tab_id) = self.raabit.active_tab_id()
+            && self.raabit.collection_tab_mut(tab_id).is_some()
+        {
+            if let Some(tab) = self.raabit.collection_tab_mut(tab_id) {
+                tab.selected = Some(0);
+            }
+            if let Some(field) = self.args.edit_cell.clone()
+                && let Some(doc) = self.raabit.selected_document(tab_id)
+                && let Some(tab) = self.raabit.collection_tab_mut(tab_id)
+            {
+                let value = doc.get(&field).cloned();
+                tab.editing = Some(mongo_raabit::app::CellEdit {
+                    doc_index: 0,
+                    path: field,
+                    text: match &value {
+                        Some(mongo_raabit::core::bson::Bson::String(s)) => s.clone(),
+                        _ => String::new(),
+                    },
+                    original: value,
+                    focus: true,
+                });
+            }
+            match self.args.dialog.as_deref() {
+                Some("edit") => self.raabit.edit_selected(tab_id),
+                Some("insert") => self.raabit.add_document(tab_id),
+                Some("delete") => self.raabit.request_delete(tab_id),
+                Some("explain") => self.raabit.explain(tab_id),
+                Some("code") => self.raabit.query_code(tab_id),
+                _ => {}
+            }
+            wait(&mut self.raabit);
+            if let Some(code) = std::env::var("RAABIT_CODE_LANGUAGE").ok()
+                && let Some(mongo_raabit::dialogs::Dialog::Code(dialog)) = &mut self.raabit.dialog
+            {
+                dialog.language = mongo_raabit::core::codegen::Language::ALL
+                    .into_iter()
+                    .find(|l| format!("{l:?}").eq_ignore_ascii_case(&code));
             }
         }
         if self.args.demo {

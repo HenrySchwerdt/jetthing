@@ -2,7 +2,7 @@
 
 use crate::app::{CollectionTab, Load, MongoRaabit, ResultView, TabId};
 use crate::icons::{self, Icon};
-use crate::results::{self, TableEvent, TreeEvent};
+use crate::results::{self, DocCommand, TableEvent, TreeEvent};
 use crate::style::{self, Palette};
 use crate::widgets;
 use egui::{CornerRadius, RichText, Stroke, Ui};
@@ -11,6 +11,11 @@ use mongo_raabit_core::connection::CollectionKind;
 pub const PAGE_SIZES: [u64; 5] = [20, 50, 100, 250, 1000];
 
 enum Action {
+    Add,
+    Doc(DocCommand, Option<usize>),
+    CommitEdit,
+    Explain,
+    Code,
     Run { recount: bool },
     Page(u64),
     PageSize(u64),
@@ -54,9 +59,46 @@ pub fn show(app: &mut MongoRaabit, tab_id: TabId, ui: &mut Ui) {
             result_toolbar(ui, &p, tab, &mut actions);
         });
     widgets::separator(ui);
-    result_area(ui, &p, tab);
+    result_area(ui, &p, tab, &mut actions);
     for action in actions {
         match action {
+            Action::Doc(command, index) => {
+                if let Some(index) = index
+                    && let Some(tab) = app.collection_tab_mut(tab_id)
+                {
+                    tab.selected = Some(index);
+                }
+                match command {
+                    DocCommand::Edit => app.edit_selected(tab_id),
+                    DocCommand::Clone => app.clone_selected(tab_id),
+                    DocCommand::Delete => app.request_delete(tab_id),
+                    DocCommand::CopyJson | DocCommand::CopyId => {
+                        if let Some(doc) = app.selected_document(tab_id) {
+                            let text = if command == DocCommand::CopyId {
+                                doc.get("_id")
+                                    .map(|id| {
+                                        mongo_raabit_core::shell::to_shell_string(
+                                            id,
+                                            mongo_raabit_core::shell::ShellStyle::Compact,
+                                        )
+                                    })
+                                    .unwrap_or_default()
+                            } else {
+                                mongo_raabit_core::shell::document_to_shell(
+                                    &doc,
+                                    mongo_raabit_core::shell::ShellStyle::Pretty(2),
+                                )
+                            };
+                            ui.ctx().copy_text(text);
+                            app.status = "Copied to clipboard".into();
+                        }
+                    }
+                }
+            }
+            Action::Add => app.add_document(tab_id),
+            Action::CommitEdit => app.commit_cell_edit(tab_id),
+            Action::Explain => app.explain(tab_id),
+            Action::Code => app.query_code(tab_id),
             Action::Run { recount } => {
                 if let Some(tab) = app.collection_tab_mut(tab_id) {
                     tab.page = 0;
@@ -206,6 +248,53 @@ fn result_toolbar(ui: &mut Ui, p: &Palette, tab: &mut CollectionTab, actions: &m
                 (ResultView::Json, Icon::Json, "JSON"),
             ],
         );
+        ui.add_space(6.0);
+        let has_selection = tab.selected.is_some();
+        ui.spacing_mut().item_spacing.x = 0.0;
+        if widgets::icon_button(ui, Icon::Plus, "Add document").clicked() {
+            actions.push(Action::Add);
+        }
+        if widgets::icon_button_tinted(
+            ui,
+            Icon::Edit,
+            "Edit document (double-click a row)",
+            None,
+            has_selection,
+        )
+        .clicked()
+        {
+            actions.push(Action::Doc(DocCommand::Edit, None));
+        }
+        if widgets::icon_button_tinted(ui, Icon::Copy, "Clone document", None, has_selection)
+            .clicked()
+        {
+            actions.push(Action::Doc(DocCommand::Clone, None));
+        }
+        if widgets::icon_button_tinted(
+            ui,
+            Icon::Trash,
+            "Delete document",
+            Some(p.error),
+            has_selection,
+        )
+        .clicked()
+        {
+            actions.push(Action::Doc(DocCommand::Delete, None));
+        }
+        ui.add_space(6.0);
+        if widgets::icon_button(ui, Icon::Explain, "Explain query plan").clicked() {
+            actions.push(Action::Explain);
+        }
+        if widgets::icon_button(
+            ui,
+            Icon::Code,
+            "Query code (JS, Python, Java, C#, Go, Rust, PHP, Ruby)",
+        )
+        .clicked()
+        {
+            actions.push(Action::Code);
+        }
+        ui.spacing_mut().item_spacing.x = 6.0;
         if tab.view == ResultView::Table && !tab.drill.is_empty() {
             ui.add_space(8.0);
             if let Some(depth) = results::breadcrumb(ui, p, &tab.drill) {
@@ -268,7 +357,7 @@ fn result_toolbar(ui: &mut Ui, p: &Palette, tab: &mut CollectionTab, actions: &m
     });
 }
 
-fn result_area(ui: &mut Ui, p: &Palette, tab: &mut CollectionTab) {
+fn result_area(ui: &mut Ui, p: &Palette, tab: &mut CollectionTab, actions: &mut Vec<Action>) {
     match &tab.result {
         Load::Idle => {}
         Load::Loading => {
@@ -302,9 +391,14 @@ fn result_area(ui: &mut Ui, p: &Palette, tab: &mut CollectionTab) {
                     Some(TableEvent::Drill(field)) => {
                         tab.drill.push(field);
                     }
-                    Some(TableEvent::Select(i)) | Some(TableEvent::Open(i)) => {
-                        tab.selected = Some(i)
+                    Some(TableEvent::Select(i)) => tab.selected = Some(i),
+                    Some(TableEvent::Open(i)) => {
+                        actions.push(Action::Doc(DocCommand::Edit, Some(i)))
                     }
+                    Some(TableEvent::Command(command, i)) => {
+                        actions.push(Action::Doc(command, Some(i)))
+                    }
+                    Some(TableEvent::CommitEdit) => actions.push(Action::CommitEdit),
                     None => {}
                 },
                 ResultView::Tree => match results::tree(ui, tab, &docs, first) {
@@ -313,7 +407,13 @@ fn result_area(ui: &mut Ui, p: &Palette, tab: &mut CollectionTab) {
                             tab.open.insert(key);
                         }
                     }
-                    Some(TreeEvent::Select(i)) | Some(TreeEvent::Open(i)) => tab.selected = Some(i),
+                    Some(TreeEvent::Select(i)) => tab.selected = Some(i),
+                    Some(TreeEvent::Open(i)) => {
+                        actions.push(Action::Doc(DocCommand::Edit, Some(i)))
+                    }
+                    Some(TreeEvent::Command(command, i)) => {
+                        actions.push(Action::Doc(command, Some(i)))
+                    }
                     None => {}
                 },
                 ResultView::Json => results::json(ui, &docs, first),

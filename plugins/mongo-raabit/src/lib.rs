@@ -6,6 +6,7 @@
 
 pub mod app;
 mod collection;
+pub mod dialogs;
 pub mod icons;
 pub mod jobs;
 pub mod manager;
@@ -88,6 +89,7 @@ impl MongoRaabit {
                 });
             });
         manager::show(self, ui.ctx());
+        dialogs::show(self, ui.ctx());
         if self.jobs.busy() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));

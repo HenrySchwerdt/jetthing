@@ -1,14 +1,20 @@
 //! View state of mongo-raabit and the operations that load data in the background.
 
+use crate::dialogs::{
+    CodeDialog, ConfirmDelete, Dialog, DocumentEditor, DocumentMode, ExplainDialog,
+};
 use crate::jobs::Jobs;
 use crate::manager::ConnectionManager;
 use mongo_raabit_core::Connection;
+use mongo_raabit_core::bson::{Bson, Document};
+use mongo_raabit_core::codegen::{CodeRequest, Operation};
 use mongo_raabit_core::connection::{
     CollectionInfo, CollectionKind, CollectionStats, DatabaseInfo, ServerInfo,
 };
 use mongo_raabit_core::profile::{ConnectionProfile, ProfileStore};
 use mongo_raabit_core::query::{Page, Query, QueryText};
 use mongo_raabit_core::secrets::{MemorySecretStore, SecretStore};
+use mongo_raabit_core::shell;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -103,6 +109,21 @@ pub struct CollectionTab {
     pub seq: u64,
     pub ran: Option<Query>,
     pub query_error: Option<String>,
+    /// Inline table cell edit in progress.
+    pub editing: Option<CellEdit>,
+}
+
+/// An inline edit of one field of one document.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CellEdit {
+    pub doc_index: usize,
+    /// Dotted field path inside the document.
+    pub path: String,
+    pub text: String,
+    /// The value before editing (strings stay strings).
+    pub original: Option<Bson>,
+    /// Focus the editor on the next frame.
+    pub focus: bool,
 }
 
 impl CollectionTab {
@@ -124,6 +145,7 @@ impl CollectionTab {
             seq: 0,
             ran: None,
             query_error: None,
+            editing: None,
         }
     }
 }
@@ -155,6 +177,7 @@ pub struct MongoRaabit {
     pub tabs: Vec<Tab>,
     pub active_tab: usize,
     pub manager: Option<ConnectionManager>,
+    pub dialog: Option<Dialog>,
     pub expanded: HashSet<NodeKey>,
     pub selected: Option<NodeKey>,
     pub tree_filter: String,
@@ -191,6 +214,7 @@ impl MongoRaabit {
             }],
             active_tab: 0,
             manager: None,
+            dialog: None,
             expanded: HashSet::new(),
             selected: None,
             tree_filter: String::new(),
@@ -510,5 +534,225 @@ impl MongoRaabit {
                 },
             );
         }
+    }
+
+    // ----- documents ---------------------------------------------------------------------
+
+    fn tab_context(&mut self, tab_id: TabId) -> Option<(Connection, String, String)> {
+        let tab = self.collection_tab_mut(tab_id)?;
+        let (session, db, coll) = (tab.session, tab.db.clone(), tab.collection.clone());
+        let conn = self.session(session)?.connection()?.clone();
+        Some((conn, db, coll))
+    }
+
+    /// The selected document of a collection tab's current page.
+    pub fn selected_document(&mut self, tab_id: TabId) -> Option<Document> {
+        let tab = self.collection_tab_mut(tab_id)?;
+        let index = tab.selected?;
+        tab.result.ready()?.documents.get(index).cloned()
+    }
+
+    pub fn edit_selected(&mut self, tab_id: TabId) {
+        if let Some(doc) = self.selected_document(tab_id) {
+            self.dialog = Some(Dialog::Document(DocumentEditor::edit(tab_id, &doc)));
+        }
+    }
+
+    pub fn add_document(&mut self, tab_id: TabId) {
+        self.dialog = Some(Dialog::Document(DocumentEditor::insert(tab_id, None)));
+    }
+
+    pub fn clone_selected(&mut self, tab_id: TabId) {
+        if let Some(mut doc) = self.selected_document(tab_id) {
+            doc.remove("_id");
+            self.dialog = Some(Dialog::Document(DocumentEditor::insert(tab_id, Some(&doc))));
+        }
+    }
+
+    pub fn request_delete(&mut self, tab_id: TabId) {
+        if let Some(id) = self
+            .selected_document(tab_id)
+            .and_then(|d| d.get("_id").cloned())
+        {
+            self.dialog = Some(Dialog::Delete(ConfirmDelete {
+                tab: tab_id,
+                ids: vec![id],
+                busy: false,
+            }));
+        }
+    }
+
+    /// Save the document editor's content (replace or insert), then refresh the page.
+    pub fn save_document(&mut self, tab_id: TabId, mode: DocumentMode, doc: Document) {
+        let Some((conn, db, coll)) = self.tab_context(tab_id) else {
+            return;
+        };
+        self.jobs.spawn(
+            async move {
+                match mode {
+                    DocumentMode::Edit(id) => conn
+                        .replace_document(&db, &coll, &id, doc)
+                        .await
+                        .map(|()| "Document saved".to_owned()),
+                    DocumentMode::Insert => {
+                        conn.insert_documents(&db, &coll, vec![doc])
+                            .await
+                            .map(|ids| {
+                                format!(
+                                    "Inserted document {}",
+                                    ids.first()
+                                        .map(|id| shell::to_shell_string(
+                                            id,
+                                            shell::ShellStyle::Compact
+                                        ))
+                                        .unwrap_or_default()
+                                )
+                            })
+                    }
+                }
+            },
+            move |app: &mut MongoRaabit, result| match result {
+                Ok(message) => {
+                    app.status = message;
+                    app.dialog = None;
+                    app.run_query(tab_id, true);
+                }
+                Err(err) => {
+                    if let Some(Dialog::Document(editor)) = &mut app.dialog {
+                        editor.saving = false;
+                        editor.error = Some(err.to_string());
+                    }
+                }
+            },
+        );
+    }
+
+    pub fn delete_documents(&mut self, tab_id: TabId, ids: Vec<Bson>) {
+        let Some((conn, db, coll)) = self.tab_context(tab_id) else {
+            return;
+        };
+        self.jobs.spawn(
+            async move { conn.delete_documents(&db, &coll, &ids).await },
+            move |app: &mut MongoRaabit, result| {
+                app.dialog = None;
+                match result {
+                    Ok(n) => {
+                        app.status =
+                            format!("Deleted {n} document{}", if n == 1 { "" } else { "s" });
+                        if let Some(tab) = app.collection_tab_mut(tab_id) {
+                            tab.selected = None;
+                        }
+                        app.run_query(tab_id, true);
+                    }
+                    Err(err) => app.status = format!("Delete failed: {err}"),
+                }
+            },
+        );
+    }
+
+    /// Commit an inline cell edit with `$set`.
+    pub fn commit_cell_edit(&mut self, tab_id: TabId) {
+        let Some(tab) = self.collection_tab_mut(tab_id) else {
+            return;
+        };
+        let Some(edit) = tab.editing.take() else {
+            return;
+        };
+        let Some(id) = tab
+            .result
+            .ready()
+            .and_then(|page| page.documents.get(edit.doc_index))
+            .and_then(|doc| doc.get("_id").cloned())
+        else {
+            return;
+        };
+        let value = match (&edit.original, shell::parse_value(&edit.text)) {
+            (Some(Bson::String(_)), _) => Bson::String(edit.text.clone()),
+            (_, Ok(value)) => value,
+            (_, Err(err)) => {
+                self.status = format!("Not saved: {err}");
+                return;
+            }
+        };
+        if edit.original.as_ref() == Some(&value) {
+            return;
+        }
+        let Some((conn, db, coll)) = self.tab_context(tab_id) else {
+            return;
+        };
+        let path = edit.path.clone();
+        self.jobs.spawn(
+            async move { conn.set_field(&db, &coll, &id, &path, Some(value)).await },
+            move |app: &mut MongoRaabit, result| match result {
+                Ok(()) => {
+                    app.status = format!("Updated {}", edit.path);
+                    app.run_query(tab_id, false);
+                }
+                Err(err) => app.status = format!("Update failed: {err}"),
+            },
+        );
+    }
+
+    pub fn explain(&mut self, tab_id: TabId) {
+        let Some(tab) = self.collection_tab_mut(tab_id) else {
+            return;
+        };
+        let query = match tab.query.parse() {
+            Ok(q) => q,
+            Err(err) => {
+                tab.query_error = Some(err.to_string());
+                return;
+            }
+        };
+        let title = format!("Explain  {}.{}", tab.db, tab.collection);
+        let Some((conn, db, coll)) = self.tab_context(tab_id) else {
+            return;
+        };
+        self.dialog = Some(Dialog::Explain(ExplainDialog {
+            title,
+            result: Load::Loading,
+            show_raw: false,
+        }));
+        self.jobs.spawn(
+            async move { conn.explain(&db, &coll, &query).await },
+            move |app: &mut MongoRaabit, result| {
+                if let Some(Dialog::Explain(dialog)) = &mut app.dialog {
+                    dialog.result = match result {
+                        Ok(plan) => Load::Ready(plan),
+                        Err(err) => Load::Failed(err.to_string()),
+                    };
+                }
+            },
+        );
+    }
+
+    pub fn query_code(&mut self, tab_id: TabId) {
+        let Some(tab) = self.collection_tab_mut(tab_id) else {
+            return;
+        };
+        let query = match tab.query.parse() {
+            Ok(q) => q,
+            Err(err) => {
+                tab.query_error = Some(err.to_string());
+                return;
+            }
+        };
+        let (session, db, coll) = (tab.session, tab.db.clone(), tab.collection.clone());
+        // Never put real passwords into generated code.
+        let uri = self
+            .session(session)
+            .map(|s| s.profile.display_uri().replace(":****@", ":<password>@"))
+            .unwrap_or_else(|| "mongodb://localhost:27017".into());
+        self.dialog = Some(Dialog::Code(CodeDialog {
+            title: format!("Query Code  {db}.{coll}"),
+            shell: query.to_shell(&coll),
+            request: CodeRequest {
+                uri,
+                database: db,
+                collection: coll,
+                operation: Operation::Find(query),
+            },
+            language: None,
+        }));
     }
 }
