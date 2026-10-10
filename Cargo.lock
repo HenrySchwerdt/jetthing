@@ -1559,6 +1559,7 @@ version = "0.1.0"
 dependencies = [
  "jetthing-command",
  "jetthing-git",
+ "jetthing-keymap",
  "jetthing-language",
  "jetthing-lsp",
  "jetthing-plugins",
@@ -1575,6 +1576,15 @@ name = "jetthing-git"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "jetthing-keymap"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]
@@ -1651,6 +1661,7 @@ dependencies = [
  "jetthing-command",
  "jetthing-core",
  "jetthing-git",
+ "jetthing-keymap",
  "jetthing-language",
  "jetthing-lsp",
  "jetthing-runner",

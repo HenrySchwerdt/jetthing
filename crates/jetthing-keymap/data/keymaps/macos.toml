@@ -1,0 +1,906 @@
+# Transcribed from the public IntelliJ IDEA keymap reference (facts only:
+# action IDs, labels and key combinations). No JetBrains files are copied.
+
+name = "macOS"
+platform = "macos"
+source = "https://www.jetbrains.com/help/idea/reference-keymap-mac-default.html"
+
+[[binding]]
+action = "SearchEverywhere"
+keys = ["shift shift"]
+
+[[binding]]
+action = "GotoAction"
+keys = ["meta shift A"]
+
+[[binding]]
+action = "ShowIntentionActions"
+keys = ["alt ENTER"]
+
+[[binding]]
+action = "RecentFiles"
+keys = ["meta E"]
+
+[[binding]]
+action = "FindUsages"
+keys = ["alt F7"]
+
+[[binding]]
+action = "SelectIn"
+keys = ["alt F1"]
+
+[[binding]]
+action = "ShowSettings"
+keys = ["meta COMMA"]
+
+[[binding]]
+action = "Generate"
+keys = ["meta N"]
+
+[[binding]]
+action = "RunAnything"
+keys = ["ctrl ctrl"]
+
+[[binding]]
+action = "Vcs.QuickListPopupAction"
+keys = ["ctrl V"]
+
+[[binding]]
+action = "Refactorings.QuickListPopupAction"
+keys = ["ctrl T"]
+
+[[binding]]
+action = "ReformatCode"
+keys = ["meta alt L"]
+
+[[binding]]
+action = "NewElementSamePlace"
+keys = ["ctrl alt N"]
+
+[[binding]]
+action = "CompileDirty"
+keys = ["meta F9"]
+
+[[binding]]
+action = "CompileProject"
+keys = ["meta shift F9"]
+
+[[binding]]
+action = "$Cut"
+keys = ["meta X"]
+
+[[binding]]
+action = "$Copy"
+keys = ["meta C"]
+
+[[binding]]
+action = "$Paste"
+keys = ["meta V"]
+
+[[binding]]
+action = "EditorPasteSimple"
+keys = ["meta alt shift V"]
+
+[[binding]]
+action = "PasteMultiple"
+keys = ["meta shift V"]
+
+[[binding]]
+action = "CopyPaths"
+keys = ["meta shift C"]
+
+[[binding]]
+action = "CopyReference"
+keys = ["meta alt shift C"]
+
+[[binding]]
+action = "SaveAll"
+keys = ["meta S"]
+
+[[binding]]
+action = "$Undo"
+keys = ["meta Z"]
+
+[[binding]]
+action = "$Redo"
+keys = ["meta shift Z"]
+
+[[binding]]
+action = "EditorIndentSelection"
+keys = ["TAB"]
+
+[[binding]]
+action = "EditorUnindentSelection"
+keys = ["shift TAB"]
+
+[[binding]]
+action = "AutoIndentLines"
+keys = ["ctrl alt I"]
+
+[[binding]]
+action = "EditorStartNewLine"
+keys = ["shift ENTER"]
+
+[[binding]]
+action = "EditorStartNewLineBefore"
+keys = ["meta alt ENTER"]
+
+[[binding]]
+action = "EditorDeleteLine"
+keys = ["meta BACK_SPACE"]
+
+[[binding]]
+action = "EditorJoinLines"
+keys = ["ctrl shift J"]
+
+[[binding]]
+action = "EditorDuplicate"
+keys = ["meta D"]
+
+[[binding]]
+action = "EditorToggleCase"
+keys = ["meta shift U"]
+
+[[binding]]
+action = "NewScratchFile"
+keys = ["meta shift N"]
+
+[[binding]]
+action = "EditSourceInNewWindow"
+keys = ["shift F4"]
+
+[[binding]]
+action = "EditorIncreaseFontSizeGlobal"
+keys = ["ctrl shift PERIOD"]
+
+[[binding]]
+action = "EditorDecreaseFontSizeGlobal"
+keys = ["ctrl shift COMMA"]
+
+[[binding]]
+action = "EditorPreviousWord"
+keys = ["alt LEFT"]
+
+[[binding]]
+action = "EditorNextWord"
+keys = ["alt RIGHT"]
+
+[[binding]]
+action = "EditorLineStart"
+keys = ["meta LEFT"]
+
+[[binding]]
+action = "EditorLineEnd"
+keys = ["meta RIGHT"]
+
+[[binding]]
+action = "EditorMatchBrace"
+keys = ["ctrl M"]
+
+[[binding]]
+action = "EditorCodeBlockStart"
+keys = ["meta alt OPEN_BRACKET"]
+
+[[binding]]
+action = "EditorCodeBlockEnd"
+keys = ["meta alt CLOSE_BRACKET"]
+
+[[binding]]
+action = "MethodDown"
+keys = ["ctrl shift DOWN"]
+
+[[binding]]
+action = "MethodUp"
+keys = ["ctrl shift UP"]
+
+[[binding]]
+action = "EditorMoveToPageTop"
+keys = ["meta PAGE_UP"]
+
+[[binding]]
+action = "EditorMoveToPageBottom"
+keys = ["meta PAGE_DOWN"]
+
+[[binding]]
+action = "EditorPageUp"
+keys = ["PAGE_UP"]
+
+[[binding]]
+action = "EditorPageDown"
+keys = ["PAGE_DOWN"]
+
+[[binding]]
+action = "EditorTextStart"
+keys = ["meta HOME"]
+
+[[binding]]
+action = "EditorTextEnd"
+keys = ["meta END"]
+
+[[binding]]
+action = "$SelectAll"
+keys = ["meta A"]
+
+[[binding]]
+action = "EditorLeftWithSelection"
+keys = ["shift LEFT"]
+
+[[binding]]
+action = "EditorRightWithSelection"
+keys = ["shift RIGHT"]
+
+[[binding]]
+action = "EditorPreviousWordWithSelection"
+keys = ["alt shift LEFT"]
+
+[[binding]]
+action = "EditorNextWordWithSelection"
+keys = ["alt shift RIGHT"]
+
+[[binding]]
+action = "EditorLineStartWithSelection"
+keys = ["meta shift LEFT"]
+
+[[binding]]
+action = "EditorLineEndWithSelection"
+keys = ["meta shift RIGHT"]
+
+[[binding]]
+action = "EditorUpWithSelection"
+keys = ["shift UP"]
+
+[[binding]]
+action = "EditorDownWithSelection"
+keys = ["shift DOWN"]
+
+[[binding]]
+action = "EditorCodeBlockStartWithSelection"
+keys = ["meta alt shift OPEN_BRACKET"]
+
+[[binding]]
+action = "EditorCodeBlockEndWithSelection"
+keys = ["meta alt shift CLOSE_BRACKET"]
+
+[[binding]]
+action = "EditorMoveToPageTopWithSelection"
+keys = ["meta shift PAGE_UP"]
+
+[[binding]]
+action = "EditorMoveToPageBottomWithSelection"
+keys = ["meta shift PAGE_DOWN"]
+
+[[binding]]
+action = "EditorPageUpWithSelection"
+keys = ["shift PAGE_UP"]
+
+[[binding]]
+action = "EditorPageDownWithSelection"
+keys = ["shift PAGE_DOWN"]
+
+[[binding]]
+action = "EditorTextStartWithSelection"
+keys = ["meta shift HOME"]
+
+[[binding]]
+action = "EditorTextEndWithSelection"
+keys = ["meta shift END"]
+
+[[binding]]
+action = "EditorSelectWord"
+keys = ["alt UP"]
+
+[[binding]]
+action = "EditorUnSelectWord"
+keys = ["alt DOWN"]
+
+[[binding]]
+action = "ExpandRegion"
+keys = ["meta ADD"]
+
+[[binding]]
+action = "CollapseRegion"
+keys = ["meta SUBTRACT"]
+
+[[binding]]
+action = "ExpandRegionRecursively"
+keys = ["meta alt ADD"]
+
+[[binding]]
+action = "CollapseRegionRecursively"
+keys = ["meta alt SUBTRACT"]
+
+[[binding]]
+action = "ExpandAllRegions"
+keys = ["meta shift ADD"]
+
+[[binding]]
+action = "CollapseAllRegions"
+keys = ["meta shift SUBTRACT"]
+
+[[binding]]
+action = "CollapseSelection"
+keys = ["meta PERIOD"]
+
+[[binding]]
+action = "EditorAddOrRemoveCaret"
+keys = []
+mouse = ["alt shift button1"]
+
+[[binding]]
+action = "EditorToggleColumnMode"
+keys = ["meta shift 8"]
+
+[[binding]]
+action = "EditorCloneCaretAbove"
+keys = ["alt alt, alt UP"]
+
+[[binding]]
+action = "EditorCloneCaretBelow"
+keys = ["alt alt, alt DOWN"]
+
+[[binding]]
+action = "EditorAddCaretPerSelectedLine"
+keys = ["alt shift G"]
+
+[[binding]]
+action = "SelectNextOccurrence"
+keys = ["ctrl G"]
+
+[[binding]]
+action = "SelectAllOccurrences"
+keys = ["meta ctrl G"]
+
+[[binding]]
+action = "UnselectPreviousOccurrence"
+keys = ["ctrl shift G"]
+
+[[binding]]
+action = "EditorCreateRectangularSelection"
+keys = []
+mouse = ["alt shift button2"]
+
+[[binding]]
+action = "EditorCreateRectangularSelectionOnMouseDrag"
+keys = []
+mouse = ["alt button1"]
+
+[[binding]]
+action = "EditorAddRectangularSelectionOnMouseDrag"
+keys = []
+mouse = ["meta alt shift button1"]
+
+[[binding]]
+action = "CodeCompletion"
+keys = ["ctrl SPACE"]
+
+[[binding]]
+action = "SmartTypeCompletion"
+keys = ["ctrl shift SPACE"]
+
+[[binding]]
+action = "ClassNameCompletion"
+keys = ["ctrl alt SPACE"]
+
+[[binding]]
+action = "EditorCompleteStatement"
+keys = ["meta shift ENTER"]
+
+[[binding]]
+action = "ParameterInfo"
+keys = ["meta P"]
+
+[[binding]]
+action = "QuickJavaDoc"
+keys = ["F1"]
+
+[[binding]]
+action = "MoveStatementUp"
+keys = ["meta shift UP"]
+
+[[binding]]
+action = "MoveStatementDown"
+keys = ["meta shift DOWN"]
+
+[[binding]]
+action = "MoveElementLeft"
+keys = ["meta alt shift LEFT"]
+
+[[binding]]
+action = "MoveElementRight"
+keys = ["meta alt shift RIGHT"]
+
+[[binding]]
+action = "MoveLineUp"
+keys = ["alt shift UP"]
+
+[[binding]]
+action = "MoveLineDown"
+keys = ["alt shift DOWN"]
+
+[[binding]]
+action = "CommentByLineComment"
+keys = ["meta SLASH"]
+
+[[binding]]
+action = "CommentByBlockComment"
+keys = ["meta alt SLASH"]
+
+[[binding]]
+action = "SurroundWith"
+keys = ["meta alt T"]
+
+[[binding]]
+action = "GotoLine"
+keys = ["meta L"]
+
+[[binding]]
+action = "Switcher"
+keys = ["ctrl TAB"]
+
+[[binding]]
+action = "RecentChanges"
+keys = ["alt shift C"]
+
+[[binding]]
+action = "JumpToLastChange"
+keys = ["meta shift BACK_SPACE"]
+
+[[binding]]
+action = "Back"
+keys = ["meta OPEN_BRACKET"]
+
+[[binding]]
+action = "Forward"
+keys = ["meta CLOSE_BRACKET"]
+
+[[binding]]
+action = "NextTab"
+keys = ["meta shift CLOSE_BRACKET"]
+
+[[binding]]
+action = "PreviousTab"
+keys = ["meta shift OPEN_BRACKET"]
+
+[[binding]]
+action = "ToggleBookmark"
+keys = ["F3"]
+
+[[binding]]
+action = "ToggleBookmarkWithMnemonic"
+keys = ["alt F3"]
+
+[[binding]]
+action = "ShowBookmarks"
+keys = ["meta F3"]
+
+[[binding]]
+action = "ShowTypeBookmarks"
+keys = ["meta alt F3"]
+
+[[binding]]
+action = "NextOccurence"
+keys = ["meta alt DOWN"]
+
+[[binding]]
+action = "PreviousOccurence"
+keys = ["meta alt UP"]
+
+[[binding]]
+action = "Find"
+keys = ["meta F"]
+
+[[binding]]
+action = "FindNext"
+keys = ["meta G"]
+
+[[binding]]
+action = "FindPrevious"
+keys = ["meta shift G"]
+
+[[binding]]
+action = "Replace"
+keys = ["meta R"]
+
+[[binding]]
+action = "FindInPath"
+keys = ["meta shift F"]
+
+[[binding]]
+action = "ReplaceInPath"
+keys = ["meta shift R"]
+
+[[binding]]
+action = "GotoClass"
+keys = ["meta O"]
+
+[[binding]]
+action = "GotoFile"
+keys = ["meta shift O"]
+
+[[binding]]
+action = "FileStructurePopup"
+keys = ["meta F12"]
+
+[[binding]]
+action = "GotoSymbol"
+keys = ["meta alt O"]
+
+[[binding]]
+action = "GotoDeclaration"
+keys = ["meta B"]
+
+[[binding]]
+action = "GotoTypeDeclaration"
+keys = ["meta shift B"]
+
+[[binding]]
+action = "ShowUsages"
+keys = ["meta alt F7"]
+
+[[binding]]
+action = "GotoSuperMethod"
+keys = ["meta U"]
+
+[[binding]]
+action = "GotoImplementation"
+keys = ["meta alt B"]
+
+[[binding]]
+action = "GotoTest"
+keys = ["meta shift T"]
+
+[[binding]]
+action = "HighlightUsagesInFile"
+keys = ["meta shift F7"]
+
+[[binding]]
+action = "ShowErrorDescription"
+keys = ["meta F1"]
+
+[[binding]]
+action = "GotoNextError"
+keys = ["F2"]
+
+[[binding]]
+action = "GotoPreviousError"
+keys = ["shift F2"]
+
+[[binding]]
+action = "RunInspection"
+keys = ["meta alt shift I"]
+
+[[binding]]
+action = "Run"
+keys = ["ctrl R"]
+
+[[binding]]
+action = "ChooseRunConfiguration"
+keys = ["ctrl alt R"]
+
+[[binding]]
+action = "Debug"
+keys = ["ctrl D"]
+
+[[binding]]
+action = "ChooseDebugConfiguration"
+keys = ["ctrl alt D"]
+
+[[binding]]
+action = "XDebugger.AttachToProcess"
+keys = ["alt shift F5"]
+
+[[binding]]
+action = "Stop"
+keys = ["meta F2"]
+
+[[binding]]
+action = "Resume"
+keys = ["meta alt R"]
+
+[[binding]]
+action = "ShowBackgroundTasks"
+keys = ["meta shift F2"]
+
+[[binding]]
+action = "StepOver"
+keys = ["F8"]
+
+[[binding]]
+action = "ForceStepOver"
+keys = ["alt shift F8"]
+
+[[binding]]
+action = "StepInto"
+keys = ["F7"]
+
+[[binding]]
+action = "SmartStepInto"
+keys = ["shift F7"]
+
+[[binding]]
+action = "ForceStepInto"
+keys = ["alt shift F7"]
+
+[[binding]]
+action = "StepOut"
+keys = ["shift F8"]
+
+[[binding]]
+action = "RunToCursor"
+keys = ["alt F9"]
+
+[[binding]]
+action = "ForceRunToCursor"
+keys = ["meta alt F9"]
+
+[[binding]]
+action = "ShowExecutionPoint"
+keys = ["alt F10"]
+
+[[binding]]
+action = "EvaluateExpression"
+keys = ["alt F8"]
+
+[[binding]]
+action = "QuickEvaluateExpression"
+keys = ["meta alt F8"]
+
+[[binding]]
+action = "ToggleLineBreakpoint"
+keys = ["meta F8"]
+
+[[binding]]
+action = "ToggleTemporaryLineBreakpoint"
+keys = ["meta alt shift F8"]
+
+[[binding]]
+action = "ViewBreakpoints"
+keys = ["meta shift F8"]
+
+[[binding]]
+action = "EditBreakpoint"
+keys = ["meta shift F8"]
+
+[[binding]]
+action = "RenameElement"
+keys = ["shift F6"]
+
+[[binding]]
+action = "ChangeSignature"
+keys = ["meta F6"]
+
+[[binding]]
+action = "Inline"
+keys = ["meta alt N"]
+
+[[binding]]
+action = "Move"
+keys = ["F6"]
+
+[[binding]]
+action = "ExtractMethod"
+keys = ["meta alt M"]
+
+[[binding]]
+action = "IntroduceField"
+keys = ["meta alt F"]
+
+[[binding]]
+action = "IntroduceParameter"
+keys = ["meta alt P"]
+
+[[binding]]
+action = "IntroduceVariable"
+keys = ["meta alt V"]
+
+[[binding]]
+action = "SafeDelete"
+keys = ["meta DELETE"]
+
+[[binding]]
+action = "CheckinProject"
+keys = ["meta K"]
+
+[[binding]]
+action = "Vcs.UpdateProject"
+keys = ["meta T"]
+
+[[binding]]
+action = "ChangesView.Revert"
+keys = ["meta alt Z"]
+
+[[binding]]
+action = "Vcs.Push"
+keys = ["meta shift K"]
+
+[[binding]]
+action = "VcsShowNextChangeMarker"
+keys = ["ctrl alt shift DOWN"]
+
+[[binding]]
+action = "VcsShowPrevChangeMarker"
+keys = ["ctrl alt shift UP"]
+
+[[binding]]
+action = "ChangesView.Diff"
+keys = ["meta D"]
+
+[[binding]]
+action = "CompareTwoFiles"
+keys = ["meta D"]
+
+[[binding]]
+action = "NextDiff"
+keys = ["F7"]
+
+[[binding]]
+action = "PreviousDiff"
+keys = ["shift F7"]
+
+[[binding]]
+action = "Diff.ApplyLeftSide"
+keys = ["meta ctrl RIGHT"]
+
+[[binding]]
+action = "Diff.ApplyRightSide"
+keys = ["meta ctrl LEFT"]
+
+[[binding]]
+action = "Diff.FocusOppositePane"
+keys = ["ctrl shift TAB"]
+
+[[binding]]
+action = "Diff.ShowSettingsPopup"
+keys = ["meta shift D"]
+
+[[binding]]
+action = "HideActiveWindow"
+keys = ["shift ESCAPE"]
+
+[[binding]]
+action = "HideAllWindows"
+keys = ["meta shift F12"]
+
+[[binding]]
+action = "JumpToLastWindow"
+keys = ["F12"]
+
+[[binding]]
+action = "ResizeToolWindowLeft"
+keys = ["ctrl alt LEFT"]
+
+[[binding]]
+action = "ResizeToolWindowRight"
+keys = ["ctrl alt RIGHT"]
+
+[[binding]]
+action = "ResizeToolWindowUp"
+keys = ["ctrl alt UP"]
+
+[[binding]]
+action = "ResizeToolWindowDown"
+keys = ["ctrl alt DOWN"]
+
+[[binding]]
+action = "ActivateProjectToolWindow"
+keys = ["meta 1"]
+
+[[binding]]
+action = "ActivateBookmarksToolWindow"
+keys = ["meta 2"]
+
+[[binding]]
+action = "ActivateFindToolWindow"
+keys = ["meta 3"]
+
+[[binding]]
+action = "ActivateRunToolWindow"
+keys = ["meta 4"]
+
+[[binding]]
+action = "ActivateDebugToolWindow"
+keys = ["meta 5"]
+
+[[binding]]
+action = "ActivateProblemsViewToolWindow"
+keys = ["meta 6"]
+
+[[binding]]
+action = "ActivateStructureToolWindow"
+keys = ["meta 7"]
+
+[[binding]]
+action = "ActivateServicesToolWindow"
+keys = ["meta 8"]
+
+[[binding]]
+action = "ActivateVersionControlToolWindow"
+keys = ["meta 9"]
+
+[[binding]]
+action = "ActivateCommitToolWindow"
+keys = ["meta 0"]
+
+[[binding]]
+action = "ActivateTerminalToolWindow"
+keys = ["alt F12"]
+
+[[binding]]
+action = "ToggleBookmark0"
+keys = ["ctrl shift 0"]
+
+[[binding]]
+action = "GotoBookmark0"
+keys = ["ctrl 0"]
+
+[[binding]]
+action = "ToggleBookmark1"
+keys = ["ctrl shift 1"]
+
+[[binding]]
+action = "GotoBookmark1"
+keys = ["ctrl 1"]
+
+[[binding]]
+action = "ToggleBookmark2"
+keys = ["ctrl shift 2"]
+
+[[binding]]
+action = "GotoBookmark2"
+keys = ["ctrl 2"]
+
+[[binding]]
+action = "ToggleBookmark3"
+keys = ["ctrl shift 3"]
+
+[[binding]]
+action = "GotoBookmark3"
+keys = ["ctrl 3"]
+
+[[binding]]
+action = "ToggleBookmark4"
+keys = ["ctrl shift 4"]
+
+[[binding]]
+action = "GotoBookmark4"
+keys = ["ctrl 4"]
+
+[[binding]]
+action = "ToggleBookmark5"
+keys = ["ctrl shift 5"]
+
+[[binding]]
+action = "GotoBookmark5"
+keys = ["ctrl 5"]
+
+[[binding]]
+action = "ToggleBookmark6"
+keys = ["ctrl shift 6"]
+
+[[binding]]
+action = "GotoBookmark6"
+keys = ["ctrl 6"]
+
+[[binding]]
+action = "ToggleBookmark7"
+keys = ["ctrl shift 7"]
+
+[[binding]]
+action = "GotoBookmark7"
+keys = ["ctrl 7"]
+
+[[binding]]
+action = "ToggleBookmark8"
+keys = ["ctrl shift 8"]
+
+[[binding]]
+action = "GotoBookmark8"
+keys = ["ctrl 8"]
+
+[[binding]]
+action = "ToggleBookmark9"
+keys = ["ctrl shift 9"]
+
+[[binding]]
+action = "GotoBookmark9"
+keys = ["ctrl 9"]

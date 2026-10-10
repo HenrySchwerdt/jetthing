@@ -7,10 +7,16 @@ fn main() -> Result<()> {
         bail!("usage: cargo xtask parity [--check]");
     }
     let check = args.any(|a| a == "--check");
-    let docs = ["docs/parity/platform.md", "docs/parity/android-studio.md"];
+    let mut docs: Vec<_> = fs::read_dir("docs/parity")
+        .context("read docs/parity")?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "md"))
+        .filter(|p| p.file_name().is_some_and(|n| n != "dashboard.md"))
+        .collect();
+    docs.sort();
     let mut totals = [0usize; 5];
-    for doc in docs {
-        let text = fs::read_to_string(doc).with_context(|| format!("read {doc}"))?;
+    for doc in &docs {
+        let text = fs::read_to_string(doc).with_context(|| format!("read {}", doc.display()))?;
         for (i, status) in ["Missing", "Planned", "Partial", "Implemented", "Verified"]
             .iter()
             .enumerate()

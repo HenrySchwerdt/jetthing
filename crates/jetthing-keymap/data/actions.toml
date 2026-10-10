@@ -1,0 +1,1501 @@
+# Transcribed from the public IntelliJ IDEA keymap reference (facts only:
+# action IDs, labels and key combinations). No JetBrains files are copied.
+
+# IntelliJ action IDs mapped to jetthing command IDs. Actions without a
+# jetthing implementation carry the explicit `unbound = true` marker.
+
+[[action]]
+id = "SearchEverywhere"
+label = "Search Everywhere"
+category = "Find everything"
+unbound = true
+
+[[action]]
+id = "GotoAction"
+label = "Find Action..."
+category = "Find everything"
+unbound = true
+
+[[action]]
+id = "ShowIntentionActions"
+label = "Show Intention Actions"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "RecentFiles"
+label = "Recent Files"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "FindUsages"
+label = "Find Usages"
+category = "Navigate from symbols"
+unbound = true
+
+[[action]]
+id = "SelectIn"
+label = "Select In..."
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ShowSettings"
+label = "Settings..."
+category = "Top shortcuts"
+unbound = true
+
+[[action]]
+id = "Generate"
+label = "Generate..."
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "RunAnything"
+label = "Run Anything"
+category = "Run and debug"
+unbound = true
+
+[[action]]
+id = "Vcs.QuickListPopupAction"
+label = "VCS Operations Popup..."
+category = "Global VCS actions"
+unbound = true
+
+[[action]]
+id = "Refactorings.QuickListPopupAction"
+label = "Refactor This..."
+category = "Refactorings"
+unbound = true
+
+[[action]]
+id = "ReformatCode"
+label = "Reformat Code"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "NewElementSamePlace"
+label = "New in This Directory"
+category = "Build projects"
+unbound = true
+
+[[action]]
+id = "CompileDirty"
+label = "Build Project"
+category = "Build projects"
+command = "build.project"
+
+[[action]]
+id = "CompileProject"
+label = "Rebuild"
+category = "Build projects"
+unbound = true
+
+[[action]]
+id = "$Cut"
+label = "Cut"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "$Copy"
+label = "Copy"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "$Paste"
+label = "Paste"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorPasteSimple"
+label = "Paste as Plain Text"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "PasteMultiple"
+label = "Paste from History..."
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "CopyPaths"
+label = "Copy Paths"
+category = "Basic editing"
+unbound = true
+
+[[action]]
+id = "CopyReference"
+label = "Copy Reference"
+category = "Basic editing"
+unbound = true
+
+[[action]]
+id = "SaveAll"
+label = "Save All"
+category = "Basic editing"
+command = "editor.saveAll"
+
+[[action]]
+id = "$Undo"
+label = "Undo"
+category = "Basic editing"
+context = "editor"
+command = "editor.undo"
+
+[[action]]
+id = "$Redo"
+label = "Redo"
+category = "Basic editing"
+context = "editor"
+command = "editor.redo"
+
+[[action]]
+id = "EditorIndentSelection"
+label = "Indent Selection"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorUnindentSelection"
+label = "Unindent Line or Selection"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "AutoIndentLines"
+label = "Auto-Indent Lines"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorStartNewLine"
+label = "Start New Line"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorStartNewLineBefore"
+label = "Start New Line Before Current"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorDeleteLine"
+label = "Delete Line"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorJoinLines"
+label = "Join Lines"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorDuplicate"
+label = "Duplicate Line or Selection"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorToggleCase"
+label = "Toggle Case"
+category = "Basic editing"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "NewScratchFile"
+label = "Scratch File"
+category = "Basic editing"
+unbound = true
+
+[[action]]
+id = "EditSourceInNewWindow"
+label = "Open Source in New Window"
+category = "Basic editing"
+unbound = true
+
+[[action]]
+id = "EditorIncreaseFontSizeGlobal"
+label = "Increase Font Size in All Editors"
+category = "Basic editing"
+unbound = true
+
+[[action]]
+id = "EditorDecreaseFontSizeGlobal"
+label = "Decrease Font Size in All Editors"
+category = "Basic editing"
+unbound = true
+
+[[action]]
+id = "EditorPreviousWord"
+label = "Move Caret to Previous Word"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorNextWord"
+label = "Move Caret to Next Word"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorLineStart"
+label = "Move Caret to Line Start"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorLineEnd"
+label = "Move Caret to Line End"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorMatchBrace"
+label = "Move Caret to Matching Brace"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorCodeBlockStart"
+label = "Move Caret to Code Block Start"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorCodeBlockEnd"
+label = "Move Caret to Code Block End"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "MethodDown"
+label = "Next Method"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "MethodUp"
+label = "Previous Method"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorMoveToPageTop"
+label = "Move Caret to Page Top"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorMoveToPageBottom"
+label = "Move Caret to Page Bottom"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorPageUp"
+label = "Page Up"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorPageDown"
+label = "Page Down"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorTextStart"
+label = "Move Caret to Text Start"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorTextEnd"
+label = "Move Caret to Text End"
+category = "Caret navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "$SelectAll"
+label = "Select All"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorLeftWithSelection"
+label = "Left with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorRightWithSelection"
+label = "Right with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorPreviousWordWithSelection"
+label = "Move Caret to Previous Word with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorNextWordWithSelection"
+label = "Move Caret to Next Word with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorLineStartWithSelection"
+label = "Move Caret to Line Start with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorLineEndWithSelection"
+label = "Move Caret to Line End with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorUpWithSelection"
+label = "Up with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorDownWithSelection"
+label = "Down with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorCodeBlockStartWithSelection"
+label = "Move Caret to Code Block Start with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorCodeBlockEndWithSelection"
+label = "Move Caret to Code Block End with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorMoveToPageTopWithSelection"
+label = "Move Caret to Page Top with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorMoveToPageBottomWithSelection"
+label = "Move Caret to Page Bottom with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorPageUpWithSelection"
+label = "Page Up with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorPageDownWithSelection"
+label = "Page Down with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorTextStartWithSelection"
+label = "Move Caret to Text Start with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorTextEndWithSelection"
+label = "Move Caret to Text End with Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorSelectWord"
+label = "Extend Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorUnSelectWord"
+label = "Shrink Selection"
+category = "Select text"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ExpandRegion"
+label = "Expand"
+category = "Code folding"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "CollapseRegion"
+label = "Collapse"
+category = "Code folding"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ExpandRegionRecursively"
+label = "Expand Recursively"
+category = "Code folding"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "CollapseRegionRecursively"
+label = "Collapse Recursively"
+category = "Code folding"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ExpandAllRegions"
+label = "Expand All"
+category = "Code folding"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "CollapseAllRegions"
+label = "Collapse All"
+category = "Code folding"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "CollapseSelection"
+label = "Fold Selection"
+category = "Code folding"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorAddOrRemoveCaret"
+label = "Add/Remove Caret"
+category = "Multiple carets and selection ranges"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorToggleColumnMode"
+label = "Toggle Column Selection Mode"
+category = "Multiple carets and selection ranges"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorCloneCaretAbove"
+label = "Clone Caret Above"
+category = "Multiple carets and selection ranges"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorCloneCaretBelow"
+label = "Clone Caret Below"
+category = "Multiple carets and selection ranges"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorAddCaretPerSelectedLine"
+label = "Add Caret to Each Line in Selection"
+category = "Multiple carets and selection ranges"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "SelectNextOccurrence"
+label = "Add Selection for Next Occurrence"
+category = "Multiple carets and selection ranges"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "SelectAllOccurrences"
+label = "Select All Occurrences"
+category = "Multiple carets and selection ranges"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "UnselectPreviousOccurrence"
+label = "Deselect Last Occurrence"
+category = "Multiple carets and selection ranges"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorCreateRectangularSelection"
+label = "Create Rectangular Selection"
+category = "Multiple carets and selection ranges"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorCreateRectangularSelectionOnMouseDrag"
+label = "Drag to Create Rectangular Selection"
+category = "Multiple carets and selection ranges"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorAddRectangularSelectionOnMouseDrag"
+label = "Drag to Create Multiple Rectangular Selections"
+category = "Multiple carets and selection ranges"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "CodeCompletion"
+label = "Basic Completion"
+category = "Coding assistance"
+context = "editor"
+command = "language.complete"
+
+[[action]]
+id = "SmartTypeCompletion"
+label = "Type-Matching Completion"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ClassNameCompletion"
+label = "Second Basic Completion"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "EditorCompleteStatement"
+label = "Complete Current Statement"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ParameterInfo"
+label = "Parameter Info"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "QuickJavaDoc"
+label = "Quick Documentation"
+category = "Coding assistance"
+unbound = true
+
+[[action]]
+id = "MoveStatementUp"
+label = "Move Statement Up"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "MoveStatementDown"
+label = "Move Statement Down"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "MoveElementLeft"
+label = "Move Element Left"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "MoveElementRight"
+label = "Move Element Right"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "MoveLineUp"
+label = "Move Line Up"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "MoveLineDown"
+label = "Move Line Down"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "CommentByLineComment"
+label = "Comment with Line Comment"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "CommentByBlockComment"
+label = "Comment with Block Comment"
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "SurroundWith"
+label = "Surround With..."
+category = "Coding assistance"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoLine"
+label = "Go to Line/Column..."
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "Switcher"
+label = "Switcher"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "RecentChanges"
+label = "Recent Changes"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "JumpToLastChange"
+label = "Last Edit Location"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "Back"
+label = "Back"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "Forward"
+label = "Forward"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "NextTab"
+label = "Select Next Tab"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "PreviousTab"
+label = "Select Previous Tab"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ToggleBookmark"
+label = "Toggle Anonymous Bookmark"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ToggleBookmarkWithMnemonic"
+label = "Toggle Bookmark with Mnemonic"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ShowBookmarks"
+label = "Show All Bookmarks"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ShowTypeBookmarks"
+label = "Show Mnemonic Bookmarks"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "NextOccurence"
+label = "Next Occurrence"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "PreviousOccurence"
+label = "Previous Occurrence"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "Find"
+label = "Find..."
+category = "Find everything"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "FindNext"
+label = "Find Next / Move to Next Occurrence"
+category = "Find everything"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "FindPrevious"
+label = "Find Previous / Move to Previous Occurrence"
+category = "Find everything"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "Replace"
+label = "Replace..."
+category = "Find everything"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "FindInPath"
+label = "Find in Files..."
+category = "Find everything"
+unbound = true
+
+[[action]]
+id = "ReplaceInPath"
+label = "Replace in Files..."
+category = "Find everything"
+unbound = true
+
+[[action]]
+id = "FindWordAtCaret"
+label = "Next Occurrence of the Word at Caret"
+category = "Find everything"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoClass"
+label = "Go to Class..."
+category = "Find everything"
+unbound = true
+
+[[action]]
+id = "GotoFile"
+label = "Go to File..."
+category = "Find everything"
+unbound = true
+
+[[action]]
+id = "FileStructurePopup"
+label = "File Structure"
+category = "Find everything"
+unbound = true
+
+[[action]]
+id = "GotoSymbol"
+label = "Go to Symbol..."
+category = "Find everything"
+unbound = true
+
+[[action]]
+id = "GotoDeclaration"
+label = "Go to Declaration or Usages"
+category = "Navigate from symbols"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoTypeDeclaration"
+label = "Go to Type Declaration"
+category = "Navigate from symbols"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ShowUsages"
+label = "Show Usages"
+category = "Navigate from symbols"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoSuperMethod"
+label = "Go to Super Method"
+category = "Navigate from symbols"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoImplementation"
+label = "Go to Implementation(s)"
+category = "Navigate from symbols"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoTest"
+label = "Go to Test"
+category = "Navigate from symbols"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "HighlightUsagesInFile"
+label = "Highlight Usages in File"
+category = "Navigate from symbols"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ShowErrorDescription"
+label = "Error Description"
+category = "Code analysis"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoNextError"
+label = "Next Highlighted Error"
+category = "Code analysis"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoPreviousError"
+label = "Previous Highlighted Error"
+category = "Code analysis"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "RunInspection"
+label = "Run Inspection by Name..."
+category = "Code analysis"
+unbound = true
+
+[[action]]
+id = "Run"
+label = "Run context configuration"
+category = "Run and debug"
+unbound = true
+
+[[action]]
+id = "ChooseRunConfiguration"
+label = "Run..."
+category = "Run and debug"
+unbound = true
+
+[[action]]
+id = "Debug"
+label = "Debug context configuration"
+category = "Run and debug"
+unbound = true
+
+[[action]]
+id = "ChooseDebugConfiguration"
+label = "Debug..."
+category = "Run and debug"
+unbound = true
+
+[[action]]
+id = "XDebugger.AttachToProcess"
+label = "Attach to Process..."
+category = "Run and debug"
+unbound = true
+
+[[action]]
+id = "Stop"
+label = "Stop"
+category = "Run and debug"
+command = "run.cancel"
+
+[[action]]
+id = "Resume"
+label = "Resume Program"
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "ShowBackgroundTasks"
+label = "Stop Background Processes..."
+category = "Run and debug"
+unbound = true
+
+[[action]]
+id = "StepOver"
+label = "Step Over"
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "ForceStepOver"
+label = "Force Step Over"
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "StepInto"
+label = "Step Into"
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "SmartStepInto"
+label = "Smart Step Into"
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "ForceStepInto"
+label = "Force Step Into"
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "StepOut"
+label = "Step Out"
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "RunToCursor"
+label = "Run To Cursor"
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "ForceRunToCursor"
+label = "Force Run To Cursor"
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "ShowExecutionPoint"
+label = "Show Execution Point"
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "EvaluateExpression"
+label = "Evaluate Expression..."
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "QuickEvaluateExpression"
+label = "Quick Evaluate Expression"
+category = "Run and debug"
+context = "debugger"
+unbound = true
+
+[[action]]
+id = "ToggleLineBreakpoint"
+label = "Toggle Line Breakpoint"
+category = "Run and debug"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ToggleTemporaryLineBreakpoint"
+label = "Toggle Temporary Line Breakpoint"
+category = "Run and debug"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ViewBreakpoints"
+label = "View Breakpoints..."
+category = "Run and debug"
+unbound = true
+
+[[action]]
+id = "EditBreakpoint"
+label = "Edit Breakpoint"
+category = "Run and debug"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "RenameElement"
+label = "Rename..."
+category = "Refactorings"
+unbound = true
+
+[[action]]
+id = "ChangeSignature"
+label = "Change Signature..."
+category = "Refactorings"
+unbound = true
+
+[[action]]
+id = "Inline"
+label = "Inline..."
+category = "Refactorings"
+unbound = true
+
+[[action]]
+id = "Move"
+label = "Move..."
+category = "Refactorings"
+unbound = true
+
+[[action]]
+id = "ExtractMethod"
+label = "Extract Method..."
+category = "Refactorings"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "IntroduceField"
+label = "Introduce Field..."
+category = "Refactorings"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "IntroduceParameter"
+label = "Introduce Parameter..."
+category = "Refactorings"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "IntroduceVariable"
+label = "Introduce Variable..."
+category = "Refactorings"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "SafeDelete"
+label = "Safe Delete..."
+category = "Refactorings"
+unbound = true
+
+[[action]]
+id = "CheckinProject"
+label = "Commit..."
+category = "Global VCS actions"
+unbound = true
+
+[[action]]
+id = "Vcs.UpdateProject"
+label = "Update Project"
+category = "Global VCS actions"
+unbound = true
+
+[[action]]
+id = "ChangesView.Revert"
+label = "Rollback"
+category = "Global VCS actions"
+unbound = true
+
+[[action]]
+id = "Vcs.Push"
+label = "Push..."
+category = "Global VCS actions"
+unbound = true
+
+[[action]]
+id = "VcsShowNextChangeMarker"
+label = "Next Change"
+category = "Global VCS actions"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "VcsShowPrevChangeMarker"
+label = "Previous Change"
+category = "Global VCS actions"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "ChangesView.Diff"
+label = "Show Diff"
+category = "Diff Viewer"
+context = "changesView"
+unbound = true
+
+[[action]]
+id = "CompareTwoFiles"
+label = "Compare Files"
+category = "Diff Viewer"
+context = "projectView"
+unbound = true
+
+[[action]]
+id = "NextDiff"
+label = "Next Difference"
+category = "Diff Viewer"
+context = "diff"
+unbound = true
+
+[[action]]
+id = "PreviousDiff"
+label = "Previous Difference"
+category = "Diff Viewer"
+context = "diff"
+unbound = true
+
+[[action]]
+id = "Diff.ApplyLeftSide"
+label = "Accept Left Side"
+category = "Diff Viewer"
+context = "diff"
+unbound = true
+
+[[action]]
+id = "Diff.ApplyRightSide"
+label = "Accept Right Side"
+category = "Diff Viewer"
+context = "diff"
+unbound = true
+
+[[action]]
+id = "Diff.FocusOppositePane"
+label = "Select Opposite Diff Pane"
+category = "Diff Viewer"
+context = "diff"
+unbound = true
+
+[[action]]
+id = "Diff.ShowSettingsPopup"
+label = "Show Diff Settings Popup..."
+category = "Diff Viewer"
+context = "diff"
+unbound = true
+
+[[action]]
+id = "HideActiveWindow"
+label = "Hide Active Tool Window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "HideAllWindows"
+label = "Hide All Tool Windows"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "JumpToLastWindow"
+label = "Jump to Last Tool Window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "ResizeToolWindowLeft"
+label = "Stretch to Left"
+category = "Tool windows"
+context = "toolWindow"
+unbound = true
+
+[[action]]
+id = "ResizeToolWindowRight"
+label = "Stretch to Right"
+category = "Tool windows"
+context = "toolWindow"
+unbound = true
+
+[[action]]
+id = "ResizeToolWindowUp"
+label = "Stretch to Top"
+category = "Tool windows"
+context = "toolWindow"
+unbound = true
+
+[[action]]
+id = "ResizeToolWindowDown"
+label = "Stretch to Bottom"
+category = "Tool windows"
+context = "toolWindow"
+unbound = true
+
+[[action]]
+id = "ActivateProjectToolWindow"
+label = "Show Project window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "ActivateBookmarksToolWindow"
+label = "Show Bookmarks window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "ActivateFindToolWindow"
+label = "Show Find window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "ActivateRunToolWindow"
+label = "Show Run window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "ActivateDebugToolWindow"
+label = "Show Debug window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "ActivateProblemsViewToolWindow"
+label = "Show Problems window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "ActivateStructureToolWindow"
+label = "Show Structure window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "ActivateServicesToolWindow"
+label = "Show Services window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "ActivateVersionControlToolWindow"
+label = "Show Version Control window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "ActivateCommitToolWindow"
+label = "Show Commit window"
+category = "Tool windows"
+unbound = true
+
+[[action]]
+id = "ActivateTerminalToolWindow"
+label = "Show Terminal window"
+category = "Tool windows"
+command = "terminal.toggle"
+
+[[action]]
+id = "ToggleBookmark0"
+label = "Toggle Bookmark 0"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoBookmark0"
+label = "Go to Bookmark 0"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ToggleBookmark1"
+label = "Toggle Bookmark 1"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoBookmark1"
+label = "Go to Bookmark 1"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ToggleBookmark2"
+label = "Toggle Bookmark 2"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoBookmark2"
+label = "Go to Bookmark 2"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ToggleBookmark3"
+label = "Toggle Bookmark 3"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoBookmark3"
+label = "Go to Bookmark 3"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ToggleBookmark4"
+label = "Toggle Bookmark 4"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoBookmark4"
+label = "Go to Bookmark 4"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ToggleBookmark5"
+label = "Toggle Bookmark 5"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoBookmark5"
+label = "Go to Bookmark 5"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ToggleBookmark6"
+label = "Toggle Bookmark 6"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoBookmark6"
+label = "Go to Bookmark 6"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ToggleBookmark7"
+label = "Toggle Bookmark 7"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoBookmark7"
+label = "Go to Bookmark 7"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ToggleBookmark8"
+label = "Toggle Bookmark 8"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoBookmark8"
+label = "Go to Bookmark 8"
+category = "Context navigation"
+unbound = true
+
+[[action]]
+id = "ToggleBookmark9"
+label = "Toggle Bookmark 9"
+category = "Context navigation"
+context = "editor"
+unbound = true
+
+[[action]]
+id = "GotoBookmark9"
+label = "Go to Bookmark 9"
+category = "Context navigation"
+unbound = true

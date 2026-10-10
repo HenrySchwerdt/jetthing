@@ -1,0 +1,11 @@
+[package]
+name = "jetthing-keymap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Keystroke parsing, keymap inheritance, conflict detection and chord matching for Jetthing"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true

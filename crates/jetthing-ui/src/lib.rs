@@ -9,6 +9,8 @@ use jetthing_text::Selection;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
+mod keymap_dispatch;
+
 pub struct IdeApp {
     state: IdeState,
     commands: CommandRegistry<IdeState>,
@@ -16,6 +18,7 @@ pub struct IdeApp {
     palette_query: String,
     terminal_input: String,
     search_input: String,
+    keymap: keymap_dispatch::KeymapDispatcher,
 }
 
 impl IdeApp {
@@ -33,6 +36,7 @@ impl IdeApp {
             palette_query: String::new(),
             terminal_input: String::new(),
             search_input: String::new(),
+            keymap: keymap_dispatch::KeymapDispatcher::default(),
         }
     }
     fn dispatch(&mut self, id: &str, params: Value) {
@@ -320,6 +324,16 @@ impl eframe::App for IdeApp {
         self.state.poll_search();
         self.state.poll_runner();
         self.state.poll_lsp();
+        let contexts: &[jetthing_keymap::KeyContext] = if self.state.active_document.is_some() {
+            &[jetthing_keymap::KeyContext::Editor]
+        } else {
+            &[]
+        };
+        for id in self.keymap.process(ctx, &self.state.keymaps, contexts) {
+            if self.commands.is_enabled(&id, &self.state) {
+                self.dispatch(&id, Value::Null);
+            }
+        }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::P)) {
             self.palette_open = true;
         }

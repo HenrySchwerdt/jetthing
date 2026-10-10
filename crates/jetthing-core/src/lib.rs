@@ -11,6 +11,9 @@ use jetthing_text::{Selection, SelectionSet, TextDocument};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
+pub mod keymap;
+pub use keymap::KeymapState;
+
 #[derive(Debug, Clone)]
 pub struct Document {
     pub path: PathBuf,
@@ -42,6 +45,7 @@ pub struct IdeState {
     pub lsp_error: Option<String>,
     pub problems_visible: bool,
     pub status: String,
+    pub keymaps: KeymapState,
 }
 
 impl IdeState {
@@ -796,6 +800,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
             },
         ))
         .expect("unique built-in id");
+    keymap::register(&mut registry).expect("unique built-in id");
     registry
 }
 
