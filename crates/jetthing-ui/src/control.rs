@@ -376,7 +376,7 @@ impl IdeApp {
             },
             "focus": focus,
             "projectTree": {
-                "selected": self.tree_selection.as_deref().map(&relative),
+                "selected": self.tree_selection.as_deref().map(relative),
                 "expanded": self.state.expanded_dirs.iter().map(|path| relative(path.as_path())).collect::<Vec<_>>(),
             },
             "editor": editor,
