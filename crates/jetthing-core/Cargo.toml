@@ -20,3 +20,6 @@ jetthing-text = { path = "../jetthing-text" }
 jetthing-update = { path = "../jetthing-update" }
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+jetthing-actions = { path = "../jetthing-actions" }

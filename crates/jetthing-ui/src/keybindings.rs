@@ -26,6 +26,11 @@ pub enum UiAction {
     FindPrevious,
     FindInPath,
     SaveAll,
+    NewProject,
+    OpenProject,
+    NewFile,
+    NewDirectory,
+    Exit,
 }
 
 pub fn ui_action(action: &str) -> Option<UiAction> {
@@ -41,6 +46,11 @@ pub fn ui_action(action: &str) -> Option<UiAction> {
         "FindPrevious" => UiAction::FindPrevious,
         "FindInPath" => UiAction::FindInPath,
         "SaveAll" => UiAction::SaveAll,
+        "NewProject" => UiAction::NewProject,
+        "OpenFile" => UiAction::OpenProject,
+        "NewFile" => UiAction::NewFile,
+        "NewDir" => UiAction::NewDirectory,
+        "Exit" => UiAction::Exit,
         _ => return None,
     })
 }
@@ -157,6 +167,7 @@ impl IdeApp {
         match action {
             UiAction::GotoLine | UiAction::Find | UiAction::Replace => document,
             UiAction::FindNext | UiAction::FindPrevious => document && !self.find.query.is_empty(),
+            UiAction::NewFile | UiAction::NewDirectory => self.state.project.is_some(),
             _ => true,
         }
     }
@@ -190,6 +201,31 @@ impl IdeApp {
                 self.search_focus_requested(ctx);
             }
             UiAction::SaveAll => self.autosave(),
+            UiAction::NewProject => self.new_project_dialog(),
+            UiAction::OpenProject => self.open_project_dialog(),
+            UiAction::NewFile | UiAction::NewDirectory => {
+                if let Some(root) = self.state.project.as_ref().map(|p| p.root().to_owned()) {
+                    // New entries go next to the selection, like the Project view's New.
+                    let parent = self
+                        .tree_selection
+                        .as_ref()
+                        .map(|path| {
+                            let absolute = root.join(path);
+                            if absolute.is_dir() {
+                                path.clone()
+                            } else {
+                                path.parent().map(Into::into).unwrap_or_default()
+                            }
+                        })
+                        .unwrap_or_default();
+                    self.open_dialog(popups::Dialog::NewEntry {
+                        parent,
+                        directory: action == UiAction::NewDirectory,
+                        name: String::new(),
+                    });
+                }
+            }
+            UiAction::Exit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
         }
     }
 
@@ -215,7 +251,9 @@ impl IdeApp {
             let Some(binding) = command_for_action(action) else {
                 continue;
             };
-            if binding.scope == BindingScope::Editor && !editor_focused {
+            if binding.scope == BindingScope::Menu
+                || (binding.scope == BindingScope::Editor && !editor_focused)
+            {
                 continue;
             }
             let params = serde_json::from_str(binding.params).unwrap_or(Value::Null);
@@ -230,6 +268,25 @@ impl IdeApp {
             return true;
         }
         false
+    }
+
+    /// Whether a menu item for `action` is enabled.
+    pub(crate) fn menu_action_enabled(&self, action: &str) -> bool {
+        if let Some(ui) = ui_action(action) {
+            return self.ui_action_available(ui);
+        }
+        command_for_action(action)
+            .is_some_and(|binding| self.commands.is_enabled(binding.command, &self.state))
+    }
+
+    /// Runs `action` from a menu (any scope).
+    pub(crate) fn run_menu_action(&mut self, action: &str, ctx: &egui::Context) {
+        if let Some(ui) = ui_action(action) {
+            self.run_ui_action(ui, ctx);
+        } else if let Some(binding) = command_for_action(action) {
+            let params = serde_json::from_str(binding.params).unwrap_or(Value::Null);
+            self.dispatch(binding.command, params);
+        }
     }
 
     /// Resolves this frame's key presses against the active keymap. Handled presses

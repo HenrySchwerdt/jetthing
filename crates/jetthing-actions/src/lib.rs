@@ -170,8 +170,114 @@ impl Catalog {
     }
 
     pub fn children(&self, group: &str) -> &[Child] {
+        let group = RUNTIME_GROUPS
+            .iter()
+            .find(|(id, _)| *id == group)
+            .map_or(group, |(_, source)| source);
         self.groups.get(group).map(Vec::as_slice).unwrap_or(&[])
     }
+
+    /// Menu structure of `group` as the reference IDE renders it: popup groups become
+    /// submenus, other groups are inlined, internal entries are hidden, and separators
+    /// are collapsed (no leading, trailing or repeated separators, no empty submenus).
+    pub fn menu(&self, group: &str) -> Vec<MenuItem> {
+        let mut stack = vec![group.to_owned()];
+        self.expand(group, &mut stack)
+    }
+
+    fn expand(&self, group: &str, stack: &mut Vec<String>) -> Vec<MenuItem> {
+        let mut items = Vec::new();
+        for child in self.children(group) {
+            match child {
+                Child::Separator { text, .. } => items.push(MenuItem::Separator(text.clone())),
+                Child::Ref { r#ref } => {
+                    // Guard against cycles in the group graph.
+                    if stack.contains(r#ref) || stack.len() > 12 {
+                        continue;
+                    }
+                    let action = self.actions.get(r#ref);
+                    if action.is_some_and(|a| a.internal)
+                        || INTERNAL_GROUPS.contains(&r#ref.as_str())
+                    {
+                        continue;
+                    }
+                    let is_group = action.map(|a| a.kind == Kind::Group).unwrap_or(false)
+                        || self.groups.contains_key(r#ref);
+                    if is_group {
+                        stack.push(r#ref.clone());
+                        let children = self.expand(r#ref, stack);
+                        stack.pop();
+                        if action.and_then(|a| a.popup).unwrap_or(false) {
+                            if children
+                                .iter()
+                                .any(|item| !matches!(item, MenuItem::Separator(_)))
+                            {
+                                items.push(MenuItem::Submenu {
+                                    id: r#ref.clone(),
+                                    label: self.label(r#ref),
+                                    items: children,
+                                });
+                            }
+                        } else {
+                            items.extend(children);
+                        }
+                    } else {
+                        items.push(MenuItem::Action {
+                            id: r#ref.clone(),
+                            label: self.label(r#ref),
+                        });
+                    }
+                }
+            }
+        }
+        collapse_separators(items)
+    }
+}
+
+/// Groups whose children the reference IDE fills at runtime from another group.
+const RUNTIME_GROUPS: [(&str, &str); 1] = [("NewElementInMenuGroup", "NewGroup")];
+
+/// Groups only visible in the reference IDE's internal mode.
+const INTERNAL_GROUPS: [&str; 5] = [
+    "Internal",
+    "InternalActions",
+    "Internal.UI",
+    "Internal.Errors",
+    "UiDebugger",
+];
+
+/// One entry of a rendered menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuItem {
+    Action {
+        id: String,
+        label: String,
+    },
+    Submenu {
+        id: String,
+        label: String,
+        items: Vec<MenuItem>,
+    },
+    /// A separator, optionally titled.
+    Separator(Option<String>),
+}
+
+fn collapse_separators(items: Vec<MenuItem>) -> Vec<MenuItem> {
+    let mut out: Vec<MenuItem> = Vec::with_capacity(items.len());
+    for item in items {
+        if matches!(item, MenuItem::Separator(_))
+            && out
+                .last()
+                .is_none_or(|last| matches!(last, MenuItem::Separator(_)))
+        {
+            continue;
+        }
+        out.push(item);
+    }
+    while matches!(out.last(), Some(MenuItem::Separator(_))) {
+        out.pop();
+    }
+    out
 }
 
 #[cfg(test)]
@@ -200,6 +306,58 @@ mod tests {
             .collect();
         assert_eq!(main.first(), Some(&"FileMenu"));
         assert!(main.contains(&"CodeMenu"));
+    }
+
+    #[test]
+    fn main_menu_follows_the_spec() {
+        let catalog = Catalog::bundled().unwrap();
+        let menu = catalog.menu("MainMenu");
+        let titles: Vec<&str> = menu
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Submenu { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "File", "Edit", "View", "Navigate", "Code", "Refactor", "Build", "Run", "Tools",
+                "Git", "Window", "Help"
+            ]
+        );
+        let MenuItem::Submenu { items: file, .. } = &menu[0] else {
+            panic!("File is a submenu");
+        };
+        // Inlined FileOpenGroup entries and a popup submenu.
+        assert!(
+            file.iter()
+                .any(|i| matches!(i, MenuItem::Action { id, .. } if id == "OpenFile"))
+        );
+        assert!(file.iter().any(|i| matches!(i, MenuItem::Action { id, label } if id == "ShowSettings" && label == "Settings…")));
+        assert!(
+            file.iter().any(
+                |i| matches!(i, MenuItem::Submenu { id, .. } if id == "NewElementInMenuGroup")
+            )
+        );
+        // Separators are never doubled, leading or trailing.
+        fn check(items: &[MenuItem]) {
+            assert!(!matches!(items.first(), Some(MenuItem::Separator(_))));
+            assert!(!matches!(items.last(), Some(MenuItem::Separator(_))));
+            for pair in items.windows(2) {
+                assert!(
+                    !(matches!(pair[0], MenuItem::Separator(_))
+                        && matches!(pair[1], MenuItem::Separator(_)))
+                );
+            }
+            for item in items {
+                if let MenuItem::Submenu { items, .. } = item {
+                    assert!(!items.is_empty());
+                    check(items);
+                }
+            }
+        }
+        check(&menu);
     }
 
     #[test]
