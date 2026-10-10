@@ -1654,6 +1654,7 @@ dependencies = [
  "jetthing-language",
  "jetthing-lsp",
  "jetthing-runner",
+ "jetthing-text",
  "serde_json",
 ]
 

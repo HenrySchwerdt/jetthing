@@ -1,10 +1,11 @@
 use eframe::egui::{self, Color32, RichText};
 use jetthing_command::CommandRegistry;
-use jetthing_core::{IdeState, built_in_commands};
+use jetthing_core::{Document, IdeState, built_in_commands};
 use jetthing_git::ChangeKind;
 use jetthing_language::{LanguageAnalysis, SyntaxKind};
 use jetthing_lsp::ServerState;
 use jetthing_runner::{OutputStream, TaskState};
+use jetthing_text::Selection;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -46,28 +47,34 @@ impl IdeApp {
             .to_owned()
     }
 
-    fn highlighted_job(
+    fn highlighted_line_job(
         text: &str,
+        line_start_byte: usize,
         analysis: &LanguageAnalysis,
-        wrap_width: f32,
     ) -> egui::text::LayoutJob {
         let mut job = egui::text::LayoutJob::default();
-        job.wrap.max_width = wrap_width;
         let base = egui::TextFormat {
             font_id: egui::FontId::monospace(14.0),
             color: Color32::from_rgb(205, 210, 220),
             ..Default::default()
         };
-        let mut cursor = 0;
-        for span in &analysis.spans {
-            if span.start_byte < cursor
-                || span.end_byte > text.len()
-                || !text.is_char_boundary(span.start_byte)
-                || !text.is_char_boundary(span.end_byte)
-            {
+        let line_end_byte = line_start_byte + text.len();
+        let mut cursor = line_start_byte;
+        for span in analysis
+            .spans
+            .iter()
+            .filter(|span| span.start_byte < line_end_byte && span.end_byte > line_start_byte)
+        {
+            let start = span.start_byte.max(line_start_byte);
+            let end = span.end_byte.min(line_end_byte);
+            if start < cursor || end < start {
                 continue;
             }
-            job.append(&text[cursor..span.start_byte], 0.0, base.clone());
+            job.append(
+                &text[cursor - line_start_byte..start - line_start_byte],
+                0.0,
+                base.clone(),
+            );
             let color = match span.kind {
                 SyntaxKind::Keyword => Color32::from_rgb(207, 142, 255),
                 SyntaxKind::String => Color32::from_rgb(167, 212, 142),
@@ -78,17 +85,233 @@ impl IdeApp {
                 SyntaxKind::Macro => Color32::from_rgb(255, 198, 109),
             };
             job.append(
-                &text[span.start_byte..span.end_byte],
+                &text[start - line_start_byte..end - line_start_byte],
                 0.0,
                 egui::TextFormat {
                     color,
                     ..base.clone()
                 },
             );
-            cursor = span.end_byte;
+            cursor = end;
         }
-        job.append(&text[cursor..], 0.0, base);
+        job.append(&text[cursor - line_start_byte..], 0.0, base);
         job
+    }
+
+    fn editor_surface(ui: &mut egui::Ui, document: &mut Document) -> Result<bool, String> {
+        let row_height = 20.0;
+        let gutter_width = 52.0;
+        let char_width =
+            ui.fonts_mut(|fonts| fonts.glyph_width(&egui::FontId::monospace(14.0), 'm'));
+        let line_count = document.text.len_lines();
+        let output = egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .show_viewport(ui, |ui, viewport| {
+                let content_size = egui::vec2(
+                    ui.available_width().max(1600.0),
+                    line_count as f32 * row_height,
+                );
+                let (rect, response) =
+                    ui.allocate_exact_size(content_size, egui::Sense::click_and_drag());
+                if response.clicked() || response.drag_started() {
+                    response.request_focus();
+                }
+                let position_to_offset = |position: egui::Pos2| {
+                    let line = (((position.y - rect.top()) / row_height).floor().max(0.0) as usize)
+                        .min(line_count.saturating_sub(1));
+                    let line_text = document.text.line(line).unwrap_or_default();
+                    let content = line_text.trim_end_matches(['\r', '\n']);
+                    let column = (((position.x - rect.left() - gutter_width) / char_width)
+                        .round()
+                        .max(0.0) as usize)
+                        .min(content.chars().count());
+                    document.text.line_to_char(line).unwrap_or(0) + column
+                };
+                if response.clicked()
+                    && let Some(position) = response.interact_pointer_pos()
+                {
+                    let offset = position_to_offset(position);
+                    let modifiers = ui.input(|input| input.modifiers);
+                    if modifiers.alt {
+                        document.selections.add(Selection::caret(offset));
+                    } else if modifiers.shift {
+                        let anchor = document.selections.primary().anchor;
+                        document.selections.set_single(Selection {
+                            anchor,
+                            head: offset,
+                        });
+                    } else {
+                        document.selections.set_single(Selection::caret(offset));
+                    }
+                }
+                if response.drag_started()
+                    && let Some(position) = response.interact_pointer_pos()
+                {
+                    document
+                        .selections
+                        .set_single(Selection::caret(position_to_offset(position)));
+                }
+                if response.dragged()
+                    && let Some(position) = response.interact_pointer_pos()
+                {
+                    let offset = position_to_offset(position);
+                    let anchor = document.selections.primary().anchor;
+                    document.selections.set_single(Selection {
+                        anchor,
+                        head: offset,
+                    });
+                }
+
+                let first_line =
+                    ((viewport.top() / row_height).floor().max(0.0) as usize).min(line_count);
+                let last_line =
+                    ((viewport.bottom() / row_height).ceil() as usize + 1).min(line_count);
+                for line in first_line..last_line {
+                    let y = rect.top() + line as f32 * row_height;
+                    let line_start = document.text.line_to_char(line).unwrap_or(0);
+                    let line_text = document.text.line(line).unwrap_or_default();
+                    let content = line_text.trim_end_matches(['\r', '\n']);
+                    let line_end = line_start + content.chars().count();
+                    ui.painter().text(
+                        egui::pos2(rect.left() + 6.0, y + 2.0),
+                        egui::Align2::LEFT_TOP,
+                        format!("{}", line + 1),
+                        egui::FontId::monospace(13.0),
+                        Color32::from_rgb(95, 101, 115),
+                    );
+                    for selection in document.selections.selections() {
+                        let start = selection.start().max(line_start).min(line_end);
+                        let end = selection.end().max(line_start).min(line_end);
+                        if start < end {
+                            let x1 = rect.left()
+                                + gutter_width
+                                + (start - line_start) as f32 * char_width;
+                            let x2 =
+                                rect.left() + gutter_width + (end - line_start) as f32 * char_width;
+                            ui.painter().rect_filled(
+                                egui::Rect::from_min_max(
+                                    egui::pos2(x1, y),
+                                    egui::pos2(x2, y + row_height),
+                                ),
+                                0.0,
+                                Color32::from_rgba_unmultiplied(65, 105, 160, 120),
+                            );
+                        }
+                    }
+                    let line_start_byte = document.text.line_to_byte(line).unwrap_or(0);
+                    let job =
+                        Self::highlighted_line_job(content, line_start_byte, &document.analysis);
+                    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                    ui.painter().galley(
+                        egui::pos2(rect.left() + gutter_width, y + 2.0),
+                        galley,
+                        Color32::WHITE,
+                    );
+                    if response.has_focus() {
+                        for selection in document.selections.selections() {
+                            if selection.head >= line_start && selection.head <= line_end {
+                                let x = rect.left()
+                                    + gutter_width
+                                    + (selection.head - line_start) as f32 * char_width;
+                                ui.painter().line_segment(
+                                    [egui::pos2(x, y + 1.0), egui::pos2(x, y + row_height - 1.0)],
+                                    egui::Stroke::new(1.5_f32, Color32::from_rgb(220, 225, 235)),
+                                );
+                            }
+                        }
+                    }
+                }
+                response
+            });
+
+        let response = output.inner;
+        if !response.has_focus() {
+            return Ok(false);
+        }
+        let events = ui.input(|input| input.events.clone());
+        let initial_revision = document.text.revision();
+        for event in events {
+            match event {
+                egui::Event::Text(text) if !text.is_empty() => {
+                    document
+                        .selections
+                        .insert(&mut document.text, &text)
+                        .map_err(|error| error.to_string())?;
+                }
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    pressed: true,
+                    ..
+                } => {
+                    document
+                        .selections
+                        .insert(&mut document.text, "\n")
+                        .map_err(|error| error.to_string())?;
+                }
+                egui::Event::Key {
+                    key: egui::Key::Tab,
+                    pressed: true,
+                    ..
+                } => {
+                    document
+                        .selections
+                        .insert(&mut document.text, "    ")
+                        .map_err(|error| error.to_string())?;
+                }
+                egui::Event::Key {
+                    key: egui::Key::Backspace,
+                    pressed: true,
+                    ..
+                } => {
+                    document
+                        .selections
+                        .backspace(&mut document.text)
+                        .map_err(|error| error.to_string())?;
+                }
+                egui::Event::Key {
+                    key: egui::Key::Delete,
+                    pressed: true,
+                    ..
+                } => {
+                    document
+                        .selections
+                        .delete_forward(&mut document.text)
+                        .map_err(|error| error.to_string())?;
+                }
+                egui::Event::Key {
+                    key: egui::Key::A,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.command => {
+                    document.selections.set_single(Selection {
+                        anchor: 0,
+                        head: document.text.len_chars(),
+                    });
+                }
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight) => {
+                    let current = document.selections.primary();
+                    let head = match key {
+                        egui::Key::ArrowLeft => current.head.saturating_sub(1),
+                        egui::Key::ArrowRight => (current.head + 1).min(document.text.len_chars()),
+                        _ => current.head,
+                    };
+                    let anchor = if modifiers.shift {
+                        current.anchor
+                    } else {
+                        head
+                    };
+                    document.selections.set_single(Selection { anchor, head });
+                }
+                _ => {}
+            }
+        }
+        Ok(document.text.revision() != initial_revision)
     }
 }
 
@@ -512,7 +735,6 @@ impl eframe::App for IdeApp {
                         .clicked()
                     {
                         self.state.active_document = Some(index);
-                        self.state.caret_char = 0;
                         if let Some(lsp) = self.state.lsp.as_mut() {
                             lsp.clear_completions();
                         }
@@ -522,36 +744,9 @@ impl eframe::App for IdeApp {
             ui.separator();
             if let Some(index) = self.state.active_document {
                 let doc = &mut self.state.documents[index];
-                let mut snapshot = doc.text.text();
-                let analysis = doc.analysis.clone();
-                let mut layouter =
-                    |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
-                        ui.fonts_mut(|fonts| {
-                            fonts.layout_job(Self::highlighted_job(
-                                buffer.as_str(),
-                                &analysis,
-                                wrap_width,
-                            ))
-                        })
-                    };
-                let output = egui::ScrollArea::both()
-                    .show(ui, |ui| {
-                        egui::TextEdit::multiline(&mut snapshot)
-                            .font(egui::TextStyle::Monospace)
-                            .layouter(&mut layouter)
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(40)
-                            .lock_focus(true)
-                            .show(ui)
-                    })
-                    .inner;
-                if let Some(cursor_range) = output.cursor_range {
-                    self.state.caret_char = cursor_range.primary.index;
-                }
-                if output.response.changed() {
-                    if let Err(error) = doc.text.replace_from_snapshot(&snapshot) {
-                        self.state.status = error.to_string();
-                    } else {
+                match Self::editor_surface(ui, doc) {
+                    Ok(true) => {
+                        let snapshot = doc.text.text();
                         doc.analysis = jetthing_language::analyze(&doc.path, &snapshot);
                         changed_document = Some((
                             doc.path.clone(),
@@ -559,6 +754,8 @@ impl eframe::App for IdeApp {
                             doc.text.revision().min(i32::MAX as u64) as i32,
                         ));
                     }
+                    Ok(false) => {}
+                    Err(error) => self.state.status = error,
                 }
             } else {
                 ui.centered_and_justified(|ui| {
@@ -593,7 +790,7 @@ impl eframe::App for IdeApp {
                                 .unwrap_or_else(|| item.label.clone());
                             self.dispatch(
                                 "editor.insertText",
-                                json!({"position": self.state.caret_char, "text": text}),
+                                json!({"position": self.state.active_caret().unwrap_or(0), "text": text}),
                             );
                         }
                     }

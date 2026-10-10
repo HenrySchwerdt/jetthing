@@ -7,7 +7,7 @@ use jetthing_project::{FileEntry, Project};
 use jetthing_runner::{TaskPlan, TaskService, TaskState};
 use jetthing_search::{SearchEvent, SearchService, TextMatch};
 use jetthing_terminal::TerminalSession;
-use jetthing_text::TextDocument;
+use jetthing_text::{Selection, SelectionSet, TextDocument};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -16,6 +16,7 @@ pub struct Document {
     pub path: PathBuf,
     pub text: TextDocument,
     pub analysis: LanguageAnalysis,
+    pub selections: SelectionSet,
 }
 
 #[derive(Default)]
@@ -40,7 +41,6 @@ pub struct IdeState {
     pub lsp: Option<LspService>,
     pub lsp_error: Option<String>,
     pub problems_visible: bool,
-    pub caret_char: usize,
     pub status: String,
 }
 
@@ -50,7 +50,6 @@ impl IdeState {
         self.files = project.entries(20_000);
         self.documents.clear();
         self.active_document = None;
-        self.caret_char = 0;
         self.search.cancel();
         self.search_results.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
@@ -69,7 +68,6 @@ impl IdeState {
     pub fn open_file(&mut self, path: &Path) -> Result<(), String> {
         if let Some(index) = self.documents.iter().position(|d| d.path == path) {
             self.active_document = Some(index);
-            self.caret_char = 0;
             return Ok(());
         }
         let project = self.project.as_ref().ok_or("no project is open")?;
@@ -78,9 +76,9 @@ impl IdeState {
             path: path.to_owned(),
             text: TextDocument::new(&text),
             analysis: analyze(path, &text),
+            selections: SelectionSet::default(),
         });
         self.active_document = Some(self.documents.len() - 1);
-        self.caret_char = 0;
         if let Some(lsp) = &mut self.lsp {
             let absolute = project.root().join(path);
             if let Err(error) = lsp.open_document(&absolute, &text, 0) {
@@ -105,15 +103,31 @@ impl IdeState {
     }
 
     pub fn undo_active(&mut self) -> bool {
-        self.active_document
+        let Some(document) = self
+            .active_document
             .and_then(|index| self.documents.get_mut(index))
-            .is_some_and(|document| document.text.undo())
+        else {
+            return false;
+        };
+        if !document.text.undo() {
+            return false;
+        }
+        document.selections.clamp(document.text.len_chars());
+        true
     }
 
     pub fn redo_active(&mut self) -> bool {
-        self.active_document
+        let Some(document) = self
+            .active_document
             .and_then(|index| self.documents.get_mut(index))
-            .is_some_and(|document| document.text.redo())
+        else {
+            return false;
+        };
+        if !document.text.redo() {
+            return false;
+        }
+        document.selections.clamp(document.text.len_chars());
+        true
     }
 
     pub fn refresh_active_analysis(&mut self) {
@@ -278,6 +292,12 @@ impl IdeState {
         self.sync_document_lsp(&path, &text, version);
     }
 
+    pub fn active_caret(&self) -> Option<usize> {
+        self.active_document
+            .and_then(|index| self.documents.get(index))
+            .map(|document| document.selections.primary().head)
+    }
+
     pub fn request_active_completion(&mut self) -> Result<u64, String> {
         let index = self.active_document.ok_or("no active document")?;
         let document = self
@@ -286,7 +306,7 @@ impl IdeState {
             .ok_or("active document does not exist")?;
         let (line, character) = document
             .text
-            .lsp_position(self.caret_char)
+            .lsp_position(document.selections.primary().head)
             .map_err(|e| e.to_string())?;
         let absolute = self
             .project
@@ -312,7 +332,9 @@ impl IdeState {
             .edit(position, position, text)
             .map_err(|e| e.to_string())?;
         document.analysis = analyze(&document.path, &document.text.text());
-        self.caret_char = position + text.chars().count();
+        document
+            .selections
+            .set_single(Selection::caret(position + text.chars().count()));
         self.sync_active_lsp();
         if let Some(lsp) = &mut self.lsp {
             lsp.clear_completions();
@@ -848,7 +870,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.documents[0].text.text(), "fn async main() {}\n");
-        assert_eq!(state.caret_char, 9);
+        assert_eq!(state.documents[0].selections.primary().head, 9);
         assert!(state.documents[0].text.can_undo());
         std::fs::remove_dir_all(root).unwrap();
     }

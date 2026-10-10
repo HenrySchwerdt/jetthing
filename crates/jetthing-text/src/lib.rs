@@ -2,12 +2,171 @@ use ropey::Rope;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Edit {
-    start_char: usize,
+struct AtomicEdit {
+    original_start: usize,
+    applied_start: usize,
     deleted: String,
     inserted: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Transaction {
+    edits: Vec<AtomicEdit>,
     before_state: u64,
     after_state: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextChange {
+    pub start_char: usize,
+    pub end_char: usize,
+    pub inserted: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Selection {
+    pub anchor: usize,
+    pub head: usize,
+}
+
+impl Selection {
+    pub fn caret(position: usize) -> Self {
+        Self {
+            anchor: position,
+            head: position,
+        }
+    }
+
+    pub fn start(self) -> usize {
+        self.anchor.min(self.head)
+    }
+
+    pub fn end(self) -> usize {
+        self.anchor.max(self.head)
+    }
+
+    pub fn is_caret(self) -> bool {
+        self.anchor == self.head
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionSet {
+    selections: Vec<Selection>,
+}
+
+impl Default for SelectionSet {
+    fn default() -> Self {
+        Self::single(0)
+    }
+}
+
+impl SelectionSet {
+    pub fn single(position: usize) -> Self {
+        Self {
+            selections: vec![Selection::caret(position)],
+        }
+    }
+
+    pub fn selections(&self) -> &[Selection] {
+        &self.selections
+    }
+
+    pub fn primary(&self) -> Selection {
+        self.selections[0]
+    }
+
+    pub fn set_single(&mut self, selection: Selection) {
+        self.selections.clear();
+        self.selections.push(selection);
+    }
+
+    pub fn add(&mut self, selection: Selection) {
+        self.selections.push(selection);
+        self.normalize();
+    }
+
+    pub fn clamp(&mut self, len: usize) {
+        for selection in &mut self.selections {
+            selection.anchor = selection.anchor.min(len);
+            selection.head = selection.head.min(len);
+        }
+        self.normalize();
+    }
+
+    pub fn insert(&mut self, document: &mut TextDocument, text: &str) -> Result<(), TextError> {
+        self.normalize();
+        let inserted_len = text.chars().count();
+        if self.selections.len() == 1 && self.selections[0].is_caret() && !text.is_empty() {
+            let position = self.selections[0].head;
+            document.type_text(position, text)?;
+            self.selections[0] = Selection::caret(position + inserted_len);
+            return Ok(());
+        }
+        let mut shift: isize = 0;
+        let mut next = Vec::with_capacity(self.selections.len());
+        let changes: Vec<_> = self
+            .selections
+            .iter()
+            .map(|selection| {
+                let start = selection.start();
+                let end = selection.end();
+                let applied_start = start.saturating_add_signed(shift);
+                shift += inserted_len as isize - (end - start) as isize;
+                next.push(Selection::caret(applied_start + inserted_len));
+                TextChange {
+                    start_char: start,
+                    end_char: end,
+                    inserted: text.to_owned(),
+                }
+            })
+            .collect();
+        document.edit_many(changes)?;
+        self.selections = next;
+        Ok(())
+    }
+
+    pub fn backspace(&mut self, document: &mut TextDocument) -> Result<(), TextError> {
+        for selection in &mut self.selections {
+            if selection.is_caret() && selection.head > 0 {
+                selection.anchor = selection.head - 1;
+            }
+        }
+        self.insert(document, "")
+    }
+
+    pub fn delete_forward(&mut self, document: &mut TextDocument) -> Result<(), TextError> {
+        let len = document.len_chars();
+        for selection in &mut self.selections {
+            if selection.is_caret() && selection.head < len {
+                selection.head += 1;
+            }
+        }
+        self.insert(document, "")
+    }
+
+    fn normalize(&mut self) {
+        self.selections
+            .sort_by_key(|selection| (selection.start(), selection.end()));
+        let mut normalized: Vec<Selection> = Vec::with_capacity(self.selections.len());
+        for selection in self.selections.drain(..) {
+            if let Some(previous) = normalized.last_mut() {
+                let duplicate_caret =
+                    previous.is_caret() && selection.is_caret() && previous.head == selection.head;
+                if selection.start() < previous.end() || duplicate_caret {
+                    let start = previous.start().min(selection.start());
+                    let end = previous.end().max(selection.end());
+                    *previous = Selection {
+                        anchor: start,
+                        head: end,
+                    };
+                    continue;
+                }
+            }
+            normalized.push(selection);
+        }
+        self.selections = normalized;
+    }
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -18,6 +177,8 @@ pub enum TextError {
         end: usize,
         len: usize,
     },
+    #[error("text changes overlap or are not ordered")]
+    OverlappingChanges,
 }
 
 /// Revisioned UTF-8 text storage. All public offsets are Unicode scalar-value
@@ -29,8 +190,8 @@ pub struct TextDocument {
     current_state: u64,
     saved_state: u64,
     next_state: u64,
-    undo: Vec<Edit>,
-    redo: Vec<Edit>,
+    undo: Vec<Transaction>,
+    redo: Vec<Transaction>,
 }
 
 impl TextDocument {
@@ -48,6 +209,28 @@ impl TextDocument {
 
     pub fn len_chars(&self) -> usize {
         self.rope.len_chars()
+    }
+
+    pub fn len_lines(&self) -> usize {
+        self.rope.len_lines()
+    }
+
+    pub fn line(&self, line: usize) -> Option<String> {
+        (line < self.len_lines()).then(|| self.rope.line(line).to_string())
+    }
+
+    pub fn line_to_char(&self, line: usize) -> Option<usize> {
+        (line < self.len_lines()).then(|| self.rope.line_to_char(line))
+    }
+
+    pub fn line_to_byte(&self, line: usize) -> Option<usize> {
+        (line < self.len_lines()).then(|| self.rope.line_to_byte(line))
+    }
+
+    pub fn char_to_line_column(&self, char_index: usize) -> Result<(usize, usize), TextError> {
+        self.validate_range(char_index, char_index)?;
+        let line = self.rope.char_to_line(char_index);
+        Ok((line, char_index - self.rope.line_to_char(line)))
     }
 
     pub fn revision(&self) -> u64 {
@@ -95,25 +278,96 @@ impl TextDocument {
         end_char: usize,
         inserted: &str,
     ) -> Result<(), TextError> {
-        self.validate_range(start_char, end_char)?;
-        let deleted = self.rope.slice(start_char..end_char).to_string();
-        if deleted == inserted {
+        self.edit_many([TextChange {
+            start_char,
+            end_char,
+            inserted: inserted.to_owned(),
+        }])
+    }
+
+    /// Applies non-overlapping edits against one document snapshot as one undo step.
+    /// Input order is irrelevant; offsets always refer to the pre-transaction text.
+    pub fn edit_many(
+        &mut self,
+        changes: impl IntoIterator<Item = TextChange>,
+    ) -> Result<(), TextError> {
+        let mut changes: Vec<_> = changes.into_iter().collect();
+        changes.sort_by_key(|change| (change.start_char, change.end_char));
+        for change in &changes {
+            self.validate_range(change.start_char, change.end_char)?;
+        }
+        if changes
+            .windows(2)
+            .any(|pair| pair[0].end_char > pair[1].start_char)
+        {
+            return Err(TextError::OverlappingChanges);
+        }
+
+        let mut shift: isize = 0;
+        let mut edits = Vec::new();
+        for change in changes {
+            let deleted = self
+                .rope
+                .slice(change.start_char..change.end_char)
+                .to_string();
+            if deleted == change.inserted {
+                continue;
+            }
+            let applied_start = change.start_char.saturating_add_signed(shift);
+            shift += change.inserted.chars().count() as isize
+                - (change.end_char - change.start_char) as isize;
+            edits.push(AtomicEdit {
+                original_start: change.start_char,
+                applied_start,
+                deleted,
+                inserted: change.inserted,
+            });
+        }
+        if edits.is_empty() {
             return Ok(());
         }
-        let before_state = self.current_state;
-        let after_state = self.next_state;
-        self.next_state = self.next_state.saturating_add(1);
-        self.apply(start_char, end_char, inserted);
-        self.undo.push(Edit {
-            start_char,
-            deleted,
-            inserted: inserted.to_owned(),
-            before_state,
-            after_state,
-        });
-        self.redo.clear();
-        self.revision = self.revision.saturating_add(1);
-        self.current_state = after_state;
+        for edit in edits.iter().rev() {
+            self.apply(
+                edit.original_start,
+                edit.original_start + edit.deleted.chars().count(),
+                &edit.inserted,
+            );
+        }
+        self.record_transaction(edits);
+        Ok(())
+    }
+
+    /// Inserts adjacent typing into the previous insertion transaction when safe.
+    pub fn type_text(&mut self, position: usize, text: &str) -> Result<(), TextError> {
+        self.validate_range(position, position)?;
+        if text.is_empty() {
+            return Ok(());
+        }
+        let can_coalesce = self.current_state != self.saved_state
+            && self.redo.is_empty()
+            && self.undo.last().is_some_and(|transaction| {
+                transaction.edits.len() == 1
+                    && transaction.edits[0].deleted.is_empty()
+                    && transaction.edits[0].applied_start
+                        + transaction.edits[0].inserted.chars().count()
+                        == position
+            });
+        self.apply(position, position, text);
+        if can_coalesce {
+            let after_state = self.allocate_state();
+            let transaction = self.undo.last_mut().expect("coalescing requires history");
+            transaction.edits[0].inserted.push_str(text);
+            transaction.after_state = after_state;
+            self.current_state = after_state;
+            self.revision = self.revision.saturating_add(1);
+        } else {
+            self.record_transaction(vec![AtomicEdit {
+                original_start: position,
+                applied_start: position,
+                deleted: String::new(),
+                inserted: text.to_owned(),
+            }]);
+        }
         Ok(())
     }
 
@@ -144,33 +398,35 @@ impl TextDocument {
     }
 
     pub fn undo(&mut self) -> bool {
-        let Some(edit) = self.undo.pop() else {
+        let Some(transaction) = self.undo.pop() else {
             return false;
         };
-        let inserted_len = edit.inserted.chars().count();
-        self.apply(
-            edit.start_char,
-            edit.start_char + inserted_len,
-            &edit.deleted,
-        );
-        self.current_state = edit.before_state;
-        self.redo.push(edit);
+        for edit in transaction.edits.iter().rev() {
+            self.apply(
+                edit.applied_start,
+                edit.applied_start + edit.inserted.chars().count(),
+                &edit.deleted,
+            );
+        }
+        self.current_state = transaction.before_state;
+        self.redo.push(transaction);
         self.revision = self.revision.saturating_add(1);
         true
     }
 
     pub fn redo(&mut self) -> bool {
-        let Some(edit) = self.redo.pop() else {
+        let Some(transaction) = self.redo.pop() else {
             return false;
         };
-        let deleted_len = edit.deleted.chars().count();
-        self.apply(
-            edit.start_char,
-            edit.start_char + deleted_len,
-            &edit.inserted,
-        );
-        self.current_state = edit.after_state;
-        self.undo.push(edit);
+        for edit in transaction.edits.iter().rev() {
+            self.apply(
+                edit.original_start,
+                edit.original_start + edit.deleted.chars().count(),
+                &edit.inserted,
+            );
+        }
+        self.current_state = transaction.after_state;
+        self.undo.push(transaction);
         self.revision = self.revision.saturating_add(1);
         true
     }
@@ -190,6 +446,25 @@ impl TextDocument {
         if !inserted.is_empty() {
             self.rope.insert(start, inserted);
         }
+    }
+
+    fn allocate_state(&mut self) -> u64 {
+        let state = self.next_state;
+        self.next_state = self.next_state.saturating_add(1);
+        state
+    }
+
+    fn record_transaction(&mut self, edits: Vec<AtomicEdit>) {
+        let before_state = self.current_state;
+        let after_state = self.allocate_state();
+        self.undo.push(Transaction {
+            edits,
+            before_state,
+            after_state,
+        });
+        self.redo.clear();
+        self.revision = self.revision.saturating_add(1);
+        self.current_state = after_state;
     }
 }
 
@@ -240,6 +515,110 @@ mod tests {
         assert_eq!(doc.lsp_position(4).unwrap(), (1, 0));
         assert_eq!(doc.lsp_position(6).unwrap(), (1, 3));
         assert!(doc.lsp_position(99).is_err());
+    }
+
+    #[test]
+    fn multi_cursor_edits_are_one_reversible_transaction() {
+        let mut doc = TextDocument::new("alpha beta gamma");
+        doc.edit_many([
+            TextChange {
+                start_char: 0,
+                end_char: 5,
+                inserted: "A".into(),
+            },
+            TextChange {
+                start_char: 11,
+                end_char: 16,
+                inserted: "G".into(),
+            },
+        ])
+        .unwrap();
+        assert_eq!(doc.text(), "A beta G");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "alpha beta gamma");
+        assert!(doc.redo());
+        assert_eq!(doc.text(), "A beta G");
+    }
+
+    #[test]
+    fn overlapping_multi_cursor_edits_are_rejected_without_mutation() {
+        let mut doc = TextDocument::new("abcdef");
+        let error = doc
+            .edit_many([
+                TextChange {
+                    start_char: 1,
+                    end_char: 4,
+                    inserted: "x".into(),
+                },
+                TextChange {
+                    start_char: 3,
+                    end_char: 5,
+                    inserted: "y".into(),
+                },
+            ])
+            .unwrap_err();
+        assert_eq!(error, TextError::OverlappingChanges);
+        assert_eq!(doc.text(), "abcdef");
+        assert!(!doc.can_undo());
+    }
+
+    #[test]
+    fn adjacent_typing_coalesces_until_a_save_boundary() {
+        let mut doc = TextDocument::new("");
+        doc.type_text(0, "a").unwrap();
+        doc.type_text(1, "🦀").unwrap();
+        doc.type_text(2, "c").unwrap();
+        assert_eq!(doc.text(), "a🦀c");
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "");
+
+        doc.type_text(0, "x").unwrap();
+        doc.mark_saved();
+        doc.type_text(1, "y").unwrap();
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "x");
+        assert!(!doc.is_dirty());
+    }
+
+    #[test]
+    fn selection_set_inserts_at_multiple_carets_and_tracks_new_positions() {
+        let mut doc = TextDocument::new("ab cd");
+        let mut selections = SelectionSet::single(0);
+        selections.add(Selection::caret(3));
+        selections.insert(&mut doc, "_").unwrap();
+        assert_eq!(doc.text(), "_ab _cd");
+        assert_eq!(
+            selections.selections(),
+            &[Selection::caret(1), Selection::caret(5)]
+        );
+        assert!(doc.undo());
+        assert_eq!(doc.text(), "ab cd");
+    }
+
+    #[test]
+    fn selection_set_replaces_and_merges_overlapping_ranges() {
+        let mut doc = TextDocument::new("abcdef");
+        let mut selections = SelectionSet::single(4);
+        selections.set_single(Selection { anchor: 4, head: 1 });
+        selections.add(Selection { anchor: 3, head: 5 });
+        selections.insert(&mut doc, "X").unwrap();
+        assert_eq!(doc.text(), "aXf");
+        assert_eq!(selections.primary(), Selection::caret(2));
+    }
+
+    #[test]
+    fn multi_cursor_deletion_and_clamping_are_unicode_safe() {
+        let mut doc = TextDocument::new("a🦀 bc");
+        let mut selections = SelectionSet::single(2);
+        selections.add(Selection::caret(5));
+        selections.backspace(&mut doc).unwrap();
+        assert_eq!(doc.text(), "a b");
+        assert_eq!(
+            selections.selections(),
+            &[Selection::caret(1), Selection::caret(3)]
+        );
+        selections.clamp(1);
+        assert_eq!(selections.selections(), &[Selection::caret(1)]);
     }
 
     proptest! {

@@ -17,7 +17,8 @@
 - [x] Command palette
 - [x] Manifest plugin discovery
 - [x] Revisioned rope-backed text engine with Unicode-safe undo/redo
-- [ ] Multi-cursor editor view and coalesced typing transactions
+- [x] Viewport-native editor that shapes and paints only visible lines
+- [x] Multi-cursor selections, atomic edits, and coalesced primary typing transactions
 - [x] Tree-sitter Rust parsing, syntax highlighting, and parse diagnostics
 - [ ] Incremental Tree-sitter edit notifications and multi-language grammars
 - [x] Integrated native PTY terminal with shell input and command dispatch
@@ -55,6 +56,5 @@ Use installed SDK, ADB, emulator, and Gradle; do not depend on Android Studio.
 
 ## Next task
 
-Build the viewport-native editor surface on the rope engine so only visible lines are
-shaped and painted. Add cursor/selection primitives, typing coalescence, multi-cursor
-transactions, and incremental Tree-sitter edit notifications.
+Add incremental Tree-sitter edit notifications and expand the editor interaction model
+with vertical movement, clipboard operations, find/replace, indentation, and IME input.
