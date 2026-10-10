@@ -7,6 +7,7 @@
 
 pub mod adb;
 pub mod avd;
+pub mod logcat;
 pub mod project;
 mod properties;
 pub mod sdk;
@@ -15,6 +16,7 @@ pub use adb::{
     Adb, AdbError, Device, DeviceProperties, DeviceState, DeviceTracker, TrackEvent, find_adb,
 };
 pub use avd::{Avd, AvdKind, EmulatorProcess, avd_home, find_emulator, list_avds};
+pub use logcat::{FilterContext, LogEntry, LogFilter, LogLevel, LogcatEvent, LogcatSession};
 pub use project::{AndroidModule, AndroidProject, LauncherActivity, ModuleKind, ProjectError};
 pub use sdk::{
     AndroidSdk, PackageCategory, SdkDetection, SdkPackage, SdkProbe, SdkSource, api_release_name,

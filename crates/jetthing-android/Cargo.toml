@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+regex = "1"
 roxmltree = "0.20"
 serde.workspace = true
 thiserror.workspace = true

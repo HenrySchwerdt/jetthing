@@ -13,7 +13,7 @@ The installed application was inspected read-only and is not a runtime dependenc
 | AND-005 | Emulator launch | Partial | `android.avd.list`, `android.emulator.start`, `android.emulator.stop` | AVD ini parsing and fake-emulator early-exit tests, start/stop command tests | AVDs from the AVD home, `emulator -avd` launch with early-exit error reporting, stop via `adb emu kill`; no create/edit/wipe wizard; real boot unverified here (no KVM); `evidence/android-devices.md` |
 | AND-006 | Gradle build | Missing | `build.run` | — | universal runner pending |
 | AND-007 | APK install | Missing | `android.apk.install` | — | M4 |
-| AND-008 | Logcat | Missing | `android.logcat.start` | — | streaming tool window pending |
+| AND-008 | Logcat | Implemented | `android.logcat.start`, `android.logcat.filter`, `android.logcat.clear`, `android.logcat.pause`, `android.logcat.softWrap`, `android.logcat.stop`, `toolwindow.activate.logcat` | threadtime parser, filter-language, fake-adb streaming, pause/clear/capacity command tests | `adb logcat -v threadtime` stream with level colours, `package:mine`/`tag:`/`message:`/`level:` with `=:`, `~:` and `-` forms, match case, pause, clear, soft wrap, scroll to end, 100k-line ring; saved filters, `age:`/`is:` keys and multiple tabs pending; `evidence/android-logcat.md` |
 | AND-009 | Debugging | Missing | `debug.start` | — | DAP/JDWP design pending |
 | AND-010 | Resource navigation | Missing | — | — | semantic platform pending |
 

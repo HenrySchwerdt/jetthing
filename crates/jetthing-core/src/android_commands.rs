@@ -20,6 +20,7 @@ pub struct AndroidState {
     /// Whether the Android SDK settings page is showing.
     pub sdk_manager_open: bool,
     pub devices: crate::android_devices::DeviceHub,
+    pub logcat: crate::android_logcat::LogcatState,
 }
 
 impl AndroidState {

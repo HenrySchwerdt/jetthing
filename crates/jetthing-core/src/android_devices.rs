@@ -220,7 +220,9 @@ impl IdeState {
 
     /// Polls device tracking; called every frame by the UI.
     pub fn poll_android(&mut self) -> bool {
-        self.android.devices.poll()
+        let devices = self.android.devices.poll();
+        let logcat = self.android.logcat.poll();
+        devices || logcat
     }
 }
 

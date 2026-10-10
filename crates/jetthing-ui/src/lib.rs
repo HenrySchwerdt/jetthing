@@ -12,6 +12,7 @@ mod editor;
 mod findbar;
 mod icons;
 mod keys;
+mod logcat_ui;
 mod notifications;
 mod palette;
 mod popups;
@@ -54,6 +55,7 @@ pub struct IdeApp {
     commit_overrides: std::collections::HashMap<PathBuf, bool>,
     window_focused: bool,
     android_sdk: android_sdk::SdkPage,
+    logcat: logcat_ui::LogcatView,
 }
 
 impl IdeApp {
@@ -117,6 +119,7 @@ impl IdeApp {
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
             android_sdk: android_sdk::SdkPage::default(),
+            logcat: logcat_ui::LogcatView::default(),
         }
     }
 

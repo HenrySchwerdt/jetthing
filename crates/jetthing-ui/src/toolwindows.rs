@@ -64,6 +64,7 @@ pub fn bottom(app: &mut IdeApp, ctx: &egui::Context) {
             ToolWindow::Build => build(app, ui),
             ToolWindow::Problems => problems(app, ui),
             ToolWindow::Terminal => terminal(app, ui),
+            ToolWindow::Logcat => crate::logcat_ui::show(app, ui),
             _ => {}
         });
 }
