@@ -56,6 +56,8 @@ pub struct IdeState {
     /// Whether the update balloon is showing.
     pub update_notification: bool,
     update_silent: bool,
+    /// Original install path, retained when the running binary is renamed.
+    update_executable: Option<PathBuf>,
     pub status: String,
 }
 

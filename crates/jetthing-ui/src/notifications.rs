@@ -5,14 +5,24 @@ use eframe::egui::{self, RichText};
 use jetthing_core::{CURRENT_VERSION, UpdateState};
 use serde_json::Value;
 
-/// Restarts the IDE with the same arguments (after an update was installed).
-pub fn restart(ctx: &egui::Context) {
-    if let Ok(exe) = std::env::current_exe() {
-        let args: Vec<_> = std::env::args_os().skip(1).collect();
-        if std::process::Command::new(exe).args(args).spawn().is_ok() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
+/// Save the current session before the replacement process can read it.
+pub fn restart(app: &mut IdeApp, ctx: &egui::Context) -> Result<(), String> {
+    app.commands
+        .execute("app.prepareRestart", &mut app.state, Value::Null)
+        .map_err(|error| error.to_string())?;
+    let exe = app
+        .state
+        .update_restart_target()
+        .ok_or("The updated executable path is unavailable; restart Jetthing manually.")?;
+    let mut command = std::process::Command::new(exe);
+    if let Some(project) = &app.state.project {
+        // Workspace restore reopens the current tabs; stale startup argv may
+        // refer to a project the user has since left.
+        command.arg(project.root());
     }
+    command.spawn().map_err(|error| error.to_string())?;
+    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    Ok(())
 }
 
 pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
@@ -115,9 +125,8 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     if let Some(url) = open_url {
         ctx.open_url(egui::OpenUrl::new_tab(url));
     }
-    if do_restart {
-        app.dispatch("workspace.save", Value::Null);
-        restart(ctx);
+    if do_restart && let Err(error) = restart(app, ctx) {
+        app.state.status = format!("Could not restart Jetthing: {error}");
     }
     if let Some(id) = action {
         app.dispatch(id, Value::Null);
@@ -125,11 +134,5 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
         if id == "app.installUpdate" {
             app.state.update_notification = true;
         }
-    }
-    if matches!(
-        app.state.update_state,
-        UpdateState::Checking | UpdateState::Installing(_)
-    ) {
-        ctx.request_repaint_after(std::time::Duration::from_millis(200));
     }
 }
