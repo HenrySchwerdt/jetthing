@@ -48,3 +48,33 @@ IntelliJ IDEA Ultimate-only feature; the dashboard reports these separately.
 `% implemented` = (weight of Implemented + Verified rows + half the weight of Partial
 rows) / total weight. `% verified` = weight of Verified rows / total weight. Both are
 reported overall, per area, and per edition scope.
+
+## Spec links
+
+Tables may add a `Spec` column (the canonical header now has 9 columns):
+
+```markdown
+| ID | Reference | Feature | Status | Weight | Spec | Commands | Tests | Limitations / evidence |
+|---|---|---|---|---:|---|---|---|---|
+```
+
+A `Spec` cell is `—` (no link) or a comma-separated list of references, each optionally
+in backticks:
+
+- a feature id from `docs/spec/features/*.md`, for example `PLATFORM-EDIT-001`;
+- `action:<id>`, an action id from `docs/spec/data/actions.json`;
+- `toolwindow:<id>`, a tool-window id from `docs/spec/data/toolwindows.json`;
+- `setting:<id>`, a configurable id from `docs/spec/data/settings.json`.
+
+`parity --check` fails on references that do not exist in the spec, and on any spec
+feature id or tool window that no row links. `cargo run -p xtask -- parity --sync-spec`
+appends a `Missing` row for every unlinked reference to `spec-<featurefile>.md`
+(tool windows go to `spec-platform.md` as `SPEC-TW-*` rows), in spec document order,
+with the weight taken from the spec priority: P0 = 5, P1 = 3, P2 = 1. Keep the table
+that `--sync-spec` appends to as the last table in its file. When a catalog row later
+covers a spec feature, link it from that row and delete the generated row.
+
+A spec feature's status is the least complete status among the rows linking it. The
+dashboard's **Spec coverage** section reports the priority-weighted percentage per
+priority and per spec family (Platform, Java, Gradle), plus how many tool windows,
+settings pages and actions are linked.

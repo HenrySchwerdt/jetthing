@@ -1,5 +1,6 @@
 mod parity;
 mod scenes;
+mod spec;
 
 use anyhow::{Context, Result, anyhow, bail};
 use std::{
@@ -8,8 +9,7 @@ use std::{
     process::Command,
 };
 
-const USAGE: &str =
-    "usage: cargo xtask parity [--check] | dist | scenes [--only 01,05] [--out DIR] [--release]";
+const USAGE: &str = "usage: cargo xtask parity [--check | --sync-spec] | dist | scenes [--only 01,05] [--out DIR] [--release]";
 
 fn workspace_root() -> PathBuf {
     // Prefer the current directory when it holds the inventory (normal `cargo run`
@@ -26,14 +26,15 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("parity") => {
-            let mut check = false;
+            let mut mode = parity::Mode::Write;
             for arg in &args[1..] {
                 match arg.as_str() {
-                    "--check" => check = true,
+                    "--check" => mode = parity::Mode::Check,
+                    "--sync-spec" => mode = parity::Mode::SyncSpec,
                     other => bail!("unknown argument `{other}`; {USAGE}"),
                 }
             }
-            parity(check)
+            parity(mode)
         }
         Some("dist") => dist(),
         Some("scenes") => scenes::run(args.into_iter().skip(1)),
@@ -41,8 +42,8 @@ fn main() -> Result<()> {
     }
 }
 
-fn parity(check: bool) -> Result<()> {
-    match parity::run(&workspace_root(), check).map_err(|e| anyhow!("{e}"))? {
+fn parity(mode: parity::Mode) -> Result<()> {
+    match parity::run(&workspace_root(), mode).map_err(|e| anyhow!("{e}"))? {
         parity::Outcome::Valid { rows } => println!("parity tables valid: {rows} rows"),
         parity::Outcome::UpToDate => println!("parity dashboard and README are up to date"),
         parity::Outcome::Written(paths) => {

@@ -1161,6 +1161,36 @@ JAVA-REF-002/006/013/018/024, JAVA-GEN-001–009, JAVA-RUN-001–013, JAVA-DBG-0
 
 ## Open questions
 
+### Resolution status
+
+Checked on 2026-10-10 against the generated data in [../data/](../data/) (Apache-2.0 facts from
+`idea/262.10968.63`). "Resolved (data)" answers come from the extracted descriptors; "Deferred"
+items need a real IntelliJ IDEA 2026.2 install (or information the Community sources do not carry)
+and say why.
+
+| # | Status | Answer / reason |
+|---|---|---|
+| 1 | Deferred | The paid boundary is a licensing fact of the unified distribution; it is not in the Community sources. |
+| 2 | Deferred | Logpoints UI is implemented in code; needs an install. |
+| 3 | Deferred | Scope and data source of dependency completion are not described by descriptors. |
+| 4 | Deferred | Gradle 10 support is Tooling API code, not descriptor data. |
+| 5 | Deferred | `ExternalSystem.RefreshAllProjects`, `ExternalSystem.RefreshProject` and `Gradle.RefreshDependencies` take their labels from message bundles that the extractor does not read (`text` is empty in `actions.json`); Maven's own actions are labelled "Sync All Maven Projects" / "Sync Project". Gradle labels: verify in an install or extend the extractor to bundles. |
+| 6 | Partly resolved (data) | Auto-sync default is not in the data (deferred). Related default that is: advanced setting `gradle.run.using.gradle` = `true`, so build and run are delegated to Gradle by default (GRADLE-100). |
+| 7 | Resolved | See the item text; [../keymaps.md](../keymaps.md) is authoritative. |
+| 8 | Resolved (data) | `DebugClass` has no binding in `$default` or its GNOME/KDE/XWin children; the macOS keymap binds `Ctrl+Shift+D` (`Ctrl+Shift+F9` in the legacy "Mac OS X" keymap). The gutter as the main Windows/Linux entry point remains an observation to confirm. |
+| 9 | Deferred | Java postfix templates are registered in Java code, not in descriptors, so the extractor cannot list keys or their default enablement; needs Settings \| Editor \| General \| Postfix Completion in an install. JAVA-PFX rows stay as written. |
+| 10 | Deferred | Live template expansion text is in template XML under the Java plugin, which the extractor does not read yet; verify by observation or extend the extractor. |
+| 11 | Deferred | Gradle JVM criteria switching is code behaviour; needs an install. |
+| 12 | Deferred | Test-task chooser behaviour is code; needs an install. |
+| 13 | Deferred | Coverage engine options are code; needs an install. |
+| 14 | Deferred | HotSwap UX is code; needs an install. |
+| 15 | Deferred | Paid plugins are not in the Community sources. |
+| 16 | Deferred | Java 27 JEP list and IDE support level need the GA release notes. |
+| 17 | Deferred | Declarative Gradle gating is a registry key or code flag not present in the extracted data. |
+| 18 | Deferred | Command completion enablement is code; needs an install. |
+
+### Questions
+
 1. **Paid-feature boundary in the unified distribution.** The public unified-product page only says "advanced
    tooling" requires a subscription; it does not enumerate whether IntelliJ Profiler, the Dependencies diagram
    (GRADLE-091), UML diagrams (JAVA-NAV-047), the DSM / dependency analysis views, and the "Vulnerable

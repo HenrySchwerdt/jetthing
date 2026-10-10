@@ -770,6 +770,34 @@ Mercurial, Subversion and Perforce plugins (P2).
 
 ## Open questions
 
+### Resolution status
+
+Checked on 2026-10-10 against the generated data in [../data/](../data/) (Apache-2.0 facts from
+`idea/262.10968.63`). "Resolved (data)" means the extracted descriptors answer the question for the
+Community platform build; product-specific overrides in the paid distribution are not visible there.
+"Deferred" means the answer needs a real IntelliJ IDEA 2026.2 install or a source we cannot reach;
+each deferral says why. Parity rows in `docs/parity/` link these features by id.
+
+| # | Status | Answer / reason |
+|---|---|---|
+| 1 | Deferred | Needs hands-on observation of the 2026.2 merge flow; not described by descriptors. |
+| 2 | Deferred | Logpoints UI and gutter gesture are implemented in code, not in descriptors; needs an install. |
+| 3 | Partly resolved (data) | `EditorCloneCaretAbove` / `EditorCloneCaretBelow` have no binding in any of the 26 bundled keymap descriptors (`keymaps.json`), so the double-modifier gesture is not keymap-driven. Linux window-manager interference with double Ctrl: deferred (needs an install). |
+| 4 | Resolved (data) | The `Mac OS X 10.5+` descriptor binds these explicitly (not via Ctrl→Cmd inheritance): `XDebugger.AttachToProcess` = `Alt+Shift+F5` (Opt+Shift+F5), `ContextHelp` = `Cmd+Shift+F1`, `ShowContent` (Show List of Tabs) = `Ctrl+Shift+Down`. |
+| 5 | Partly resolved (data) | Core keymaps from `platform/platform-resources`: `$default`, Default for GNOME / KDE / XWin, Emacs, Mac OS X, Mac OS X 10.5+, Sublime Text (+ macOS), macOS System Shortcuts. Eclipse, NetBeans 6.5, Qt Creator, ReSharper, Visual Assist, Visual Studio (2022, for Mac, OSX), VS Code and Xcode keymaps ship as `plugins/keymaps/*` modules. Whether those plugins are pre-installed in IDEA 2026.2 or Marketplace-only: deferred (distribution packaging is not in the sources). |
+| 6 | Deferred | The code-insight and large-file thresholds are system properties defined in code, not in the extracted descriptors. |
+| 7 | Resolved (data) | Advanced setting `localHistory.daysToKeep` ("Duration of storing changes in Local History") defaults to `5`: retention is days-based, 5 days. |
+| 8 | Deferred | Code With Me availability is a distribution question; not in the Community sources. |
+| 9 | Deferred | The only log-like tool window in the data is `Statistics Event Log` (usage statistics), not the classic Event Log; Classic UI plugin packaging needs an install. |
+| 10 | Partly resolved (data) | Search Everywhere advanced settings: `se.text.search` = true (text results in All and a Text tab), `search.everywhere.recent.at.top` = true, ML sorting on for actions, files and classes (`searcheverywhere.ml.sort.*`), off for All; `git.search.everywhere.tab.enabled` = false. Visible tab order: deferred. |
+| 11 | Resolved (data) | Advanced setting `welcome.screen.non.modal.enabled` defaults to `true` (`platform/non-modal-welcome-screen`): the non-modal welcome screen is the platform default. |
+| 12 | Deferred | Soft-wrap file masks and clipboard history size are editor-settings defaults in code, not descriptors. |
+| 13 | Resolved (data) | `TextSearchAction` ("Text…", "Show text occurrences in Search Everywhere") is a searchable, non-internal action bound to `Ctrl+Alt+Shift+E` (`$default`) and `Cmd+Alt+Shift+E` (macOS). |
+| 14 | Deferred | Other products are out of scope for the IDEA parity catalog. |
+| 15 | Deferred | Outbound link checks still fail from the research container; tracked with the help links in the parity catalog. |
+
+### Questions
+
 1. **2026.2 conflict-resolution flow** (PLATFORM-VCS-026): release blog names it but the public
    help page describing what changed was not found; needs hands-on observation.
 2. **Logpoints UI** (PLATFORM-RUN-024): gutter interaction, default shortcut (if any), and how

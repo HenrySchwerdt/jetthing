@@ -1223,6 +1223,50 @@ Sources:
 
 ## 9. Open questions (verify in a real IntelliJ IDEA 2026.2)
 
+### Resolution status
+
+Checked on 2026-10-10 against the generated data in [../data/](../data/) (Apache-2.0 facts from
+`idea/262.10968.63`; theme values are the resolved Islands Dark keys in `themes.json`). "Resolved
+(data)" answers come from the extracted descriptors and themes; "Deferred" items need a real
+IntelliJ IDEA 2026.2 install and say why.
+
+| # | Status | Answer / reason |
+|---|---|---|
+| 1 | Deferred | The first-run theme is chosen in code (LaF manager and onboarding), not in the theme files; both `Islands Dark` and `ExperimentalDark` ("Dark") ship. Needs a clean install per OS. |
+| 2 | Partly resolved (data) | Advanced setting `merge.main.menu` ("Merge main menu with window title") defaults to `true`. Whether the resulting Windows/Linux default is the hamburger or the merged menu: deferred. |
+| 3 | Partly resolved (data) | Themed sizes: stripe button `StripeToolbar.Button.size` 37×40 (compact 32×32), `ToolWindow.Header.height.compact` 31, `RunWidget.toolbarHeight.compact` 26, `TabbedPane.tabHeight` 40 (compact 36), tree and list rows 24 (compact 22). Main toolbar height, normal tool-window header height, editor tab height and status bar height are not themed (code defaults): deferred. |
+| 4 | Resolved (data) | `Island.arc` = 20 (compact 16), `Island.borderWidth` = 6 (compact 4), `Island.borderArcLength` = 14 (compact 10); the 8 px / 3 px guesses above are superseded. Swing `arc` values are corner diameters (inferred), so the visible radius is about half. HiDPI rendering: deferred. |
+| 5 | Deferred | AI widgets come from plugins outside the Community data. |
+| 6 | Deferred | Header contents are assembled in code; needs an install. |
+| 7 | Partly resolved (data) | Islands Dark run widget: `RunWidget.runningBackground` #338555, `RunWidget.runningIconColor` #FFFFFF, `RunWidget.stopBackground` #C54E58, `RunWidget.runIconColor` #4E9D6C. How several running configurations are shown: deferred. |
+| 8 | Deferred | The gear menu is built from action groups plus code; item order needs an install. |
+| 9 | Resolved (data) for 19 windows | Descriptor anchors (`toolwindows.json`; "secondary" = lower/second group of the stripe): left — Project, Commit, Pull Requests, Merge Requests, Learn, Backup and Sync History; left secondary — Bookmarks, Structure; bottom — Problems View, TODO, Version Control, Terminal, Statistics Event Log; right — Gradle, Ant, Commander, UI Theme Color Picker; right secondary — Notifications, Coverage. Database, Endpoints, Build, Services, Run, Debug and Find are registered in code or paid plugins: deferred. |
+| 10 | Deferred | Labels come from bundles and code. |
+| 11 | Deferred | Click semantics are code behaviour. |
+| 12 | Partly resolved (data) | Advanced settings: `editor.reuse.not.modified.tabs` = false, `editor.open.tabs.in.main.window` = false, `editor.keep.pinned.tabs.on.left` = true, `editor.maximize.on.double.click` = true, `editor.open.inactive.splitter` = true, `editor.tab.painting` = HORIZONTAL_LINE. Close-button policy, tab limit and preview-tab defaults are UISettings code defaults: deferred. |
+| 13 | Deferred | Breadcrumb placement default is code. |
+| 14 | Resolved (data) | Advanced setting `floating.codeToolbar.hide` ("Hide floating toolbar for code editing") defaults to `false`: the floating code toolbar is shown by default in the platform build. |
+| 15 | Deferred | Inspection widget contents are code. |
+| 16 | Deferred | Empty-editor placeholder text is code and bundles. |
+| 17 | Partly resolved (data) | `code.vision.java.minimal.usages` = 0. Which code vision providers are on and their position: deferred. |
+| 18 | Deferred | Reader mode scope default is code. |
+| 19 | Deferred | Editor font defaults are code (`AppEditorFontOptions`), not descriptors. |
+| 20 | Deferred | Line-number mode default is code. |
+| 21 | Deferred | Status bar widget defaults are code. |
+| 22 | Deferred | Labels come from bundles. |
+| 23 | Partly resolved (data) | `se.text.search` = true shows a Text tab; `search.everywhere.recent.at.top` = true. Tab order and preview default: deferred. |
+| 24 | Partly resolved (data) | `ide.ui.non.modal.settings.window` = true (Settings opens as a non-modal window by default). "Backup and Sync" (`settings.sync`) is a root-group page with group weight 5, "Advanced Settings" is a root page; see [../settings-tree.md](../settings-tree.md). Reset link and navigation arrows: deferred. |
+| 25 | Deferred | Project Structure categories are code; the shortcut is in [../keymaps.md](../keymaps.md). |
+| 26 | Partly resolved (data) | `welcome.screen.non.modal.enabled` = true: the welcome screen is non-modal by default. Button captions: deferred (bundles). |
+| 27 | Deferred | Wizard defaults are code. |
+| 28 | Deferred | Notification timing is code. |
+| 29 | Partly resolved (data) | `ide.remember.last.search.scope` = false, `ide.usages.page.size` = 100, `ide.find.result.count.warning.limit` = 1000. Filter labels and pin: deferred. |
+
+`docs/spec/settings-tree.md` (the issue's "settings.md") has no open-questions section; its page
+tree is generated from `settings.json`, so nothing there is open.
+
+### Questions
+
 Defaults and pixels:
 1. **Default theme on first launch**: the 2025.3 release notes and the platform blog say Islands
    is the default, but the 2026.2 help page says the IDE uses "Dark" unless changed on first run.
