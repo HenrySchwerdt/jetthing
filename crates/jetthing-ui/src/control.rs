@@ -260,7 +260,10 @@ impl IdeApp {
     }
 
     fn completion_visible(&self) -> bool {
-        !self.state.lsp.completions().is_empty()
+        self.state
+            .completion
+            .as_ref()
+            .is_some_and(|session| session.visible())
     }
 
     fn terminal_text(&self) -> Option<String> {

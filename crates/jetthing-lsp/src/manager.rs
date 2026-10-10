@@ -10,7 +10,7 @@ use crate::{
     client::{LspDiagnostic, LspService, ServerState, WorkProgress},
     registry::{LaunchContext, LspSettings, ServerRegistry, cache_dir, workspace_root},
 };
-use lsp_types::{CompletionItem, CompletionResponse, request::Completion};
+use lsp_types::{CompletionItem, CompletionResponse, CompletionTriggerKind, request::Completion};
 use serde::Serialize;
 use serde_json::json;
 use std::{
@@ -95,8 +95,25 @@ pub struct LspManager {
     notices: Vec<LspNotice>,
     dismissed: BTreeSet<String>,
     completion: Option<CompletionRequest>,
-    completions: Vec<CompletionItem>,
-    completion_incomplete: bool,
+    completion_result: Option<CompletionResult>,
+}
+
+/// Why completion was requested (LSP `CompletionTriggerKind`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionTrigger {
+    /// Ctrl+Space or typing an identifier character.
+    Invoked,
+    /// A server trigger character such as `.`.
+    Character(String),
+    /// Re-query because the previous result was `isIncomplete`.
+    Incomplete,
+}
+
+/// A completion response.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CompletionResult {
+    pub items: Vec<CompletionItem>,
+    pub incomplete: bool,
 }
 
 impl Default for LspManager {
@@ -117,8 +134,7 @@ impl LspManager {
             notices: Vec::new(),
             dismissed: BTreeSet::new(),
             completion: None,
-            completions: Vec::new(),
-            completion_incomplete: false,
+            completion_result: None,
         }
     }
 
@@ -148,7 +164,7 @@ impl LspManager {
 
     /// Stops every server.
     pub fn shutdown(&mut self) {
-        self.clear_completions();
+        self.cancel_completion();
         self.documents.clear();
         for server in &mut self.servers {
             if let Some(service) = server.service.as_mut() {
@@ -526,6 +542,7 @@ impl LspManager {
         path: &Path,
         line: usize,
         character: usize,
+        trigger: CompletionTrigger,
     ) -> Result<u64, LspError> {
         self.cancel_completion();
         let service = self.ready_server_for(path)?;
@@ -533,12 +550,22 @@ impl LspManager {
             server: service.name().into(),
             root: service.root().to_owned(),
         };
+        let context = match trigger {
+            CompletionTrigger::Invoked => json!({"triggerKind": CompletionTriggerKind::INVOKED}),
+            CompletionTrigger::Character(character) => json!({
+                "triggerKind": CompletionTriggerKind::TRIGGER_CHARACTER,
+                "triggerCharacter": character
+            }),
+            CompletionTrigger::Incomplete => json!({
+                "triggerKind": CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS
+            }),
+        };
         let id = service.request_raw(
             <Completion as lsp_types::request::Request>::METHOD,
             json!({
                 "textDocument": {"uri": crate::client::file_uri(path)?},
                 "position": {"line": line, "character": character},
-                "context": {"triggerKind": 1}
+                "context": context
             }),
         )?;
         let key = self
@@ -550,7 +577,9 @@ impl LspManager {
         Ok(id)
     }
 
-    fn cancel_completion(&mut self) {
+    /// Cancels the pending completion request and drops an untaken result.
+    pub fn cancel_completion(&mut self) {
+        self.completion_result = None;
         if let Some(request) = self.completion.take()
             && let Some(service) = self.service_mut(&request.server)
         {
@@ -575,31 +604,50 @@ impl LspManager {
             return;
         };
         self.completion = None;
-        let (items, incomplete) = match result {
-            Ok(Some(CompletionResponse::Array(items))) => (items, false),
-            Ok(Some(CompletionResponse::List(list))) => (list.items, list.is_incomplete),
-            Ok(None) | Err(_) => (Vec::new(), false),
-        };
-        self.completions = items;
-        self.completion_incomplete = incomplete;
+        self.completion_result = Some(match result {
+            Ok(Some(CompletionResponse::Array(items))) => CompletionResult {
+                items,
+                incomplete: false,
+            },
+            Ok(Some(CompletionResponse::List(list))) => CompletionResult {
+                items: list.items,
+                incomplete: list.is_incomplete,
+            },
+            Ok(None) | Err(_) => CompletionResult::default(),
+        });
     }
 
     pub fn completion_pending(&self) -> bool {
         self.completion.is_some()
     }
 
-    pub fn completions(&self) -> &[CompletionItem] {
-        &self.completions
+    /// Takes the latest completion response once it has arrived.
+    pub fn take_completion(&mut self) -> Option<CompletionResult> {
+        self.completion_result.take()
     }
 
-    pub fn completions_incomplete(&self) -> bool {
-        self.completion_incomplete
+    /// Filters and sorts `items` for `path`'s language with its provider's
+    /// relevance hints.
+    pub fn rank_completions(
+        &self,
+        path: &Path,
+        items: &[CompletionItem],
+        prefix: &str,
+    ) -> Vec<crate::completion::RankedItem> {
+        match self.registry.for_path(path) {
+            Some((provider, _)) => {
+                crate::completion::rank(items, prefix, |item| provider.completion_relevance(item))
+            }
+            None => crate::completion::rank(items, prefix, |_| 0),
+        }
     }
 
-    pub fn clear_completions(&mut self) {
-        self.cancel_completion();
-        self.completions.clear();
-        self.completion_incomplete = false;
+    /// Characters that open completion for `path`'s running server (`.`, `::`, ...).
+    pub fn trigger_characters(&self, path: &Path) -> Vec<String> {
+        self.server_for(path)
+            .and_then(|service| service.capabilities().completion_provider.as_ref())
+            .and_then(|provider| provider.trigger_characters.clone())
+            .unwrap_or_default()
     }
 
     /// The language id the server uses for `path`.
