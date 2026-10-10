@@ -25,3 +25,4 @@ serde_json.workspace = true
 [dev-dependencies]
 flate2 = "1"
 tar = "0.4"
+jetthing-actions = { path = "../jetthing-actions" }

@@ -15,6 +15,7 @@ mod icons;
 mod keybindings;
 mod keys;
 mod lsp_status;
+mod main_menu;
 mod notifications;
 mod palette;
 mod popups;
@@ -66,6 +67,9 @@ pub struct IdeApp {
     window_focused: bool,
     /// First stroke of a two-stroke chord waiting for its second stroke.
     pending_chord: Option<jetthing_keymap::KeyStroke>,
+    /// The main menu titles are expanded in the toolbar.
+    menu_bar_open: bool,
+    menu_bar_popup_seen: bool,
     /// UI automation socket, when `JETTHING_CONTROL_SOCKET` is set.
     control: Option<control::Control>,
 }
@@ -144,6 +148,8 @@ impl IdeApp {
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
             pending_chord: None,
+            menu_bar_open: false,
+            menu_bar_popup_seen: false,
             control: None,
         }
     }

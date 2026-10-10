@@ -1725,6 +1725,7 @@ name = "jetthing-core"
 version = "0.0.2"
 dependencies = [
  "flate2",
+ "jetthing-actions",
  "jetthing-command",
  "jetthing-git",
  "jetthing-keymap",
