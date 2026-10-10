@@ -128,7 +128,11 @@ impl IdeState {
         self.start_task(plan, "Build", TaskKind::Build)
     }
 
+    /// Runs the selected run configuration, or the detected default target.
     pub fn start_run(&mut self) -> Result<(), String> {
+        if self.run_configurations.selected().is_some() {
+            return self.run_configuration(None);
+        }
         let plan = self.plan(TaskKind::Run);
         self.start_task(plan, "Run", TaskKind::Run)
     }
@@ -145,6 +149,20 @@ impl IdeState {
             return;
         }
         if was_running && !self.runner.is_running() {
+            if self
+                .runner
+                .plan()
+                .is_some_and(|plan| plan.kind == TaskKind::Sync)
+            {
+                if self.is_bazel_project() {
+                    self.finish_bazel_sync();
+                } else {
+                    self.finish_gradle_sync();
+                }
+                if matches!(self.runner.state(), TaskState::Exited(0)) {
+                    return;
+                }
+            }
             let name = self
                 .runner
                 .plan()
@@ -157,6 +175,24 @@ impl IdeState {
                 _ => self.status.clone(),
             };
         }
+    }
+
+    /// Re-runs only the tests that failed in the last test task.
+    pub fn rerun_failed_tests(&mut self) -> Result<(), String> {
+        let last = self.runner.plan().cloned().ok_or("nothing has run yet")?;
+        let failed = self.runner.tests().failed_tests();
+        let root = self
+            .project
+            .as_ref()
+            .ok_or("no project is open")?
+            .root()
+            .to_owned();
+        let plan = self
+            .build_systems
+            .detect(&root)
+            .ok_or_else(|| RunnerError::NoBuildSystem(root.clone()))
+            .and_then(|provider| provider.rerun_failed_plan(&root, &last, &failed));
+        self.start_task(plan, "Rerun Failed Tests", TaskKind::Test)
     }
 
     fn can_start(&self) -> bool {
@@ -179,11 +215,14 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
         .register(Command::new(
             spec("run.project", "Run", "Run", Some("⌃R"), "{}"),
             |state: &IdeState| {
-                state.can_start()
-                    && state
-                        .detected_build
-                        .as_ref()
-                        .is_some_and(|build| build.run_unavailable.is_none())
+                let configured = state.run_configurations.selected().is_some();
+                state.project.is_some()
+                    && !state.runner.is_running()
+                    && (configured
+                        || state
+                            .detected_build
+                            .as_ref()
+                            .is_some_and(|build| build.run_unavailable.is_none()))
             },
             |state: &mut IdeState, _| {
                 state.start_run().map_err(CommandError::Failed)?;
@@ -197,6 +236,20 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             IdeState::can_start,
             |state: &mut IdeState, _| {
                 state.start_tests().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("test.rerunFailed", "Rerun Failed Tests", "Run", None, "{}"),
+            |state: &IdeState| {
+                state.project.is_some()
+                    && !state.runner.is_running()
+                    && state.runner.tests().counts().failed > 0
+            },
+            |state: &mut IdeState, _| {
+                state.rerun_failed_tests().map_err(CommandError::Failed)?;
                 Ok(Value::Null)
             },
         ))
@@ -344,6 +397,52 @@ mod tests {
             state.tool_windows.visible(crate::Anchor::Bottom),
             Some(ToolWindow::Build)
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_gradle_tests_are_rerun_with_filters() {
+        let root = project(
+            "rerun",
+            &[
+                ("settings.gradle.kts", ""),
+                ("build.gradle.kts", "plugins { java }\n"),
+                (
+                    "gradlew",
+                    "#!/bin/sh\necho \"args: $*\"\nmkdir -p build/test-results/test\nprintf '<testsuite name=\"T\"><testcase classname=\"com.T\" name=\"bad()\"><failure message=\"x\"/></testcase><testcase classname=\"com.T\" name=\"good()\"/></testsuite>' > build/test-results/test/TEST-T.xml\nexit 1\n",
+                ),
+            ],
+        );
+        std::process::Command::new("chmod")
+            .args(["+x", "gradlew"])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        assert!(!commands.is_enabled("test.rerunFailed", &state));
+        commands
+            .execute("test.project", &mut state, Value::Null)
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while state.runner.is_running() && std::time::Instant::now() < deadline {
+            state.poll_runner();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        state.poll_runner();
+        assert_eq!(state.runner.tests().counts().failed, 1);
+        assert!(commands.is_enabled("test.rerunFailed", &state));
+        commands
+            .execute("test.rerunFailed", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(
+            state.runner.plan().unwrap().args,
+            ["test", "--console=plain", "--tests", "com.T.bad"]
+        );
+        let _ = state.runner.cancel();
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -245,14 +245,7 @@ mod tests {
         assert_eq!(bar.query, "needle");
         assert!(bar.replace);
         let path = std::path::PathBuf::from("n.txt");
-        let mut document = jetthing_core::Document {
-            analysis: jetthing_language::analyze(&path, "a needle, Needle"),
-            text: jetthing_text::TextDocument::new("a needle, Needle"),
-            path,
-            selections: Default::default(),
-            disk_hash: 0,
-            conflict: None,
-        };
+        let mut document = jetthing_core::Document::new(path, "a needle, Needle");
         assert_eq!(bar.matches(&document).len(), 2);
         bar.match_case = true;
         assert_eq!(
@@ -275,15 +268,7 @@ mod tests {
             regex: true,
             ..Default::default()
         };
-        let path = std::path::PathBuf::from("n.txt");
-        let document = jetthing_core::Document {
-            analysis: jetthing_language::analyze(&path, "needle neeedles neeedle"),
-            text: jetthing_text::TextDocument::new("needle neeedles neeedle"),
-            path,
-            selections: Default::default(),
-            disk_hash: 0,
-            conflict: None,
-        };
+        let document = jetthing_core::Document::new("n.txt".into(), "needle neeedles neeedle");
         assert_eq!(bar.matches(&document).len(), 2);
         assert_eq!(bar.params()["regex"], true);
         assert_eq!(bar.error(), None);

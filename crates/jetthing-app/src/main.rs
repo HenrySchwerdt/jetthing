@@ -15,6 +15,25 @@ enum Mode {
     App(String),
 }
 
+/// Window chrome per platform. macOS keeps its traffic-light buttons but merges
+/// the title bar into the content (transparent bar, full-size content view,
+/// no title text) so the main toolbar draws in the title-bar area; the toolbar
+/// reserves `jetthing_ui::chrome::MAC_TRAFFIC_LIGHT_INSET` for the buttons. Other
+/// platforms draw their own controls in the toolbar.
+fn platform_viewport(
+    viewport: eframe::egui::ViewportBuilder,
+    macos: bool,
+) -> eframe::egui::ViewportBuilder {
+    if macos {
+        viewport
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false)
+    } else {
+        viewport.with_decorations(false)
+    }
+}
+
 fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOptions {
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title(title)
@@ -27,14 +46,7 @@ fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOpti
     {
         viewport = viewport.with_icon(icon);
     }
-    viewport = if cfg!(target_os = "macos") {
-        // Keep native window controls in the OS title bar. The toolbar below it
-        // starts at the content edge and needs no traffic-light spacer.
-        viewport.with_title_shown(false)
-    } else {
-        // The main toolbar doubles as the title bar.
-        viewport.with_decorations(false)
-    };
+    viewport = platform_viewport(viewport, cfg!(target_os = "macos"));
     eframe::NativeOptions {
         viewport,
         renderer,
@@ -277,5 +289,27 @@ mod tests {
         assert!(generic.contains("libfoo.so.3 is missing"));
         assert!(!generic.contains("apt install"));
         assert_eq!(missing_library_hint("index out of bounds"), None);
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    #[test]
+    fn macos_merges_the_title_bar_and_keeps_native_buttons() {
+        let viewport = platform_viewport(Default::default(), true);
+        assert_eq!(viewport.fullsize_content_view, Some(true));
+        assert_eq!(viewport.titlebar_shown, Some(false));
+        assert_eq!(viewport.title_shown, Some(false));
+        assert_eq!(viewport.decorations, None);
+    }
+
+    #[test]
+    fn other_platforms_draw_their_own_title_bar() {
+        let viewport = platform_viewport(Default::default(), false);
+        assert_eq!(viewport.decorations, Some(false));
+        assert_eq!(viewport.fullsize_content_view, None);
+        assert_eq!(viewport.titlebar_shown, None);
     }
 }

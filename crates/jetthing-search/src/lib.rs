@@ -21,14 +21,17 @@ pub struct TextMatch {
     pub column: usize,
     /// Length in characters of the first occurrence.
     pub length: usize,
-    /// The trimmed line, at most [`PREVIEW_CHARS`] characters.
+    /// The trimmed line, at most [`PREVIEW_CHARS`] characters. Longer lines
+    /// are elided around the first occurrence, with `…` where text was cut.
     pub preview: String,
     /// Character ranges of every occurrence within `preview`.
     pub highlights: Vec<std::ops::Range<usize>>,
 }
 
-/// Longest preview kept per result line.
-pub const PREVIEW_CHARS: usize = 240;
+/// Longest preview kept per result line (including `…` markers).
+pub const PREVIEW_CHARS: usize = 120;
+/// Characters kept before the first occurrence when a long line is elided.
+pub const PREVIEW_CONTEXT: usize = 32;
 
 /// Find in Files options, as in the reference IDE's search popup.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -157,6 +160,34 @@ impl Matcher {
     }
 }
 
+/// At most [`PREVIEW_CHARS`] characters of `text` around character `focus`:
+/// short text is kept whole; otherwise a window starting [`PREVIEW_CONTEXT`]
+/// characters before `focus`, with `…` replacing the cut parts. Returns the
+/// preview and the shift from `text` columns to preview columns.
+fn elide_around(text: &str, focus: usize) -> (String, isize) {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= PREVIEW_CHARS {
+        return (text.to_owned(), 0);
+    }
+    // Reserve room for both markers, then slide the window to the end if needed.
+    let room = PREVIEW_CHARS - 2;
+    let from = focus
+        .saturating_sub(PREVIEW_CONTEXT)
+        .min(chars.len() - room);
+    let to = (from + room).min(chars.len());
+    let mut preview = String::new();
+    let mut shift = -(from as isize);
+    if from > 0 {
+        preview.push('…');
+        shift += 1;
+    }
+    preview.extend(&chars[from..to]);
+    if to < chars.len() {
+        preview.push('…');
+    }
+    (preview, shift)
+}
+
 /// Builds the result row for one line, or `None` when nothing matches.
 pub fn line_match(
     path: &Path,
@@ -167,13 +198,16 @@ pub fn line_match(
     let ranges = matcher.occurrences(line);
     let first = ranges.first()?.clone();
     let leading = line.chars().take_while(|c| c.is_whitespace()).count();
-    let preview: String = line.trim().chars().take(PREVIEW_CHARS).collect();
+    let (preview, offset) = elide_around(line.trim(), first.start.saturating_sub(leading));
     let preview_len = preview.chars().count();
     let highlights = ranges
         .iter()
         .filter_map(|range| {
-            let start = range.start.saturating_sub(leading).min(preview_len);
-            let end = range.end.saturating_sub(leading).min(preview_len);
+            let shift = |at: usize| {
+                (at.saturating_sub(leading) as isize + offset).clamp(0, preview_len as isize)
+                    as usize
+            };
+            let (start, end) = (shift(range.start), shift(range.end));
             (start < end).then_some(start..end)
         })
         .collect();
@@ -391,6 +425,35 @@ mod tests {
         assert_eq!(found.highlights, vec![4..9, 15..20]);
         let none = matcher("greet", SearchOptions::default());
         assert!(line_match(Path::new("a.kt"), 0, "nothing here", &none).is_none());
+    }
+
+    #[test]
+    fn long_lines_are_elided_around_the_match() {
+        let matcher = Matcher::new("needle", &SearchOptions::default()).unwrap();
+        let line = format!("  {}needle{}", "a".repeat(5000), "b".repeat(5000));
+        let found = line_match(Path::new("min.js"), 0, &line, &matcher).unwrap();
+        assert!(found.preview.chars().count() <= PREVIEW_CHARS);
+        assert!(found.preview.starts_with('…') && found.preview.ends_with('…'));
+        assert_eq!(found.highlights.len(), 1);
+        let chars: Vec<char> = found.preview.chars().collect();
+        let range = found.highlights[0].clone();
+        assert_eq!(chars[range.clone()].iter().collect::<String>(), "needle");
+        assert_eq!(
+            range.start,
+            1 + PREVIEW_CONTEXT,
+            "context kept before the match"
+        );
+        // The column still points into the full line.
+        assert_eq!(found.column, 2 + 5000 + 1);
+        // A match near the end slides the window instead of leaving it short.
+        let tail = format!("{}needle", "c".repeat(5000));
+        let found = line_match(Path::new("t"), 0, &tail, &matcher).unwrap();
+        assert!(found.preview.starts_with('…') && found.preview.ends_with("needle"));
+        assert_eq!(found.preview.chars().count(), PREVIEW_CHARS - 1);
+        // Short lines are unchanged.
+        let found = line_match(Path::new("t"), 0, "  one needle  ", &matcher).unwrap();
+        assert_eq!(found.preview, "one needle");
+        assert_eq!(found.highlights, vec![4..10]);
     }
 
     #[test]

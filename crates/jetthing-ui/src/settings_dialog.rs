@@ -102,6 +102,16 @@ pub fn take_request(app: &mut IdeApp) {
     }
 }
 
+fn backdrop_id() -> egui::Id {
+    egui::Id::new("settings_backdrop")
+}
+
+/// Keeps the dimming backdrop above notification balloons (which share its
+/// layer order) while the dialog is open; called after the balloons are shown.
+pub fn backdrop_to_top(ctx: &egui::Context) {
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, backdrop_id()));
+}
+
 pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     take_request(app);
     let Some(mut dialog) = app.settings_dialog.take() else {
@@ -188,7 +198,7 @@ fn draw(dialog: &mut SettingsDialog, context: PageContext<'_>, ctx: &egui::Conte
     }
     let screen = ctx.content_rect();
     // Dim and block the workbench behind the dialog.
-    egui::Area::new(egui::Id::new("settings_backdrop"))
+    egui::Area::new(backdrop_id())
         .order(egui::Order::Middle)
         .fixed_pos(screen.min)
         .show(ctx, |ui| {

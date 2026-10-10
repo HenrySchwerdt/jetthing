@@ -22,7 +22,10 @@ pub struct LanguageSpec {
     pub(crate) highlights: &'static [&'static str],
     pub(crate) injections: Option<&'static str>,
     pub(crate) locals: Option<&'static str>,
-    pub(crate) tags: Option<&'static str>,
+    /// Folding query (`folds.scm`) when the grammar ships one.
+    pub(crate) folds: Option<&'static str>,
+    /// Tags queries (definitions for Structure/breadcrumbs), concatenated.
+    pub(crate) tags: &'static [&'static str],
     /// Capture-name overrides for languages whose IntelliJ keys differ from
     /// the defaults (e.g. `tag` → `HTML_TAG_NAME`). Data, not code.
     pub(crate) capture_keys: &'static [(&'static str, &'static str)],
@@ -34,7 +37,7 @@ impl LanguageSpec {
     }
 
     pub fn has_tags(&self) -> bool {
-        self.tags.is_some()
+        !self.tags.is_empty()
     }
 
     pub fn has_injections(&self) -> bool {
@@ -80,7 +83,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_rust::HIGHLIGHTS_QUERY],
         injections: Some(tree_sitter_rust::INJECTIONS_QUERY),
         locals: None,
-        tags: Some(tree_sitter_rust::TAGS_QUERY),
+        folds: None,
+        tags: &[tree_sitter_rust::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -93,7 +97,11 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_java::HIGHLIGHTS_QUERY],
         injections: None,
         locals: None,
-        tags: Some(tree_sitter_java::TAGS_QUERY),
+        folds: None,
+        tags: &[
+            tree_sitter_java::TAGS_QUERY,
+            include_str!("../queries/java/tags.scm"),
+        ],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -109,7 +117,22 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         ],
         injections: None,
         locals: None,
-        tags: None,
+        folds: None,
+        tags: &[include_str!("../queries/kotlin/tags.scm")],
+        capture_keys: NO_OVERRIDES,
+    },
+    LanguageSpec {
+        id: "groovy",
+        name: "Groovy",
+        extensions: &["groovy", "gradle", "gvy", "gy", "gsh"],
+        file_names: &["Jenkinsfile"],
+        shebangs: &["groovy"],
+        grammar: tree_sitter_groovy::LANGUAGE,
+        highlights: &[tree_sitter_groovy::HIGHLIGHTS_QUERY],
+        injections: None,
+        locals: None,
+        folds: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -122,7 +145,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_xml::XML_HIGHLIGHT_QUERY],
         injections: None,
         locals: None,
-        tags: None,
+        folds: None,
+        tags: &[include_str!("../queries/xml/tags.scm")],
         capture_keys: XML_KEYS,
     },
     LanguageSpec {
@@ -135,7 +159,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_json::HIGHLIGHTS_QUERY],
         injections: None,
         locals: None,
-        tags: None,
+        folds: None,
+        tags: &[include_str!("../queries/json/tags.scm")],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -148,7 +173,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_toml_ng::HIGHLIGHTS_QUERY],
         injections: None,
         locals: None,
-        tags: None,
+        folds: None,
+        tags: &[include_str!("../queries/toml/tags.scm")],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -161,7 +187,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_yaml::HIGHLIGHTS_QUERY],
         injections: None,
         locals: None,
-        tags: None,
+        folds: None,
+        tags: &[include_str!("../queries/yaml/tags.scm")],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -174,7 +201,23 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
         injections: Some(tree_sitter_md::INJECTION_QUERY_BLOCK),
         locals: None,
-        tags: None,
+        folds: None,
+        tags: &[include_str!("../queries/markdown/tags.scm")],
+        capture_keys: NO_OVERRIDES,
+    },
+    LanguageSpec {
+        // Only reached through Markdown's `(inline) @injection.content`.
+        id: "markdown_inline",
+        name: "Markdown",
+        extensions: &[],
+        file_names: &[],
+        shebangs: &[],
+        grammar: tree_sitter_md::INLINE_LANGUAGE,
+        highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_INLINE],
+        injections: Some(tree_sitter_md::INJECTION_QUERY_INLINE),
+        locals: None,
+        folds: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -195,7 +238,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_starlark::HIGHLIGHTS_QUERY],
         injections: Some(tree_sitter_starlark::INJECTIONS_QUERY),
         locals: Some(tree_sitter_starlark::LOCALS_QUERY),
-        tags: None,
+        folds: Some(tree_sitter_starlark::FOLDS_QUERY),
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -208,7 +252,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_python::HIGHLIGHTS_QUERY],
         injections: None,
         locals: None,
-        tags: Some(tree_sitter_python::TAGS_QUERY),
+        folds: None,
+        tags: &[tree_sitter_python::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -224,7 +269,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         ],
         injections: Some(tree_sitter_javascript::INJECTIONS_QUERY),
         locals: Some(tree_sitter_javascript::LOCALS_QUERY),
-        tags: Some(tree_sitter_javascript::TAGS_QUERY),
+        folds: None,
+        tags: &[tree_sitter_javascript::TAGS_QUERY],
         capture_keys: HTML_KEYS,
     },
     LanguageSpec {
@@ -240,7 +286,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         ],
         injections: Some(tree_sitter_javascript::INJECTIONS_QUERY),
         locals: Some(tree_sitter_typescript::LOCALS_QUERY),
-        tags: Some(tree_sitter_typescript::TAGS_QUERY),
+        folds: None,
+        tags: &[tree_sitter_typescript::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -257,7 +304,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         ],
         injections: Some(tree_sitter_javascript::INJECTIONS_QUERY),
         locals: Some(tree_sitter_typescript::LOCALS_QUERY),
-        tags: Some(tree_sitter_typescript::TAGS_QUERY),
+        folds: None,
+        tags: &[tree_sitter_typescript::TAGS_QUERY],
         capture_keys: HTML_KEYS,
     },
     LanguageSpec {
@@ -270,7 +318,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_go::HIGHLIGHTS_QUERY],
         injections: None,
         locals: None,
-        tags: Some(tree_sitter_go::TAGS_QUERY),
+        folds: None,
+        tags: &[tree_sitter_go::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -283,7 +332,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_c::HIGHLIGHT_QUERY],
         injections: None,
         locals: None,
-        tags: Some(tree_sitter_c::TAGS_QUERY),
+        folds: None,
+        tags: &[tree_sitter_c::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -301,7 +351,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         ],
         injections: None,
         locals: None,
-        tags: Some(tree_sitter_cpp::TAGS_QUERY),
+        folds: None,
+        tags: &[tree_sitter_cpp::TAGS_QUERY],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -321,7 +372,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_bash::HIGHLIGHT_QUERY],
         injections: None,
         locals: None,
-        tags: None,
+        folds: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -334,7 +386,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_html::HIGHLIGHTS_QUERY],
         injections: Some(tree_sitter_html::INJECTIONS_QUERY),
         locals: None,
-        tags: None,
+        folds: None,
+        tags: &[include_str!("../queries/html/tags.scm")],
         capture_keys: HTML_KEYS,
     },
     LanguageSpec {
@@ -347,7 +400,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_css::HIGHLIGHTS_QUERY],
         injections: None,
         locals: None,
-        tags: None,
+        folds: None,
+        tags: &[],
         capture_keys: NO_OVERRIDES,
     },
     LanguageSpec {
@@ -360,7 +414,8 @@ pub static LANGUAGES: &[LanguageSpec] = &[
         highlights: &[tree_sitter_properties::HIGHLIGHTS_QUERY],
         injections: None,
         locals: None,
-        tags: Some(tree_sitter_properties::TAGS_QUERY),
+        folds: None,
+        tags: &[tree_sitter_properties::TAGS_QUERY],
         capture_keys: PROPERTIES_KEYS,
     },
 ];
@@ -371,7 +426,7 @@ pub fn by_id(id: &str) -> Option<&'static LanguageSpec> {
     let id = id.trim().to_ascii_lowercase();
     let id = match id.as_str() {
         "rs" => "rust",
-        "kt" | "kts" => "kotlin",
+        "kt" | "kts" | "gradle.kts" => "kotlin",
         "js" | "jsx" | "node" => "javascript",
         "ts" => "typescript",
         "py" | "python3" => "python",
@@ -446,6 +501,8 @@ mod tests {
         assert_eq!(id("defs.bzl", ""), Some("starlark"));
         assert_eq!(id("Cargo.lock", ""), Some("toml"));
         assert_eq!(id("gradlew", ""), Some("bash"));
+        assert_eq!(id("app/build.gradle", ""), Some("groovy"));
+        assert_eq!(id("Jenkinsfile", ""), Some("groovy"));
         assert_eq!(
             id("tool", "#!/usr/bin/env python3\nprint(1)\n"),
             Some("python")

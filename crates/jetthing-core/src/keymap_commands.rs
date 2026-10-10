@@ -66,6 +66,8 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     global("CloseContent", "editor.close", "{}"),
     global("CompileDirty", "build.project", "{}"),
     global("Run", "run.project", "{}"),
+    // Run context configuration: the gutter target at the caret.
+    editor("RunClass", "run.gutter"),
     global("Rerun", "run.rerun", "{}"),
     global("Stop", "run.cancel", "{}"),
     global("CheckinProject", "toolwindow.activate.commit", "{}"),
@@ -90,6 +92,11 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
         "ActivateCommitToolWindow",
         "toolwindow.toggle",
         r#"{"id":"commit"}"#,
+    ),
+    global(
+        "ActivateStructureToolWindow",
+        "toolwindow.toggle",
+        r#"{"id":"structure"}"#,
     ),
     global(
         "ActivateFindToolWindow",
@@ -136,6 +143,12 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     editor("VcsShowPrevChangeMarker", "vcs.previousChange"),
     editor("Vcs.RollbackChangedLines", "vcs.rollbackChange"),
     editor("GotoPreviousError", "editor.previousProblem"),
+    editor("EditorSelectWord", "editor.extendSelection"),
+    editor("EditorUnSelectWord", "editor.shrinkSelection"),
+    editor("CollapseRegion", "editor.collapseRegion"),
+    editor("ExpandRegion", "editor.expandRegion"),
+    editor("CollapseAllRegions", "editor.collapseAllRegions"),
+    editor("ExpandAllRegions", "editor.expandAllRegions"),
     editor("EditorDuplicate", "editor.duplicate"),
     editor("EditorDeleteLine", "editor.deleteLine"),
     editor("CommentByLineComment", "editor.commentLine"),

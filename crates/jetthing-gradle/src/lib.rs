@@ -4,8 +4,14 @@
 //! so it never executes build logic of an untrusted project. The precise project
 //! model comes from a Gradle sync, which runs the user's Gradle.
 
+pub mod model;
+
+pub use model::{GradleModel, ProjectModel, TaskModel};
+
 use jetthing_runner::{
-    BuildSystem, BuildSystemKind, RunnerError, TaskKind, TaskPlan, build_system::require_program,
+    BuildSystem, BuildSystemKind, RunConfiguration, RunTarget, RunnerError, TaskKind, TaskPlan,
+    TestId,
+    build_system::{derive_plan, java_method_name, require_program},
 };
 use std::path::{Path, PathBuf};
 
@@ -317,6 +323,65 @@ impl BuildSystem for Gradle {
         };
         build.task_plan(TaskKind::Test, "Gradle Test", &[task.into()])
     }
+
+    fn configuration_plan(
+        &self,
+        root: &Path,
+        config: &RunConfiguration,
+    ) -> Result<TaskPlan, RunnerError> {
+        let RunTarget::Gradle {
+            tasks,
+            options,
+            program_arguments,
+        } = &config.target
+        else {
+            return Err(RunnerError::NotRunnable(
+                "not a Gradle configuration".into(),
+            ));
+        };
+        let build = detected(root)?;
+        let mut args: Vec<String> = tasks
+            .iter()
+            .flat_map(|task| task.split_whitespace())
+            .map(str::to_owned)
+            .chain(options.iter().cloned())
+            .collect();
+        if !program_arguments.is_empty() {
+            // `run` and other JavaExec tasks receive program arguments via --args.
+            args.push(format!("--args={}", program_arguments.join(" ")));
+        }
+        build.task_plan(config.target.task_kind(), &config.name, &args)
+    }
+
+    fn rerun_failed_plan(
+        &self,
+        _root: &Path,
+        plan: &TaskPlan,
+        failed: &[TestId],
+    ) -> Result<TaskPlan, RunnerError> {
+        if failed.is_empty() {
+            return Err(RunnerError::NotRunnable("no failed tests".into()));
+        }
+        // Keep tasks and options, drop earlier filters, add one --tests per failure.
+        let mut args = Vec::new();
+        let mut previous_filter = false;
+        for arg in &plan.args {
+            if previous_filter {
+                previous_filter = false;
+                continue;
+            }
+            if arg == "--tests" {
+                previous_filter = true;
+                continue;
+            }
+            args.push(arg.clone());
+        }
+        for test in failed {
+            args.push("--tests".into());
+            args.push(format!("{}.{}", test.suite, java_method_name(&test.name)));
+        }
+        Ok(derive_plan(plan, args))
+    }
 }
 
 fn detected(root: &Path) -> Result<GradleBuild, RunnerError> {
@@ -442,6 +507,55 @@ mod tests {
         assert_eq!(run.args, [":app:run", "--console=plain"]);
         assert_eq!(run.kind, TaskKind::Run);
         assert_eq!(Gradle.build_plan(&fixture.0).unwrap().args[0], "build");
+    }
+
+    #[test]
+    fn gradle_configuration_plan_passes_options_and_program_arguments() {
+        let fixture = Fixture::new("config");
+        fixture
+            .write("settings.gradle.kts", "")
+            .write("gradlew", "");
+        let config = RunConfiguration::new(
+            "App",
+            RunTarget::Gradle {
+                tasks: vec![":app:run".into()],
+                options: vec!["--offline".into()],
+                program_arguments: vec!["a".into(), "b".into()],
+            },
+        );
+        let plan = Gradle.configuration_plan(&fixture.0, &config).unwrap();
+        assert_eq!(
+            plan.args,
+            [":app:run", "--offline", "--args=a b", "--console=plain"]
+        );
+        assert_eq!(plan.kind, TaskKind::Run);
+    }
+
+    #[test]
+    fn rerun_failed_adds_test_filters() {
+        let plan = TaskPlan::new(
+            "Gradle Test",
+            "./gradlew",
+            [":app:test", "--tests", "Old", "--console=plain"],
+            "/w",
+        );
+        let failed = [TestId {
+            suite: "com.example.AppTest".into(),
+            name: "fails()".into(),
+        }];
+        let rerun = Gradle
+            .rerun_failed_plan(Path::new("/w"), &plan, &failed)
+            .unwrap();
+        assert_eq!(
+            rerun.args,
+            [
+                ":app:test",
+                "--console=plain",
+                "--tests",
+                "com.example.AppTest.fails"
+            ]
+        );
+        assert_eq!(rerun.kind, TaskKind::Test);
     }
 
     #[test]

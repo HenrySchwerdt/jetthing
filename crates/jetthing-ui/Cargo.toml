@@ -11,11 +11,13 @@ jetthing-android = { path = "../jetthing-android" }
 jetthing-actions = { path = "../jetthing-actions" }
 pulldown-cmark.workspace = true
 jetthing-ai = { path = "../jetthing-ai" }
+jetthing-bazel = { path = "../jetthing-bazel" }
 jetthing-command = { path = "../jetthing-command" }
 jetthing-control = { path = "../jetthing-control" }
 jetthing-core = { path = "../jetthing-core" }
 jetthing-git = { path = "../jetthing-git" }
 jetthing-keymap = { path = "../jetthing-keymap" }
+jetthing-gradle = { path = "../jetthing-gradle" }
 jetthing-language = { path = "../jetthing-language" }
 jetthing-lsp = { path = "../jetthing-lsp" }
 jetthing-plugins = { path = "../jetthing-plugins" }

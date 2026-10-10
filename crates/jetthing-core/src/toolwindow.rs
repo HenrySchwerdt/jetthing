@@ -16,6 +16,7 @@ pub enum Anchor {
 pub enum ToolWindow {
     Project,
     Commit,
+    Structure,
     Find,
     Build,
     Problems,
@@ -24,13 +25,16 @@ pub enum ToolWindow {
     Logcat,
     Git,
     BuildVariants,
+    Gradle,
+    Bazel,
     AiChat,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 11] = [
+    pub const ALL: [ToolWindow; 14] = [
         ToolWindow::Project,
         ToolWindow::Commit,
+        ToolWindow::Structure,
         ToolWindow::Find,
         ToolWindow::Build,
         ToolWindow::Problems,
@@ -39,6 +43,8 @@ impl ToolWindow {
         ToolWindow::Logcat,
         ToolWindow::Git,
         ToolWindow::BuildVariants,
+        ToolWindow::Gradle,
+        ToolWindow::Bazel,
         ToolWindow::AiChat,
     ];
 
@@ -46,6 +52,7 @@ impl ToolWindow {
         match self {
             ToolWindow::Project => "project",
             ToolWindow::Commit => "commit",
+            ToolWindow::Structure => "structure",
             ToolWindow::Find => "find",
             ToolWindow::Build => "build",
             ToolWindow::Problems => "problems",
@@ -55,6 +62,8 @@ impl ToolWindow {
             ToolWindow::Git => "git",
             ToolWindow::BuildVariants => "buildVariants",
             ToolWindow::AiChat => "aiChat",
+            ToolWindow::Gradle => "gradle",
+            ToolWindow::Bazel => "bazel",
         }
     }
 
@@ -62,6 +71,7 @@ impl ToolWindow {
         match self {
             ToolWindow::Project => "Project",
             ToolWindow::Commit => "Commit",
+            ToolWindow::Structure => "Structure",
             ToolWindow::Find => "Find",
             ToolWindow::Build => "Build",
             ToolWindow::Problems => "Problems",
@@ -71,14 +81,18 @@ impl ToolWindow {
             ToolWindow::Git => "Git",
             ToolWindow::BuildVariants => "Build Variants",
             ToolWindow::AiChat => "AI Chat",
+            ToolWindow::Gradle => "Gradle",
+            ToolWindow::Bazel => "Bazel",
         }
     }
 
-    /// Default activation shortcut (macOS notation, see `docs/spec/toolwindows.md`).
+    /// Default activation shortcut (macOS notation, see `docs/spec/toolwindows.md`);
+    /// empty when the reference assigns none.
     pub fn shortcut(self) -> &'static str {
         match self {
             ToolWindow::Project => "⌘1",
             ToolWindow::Commit => "⌘0",
+            ToolWindow::Structure => "⌘7",
             ToolWindow::Find => "⌘3",
             ToolWindow::Build => "⌘4",
             ToolWindow::Problems => "⌘6",
@@ -88,6 +102,8 @@ impl ToolWindow {
             ToolWindow::DeviceManager
             | ToolWindow::Logcat
             | ToolWindow::BuildVariants
+            | ToolWindow::Gradle
+            | ToolWindow::Bazel
             | ToolWindow::AiChat => "",
             ToolWindow::Git => "⌘9",
         }
@@ -95,14 +111,20 @@ impl ToolWindow {
 
     pub fn anchor(self) -> Anchor {
         match self {
-            ToolWindow::Project | ToolWindow::Commit | ToolWindow::BuildVariants => Anchor::Left,
+            ToolWindow::Project
+            | ToolWindow::Commit
+            | ToolWindow::Structure
+            | ToolWindow::BuildVariants => Anchor::Left,
             ToolWindow::Find
             | ToolWindow::Build
             | ToolWindow::Problems
             | ToolWindow::Terminal
             | ToolWindow::Logcat
             | ToolWindow::Git => Anchor::Bottom,
-            ToolWindow::DeviceManager | ToolWindow::AiChat => Anchor::Right,
+            ToolWindow::DeviceManager
+            | ToolWindow::Gradle
+            | ToolWindow::Bazel
+            | ToolWindow::AiChat => Anchor::Right,
         }
     }
 
@@ -122,9 +144,38 @@ pub struct ToolWindowLayout {
     left: Option<ToolWindow>,
     bottom: Option<ToolWindow>,
     right: Option<ToolWindow>,
+    bottom_height: Option<u32>,
 }
 
+/// Smallest bottom tool window height, in points.
+pub const BOTTOM_MIN_HEIGHT: f32 = 180.0;
+/// Bottom tool window height used until the user drags the splitter.
+pub const BOTTOM_DEFAULT_HEIGHT: f32 = 260.0;
+/// Editor height that must remain when the bottom tool window grows.
+pub const EDITOR_MIN_HEIGHT: f32 = 120.0;
+
 impl ToolWindowLayout {
+    /// Height the user dragged the bottom tool window to, if any.
+    pub fn bottom_height(&self) -> Option<f32> {
+        self.bottom_height.map(|height| height as f32)
+    }
+
+    /// Remembers a user-chosen bottom height. Non-finite values are ignored.
+    pub fn set_bottom_height(&mut self, height: f32) {
+        if height.is_finite() {
+            self.bottom_height = Some(height.round().max(BOTTOM_MIN_HEIGHT) as u32);
+        }
+    }
+
+    /// Height to lay the bottom window out with, clamped so the editor keeps
+    /// at least [`EDITOR_MIN_HEIGHT`] of a window `window_height` tall.
+    pub fn effective_bottom_height(&self, window_height: f32) -> f32 {
+        let max = (window_height - EDITOR_MIN_HEIGHT).max(BOTTOM_MIN_HEIGHT);
+        self.bottom_height()
+            .unwrap_or(BOTTOM_DEFAULT_HEIGHT)
+            .clamp(BOTTOM_MIN_HEIGHT, max)
+    }
+
     fn slot(&mut self, anchor: Anchor) -> &mut Option<ToolWindow> {
         match anchor {
             Anchor::Left => &mut self.left,
@@ -180,6 +231,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bottom_height_is_kept_across_toggles_and_clamped() {
+        let mut layout = ToolWindowLayout::default();
+        assert_eq!(layout.effective_bottom_height(900.0), BOTTOM_DEFAULT_HEIGHT);
+        layout.set_bottom_height(500.4);
+        layout.toggle(ToolWindow::Terminal);
+        layout.toggle(ToolWindow::Terminal);
+        assert_eq!(layout.effective_bottom_height(900.0), 500.0);
+        // Never squeezes the editor out, never below the minimum.
+        assert_eq!(layout.effective_bottom_height(400.0), 280.0);
+        layout.set_bottom_height(f32::NAN);
+        layout.set_bottom_height(10.0);
+        assert_eq!(layout.bottom_height(), Some(BOTTOM_MIN_HEIGHT));
+    }
+
+    #[test]
     fn one_tool_window_per_anchor() {
         let mut layout = ToolWindowLayout::default();
         layout.show(ToolWindow::Project);
@@ -204,6 +270,9 @@ mod tests {
             layout.is_visible(ToolWindow::Commit),
             "anchors are independent"
         );
+        layout.show(ToolWindow::Gradle);
+        assert_eq!(layout.visible(Anchor::Right), Some(ToolWindow::Gradle));
+        assert!(layout.is_visible(ToolWindow::Commit));
         layout.hide_all();
         assert_eq!(layout.visible(Anchor::Right), None);
     }

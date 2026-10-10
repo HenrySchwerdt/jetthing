@@ -67,6 +67,6 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
         });
     // Escape is handled with the other dismiss keys in `IdeApp`.
     if close {
-        app.state.about_open = false;
+        app.dispatch("app.closeAbout", serde_json::Value::Null);
     }
 }

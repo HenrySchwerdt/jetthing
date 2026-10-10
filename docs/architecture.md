@@ -25,6 +25,10 @@ no crate below `jetthing-ui` imports UI types.
   npm, Go built in), cancellable child-process execution, a line-oriented console model
   (`\r` progress, ANSI stripping) and a build-event parser (steps with durations, compiler
   messages with source locations).
+- `jetthing-runnables`: entry points (mains, tests, test containers) found with the
+  registry's tree-sitter grammars, for gutter run icons.
+- `jetthing-bazel`: Bazel workspace detection, `bazel query` target model with a cache,
+  BUILD-file rule scanning, and per-target run configurations.
 - `jetthing-gradle`: static Gradle build detection (settings includes, wrapper, plugin
   ids/aliases including Android) and the Gradle `BuildSystem` provider.
 - `jetthing-android`: Android SDK discovery (IDE setting, `local.properties`, `ANDROID_HOME`,

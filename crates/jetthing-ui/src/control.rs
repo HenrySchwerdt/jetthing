@@ -278,6 +278,7 @@ impl IdeApp {
         self.palette.open
             || self.dialog.is_some()
             || self.state.about_open
+            || self.state.first_run_open
             || self.completion_visible()
             || egui::Popup::is_any_open(ctx)
             || self.state.docs.popup.is_some()
@@ -389,6 +390,7 @@ impl IdeApp {
                 "completion": self.completion_visible(),
                 "notification": self.state.update_notification,
                 "about": self.state.about_open,
+                "customize": self.state.first_run_open,
                 "crashReport": self.state.crash_report.is_some(),
                 "menu": egui::Popup::is_any_open(ctx),
             },

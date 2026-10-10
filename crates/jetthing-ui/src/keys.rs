@@ -21,6 +21,7 @@ pub fn for_windows_linux(mac: &str) -> String {
         "Double ⇧" => return "Double Shift".into(),
         // Default keymap differences between macOS and Windows/Linux.
         "⌃R" => return "Shift+F10".into(),
+        "⌃⇧R" => return "Ctrl+Shift+F10".into(),
         "⌘W" => return "Ctrl+F4".into(),
         "⌥F12" => return "Alt+F12".into(),
         "⌘," => return "Ctrl+Alt+S".into(),
@@ -36,6 +37,8 @@ pub fn for_windows_linux(mac: &str) -> String {
         "⌘]" => return "Ctrl+Alt+Right".into(),
         // Quick Documentation.
         "F1" => return "Ctrl+Q".into(),
+        "⌥↑" => return "Ctrl+W".into(),
+        "⌥↓" => return "Ctrl+Shift+W".into(),
         _ => {}
     }
     let mut chars = mac.chars().peekable();
@@ -110,7 +113,10 @@ mod tests {
         assert_eq!(for_windows_linux("⌘1"), "Alt+1");
         assert_eq!(for_windows_linux("⇧⌘F12"), "Ctrl+Shift+F12");
         assert_eq!(for_windows_linux("⌃R"), "Shift+F10");
+        assert_eq!(for_windows_linux("⌃⇧R"), "Ctrl+Shift+F10");
         assert_eq!(for_windows_linux("Double ⇧"), "Double Shift");
+        assert_eq!(for_windows_linux("⌥↑"), "Ctrl+W");
+        assert_eq!(for_windows_linux("⌥↓"), "Ctrl+Shift+W");
         assert_eq!(for_windows_linux(""), "");
         assert_eq!(for_windows_linux("⌘S"), "Ctrl+S");
         assert_eq!(for_windows_linux("⌃G"), "Alt+J");

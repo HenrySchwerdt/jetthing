@@ -1332,6 +1332,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
+name = "dekobon-tree-sitter-groovy"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad65fc9637f84f0baf90c88ac337ab068dd7a9260390e473d9496e380685e2d9"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2776,7 +2786,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jetthing-actions"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -2784,7 +2794,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-ai"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "pulldown-cmark",
  "serde",
@@ -2797,7 +2807,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-android"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "regex",
  "roxmltree",
@@ -2810,7 +2820,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-app"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "eframe",
  "jetthing-plugin-hello",
@@ -2821,8 +2831,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jetthing-bazel"
+version = "0.0.4"
+dependencies = [
+ "jetthing-runner",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jetthing-cli"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "jetthing-command",
  "jetthing-control",
@@ -2832,7 +2851,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-command"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -2841,7 +2860,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-control"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "interprocess",
  "png",
@@ -2852,12 +2871,13 @@ dependencies = [
 
 [[package]]
 name = "jetthing-core"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "flate2",
  "jetthing-actions",
  "jetthing-ai",
  "jetthing-android",
+ "jetthing-bazel",
  "jetthing-command",
  "jetthing-git",
  "jetthing-gradle",
@@ -2866,6 +2886,7 @@ dependencies = [
  "jetthing-lsp",
  "jetthing-plugins",
  "jetthing-project",
+ "jetthing-runnables",
  "jetthing-runner",
  "jetthing-search",
  "jetthing-settings",
@@ -2881,7 +2902,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-git"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "similar",
  "thiserror 2.0.21",
@@ -2889,14 +2910,16 @@ dependencies = [
 
 [[package]]
 name = "jetthing-gradle"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "jetthing-runner",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "jetthing-keymap"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -2905,8 +2928,11 @@ dependencies = [
 
 [[package]]
 name = "jetthing-language"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
+ "dekobon-tree-sitter-groovy",
+ "jetthing-text",
+ "proptest",
  "serde_json",
  "tree-sitter",
  "tree-sitter-bash",
@@ -2933,7 +2959,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-lsp"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "lsp-types",
  "serde",
@@ -2946,7 +2972,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-plugin-api"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "jetthing-command",
  "serde",
@@ -2957,7 +2983,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-plugin-hello"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "jetthing-plugin-api",
  "jetthing-plugin-ui",
@@ -2965,7 +2991,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-plugin-lua"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "egui",
  "jetthing-plugin-api",
@@ -2978,7 +3004,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-plugin-ui"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "egui",
  "jetthing-plugin-api",
@@ -2986,7 +3012,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-plugin-wasm"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "egui",
  "jetthing-plugin-api",
@@ -2999,7 +3025,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-plugins"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "jetthing-command",
  "jetthing-plugin-api",
@@ -3012,7 +3038,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-project"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "notify",
  "serde",
@@ -3021,17 +3047,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "jetthing-runner"
-version = "0.0.3"
+name = "jetthing-runnables"
+version = "0.0.4"
 dependencies = [
+ "jetthing-language",
+ "tree-sitter",
+]
+
+[[package]]
+name = "jetthing-runner"
+version = "0.0.4"
+dependencies = [
+ "quick-xml 0.37.5",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
  "toml",
+ "walkdir",
 ]
 
 [[package]]
 name = "jetthing-search"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "globset",
  "regex",
@@ -3040,7 +3077,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-settings"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "jetthing-keymap",
  "serde",
@@ -3051,7 +3088,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-terminal"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "portable-pty",
  "thiserror 2.0.21",
@@ -3060,7 +3097,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-text"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "proptest",
  "regex",
@@ -3070,7 +3107,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-toolchains"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "flate2",
  "lzma-rs",
@@ -3088,17 +3125,19 @@ dependencies = [
 
 [[package]]
 name = "jetthing-ui"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "eframe",
  "egui",
  "jetthing-actions",
  "jetthing-ai",
  "jetthing-android",
+ "jetthing-bazel",
  "jetthing-command",
  "jetthing-control",
  "jetthing-core",
  "jetthing-git",
+ "jetthing-gradle",
  "jetthing-keymap",
  "jetthing-language",
  "jetthing-lsp",
@@ -3116,7 +3155,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-update"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "flate2",
  "serde",
@@ -3805,7 +3844,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-http"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "eframe",
  "egui",
@@ -3819,7 +3858,7 @@ dependencies = [
 
 [[package]]
 name = "nexus-http-core"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "base64 0.22.1",
  "cookie",
@@ -4632,6 +4671,15 @@ name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
+
+[[package]]
+name = "quick-xml"
+version = "0.37.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "quick-xml"
@@ -7152,7 +7200,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "338e30461b3a2b67d70eb30a6d89f8e0c93a833e07d2ae89085cd070c4a00ac0"
 dependencies = [
  "proc-macro2",
- "quick-xml",
+ "quick-xml 0.41.0",
  "quote",
 ]
 
@@ -8029,7 +8077,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "anyhow",
  "flate2",
