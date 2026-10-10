@@ -50,6 +50,33 @@ impl HighlightLayer {
             })
     }
 
+    /// Builds a layer from spans in any order; where spans overlap, the one
+    /// starting later wins (nested injections come after their host).
+    fn from_unsorted(mut spans: Vec<HighlightSpan>) -> Self {
+        spans.sort_by_key(|span| span.start_byte);
+        let mut layer = Self::default();
+        let mut overlapping = Vec::new();
+        for span in spans {
+            if span.start_byte >= span.end_byte {
+                continue;
+            }
+            if layer
+                .spans
+                .last()
+                .is_some_and(|last| last.end_byte > span.start_byte)
+            {
+                overlapping.push(span);
+            } else {
+                push_merged(&mut layer.spans, span.start_byte..span.end_byte, span.key);
+            }
+        }
+        // Rare (overlapping injections): resolve the remainder exactly.
+        for span in overlapping {
+            layer = layer.overlay(&Self { spans: vec![span] });
+        }
+        layer
+    }
+
     pub fn spans(&self) -> &[HighlightSpan] {
         &self.spans
     }
@@ -323,6 +350,10 @@ fn highlight_at_depth(
     if depth >= injection::MAX_DEPTH {
         return Ok(layer);
     }
+    // Injected layers are gathered and merged in one pass: overlaying each
+    // one onto the whole layer would be quadratic for files with many
+    // injections (every Rust macro call is one).
+    let mut injected_spans: Vec<HighlightSpan> = Vec::new();
     for injection in injection::injections(spec, tree, source, range.clone()) {
         let extent = injection.extent();
         let clip = range.start.max(extent.start)..range.end.min(extent.end);
@@ -335,8 +366,11 @@ fn highlight_at_depth(
         // Injected languages without highlight queries contribute nothing.
         if let Ok(injected) = highlight_at_depth(injection.spec, &injected, source, clip, depth + 1)
         {
-            layer = layer.overlay(&injected);
+            injected_spans.extend(injected.spans);
         }
+    }
+    if !injected_spans.is_empty() {
+        layer = layer.overlay(&HighlightLayer::from_unsorted(injected_spans));
     }
     Ok(layer)
 }

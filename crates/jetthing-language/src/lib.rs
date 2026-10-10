@@ -28,6 +28,10 @@ use tree_sitter::Node;
 /// Maximum number of syntax diagnostics reported per file.
 const MAX_DIAGNOSTICS: usize = 100;
 
+/// Bytes highlighted when a file is analyzed; the rest is highlighted on
+/// demand as the editor scrolls ([`LanguageAnalysis::ensure_highlighted`]).
+pub const INITIAL_HIGHLIGHT_BYTES: usize = 32 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub message: String,
@@ -47,6 +51,8 @@ pub struct LanguageAnalysis {
     /// The text this analysis describes (shared, for range queries such as
     /// folding regions without re-reading the buffer).
     pub source: std::sync::Arc<str>,
+    /// Byte ranges whose highlights are computed (sorted, disjoint).
+    highlighted: Vec<std::ops::Range<usize>>,
 }
 
 impl LanguageAnalysis {
@@ -101,11 +107,12 @@ impl LanguageAnalysis {
         };
         let mut stale: Vec<std::ops::Range<usize>> = Vec::new();
         for edit in edits {
-            for range in &mut stale {
+            for range in stale.iter_mut().chain(self.highlighted.iter_mut()) {
                 *range = syntax::map_range(range.clone(), edit);
             }
             stale.extend(self.highlights.apply_edit(edit));
         }
+        self.highlighted = syntax::merge_ranges(std::mem::take(&mut self.highlighted));
         let Some(mut ranges) = syntax.apply_edits(source, edits) else {
             *self = analyze(path, source);
             return;
@@ -115,28 +122,102 @@ impl LanguageAnalysis {
                 .into_iter()
                 .map(|range| range.start.min(source.len())..range.end.min(source.len())),
         );
-        for mut range in syntax::merge_ranges(ranges) {
-            // Grow until the range covers whole new captures and whole old
-            // spans, so no clipped remainder keeps a stale key.
-            loop {
-                let (covered, replacement) = syntax.highlight_covering(source, range);
-                let grown = self.highlights.covering(covered.clone());
-                if grown == covered {
-                    self.highlights.splice(covered, replacement);
-                    break;
-                }
-                range = grown;
+        self.source = source.into();
+        for range in syntax::merge_ranges(ranges) {
+            // Text never highlighted stays lazy; it is computed when shown.
+            if self
+                .highlighted
+                .iter()
+                .any(|covered| covered.start <= range.end && range.start <= covered.end)
+            {
+                self.highlight_region(range);
             }
         }
+        let Some(syntax) = self.syntax.as_ref() else {
+            return;
+        };
         self.diagnostics.clear();
         collect_diagnostics(syntax.tree().root_node(), &mut self.diagnostics);
-        self.source = source.into();
+    }
+
+    /// Highlights `range` (grown until it covers whole new captures and whole
+    /// old spans, so no clipped remainder keeps a stale key) and records it
+    /// as computed.
+    fn highlight_region(&mut self, mut range: std::ops::Range<usize>) {
+        let Some(syntax) = self.syntax.as_ref() else {
+            return;
+        };
+        loop {
+            let (covered, replacement) = syntax.highlight_covering(&self.source, range.clone());
+            let grown = self.highlights.covering(covered.clone());
+            if grown == covered {
+                self.highlights.splice(covered.clone(), replacement);
+                self.highlighted.push(covered);
+                self.highlighted = syntax::merge_ranges(std::mem::take(&mut self.highlighted));
+                return;
+            }
+            range = grown;
+        }
+    }
+
+    /// Computes highlights for any part of the byte `range` not highlighted
+    /// yet (the editor calls this with its viewport).
+    pub fn ensure_highlighted(&mut self, range: std::ops::Range<usize>) {
+        if self.syntax.is_none() {
+            return;
+        }
+        let len = self.source.len();
+        let range = range.start.min(len)..range.end.min(len);
+        let mut gaps = Vec::new();
+        let mut cursor = range.start;
+        for covered in &self.highlighted {
+            if covered.end <= cursor {
+                continue;
+            }
+            if covered.start >= range.end {
+                break;
+            }
+            if covered.start > cursor {
+                gaps.push(cursor..covered.start);
+            }
+            cursor = cursor.max(covered.end);
+        }
+        if cursor < range.end {
+            gaps.push(cursor..range.end);
+        }
+        for gap in gaps {
+            let gap = syntax::line_range(&self.source, gap);
+            self.highlight_region(gap);
+        }
+    }
+
+    /// True when no injected region (Markdown fence, `<script>`, …) has syntax
+    /// errors. Injected error recovery can depend on position, so highlights
+    /// of erroneous injected regions may lag until they are edited.
+    #[doc(hidden)]
+    pub fn injections_error_free(&self) -> bool {
+        self.syntax.as_ref().is_none_or(|syntax| {
+            injection::error_free(syntax.language(), syntax.tree(), &self.source)
+        })
+    }
+
+    /// True when every byte of the file has highlights computed.
+    pub fn fully_highlighted(&self) -> bool {
+        self.syntax.is_none()
+            || self.highlighted.first() == Some(&(0..self.source.len()))
+            || self.source.is_empty()
     }
 }
 
 /// Parses and highlights `source`, detecting the language from `path`.
 /// Unknown languages and grammar failures yield plain-text analysis.
 pub fn analyze(path: &Path, source: &str) -> LanguageAnalysis {
+    analyze_with_budget(path, source, INITIAL_HIGHLIGHT_BYTES)
+}
+
+/// Like [`analyze`], highlighting only about the first `budget` bytes (whole
+/// lines); the rest follows through [`LanguageAnalysis::ensure_highlighted`].
+pub fn analyze_with_budget(path: &Path, source: &str, budget: usize) -> LanguageAnalysis {
     let Some(spec) = registry::detect(path, source) else {
         return LanguageAnalysis::default();
     };
@@ -147,10 +228,11 @@ pub fn analyze(path: &Path, source: &str) -> LanguageAnalysis {
     let Some(syntax) = SyntaxTree::parse(spec, source) else {
         return result;
     };
-    result.highlights = syntax.highlight(source, 0..source.len());
     collect_diagnostics(syntax.tree().root_node(), &mut result.diagnostics);
     result.source = source.into();
     result.syntax = Some(syntax);
+    let first = syntax::line_range(source, 0..budget.min(source.len()));
+    result.highlight_region(first);
     result
 }
 
@@ -407,6 +489,44 @@ mod tests {
                 analysis.highlights
             );
         }
+    }
+
+    #[test]
+    fn lazy_highlighting_fills_viewports_and_survives_edits() {
+        let mut source = String::new();
+        for i in 0..300 {
+            source.push_str(&format!(
+                "/** d{i} */\nclass C{i} {{ int f() {{ return {i}; }} }}\n"
+            ));
+        }
+        let path = Path::new("Big.java");
+        let mut lazy = analyze_with_budget(path, &source, 2_000);
+        assert!(!lazy.fully_highlighted());
+        assert!(
+            lazy.highlights
+                .spans()
+                .iter()
+                .all(|span| span.end_byte <= 2_100)
+        );
+        let mid = source.len() / 2;
+        lazy.ensure_highlighted(mid..mid + 3_000);
+        // Edit once inside highlighted text and once in never-shown text.
+        let mut document = jetthing_text::TextDocument::new(&source);
+        document.take_edits();
+        document.edit(10, 10, "x").unwrap();
+        let far = document.len_chars() - 50;
+        document.edit(far, far, "/* c */").unwrap();
+        let text = document.text();
+        let jetthing_text::EditJournal::Edits(edits) = document.take_edits() else {
+            panic!("journal");
+        };
+        lazy.apply_edits(path, &text, &edits);
+        lazy.ensure_highlighted(0..text.len());
+        assert!(lazy.fully_highlighted());
+        assert_eq!(
+            lazy.highlights,
+            analyze_with_budget(path, &text, usize::MAX).highlights
+        );
     }
 
     #[test]

@@ -433,6 +433,22 @@ fn editor_surface(
     document.reveal_carets();
     let folds = FoldView::new(document);
     let row_count = folds.row_count(line_count);
+    // Highlights are computed lazily: make sure last frame's visible rows plus
+    // a page of margin are highlighted before painting.
+    let viewport_id = egui::Id::new(("editor_viewport_rows", &document.path));
+    let (seen_first, seen_last) = ui
+        .data(|data| data.get_temp::<(usize, usize)>(viewport_id))
+        .unwrap_or((0, 80));
+    if row_count > 0 {
+        let first_line = folds.row_to_line(seen_first.saturating_sub(60).min(row_count - 1));
+        let last_line = folds.row_to_line((seen_last + 60).min(row_count - 1));
+        let start = document.text.line_to_byte(first_line).unwrap_or(0);
+        let end = document
+            .text
+            .line_to_byte(last_line + 1)
+            .unwrap_or_else(|| document.text.char_to_byte(document.text.len_chars()));
+        document.analysis.ensure_highlighted(start..end);
+    }
     let digits = line_count.max(1).to_string().len().max(2);
     let gutter_width = 20.0 + digits as f32 * char_width + 18.0;
     let text_left = gutter_width + TEXT_LEFT_PADDING;
@@ -622,6 +638,13 @@ fn editor_surface(
             let first_row =
                 ((viewport.top() / ROW_HEIGHT).floor().max(0.0) as usize).min(row_count);
             let last_row = ((viewport.bottom() / ROW_HEIGHT).ceil() as usize + 1).min(row_count);
+            if (first_row, last_row) != (seen_first, seen_last) {
+                ui.data_mut(|data| data.insert_temp(viewport_id, (first_row, last_row)));
+                // Newly exposed rows get highlighted on the next frame.
+                if !document.analysis.fully_highlighted() {
+                    ui.ctx().request_repaint();
+                }
+            }
             // Gutter fold markers for regions starting in the viewport.
             let gutter_hovered = ui
                 .input(|input| input.pointer.hover_pos())
