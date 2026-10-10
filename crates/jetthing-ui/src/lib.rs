@@ -17,6 +17,7 @@ mod disk_banner;
 mod editor;
 mod editor_keys;
 mod findbar;
+mod first_run;
 mod icons;
 mod keys;
 mod logcat_ui;
@@ -67,6 +68,8 @@ pub struct IdeApp {
     dialog: Option<popups::Dialog>,
     settings_dialog: Option<settings_dialog::SettingsDialog>,
     dialog_focus: bool,
+    /// Pending choices in the first-run "Customize Jetthing" wizard.
+    customize: Option<first_run::Draft>,
     commit_message: String,
     /// Commit checkbox overrides; by default tracked changes are included and
     /// unversioned files are not.
@@ -105,6 +108,9 @@ impl IdeApp {
         let mut app = Self::build(project, files, bundled, check_updates);
         if let Some(dir) = diagnostics::active_log_dir() {
             app.state.check_crash_reports(&dir);
+        }
+        if let Some(dir) = jetthing_settings::default_config_dir() {
+            app.state.detect_first_run(&dir);
         }
         app
     }
@@ -182,6 +188,7 @@ impl IdeApp {
             dialog: None,
             settings_dialog: None,
             dialog_focus: false,
+            customize: None,
             commit_message: String::new(),
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
@@ -470,6 +477,8 @@ impl IdeApp {
         if consume(Modifiers::NONE, Key::Escape) {
             if self.state.about_open {
                 self.state.about_open = false;
+            } else if self.state.first_run_open {
+                self.dispatch("app.skipCustomize", Value::Null);
             } else if self.dialog.is_some() {
                 self.dialog = None;
             } else if self.palette.open {
@@ -732,6 +741,7 @@ impl eframe::App for IdeApp {
         android_sdk::show(self, ctx);
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
+        first_run::show(self, ctx);
         about::show(self, ctx);
         lsp_status::notices(self, ctx);
         plugin_ui::plugins_window(self, ctx);

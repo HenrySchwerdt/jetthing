@@ -51,6 +51,7 @@
 - [x] Check for Updates with verified self-update from GitHub releases
 - [x] `--version` and Help → About with embedded build info (commit, date, target)
 - [x] Log file per OS, crash reports with backtrace, crash notice on next start
+- [x] First-run "Customize Jetthing": theme, keymap, settings import
 - [x] Versioned release pipeline (0.0.2) publishing on every version bump
 
 ## M2 — language intelligence

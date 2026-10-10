@@ -259,6 +259,7 @@ impl IdeApp {
         self.palette.open
             || self.dialog.is_some()
             || self.state.about_open
+            || self.state.first_run_open
             || self.completion_visible()
     }
 
@@ -361,6 +362,7 @@ impl IdeApp {
                 "completion": self.completion_visible(),
                 "notification": self.state.update_notification,
                 "about": self.state.about_open,
+                "customize": self.state.first_run_open,
                 "crashReport": self.state.crash_report.is_some(),
             },
             "status": self.state.status,
