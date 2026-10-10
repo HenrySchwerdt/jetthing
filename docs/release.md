@@ -150,8 +150,9 @@ smoke-tested:
 - The DMG is mounted, and the workflow checks the Info.plist, the code signature and
   the CLI.
 
-The workflow runs on pull requests that touch packaging files (build and test only)
-and can be started manually from the Actions tab.
+To test packaging changes on a branch, start the workflow manually from the Actions
+tab (**Run workflow** with that branch). On branches other than `main` it builds and
+smoke-tests only.
 
 Publishing GitHub release `v<version>` (`version` from `[workspace.package]` in
 `Cargo.toml`):
@@ -162,14 +163,15 @@ Publishing GitHub release `v<version>` (`version` from `[workspace.package]` in
   workflow to repair the release, or bump the version.
 - **Push of tag `v<version>`**: the workflow always publishes or repairs (re-uploads)
   the release. The tag must equal the workspace version, or the run fails.
-- **Pull requests and other branches**: the workflow never publishes.
+- **Manual runs on other branches**: the workflow never publishes. Pull requests do
+  not run it.
 
 To ship a version, bump `[workspace.package] version` and merge it to `main`.
 
 ## Optional signing
 
 All signing is optional. The workflow skips each signing step when its secrets are
-unset, so forks and pull requests build unsigned. Store certificates as base64:
+unset, so forks and branch runs build unsigned. Store certificates as base64:
 `base64 -i cert.p12 | pbcopy`.
 
 | Secret | Used for |

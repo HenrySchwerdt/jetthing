@@ -1,7 +1,7 @@
 # Native installers (PLAT-024)
 
 How to reproduce: `cargo run -p xtask -- dist --installer` on each OS (see
-`docs/release.md`), or run the **Release** workflow on any branch.
+`docs/release.md`), or run the **Release** workflow manually on any branch.
 
 ## Linux `.deb` (local, Ubuntu container, x86_64)
 
