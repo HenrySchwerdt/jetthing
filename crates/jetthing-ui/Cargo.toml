@@ -11,4 +11,5 @@ jetthing-command = { path = "../jetthing-command" }
 jetthing-core = { path = "../jetthing-core" }
 jetthing-git = { path = "../jetthing-git" }
 jetthing-language = { path = "../jetthing-language" }
+jetthing-runner = { path = "../jetthing-runner" }
 serde_json.workspace = true

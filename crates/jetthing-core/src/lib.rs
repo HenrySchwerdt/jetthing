@@ -3,6 +3,7 @@ use jetthing_git::RepositoryStatus;
 use jetthing_language::{LanguageAnalysis, analyze};
 use jetthing_plugins::PluginManifest;
 use jetthing_project::{FileEntry, Project};
+use jetthing_runner::{TaskPlan, TaskService, TaskState};
 use jetthing_search::{SearchEvent, SearchService, TextMatch};
 use jetthing_terminal::TerminalSession;
 use jetthing_text::TextDocument;
@@ -33,6 +34,8 @@ pub struct IdeState {
     pub search_truncated: bool,
     pub git: Option<RepositoryStatus>,
     pub git_visible: bool,
+    pub runner: TaskService,
+    pub build_visible: bool,
     pub status: String,
 }
 
@@ -191,6 +194,32 @@ impl IdeState {
             .map_err(|error| error.to_string())?;
         self.refresh_git()
     }
+
+    pub fn start_build(&mut self) -> Result<(), String> {
+        let root = self.project.as_ref().ok_or("no project is open")?.root();
+        let plan = TaskPlan::detect_build(root).map_err(|error| error.to_string())?;
+        let name = plan.name.clone();
+        self.runner.start(plan).map_err(|error| error.to_string())?;
+        self.build_visible = true;
+        self.status = format!("Running {name}");
+        Ok(())
+    }
+
+    pub fn poll_runner(&mut self) {
+        let was_running = self.runner.is_running();
+        if let Err(error) = self.runner.poll() {
+            self.status = error.to_string();
+            return;
+        }
+        if was_running && !self.runner.is_running() {
+            self.status = match self.runner.state() {
+                TaskState::Exited(0) => "Build finished successfully".into(),
+                TaskState::Exited(code) => format!("Build failed with exit code {code}"),
+                TaskState::Cancelled => "Build cancelled".into(),
+                _ => self.status.clone(),
+            };
+        }
+    }
 }
 
 fn spec(
@@ -216,6 +245,27 @@ fn string_param(params: &Value, name: &str) -> Result<String, CommandError> {
         .ok_or_else(|| CommandError::InvalidParams(format!("expected string field `{name}`")))
 }
 
+fn string_array_param(params: &Value, name: &str) -> Result<Vec<String>, CommandError> {
+    params
+        .get(name)
+        .map(|value| {
+            value
+                .as_array()
+                .ok_or_else(|| {
+                    CommandError::InvalidParams(format!("expected array field `{name}`"))
+                })?
+                .iter()
+                .map(|item| {
+                    item.as_str().map(Into::into).ok_or_else(|| {
+                        CommandError::InvalidParams(format!("expected strings in `{name}`"))
+                    })
+                })
+                .collect()
+        })
+        .transpose()
+        .map(|value| value.unwrap_or_default())
+}
+
 pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
     registry
@@ -233,6 +283,63 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .open_project(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"root": state.project.as_ref().unwrap().root()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("build.project", "Build Project", "Build", Some("⌘F9"), "{}"),
+            |state: &IdeState| state.project.is_some() && !state.runner.is_running(),
+            |state: &mut IdeState, _| {
+                state.start_build().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "run.task",
+                "Run Task",
+                "Run",
+                None,
+                r#"{"program":"string","args":["string"]}"#,
+            ),
+            |state: &IdeState| state.project.is_some() && !state.runner.is_running(),
+            |state: &mut IdeState, params| {
+                let program = string_param(&params, "program")?;
+                let args = string_array_param(&params, "args")?;
+                let cwd = state
+                    .project
+                    .as_ref()
+                    .ok_or_else(|| CommandError::Disabled("run.task".into()))?
+                    .root()
+                    .to_owned();
+                state
+                    .runner
+                    .start(TaskPlan {
+                        name: program.clone(),
+                        program,
+                        args,
+                        cwd,
+                    })
+                    .map_err(|error| CommandError::Failed(error.to_string()))?;
+                state.build_visible = true;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("run.cancel", "Stop Running Task", "Run", None, "{}"),
+            |state: &IdeState| state.runner.is_running(),
+            |state: &mut IdeState, _| {
+                state
+                    .runner
+                    .cancel()
+                    .map_err(|error| CommandError::Failed(error.to_string()))?;
+                state.status = "Task cancelled".into();
+                Ok(Value::Null)
             },
         ))
         .expect("unique built-in id");

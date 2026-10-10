@@ -3,6 +3,7 @@ use jetthing_command::CommandRegistry;
 use jetthing_core::{IdeState, built_in_commands};
 use jetthing_git::ChangeKind;
 use jetthing_language::{LanguageAnalysis, SyntaxKind};
+use jetthing_runner::{OutputStream, TaskState};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -93,6 +94,7 @@ impl IdeApp {
 impl eframe::App for IdeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.state.poll_search();
+        self.state.poll_runner();
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::P)) {
             self.palette_open = true;
         }
@@ -138,6 +140,12 @@ impl eframe::App for IdeApp {
                     }
                     if ui.button("Git").clicked() {
                         self.state.git_visible = !self.state.git_visible;
+                    }
+                    if ui
+                        .add_enabled(!self.state.runner.is_running(), egui::Button::new("Build"))
+                        .clicked()
+                    {
+                        self.dispatch("build.project", Value::Null);
                     }
                     ui.add_space(12.0);
                     let root = self
@@ -224,6 +232,48 @@ impl eframe::App for IdeApp {
                             }
                         }
                     });
+                });
+        }
+        if self.state.build_visible {
+            egui::TopBottomPanel::bottom("build_output")
+                .default_height(230.0)
+                .min_height(100.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        let title = self
+                            .state
+                            .runner
+                            .plan()
+                            .map(|plan| plan.name.as_str())
+                            .unwrap_or("Build");
+                        ui.strong(title);
+                        let state = match self.state.runner.state() {
+                            TaskState::Idle => "idle".into(),
+                            TaskState::Running => "running…".into(),
+                            TaskState::Exited(code) => format!("finished ({code})"),
+                            TaskState::Cancelled => "cancelled".into(),
+                        };
+                        ui.label(state);
+                        if self.state.runner.is_running() && ui.button("Stop").clicked() {
+                            self.dispatch("run.cancel", Value::Null);
+                        }
+                        if ui.small_button("×").clicked() {
+                            self.state.build_visible = false;
+                        }
+                    });
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            for chunk in self.state.runner.output() {
+                                let color = match chunk.stream {
+                                    OutputStream::Stdout => Color32::from_rgb(205, 210, 220),
+                                    OutputStream::Stderr => Color32::from_rgb(238, 135, 135),
+                                };
+                                ui.label(RichText::new(&chunk.text).monospace().color(color));
+                            }
+                        });
                 });
         }
         if self.state.terminal_visible {

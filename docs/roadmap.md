@@ -23,6 +23,7 @@
 - [x] Integrated native PTY terminal with shell input and command dispatch
 - [ ] ANSI terminal grid, hyperlinks, selection, and multiple sessions
 - [x] Cancellable background project text search with streamed result navigation
+- [x] Detected Cargo/Gradle/Maven/npm/Go builds with streamed output and cancellation
 - [ ] UI automation/control socket and screenshot tests
 
 ## M2 — language intelligence
@@ -38,6 +39,8 @@ workspace layout persistence, plugin manager, and recovery.
 
 - [x] Repository detection, branch/status view, stage, and unstage
 - [ ] Diff editor, history, blame, commit, branches, fetch/pull/push, and worktrees
+- [x] Universal process runner and detected project build command
+- [ ] Persistent run configurations, test tree, debug-before-run, and compound tasks
 
 ## M4 — web/JVM/Android bundles
 
