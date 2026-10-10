@@ -1,5 +1,7 @@
 //! A minimal HTTP/1.1 file server for provisioning tests: serves fixed bodies,
 //! honours `Range: bytes=n-`, can cut a response short once, and logs requests.
+// Each test binary uses a different subset of the helpers.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -77,7 +79,7 @@ impl FakeServer {
             .lock()
             .unwrap()
             .iter()
-            .filter(|r| r.path == path)
+            .filter(|r| r.path == path || r.path.split('?').next() == Some(path))
             .cloned()
             .collect()
     }
@@ -108,7 +110,13 @@ fn handle(mut stream: TcpStream, shared: &Shared) {
     });
     let route = {
         let mut routes = shared.routes.lock().unwrap();
-        let Some(route) = routes.get_mut(&path) else {
+        // Exact target first, then the path without its query string.
+        let key = if routes.contains_key(&path) {
+            path.clone()
+        } else {
+            path.split('?').next().unwrap_or(&path).to_owned()
+        };
+        let Some(route) = routes.get_mut(&key) else {
             let _ = stream.write_all(
                 b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
             );
