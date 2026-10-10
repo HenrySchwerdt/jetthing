@@ -460,7 +460,7 @@ impl IdeApp {
             } else if self.menu_bar_open {
                 self.menu_bar_open = false;
             } else if self.state.about_open {
-                self.state.about_open = false;
+                self.dispatch("app.closeAbout", Value::Null);
             } else if self.state.first_run_open {
                 self.dispatch("app.skipCustomize", Value::Null);
             } else if self.dialog.is_some() {
