@@ -78,6 +78,15 @@ impl PluginStatus {
     }
 }
 
+/// A data asset of an installed plugin ([`PluginRegistry::assets`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledAsset {
+    pub plugin: String,
+    pub kind: AssetKind,
+    pub name: String,
+    pub path: PathBuf,
+}
+
 pub struct PluginEntry {
     pub manifest: PluginManifest,
     pub source: PluginSource,
@@ -391,6 +400,34 @@ impl PluginRegistry {
         };
         self.set_status(id, status);
         Ok(())
+    }
+
+    /// Assets of `kind` from active directory plugins, with absolute paths.
+    pub fn assets(&self, kind: AssetKind) -> Vec<InstalledAsset> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.is_active())
+            .filter_map(|entry| match &entry.source {
+                PluginSource::Directory(dir) => Some((entry, dir)),
+                PluginSource::Bundled => None,
+            })
+            .flat_map(|(entry, dir)| {
+                entry
+                    .manifest
+                    .assets
+                    .iter()
+                    .filter(move |asset| asset.kind == kind)
+                    .map(move |asset| InstalledAsset {
+                        plugin: entry.id().to_owned(),
+                        kind,
+                        name: asset
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| entry.manifest.name.clone()),
+                        path: dir.join(&asset.path),
+                    })
+            })
+            .collect()
     }
 
     /// Active plugins' commands as `(plugin id, spec)`.

@@ -32,6 +32,10 @@ fn render_view(app: &mut IdeApp, ui: &mut egui::Ui, plugin: &str, context: ViewC
 /// when plugins changed.
 pub fn sync(app: &mut IdeApp, ctx: &egui::Context) {
     app.state.poll_plugins();
+    app.state.poll_marketplace();
+    if app.state.marketplace.is_busy() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
     if app.state.take_plugin_repaint() {
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }

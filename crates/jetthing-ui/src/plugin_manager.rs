@@ -31,6 +31,8 @@ pub struct PluginManager {
     pub selected: Option<String>,
     pub search: String,
     pub detail: DetailTab,
+    /// Whether the Marketplace tab has requested its initial listing.
+    pub marketplace_requested: bool,
     /// Path field of "Install Plugin from Disk…" while it is open.
     pub install_path: Option<String>,
     pub install_error: Option<String>,
@@ -183,7 +185,7 @@ fn page(app: &mut IdeApp, ui: &mut egui::Ui, manager: &mut PluginManager) -> boo
     );
     match manager.tab {
         Tab::Installed => details(app, &mut details_ui, manager),
-        Tab::Marketplace => placeholder(&mut details_ui, "Select plugin to preview details"),
+        Tab::Marketplace => crate::marketplace_ui::details(app, &mut details_ui),
     }
     let mut footer_ui = ui.new_child(
         egui::UiBuilder::new()
@@ -301,7 +303,7 @@ fn paint_gear(painter: &egui::Painter, center: egui::Pos2, color: Color32) {
     }
 }
 
-fn placeholder(ui: &mut egui::Ui, text: &str) {
+pub(crate) fn placeholder(ui: &mut egui::Ui, text: &str) {
     ui.centered_and_justified(|ui| {
         ui.label(RichText::new(text).color(theme::TEXT_SECONDARY));
     });
@@ -311,13 +313,19 @@ fn list(app: &mut IdeApp, ui: &mut egui::Ui, manager: &mut PluginManager) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        widgets::search_field(
+        let response = widgets::search_field(
             ui,
             egui::Id::new("plugin_manager_search"),
             &mut manager.search,
             "Type / to see options",
             LIST_WIDTH - 60.0,
         );
+        if manager.tab == Tab::Marketplace
+            && response.lost_focus()
+            && ui.input(|input| input.key_pressed(egui::Key::Enter))
+        {
+            app.dispatch("marketplace.search", json!({"query": manager.search}));
+        }
     });
     ui.add_space(8.0);
     if let Some(path) = manager.install_path.as_mut() {
@@ -366,28 +374,9 @@ fn list(app: &mut IdeApp, ui: &mut egui::Ui, manager: &mut PluginManager) {
         }
     }
     match manager.tab {
-        Tab::Marketplace => marketplace(ui, manager),
+        Tab::Marketplace => crate::marketplace_ui::list(app, ui, manager),
         Tab::Installed => installed_list(app, ui, manager),
     }
-}
-
-fn marketplace(ui: &mut egui::Ui, manager: &mut PluginManager) {
-    ui.add_space(40.0);
-    ui.vertical_centered(|ui| {
-        ui.label(RichText::new("No plugin marketplace is configured").color(theme::TEXT_BRIGHT));
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new(
-                "Install .jtplugin archives from disk.\nJetBrains Marketplace browsing is planned.",
-            )
-            .color(theme::TEXT_SECONDARY),
-        );
-        ui.add_space(8.0);
-        if ui.button("Install Plugin from Disk…").clicked() {
-            manager.tab = Tab::Installed;
-            manager.install_path = Some(String::new());
-        }
-    });
 }
 
 fn installed_list(app: &mut IdeApp, ui: &mut egui::Ui, manager: &mut PluginManager) {
@@ -571,7 +560,7 @@ fn plugin_row(ui: &mut egui::Ui, entry: &PluginEntry, manager: &mut PluginManage
 }
 
 /// Plugin icon: rounded square with initials (no third-party artwork).
-fn paint_plugin_icon(painter: &egui::Painter, rect: Rect, name: &str) {
+pub(crate) fn paint_plugin_icon(painter: &egui::Painter, rect: Rect, name: &str) {
     painter.rect_filled(rect, 8.0, theme::avatar_color(name));
     painter.text(
         rect.center(),

@@ -11,6 +11,7 @@ plugins** ([wasm.md](wasm.md)).
 | `jetthing-plugin-api` | engine (no UI toolkit) | `Plugin` trait, `Contributions`, `PluginHost`, `PluginManifest`, `ViewFrame`, `testing::RecordingHost` |
 | `jetthing-plugin-ui` | UI | `ui(frame) -> Option<&mut egui::Ui>`, `EguiView`, and theme-aware widgets (`header`, `section`, `property`, `empty_state`) |
 | `jetthing-plugins` | engine | registry: discovery, enable/disable, settings store (`<config>/plugins.json`), activation order, `PluginLoader` for script runtimes, `.jtplugin` archives |
+| `jetthing-marketplace` | engine | JetBrains Marketplace client, `plugin.xml` inspection and conversion of data-only plugins ([marketplace.md](marketplace.md)) |
 | `jetthing-plugin-wasm` | UI (runtime) | `WasmLoader`: wasmtime component plugins (`wit/plugin.wit`), WASI sandbox with permission-gated project files and network, fuel and memory limits |
 | `jetthing-plugin-lua` | UI (runtime) | `LuaLoader`: sandboxed Lua 5.4 plugins with the same contributions, `ctx` services, immediate and declarative views |
 | `jetthing-core` (`plugin_host`) | engine | `PluginHost` implementation, command routing, plugin tool window/tab state, `plugin.*` commands |
@@ -228,5 +229,4 @@ implementations) do not.
 - Move the Plugins page into the Settings dialog, and add an update check for installed plugins.
 - Left/bottom tool window anchors for plugins (API 1 docks every plugin tool window on the right),
   editor/project context menus, and opening custom editors by file extension.
-- JetBrains Marketplace browsing, and conversion of themes, color schemes, keymaps,
-  live templates, TextMate bundles and LSP plugins.
+- Applying converted Marketplace themes and color schemes (see [marketplace.md](marketplace.md)).

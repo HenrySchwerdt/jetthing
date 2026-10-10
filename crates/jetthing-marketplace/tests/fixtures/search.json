@@ -1,0 +1,72 @@
+{
+ "plugins": [
+  {
+   "id": 11938,
+   "xmlId": "com.markskelton.one-dark-theme",
+   "link": "/plugin/11938-one-dark-theme",
+   "name": "One Dark Theme",
+   "preview": "One Dark theme for JetBrains. After installing the theme, go to Preferences | Appearance &amp; Behavior | Appearance and select the One Dark theme (or Islands variant...",
+   "downloads": 11767296,
+   "pricingModel": "FREE",
+   "icon": "/files/11938/1091393/icon/default.svg",
+   "previewImage": "/files/11938/preview_19494.png",
+   "cdate": 1782752929000,
+   "rating": 4.84,
+   "hasSource": true,
+   "tags": [
+    "Theme",
+    "User Interface"
+   ],
+   "vendor": {
+    "name": "Mark Skelton",
+    "isVerified": false
+   }
+  },
+  {
+   "id": 12178,
+   "xmlId": "github.cweijan.test-theme",
+   "link": "/plugin/12178-one-dark-modern-theme",
+   "name": "One Dark Modern Theme",
+   "preview": "A dark UI and editor color scheme for JetBrains IDEs, inspired by the One Dark Modern palette. Includes tuned UI colors, solid secondary buttons, blue primary actions...",
+   "downloads": 685235,
+   "pricingModel": "FREE",
+   "icon": "/files/12178/1093543/icon/default.svg",
+   "previewImage": "/files/12178/preview_508c05b0-2bc0-4ff3-b48d-58f5a5617473",
+   "cdate": 1782836407000,
+   "rating": 4.4,
+   "hasSource": true,
+   "tags": [
+    "Theme",
+    "User Interface"
+   ],
+   "vendor": {
+    "name": "Weijan Chen",
+    "isVerified": false
+   }
+  },
+  {
+   "id": 12131,
+   "xmlId": "hu.aradipatrik.onedarknative",
+   "link": "/plugin/12131-one-dark-native",
+   "name": "One Dark Native",
+   "preview": "This color theme try to recreate the theme of the Atom text editor, One Dark, using the new native theme support. Repo...",
+   "downloads": 125096,
+   "pricingModel": "FREE",
+   "icon": "/files/12131/73857/icon/default.svg",
+   "previewImage": "/files/12131/preview_20609.png",
+   "cdate": 1575575808000,
+   "rating": 4.8500000000000005,
+   "hasSource": true,
+   "tags": [
+    "Theme",
+    "User Interface"
+   ],
+   "vendor": {
+    "name": "Patrik Aradi",
+    "isVerified": false
+   }
+  }
+ ],
+ "total": 379,
+ "correctedQuery": ""
+}

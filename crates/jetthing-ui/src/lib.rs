@@ -12,6 +12,7 @@ mod findbar;
 mod icons;
 mod keys;
 mod lsp_status;
+mod marketplace_ui;
 mod notifications;
 mod palette;
 mod plugin_manager;

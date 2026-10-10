@@ -93,6 +93,43 @@ impl Permission {
     }
 }
 
+/// Kind of a data asset shipped by a plugin (no code needed).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(rename_all = "kebab-case")]
+pub enum AssetKind {
+    /// IntelliJ UI theme (`*.theme.json`).
+    Theme,
+    /// IntelliJ editor color scheme (`*.icls` / scheme XML).
+    ColorScheme,
+    /// IntelliJ keymap XML.
+    Keymap,
+    /// IntelliJ live templates XML.
+    LiveTemplates,
+    /// TextMate bundle directory.
+    TextmateBundle,
+}
+
+impl AssetKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            AssetKind::Theme => "theme",
+            AssetKind::ColorScheme => "color scheme",
+            AssetKind::Keymap => "keymap",
+            AssetKind::LiveTemplates => "live templates",
+            AssetKind::TextmateBundle => "TextMate bundle",
+        }
+    }
+}
+
+/// A data asset declared in `[[assets]]`; `path` is relative to the plugin.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetDecl {
+    pub kind: AssetKind,
+    pub path: String,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
 /// Standalone application mode (`jetthing --app <plugin-id>`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppManifest {
@@ -135,6 +172,9 @@ pub struct PluginManifest {
     pub dependencies: Vec<String>,
     #[serde(default)]
     pub app: Option<AppManifest>,
+    /// Data assets (themes, color schemes, keymaps, …) for the host to offer.
+    #[serde(default)]
+    pub assets: Vec<AssetDecl>,
 }
 
 impl PluginManifest {
@@ -179,6 +219,14 @@ impl PluginManifest {
             return Err(PluginError::Manifest(format!(
                 "{}: entry must be a relative path inside the plugin: {entry}",
                 self.id
+            )));
+        }
+        if let Some(asset) = self.assets.iter().find(|asset| {
+            asset.path.starts_with('/') || asset.path.contains("..") || asset.path.contains('\\')
+        }) {
+            return Err(PluginError::Manifest(format!(
+                "{}: asset path must be relative inside the plugin: {}",
+                self.id, asset.path
             )));
         }
         if let Some(dependency) = self.dependencies.iter().find(|id| !valid_id(id)) {
@@ -232,6 +280,11 @@ dependencies = ["dev.jetthing.core-ui"]
 [app]
 view = "main"
 title = "Hello App"
+
+[[assets]]
+kind = "color-scheme"
+path = "assets/schemes/one_dark.xml"
+name = "One Dark"
 "#,
         )
         .unwrap();
@@ -239,6 +292,7 @@ title = "Hello App"
         assert!(manifest.has_permission(Permission::Network));
         assert!(!manifest.has_permission(Permission::Process));
         assert_eq!(manifest.app_title(), "Hello App");
+        assert_eq!(manifest.assets[0].kind, AssetKind::ColorScheme);
     }
 
     #[test]
@@ -267,6 +321,10 @@ title = "Hello App"
                 "relative path",
             ),
             (format!("id='a.b'\n{base}permissions=['root']\n"), "invalid"),
+            (
+                format!("id='a.b'\n{base}[[assets]]\nkind='theme'\npath='../x.json'\n"),
+                "asset path",
+            ),
         ] {
             let error = PluginManifest::parse(&input).unwrap_err().to_string();
             assert!(error.contains(needle), "{input:?} -> {error}");

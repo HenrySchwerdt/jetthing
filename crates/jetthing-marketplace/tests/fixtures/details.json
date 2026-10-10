@@ -1,0 +1,46 @@
+{
+ "id": 11938,
+ "name": "One Dark Theme",
+ "link": "/plugin/11938-one-dark-theme",
+ "xmlId": "com.markskelton.one-dark-theme",
+ "description": "<p>One Dark theme for JetBrains.</p>\n        <br>\n        <p>After installing the theme, go to Preferences | Appearance &amp; Behavior | Appearance and select the One Dark theme (or Islands variant) from the list.</p>",
+ "downloads": 11767296,
+ "vendor": {
+  "type": "Organization",
+  "name": "1a1c5548-64f1-4e80-89dc-d3227d13fffc",
+  "url": "https://mskelton.dev",
+  "publicName": "Mark Skelton",
+  "isVerified": false
+ },
+ "urls": {
+  "url": "",
+  "forumUrl": "",
+  "licenseUrl": "https://github.com/one-dark/jetbrains-one-dark-theme/blob/master/LICENSE",
+  "privacyPolicyUrl": "",
+  "bugtrackerUrl": "https://github.com/one-dark/jetbrains-one-dark-theme/issues",
+  "docUrl": "https://github.com/one-dark/jetbrains-one-dark-theme#readme",
+  "sourceCodeUrl": "https://github.com/one-dark/jetbrains-one-dark-theme",
+  "customContacts": [
+   {
+    "title": "Twitter",
+    "link": "https://twitter.com/mskelton0"
+   }
+  ]
+ },
+ "tags": [
+  {
+   "id": 164,
+   "name": "Theme",
+   "privileged": true,
+   "searchable": true,
+   "link": "/tag/164-theme"
+  },
+  {
+   "id": 13,
+   "name": "User Interface",
+   "privileged": false,
+   "searchable": true,
+   "link": "/tag/13-user-interface"
+  }
+ ]
+}

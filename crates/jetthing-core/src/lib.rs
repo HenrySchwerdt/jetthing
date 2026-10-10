@@ -13,11 +13,13 @@ use std::path::{Path, PathBuf};
 
 mod editor_commands;
 mod lsp_commands;
+mod marketplace;
 mod plugin_host;
 mod project_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
+pub use marketplace::{InstallOutcome, MarketplaceState};
 pub use plugin_host::{
     PluginHostState, PluginStatusWidget, PluginTab, sync_plugin_commands, user_plugin_dir,
 };
@@ -41,6 +43,7 @@ pub struct IdeState {
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
     pub plugin_host: PluginHostState,
+    pub marketplace: MarketplaceState,
     pub terminal: Option<TerminalSession>,
     pub search: SearchService,
     pub search_results: Vec<TextMatch>,
@@ -595,6 +598,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     terminal_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
     plugin_host::register(&mut registry);
+    marketplace::register(&mut registry);
     registry
         .register(Command::new(
             spec(

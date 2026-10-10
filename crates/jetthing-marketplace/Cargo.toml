@@ -1,0 +1,16 @@
+[package]
+name = "jetthing-marketplace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "JetBrains Marketplace client: browse plugins and convert data-only plugins (themes, color schemes, keymaps, live templates, TextMate bundles) into Jetthing plugins."
+
+[dependencies]
+jetthing-plugin-api = { path = "../jetthing-plugin-api" }
+quick-xml = "0.41"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+ureq = { version = "2.12", default-features = false, features = ["tls", "native-certs", "proxy-from-env", "json"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
