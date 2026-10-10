@@ -420,6 +420,8 @@ impl IdeApp {
                 self.toggle_tool_window(window);
             }
         }
+        // Unbound Alt chords (e.g. Alt+7) must not type their digit either.
+        ctx.input_mut(|input| keys::strip_alt_chord_text(&mut input.events));
         // Some platforms also emit the chord's character as text (e.g. Alt+1 → "1");
         // a consumed shortcut must not type into the focused field.
         if consumed_chord.get() {
