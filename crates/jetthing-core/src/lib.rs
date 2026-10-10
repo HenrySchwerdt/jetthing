@@ -21,8 +21,8 @@ mod terminal_commands;
 mod toolchain_commands;
 mod toolwindow;
 mod update_commands;
-pub use toolchain_commands::ToolchainState;
 pub use disk_sync::{DiskConflict, Waker, content_hash};
+pub use toolchain_commands::ToolchainState;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
