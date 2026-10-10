@@ -65,7 +65,8 @@ Rust via rust-analyzer.
 - [x] Rust document open/change synchronization and published diagnostics
 - [x] Completion request transport and result modeling
 - [x] Completion popup, UTF-16 caret integration, and transactional insertion
-- [ ] Completion filtering/snippets, hover, navigation, formatting, and code actions
+- [x] IntelliJ-style completion popup: auto-popup, camel-hump filtering/ranking, Enter/Tab
+- [ ] Completion snippets, documentation, hover, navigation, formatting, and code actions
 
 ## M3 — professional workflows
 

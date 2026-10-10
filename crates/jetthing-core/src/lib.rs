@@ -18,6 +18,7 @@ pub mod build_info;
 mod diagnostic_commands;
 pub mod diagnostics;
 mod disk_sync;
+mod completion;
 mod editor_commands;
 mod lsp_commands;
 mod plugin_host;
@@ -37,6 +38,7 @@ pub use plugin_host::{
     PluginHostState, PluginStatusWidget, PluginTab, sync_plugin_commands, user_plugin_dir,
 };
 pub use toolchain_commands::ToolchainState;
+pub use completion::CompletionSession;
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -82,6 +84,8 @@ pub struct IdeState {
     pub lsp: LspManager,
     /// Toolchain provisioning: discovery, pins and background installs.
     pub toolchains: ToolchainState,
+    /// The code completion popup, while open.
+    pub completion: Option<CompletionSession>,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -222,7 +226,7 @@ impl IdeState {
             Some(active) if active == index => Some(index.min(self.documents.len() - 1)),
             other => other,
         };
-        self.lsp.clear_completions();
+        self.close_completion();
         if let Some(project) = &self.project {
             let _ = self
                 .lsp
@@ -241,7 +245,7 @@ impl IdeState {
         self.plugin_host.active_tab = None;
         let path = self.documents[index].path.clone();
         self.touch_recent(&path);
-        self.lsp.clear_completions();
+        self.close_completion();
         Ok(())
     }
 
@@ -474,6 +478,7 @@ impl IdeState {
     /// Pumps the language servers and re-opens documents on restarted servers.
     pub fn poll_lsp(&mut self) {
         let restarted = self.lsp.poll();
+        self.poll_completion();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };
@@ -498,7 +503,6 @@ impl IdeState {
         let Some(project) = &self.project else {
             return;
         };
-        self.lsp.clear_completions();
         let absolute = project.root().join(relative_path);
         match self.lsp.sync_document(&absolute, text, version) {
             Ok(()) | Err(jetthing_lsp::LspError::ServerNotFound { .. }) => {}
@@ -525,27 +529,6 @@ impl IdeState {
             .map(|document| document.selections.primary().head)
     }
 
-    pub fn request_active_completion(&mut self) -> Result<u64, String> {
-        let index = self.active_document.ok_or("no active document")?;
-        let document = self
-            .documents
-            .get(index)
-            .ok_or("active document does not exist")?;
-        let (line, character) = document
-            .text
-            .lsp_position(document.selections.primary().head)
-            .map_err(|e| e.to_string())?;
-        let absolute = self
-            .project
-            .as_ref()
-            .ok_or("no project is open")?
-            .root()
-            .join(&document.path);
-        self.lsp
-            .request_completion(&absolute, line, character)
-            .map_err(|e| e.to_string())
-    }
-
     /// Runs an edit on the active document and refreshes analysis/LSP if it changed.
     pub fn edit_active<T>(
         &mut self,
@@ -561,7 +544,7 @@ impl IdeState {
         if document.text.revision() != revision {
             document.analysis = analyze(&document.path, &document.text.text());
             self.sync_active_lsp();
-            self.lsp.clear_completions();
+            self.close_completion();
         }
         Ok(result)
     }
@@ -581,7 +564,7 @@ impl IdeState {
             .selections
             .set_single(Selection::caret(position + text.chars().count()));
         self.sync_active_lsp();
-        self.lsp.clear_completions();
+        self.close_completion();
         Ok(())
     }
 

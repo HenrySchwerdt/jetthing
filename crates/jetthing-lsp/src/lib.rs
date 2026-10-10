@@ -9,6 +9,7 @@
 //! Nothing here depends on the UI; editor popups live in `jetthing-ui`.
 
 pub mod client;
+pub mod completion;
 pub mod manager;
 pub mod registry;
 pub mod transport;
@@ -18,7 +19,10 @@ pub use client::{
     ServerState, WorkProgress,
 };
 pub use lsp_types;
-pub use manager::{LspManager, LspNotice, ServerInfo, ServerKey, ServerStatus, describe_progress};
+pub use manager::{
+    CompletionResult, CompletionTrigger, LspManager, LspNotice, ServerInfo, ServerKey,
+    ServerStatus, describe_progress,
+};
 pub use registry::{
     LanguageServerProvider, LaunchContext, LspSettings, ServerRegistry, ServerSettings, ServerSpec,
 };

@@ -1,8 +1,8 @@
 //! End-to-end tests against the scriptable `jetthing-fake-lsp` server.
 
 use jetthing_lsp::{
-    LanguageServerProvider, LaunchConfig, LaunchContext, LspError, LspManager, LspService,
-    ServerRegistry, ServerSpec, ServerState, ServerStatus,
+    CompletionTrigger, LanguageServerProvider, LaunchConfig, LaunchContext, LspError, LspManager,
+    LspService, ServerRegistry, ServerSpec, ServerState, ServerStatus,
 };
 use std::{
     path::{Path, PathBuf},
@@ -134,12 +134,21 @@ fn manager_starts_lazily_reports_progress_and_routes_completion() {
         manager.poll();
         !manager.diagnostics_for(&file).is_empty()
     }));
-    manager.request_completion(&file, 0, 4).unwrap();
+    manager
+        .request_completion(&file, 0, 4, CompletionTrigger::Character(".".into()))
+        .unwrap();
+    let mut result = None;
     assert!(wait_until(|| {
         manager.poll();
-        !manager.completions().is_empty()
+        result = manager.take_completion();
+        result.is_some()
     }));
-    assert_eq!(manager.completions().len(), 4);
+    let result = result.unwrap();
+    assert_eq!(result.items.len(), 4);
+    assert!(!result.incomplete);
+    assert_eq!(manager.trigger_characters(&file), ["."]);
+    let ranked = manager.rank_completions(&file, &result.items, "gRF");
+    assert_eq!(result.items[ranked[0].index].label, "getRequiredField");
     manager.close_document(&file).unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -187,14 +196,19 @@ fn stale_completion_requests_are_cancelled() {
         manager.poll();
         manager.ready_server_for(&file).is_ok()
     }));
-    let first = manager.request_completion(&file, 0, 4).unwrap();
-    manager.clear_completions();
+    let first = manager
+        .request_completion(&file, 0, 4, CompletionTrigger::Invoked)
+        .unwrap();
+    manager.cancel_completion();
     assert!(!manager.completion_pending());
     let service = manager.ready_server_for(&file).unwrap();
     assert!(!service.is_pending(first), "cancelled request is forgotten");
     thread::sleep(Duration::from_millis(400));
     manager.poll();
-    assert!(manager.completions().is_empty(), "late response is dropped");
+    assert!(
+        manager.take_completion().is_none(),
+        "late response is dropped"
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 
