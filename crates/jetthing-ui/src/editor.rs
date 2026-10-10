@@ -1,5 +1,6 @@
 //! Editor island: tabs, viewport-native text surface, and completion popup.
 
+use crate::folding::{CollapsedRow, FoldView};
 use crate::icons::{self, Icon};
 use crate::widgets::island_frame;
 use crate::{IdeApp, theme};
@@ -306,6 +307,55 @@ fn highlighted_line_job(
     job
 }
 
+/// Paints a collapsed region's placeholder box and the text after the region
+/// on its last line, starting at `origin` (top-left of the placeholder).
+fn paint_collapsed_tail(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    document: &Document,
+    row: &CollapsedRow,
+    origin: egui::Pos2,
+    char_width: f32,
+) {
+    let folded = crate::syntax::attributes("FOLDED_TEXT_ATTRIBUTES");
+    let width = row.placeholder.chars().count() as f32 * char_width;
+    let font = egui::FontId::monospace(theme::EDITOR_FONT_SIZE);
+    let to_color = |rgba: jetthing_language::Rgba| Color32::from_rgb(rgba.r, rgba.g, rgba.b);
+    painter.rect_filled(
+        Rect::from_min_size(origin + vec2(0.0, 3.0), vec2(width, ROW_HEIGHT - 6.0)),
+        3.0,
+        folded
+            .background
+            .map_or(theme::editor::MATCHED_BRACE, to_color),
+    );
+    painter.text(
+        origin + vec2(0.0, ROW_HEIGHT / 2.0),
+        egui::Align2::LEFT_CENTER,
+        &row.placeholder,
+        font,
+        folded
+            .foreground
+            .map_or(theme::editor::LINE_NUMBER_CARET, to_color),
+    );
+    let end_line_start = document.text.line_to_char(row.end_line).unwrap_or(0);
+    let end_text = document.text.line(row.end_line).unwrap_or_default();
+    let end_content = end_text.trim_end_matches(['\r', '\n']);
+    let skip = row.end_char.saturating_sub(end_line_start);
+    let start = end_content
+        .char_indices()
+        .nth(skip)
+        .map_or(end_content.len(), |(index, _)| index);
+    let tail = &end_content[start..];
+    if tail.is_empty() {
+        return;
+    }
+    let tail_byte = document.text.line_to_byte(row.end_line).unwrap_or(0) + start;
+    let job = highlighted_line_job(tail, tail_byte, &document.analysis);
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    let text_y = origin.y + (ROW_HEIGHT - galley.size().y) / 2.0;
+    painter.galley(egui::pos2(origin.x + width, text_y), galley, Color32::WHITE);
+}
+
 /// Squiggle underline used for errors and warnings.
 fn squiggle(painter: &egui::Painter, x1: f32, x2: f32, y: f32, color: Color32) {
     let step = 2.0;
@@ -344,13 +394,15 @@ fn line_length(document: &Document, line: usize) -> usize {
         .count()
 }
 
-/// Character offset for moving `head` vertically by `delta` lines, keeping the column.
-fn vertical_target(document: &Document, head: usize, delta: isize) -> usize {
+/// Character offset for moving `head` vertically by `delta` visual rows
+/// (collapsed regions count as one row), keeping the column.
+fn vertical_target(document: &Document, folds: &FoldView, head: usize, delta: isize) -> usize {
     let Ok((line, column)) = document.text.char_to_line_column(head) else {
         return head;
     };
-    let last = document.text.len_lines().saturating_sub(1) as isize;
-    let target = (line as isize + delta).clamp(0, last) as usize;
+    let last_row = folds.row_count(document.text.len_lines()).saturating_sub(1) as isize;
+    let row = (folds.line_to_row(line) as isize + delta).clamp(0, last_row) as usize;
+    let target = folds.row_to_line(row);
     if target == line {
         return if delta < 0 {
             document.text.line_to_char(line).unwrap_or(0)
@@ -377,6 +429,10 @@ fn editor_surface(
     let font = egui::FontId::monospace(theme::EDITOR_FONT_SIZE);
     let char_width = ui.fonts_mut(|fonts| fonts.glyph_width(&font, 'm'));
     let line_count = document.text.len_lines();
+    // Carets never stay inside collapsed text (Go to Line, Find, arrows).
+    document.reveal_carets();
+    let folds = FoldView::new(document);
+    let row_count = folds.row_count(line_count);
     let digits = line_count.max(1).to_string().len().max(2);
     let gutter_width = 20.0 + digits as f32 * char_width + 18.0;
     let text_left = gutter_width + TEXT_LEFT_PADDING;
@@ -403,7 +459,7 @@ fn editor_surface(
             let longest = 400.0_f32;
             let content_size = egui::vec2(
                 ui.available_width().max(text_left + longest * char_width),
-                line_count as f32 * ROW_HEIGHT + ui.available_height() * 0.5,
+                row_count as f32 * ROW_HEIGHT + ui.available_height() * 0.5,
             );
             let (rect, response) = ui.allocate_exact_size(content_size, Sense::click_and_drag());
             let response = ui
@@ -413,9 +469,12 @@ fn editor_surface(
             if response.clicked() || response.drag_started() {
                 response.request_focus();
             }
+            let row_at = |position: egui::Pos2| {
+                (((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize)
+                    .min(row_count.saturating_sub(1))
+            };
             let position_to_offset = |position: egui::Pos2| {
-                let line = (((position.y - rect.top()) / ROW_HEIGHT).floor().max(0.0) as usize)
-                    .min(line_count.saturating_sub(1));
+                let line = folds.row_to_line(row_at(position));
                 let line_text = document.text.line(line).unwrap_or_default();
                 let content = line_text.trim_end_matches(['\r', '\n']);
                 let column = (((position.x - rect.left() - text_left) / char_width)
@@ -424,7 +483,30 @@ fn editor_surface(
                     .min(content.chars().count());
                 document.text.line_to_char(line).unwrap_or(0) + column
             };
-            if response.clicked()
+            // Fold markers sit in the gutter just left of the text; placeholders
+            // expand their region when clicked.
+            let fold_click = response
+                .clicked()
+                .then(|| response.interact_pointer_pos())
+                .flatten()
+                .and_then(|position| {
+                    let line = folds.row_to_line(row_at(position));
+                    let x = position.x - rect.left();
+                    let in_marker_column = x > gutter_width - 16.0 && x < gutter_width + 4.0;
+                    let on_placeholder = folds.collapsed_on(line).is_some_and(|row| {
+                        let line_start = document.text.line_to_char(line).unwrap_or(0);
+                        let column = (x - text_left) / char_width;
+                        let start = (row.start_char - line_start) as f32;
+                        column >= start && column <= start + row.placeholder.chars().count() as f32
+                    });
+                    (in_marker_column || on_placeholder).then_some(line)
+                });
+            if let Some(line) = fold_click {
+                requests.push(EditorRequest::Command(
+                    "editor.toggleFold",
+                    serde_json::json!({ "line": line }),
+                ));
+            } else if response.clicked()
                 && let Some(position) = response.interact_pointer_pos()
             {
                 let offset = position_to_offset(position);
@@ -527,16 +609,37 @@ fn editor_surface(
 
             let painter = ui.painter().clone();
             // Gutter background matches the editor in Islands; draw caret row first.
-            let first_line =
-                ((viewport.top() / ROW_HEIGHT).floor().max(0.0) as usize).min(line_count);
-            let last_line = ((viewport.bottom() / ROW_HEIGHT).ceil() as usize + 1).min(line_count);
+            let first_row =
+                ((viewport.top() / ROW_HEIGHT).floor().max(0.0) as usize).min(row_count);
+            let last_row = ((viewport.bottom() / ROW_HEIGHT).ceil() as usize + 1).min(row_count);
+            // Gutter fold markers for regions starting in the viewport.
+            let gutter_hovered = ui
+                .input(|input| input.pointer.hover_pos())
+                .is_some_and(|pos| rect.contains(pos) && pos.x - rect.left() < gutter_width + 4.0);
+            let markers: Vec<(usize, bool)> = if first_row < last_row {
+                let first_line = folds.row_to_line(first_row);
+                let last_line = folds.row_to_line(last_row - 1);
+                let start = document.text.line_to_char(first_line).unwrap_or(0);
+                let end = document
+                    .text
+                    .line_to_char(last_line + 1)
+                    .unwrap_or(document.text.len_chars());
+                document
+                    .folds_in_chars(start, end)
+                    .iter()
+                    .map(|fold| (fold.start_line, document.folds.is_collapsed(fold)))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let focused = response.has_focus();
             let blink_on = {
                 let time = ui.input(|input| input.time);
                 (time * 2.0) as i64 % 2 == 0
             };
-            for line in first_line..last_line {
-                let y = rect.top() + line as f32 * ROW_HEIGHT;
+            for row_index in first_row..last_row {
+                let line = folds.row_to_line(row_index);
+                let y = rect.top() + row_index as f32 * ROW_HEIGHT;
                 let line_start = document.text.line_to_char(line).unwrap_or(0);
                 let line_text = document.text.line(line).unwrap_or_default();
                 let content = line_text.trim_end_matches(['\r', '\n']);
@@ -557,6 +660,16 @@ fn editor_surface(
                         theme::editor::LINE_NUMBER
                     },
                 );
+                if let Some(&(_, collapsed)) = markers.iter().find(|(start, _)| *start == line)
+                    && (collapsed || gutter_hovered)
+                {
+                    crate::folding::paint_marker(
+                        &painter,
+                        egui::pos2(rect.left() + gutter_width - 6.0, y + ROW_HEIGHT / 2.0),
+                        collapsed,
+                        theme::editor::LINE_NUMBER_CARET,
+                    );
+                }
                 // Indent guides every four columns of leading whitespace.
                 let indent = content.chars().take_while(|c| *c == ' ').count();
                 for level in (4..=indent.saturating_sub(1)).step_by(4) {
@@ -609,7 +722,21 @@ fn editor_surface(
                     }
                 }
                 let line_start_byte = document.text.line_to_byte(line).unwrap_or(0);
-                let job = highlighted_line_job(content, line_start_byte, &document.analysis);
+                let collapsed = folds.collapsed_on(line);
+                // A collapsed region shows the text before it, its placeholder,
+                // then the rest of its last line.
+                let visible = match collapsed {
+                    Some(row) => {
+                        let prefix_chars = row.start_char.saturating_sub(line_start);
+                        let end = content
+                            .char_indices()
+                            .nth(prefix_chars)
+                            .map_or(content.len(), |(index, _)| index);
+                        &content[..end]
+                    }
+                    None => content,
+                };
+                let job = highlighted_line_job(visible, line_start_byte, &document.analysis);
                 let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
                 let text_y = y + (ROW_HEIGHT - galley.size().y) / 2.0;
                 painter.galley(
@@ -617,6 +744,19 @@ fn editor_surface(
                     galley,
                     Color32::WHITE,
                 );
+                if let Some(row) = collapsed {
+                    paint_collapsed_tail(
+                        ui,
+                        &painter,
+                        document,
+                        row,
+                        egui::pos2(
+                            rect.left() + text_left + visible.chars().count() as f32 * char_width,
+                            y,
+                        ),
+                        char_width,
+                    );
+                }
 
                 let column_x = |column: usize| rect.left() + text_left + column as f32 * char_width;
                 for diagnostic in &document.analysis.diagnostics {
@@ -770,6 +910,19 @@ fn editor_surface(
                 requests.push(command("editor.deleteLine"))
             }
             egui::Key::Slash if modifiers.command => requests.push(command("editor.commentLine")),
+            // Folding: ⌘-/⌘= (Ctrl on Windows/Linux), with ⇧ for all regions.
+            egui::Key::Minus if modifiers.command => requests.push(command(if modifiers.shift {
+                "editor.collapseAllRegions"
+            } else {
+                "editor.collapseRegion"
+            })),
+            egui::Key::Equals | egui::Key::Plus if modifiers.command => {
+                requests.push(command(if modifiers.shift {
+                    "editor.expandAllRegions"
+                } else {
+                    "editor.expandRegion"
+                }))
+            }
             // Extend/Shrink Selection: Ctrl+W / Ctrl+Shift+W, ⌥↑ / ⌥↓ on macOS.
             egui::Key::W if modifiers.ctrl && !mac => requests.push(command(if modifiers.shift {
                 "editor.shrinkSelection"
@@ -873,18 +1026,24 @@ fn editor_surface(
                 };
                 move_primary(document, target, extend);
             }
-            egui::Key::ArrowUp => {
-                move_primary(document, vertical_target(document, head, -1), extend)
-            }
+            egui::Key::ArrowUp => move_primary(
+                document,
+                vertical_target(document, &folds, head, -1),
+                extend,
+            ),
             egui::Key::ArrowDown => {
-                move_primary(document, vertical_target(document, head, 1), extend)
+                move_primary(document, vertical_target(document, &folds, head, 1), extend)
             }
-            egui::Key::PageUp => {
-                move_primary(document, vertical_target(document, head, -page), extend)
-            }
-            egui::Key::PageDown => {
-                move_primary(document, vertical_target(document, head, page), extend)
-            }
+            egui::Key::PageUp => move_primary(
+                document,
+                vertical_target(document, &folds, head, -page),
+                extend,
+            ),
+            egui::Key::PageDown => move_primary(
+                document,
+                vertical_target(document, &folds, head, page),
+                extend,
+            ),
             egui::Key::Home => {
                 let target = if modifiers.command {
                     0

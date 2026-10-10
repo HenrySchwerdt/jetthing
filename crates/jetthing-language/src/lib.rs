@@ -3,6 +3,7 @@
 //! schemes. No language has its own code path here.
 
 mod captures;
+pub mod folding;
 pub mod highlight;
 mod injection;
 pub mod registry;
@@ -11,6 +12,7 @@ pub mod selection;
 pub mod syntax;
 
 pub use captures::capture_key;
+pub use folding::{FoldKind, FoldRange};
 pub use highlight::{HighlightLayer, HighlightSpan, QueryError};
 pub use jetthing_text::{ByteEdit, BytePoint};
 pub use registry::{LANGUAGES, LanguageSpec};
@@ -39,9 +41,22 @@ pub struct LanguageAnalysis {
     pub diagnostics: Vec<Diagnostic>,
     /// The incrementally maintained syntax tree, when the language is known.
     pub syntax: Option<SyntaxTree>,
+    /// The text this analysis describes (shared, for range queries such as
+    /// folding regions without re-reading the buffer).
+    pub source: std::sync::Arc<str>,
 }
 
 impl LanguageAnalysis {
+    /// Folding regions intersecting the byte `range` (see [`folding::fold_ranges`]).
+    pub fn folds_in(&self, range: std::ops::Range<usize>) -> Vec<FoldRange> {
+        match &self.syntax {
+            Some(syntax) => {
+                folding::fold_ranges(syntax.language(), syntax.tree(), &self.source, range)
+            }
+            None => Vec::new(),
+        }
+    }
+
     /// Extend Selection: the next larger syntactic byte range around `range`.
     pub fn expand_selection(
         &self,
@@ -96,6 +111,7 @@ impl LanguageAnalysis {
         }
         self.diagnostics.clear();
         collect_diagnostics(syntax.tree().root_node(), &mut self.diagnostics);
+        self.source = source.into();
     }
 }
 
@@ -114,6 +130,7 @@ pub fn analyze(path: &Path, source: &str) -> LanguageAnalysis {
     };
     result.highlights = syntax.highlight(source, 0..source.len());
     collect_diagnostics(syntax.tree().root_node(), &mut result.diagnostics);
+    result.source = source.into();
     result.syntax = Some(syntax);
     result
 }

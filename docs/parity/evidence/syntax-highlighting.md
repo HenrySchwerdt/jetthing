@@ -92,6 +92,25 @@ on macOS.
 - `syntax-highlighting/extend-selection-ctrl-w.png`: the caret was in `greeting` on line 11, then
   Ctrl+W was pressed three times (`greeting` → `app.greeting(name)` → `(app.greeting(name))`).
 
+## Code folding
+
+`jetthing-language::folding` derives regions from the tree. A grammar's own `folds.scm` is used
+when one ships (Starlark). Otherwise the regions are: nodes delimited by `{}`/`[]`/`()`/`<>` or
+start and end tags on different lines, block comments, and runs of import declarations, with at
+most one region per start line. Queries are bounded by byte range: the editor asks only for the
+viewport (~60 µs on the 10k-line file), and Collapse All asks for the whole file. Collapsed regions
+live in `Document::folds` as byte anchors that follow the edit journal. An edit inside a region
+expands it, and so does a caret that enters hidden text (Go to Line, Find, arrows), as in IntelliJ.
+The editor maps visual rows to document lines (`jetthing-ui::folding::FoldView`), renders a
+collapsed region as prefix + placeholder (`FOLDED_TEXT_ATTRIBUTES`) + the rest of its last line,
+and moves Up/Down by visual rows.
+
+- `syntax-highlighting/04-kotlin-imports-folded.png`: `MainActivity.kt` as it opens. The imports
+  are collapsed to `import ...` with a `›` gutter marker, and line numbers jump 3 → 6, as in
+  Android Studio scene 04.
+- `syntax-highlighting/folding-gutter-collapse.png`: after clicking the class's gutter marker the
+  body shows as `{...}`. The next visible line is 16.
+
 ## Languages
 
 Rust, Java, Kotlin (`tree-sitter-kotlin-sg`), Groovy (`*.gradle`, `*.groovy`, `Jenkinsfile`), XML, JSON, TOML, YAML, Markdown (block grammar, with the inline grammar injected),

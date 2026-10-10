@@ -9,6 +9,7 @@ mod chrome;
 mod control;
 mod editor;
 mod findbar;
+mod folding;
 mod icons;
 mod keys;
 mod lsp_status;
@@ -533,6 +534,8 @@ impl eframe::App for IdeApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Ctrl+-/= are Collapse/Expand in the editor (IntelliJ keymap), not UI zoom.
+        ctx.options_mut(|options| options.zoom_with_keyboard = false);
         self.state.poll_search();
         self.state.poll_runner();
         self.state.poll_lsp();

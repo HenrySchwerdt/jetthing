@@ -13,11 +13,13 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod editor_commands;
+mod folds;
 mod lsp_commands;
 mod project_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
+pub use folds::{CollapsedFold, FoldState};
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -31,6 +33,8 @@ pub struct Document {
     pub selections: SelectionSet,
     /// Selections before each Extend Selection step, for Shrink Selection.
     pub selection_history: Vec<Vec<Selection>>,
+    /// Collapsed code-folding regions.
+    pub folds: FoldState,
 }
 
 impl Document {
@@ -42,6 +46,7 @@ impl Document {
             path,
             selections: SelectionSet::default(),
             selection_history: Vec::new(),
+            folds: FoldState::default(),
         };
         // The analysis already reflects `text`.
         document.text.take_edits();
@@ -52,8 +57,16 @@ impl Document {
     /// edits are applied incrementally; otherwise the file is reanalyzed.
     pub fn refresh_analysis(&mut self, source: &str) {
         match self.text.take_edits() {
-            EditJournal::Edits(edits) => self.analysis.apply_edits(&self.path, source, &edits),
-            EditJournal::Reset => self.analysis = analyze(&self.path, source),
+            EditJournal::Edits(edits) => {
+                for edit in &edits {
+                    self.folds.apply_edit(edit);
+                }
+                self.analysis.apply_edits(&self.path, source, &edits);
+            }
+            EditJournal::Reset => {
+                self.folds.clear();
+                self.analysis = analyze(&self.path, source);
+            }
         }
     }
 }
@@ -145,7 +158,9 @@ impl IdeState {
         }
         let project = self.project.as_ref().ok_or("no project is open")?;
         let text = project.read_text(path).map_err(|e| e.to_string())?;
-        self.documents.push(Document::new(path.to_owned(), &text));
+        let mut document = Document::new(path.to_owned(), &text);
+        document.collapse_default_regions();
+        self.documents.push(document);
         self.active_document = Some(self.documents.len() - 1);
         self.touch_recent(path);
         self.status = format!("Opened {}", path.display());
@@ -610,6 +625,7 @@ pub(crate) fn usize_param(params: &Value, name: &str) -> Result<usize, CommandEr
 pub fn built_in_commands() -> CommandRegistry<IdeState> {
     let mut registry = CommandRegistry::default();
     editor_commands::register(&mut registry);
+    folds::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
