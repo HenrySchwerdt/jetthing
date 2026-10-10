@@ -27,6 +27,7 @@ mod problems;
 mod project_commands;
 mod settings_commands;
 mod snippet_session;
+pub mod tabs;
 mod terminal_commands;
 mod toolchain_commands;
 mod toolwindow;
@@ -70,6 +71,8 @@ pub struct IdeState {
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
     pub plugin_host: PluginHostState,
+    /// Pinned tabs, closed-tab history and the tab limit.
+    pub tabs: tabs::EditorTabs,
     pub terminal: Option<TerminalSession>,
     pub search: SearchService,
     pub search_results: Vec<TextMatch>,
@@ -157,6 +160,10 @@ impl IdeState {
         self.files = project.entries(20_000);
         self.documents.clear();
         self.active_document = None;
+        self.tabs = tabs::EditorTabs {
+            limit: self.tabs.limit,
+            ..Default::default()
+        };
         self.search.cancel();
         self.search_results.clear();
         self.search_query.clear();
@@ -208,7 +215,7 @@ impl IdeState {
         self.reveal_in_tree(path);
         self.status = format!("Opened {}", path.display());
         self.sync_document_lsp(path, &text, 0);
-        Ok(())
+        self.enforce_tab_limit()
     }
 
     /// Expands the Project tree down to `path` so an opened file is visible
@@ -246,6 +253,7 @@ impl IdeState {
         if document.text.is_dirty() {
             self.save(index)?;
         }
+        self.remember_closed(index);
         let document = self.documents.remove(index);
         self.active_document = match self.active_document {
             _ if self.documents.is_empty() => None,
@@ -732,6 +740,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_logcat::register(&mut registry);
     editor_commands::register(&mut registry);
     disk_sync::register(&mut registry);
+    tabs::register(&mut registry);
     project_commands::register(&mut registry);
     update_commands::register(&mut registry);
     diagnostic_commands::register(&mut registry);

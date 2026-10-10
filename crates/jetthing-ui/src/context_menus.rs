@@ -78,6 +78,10 @@ fn applies(action: &str, target: &Target) -> bool {
                 | "CloseAllEditors"
                 | "CloseAllToTheLeft"
                 | "CloseAllToTheRight"
+                | "CloseAllUnmodifiedEditors"
+                | "PinActiveEditorTab"
+                | "PinActiveTabToggle"
+                | "ReopenClosedTab"
                 | "CopyAbsolutePath"
                 | "CopyFileName"
                 | "CopyContentRootPath"
@@ -191,38 +195,26 @@ impl IdeApp {
             }
             "CloseAllEditors"
             | "CloseAllEditorsButActive"
+            | "CloseAllUnmodifiedEditors"
             | "CloseAllToTheLeft"
-            | "CloseAllToTheRight" => {
+            | "CloseAllToTheRight"
+            | "PinActiveEditorTab"
+            | "PinActiveTabToggle" => {
                 if let Target::Tab(index) = target {
-                    self.close_tabs(action, *index);
+                    // The tab commands skip pinned tabs, like the reference IDE.
+                    let command = match action {
+                        "CloseAllEditors" => "editor.closeAll",
+                        "CloseAllEditorsButActive" => "editor.closeOthers",
+                        "CloseAllUnmodifiedEditors" => "editor.closeUnmodified",
+                        "CloseAllToTheLeft" => "editor.closeLeft",
+                        "CloseAllToTheRight" => "editor.closeRight",
+                        _ => "editor.togglePin",
+                    };
+                    self.dispatch(command, json!({"index": index}));
                 }
             }
+            "ReopenClosedTab" => self.dispatch("editor.reopenClosed", serde_json::Value::Null),
             _ => self.run_menu_action(action, ctx),
-        }
-    }
-
-    /// Closes tabs relative to tab `index`, from the highest index down so the
-    /// remaining indexes stay valid.
-    fn close_tabs(&mut self, action: &str, index: usize) {
-        let count = self.state.documents.len();
-        let close: Vec<usize> = (0..count)
-            .rev()
-            .filter(|&other| match action {
-                "CloseAllEditors" => true,
-                "CloseAllEditorsButActive" => other != index,
-                "CloseAllToTheLeft" => other < index,
-                _ => other > index,
-            })
-            .collect();
-        for other in close {
-            if let Err(error) =
-                self.commands
-                    .execute("editor.close", &mut self.state, json!({"index": other}))
-            {
-                // Stop at the first tab that refuses (e.g. unsaved changes).
-                self.state.status = error.to_string();
-                break;
-            }
         }
     }
 }

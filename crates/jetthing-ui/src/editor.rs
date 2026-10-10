@@ -284,10 +284,23 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         let close_rect = layout.close;
         let dirty = doc.text.is_dirty();
+        let pinned = app.state.is_pinned(index);
         let pointer_on_close = response
             .hover_pos()
             .is_some_and(|pos| close_rect.expand(2.0).contains(pos));
-        if response.hovered() || active {
+        if pinned {
+            // Pinned tabs show a pin in place of the close button; clicking it unpins.
+            if pointer_on_close {
+                ui.painter()
+                    .rect_filled(close_rect.expand(2.0), 4.0, theme::HOVER);
+            }
+            icons::paint(
+                ui.painter(),
+                close_rect.shrink(1.0),
+                Icon::Pin,
+                theme::TEXT_SECONDARY,
+            );
+        } else if response.hovered() || active {
             if pointer_on_close {
                 ui.painter()
                     .rect_filled(close_rect.expand(2.0), 4.0, theme::HOVER);
@@ -317,7 +330,9 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             }
         });
         if response.clicked() {
-            if pointer_on_close {
+            if pointer_on_close && pinned {
+                tab_action = Some(("PinActiveTabToggle".to_owned(), crate::context_menus::Target::Tab(index)));
+            } else if pointer_on_close {
                 close = Some(index);
             } else {
                 activate = Some(index);

@@ -50,6 +50,7 @@ pub enum Icon {
     ScrollEnd,
     SoftWrap,
     WeakWarning,
+    Pin,
 }
 
 impl Icon {
@@ -299,6 +300,18 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
                 egui::StrokeKind::Middle,
             );
             line(&[(7.0, 12.5), (9.0, 12.5)]);
+        }
+        Icon::Pin => {
+            line(&[(5.0, 2.5), (11.0, 2.5)]);
+            line(&[
+                (6.5, 2.5),
+                (6.5, 7.0),
+                (4.0, 9.5),
+                (12.0, 9.5),
+                (9.5, 7.0),
+                (9.5, 2.5),
+            ]);
+            line(&[(8.0, 9.5), (8.0, 14.0)]);
         }
         Icon::Refresh => {
             let center = g.p(8.0, 8.0);

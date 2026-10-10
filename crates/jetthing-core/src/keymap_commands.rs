@@ -70,6 +70,13 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     global("CheckinProject", "toolwindow.activate.commit", "{}"),
     global("HideAllWindows", "toolwindow.hideAll", "{}"),
     global("Synchronize", "file.synchronize", "{}"),
+    menu("ReopenClosedTab", "editor.reopenClosed"),
+    global("NextTab", "editor.nextTab", "{}"),
+    global("PreviousTab", "editor.previousTab", "{}"),
+    menu("PinActiveTabToggle", "editor.togglePin"),
+    menu("CloseAllEditors", "editor.closeAll"),
+    menu("CloseAllEditorsButActive", "editor.closeOthers"),
+    menu("CloseAllUnmodifiedEditors", "editor.closeUnmodified"),
     global("NextDiff", "diff.nextChange", "{}"),
     global("PreviousDiff", "diff.previousChange", "{}"),
     global(
