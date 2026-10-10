@@ -2,7 +2,6 @@ use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
 use jetthing_git::RepositoryStatus;
 use jetthing_language::{LanguageAnalysis, analyze};
 use jetthing_lsp::{LspDiagnostic, LspManager};
-use jetthing_plugins::PluginManifest;
 use jetthing_project::{FileEntry, Project};
 use jetthing_runner::{TaskPlan, TaskService, TaskState};
 use jetthing_search::{SearchEvent, SearchService, TextMatch};
@@ -14,10 +13,14 @@ use std::path::{Path, PathBuf};
 
 mod editor_commands;
 mod lsp_commands;
+mod plugin_host;
 mod project_commands;
 mod terminal_commands;
 mod toolwindow;
 mod update_commands;
+pub use plugin_host::{
+    PluginHostState, PluginStatusWidget, PluginTab, sync_plugin_commands, user_plugin_dir,
+};
 pub use toolwindow::{Anchor, ToolWindow, ToolWindowLayout};
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
@@ -37,7 +40,7 @@ pub struct IdeState {
     pub files: Vec<FileEntry>,
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
-    pub plugins: Vec<PluginManifest>,
+    pub plugin_host: PluginHostState,
     pub terminal: Option<TerminalSession>,
     pub search: SearchService,
     pub search_results: Vec<TextMatch>,
@@ -98,7 +101,6 @@ impl IdeState {
         self.search_truncated = false;
         self.terminal = None;
         self.runner = TaskService::default();
-        self.plugins.clear();
         self.git = RepositoryStatus::load(project.root()).ok();
         self.lsp.set_project(Some(project.root()));
         self.expanded_dirs.clear();
@@ -113,6 +115,7 @@ impl IdeState {
     pub fn open_file(&mut self, path: &Path) -> Result<(), String> {
         if let Some(index) = self.documents.iter().position(|d| d.path == path) {
             self.active_document = Some(index);
+            self.plugin_host.active_tab = None;
             self.touch_recent(path);
             return Ok(());
         }
@@ -125,6 +128,7 @@ impl IdeState {
             selections: SelectionSet::default(),
         });
         self.active_document = Some(self.documents.len() - 1);
+        self.plugin_host.active_tab = None;
         self.touch_recent(path);
         self.status = format!("Opened {}", path.display());
         self.sync_document_lsp(path, &text, 0);
@@ -173,6 +177,7 @@ impl IdeState {
             return Err("document does not exist".into());
         }
         self.active_document = Some(index);
+        self.plugin_host.active_tab = None;
         let path = self.documents[index].path.clone();
         self.touch_recent(&path);
         self.lsp.clear_completions();
@@ -589,6 +594,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     update_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     lsp_commands::register(&mut registry);
+    plugin_host::register(&mut registry);
     registry
         .register(Command::new(
             spec(
@@ -1021,23 +1027,6 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .toggle_directory(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"expanded": expanded}))
-            },
-        ))
-        .expect("unique built-in id");
-    registry
-        .register(Command::new(
-            spec("plugin.refresh", "Refresh Plugins", "Plugins", None, "{}"),
-            |_| true,
-            |state: &mut IdeState, _| {
-                let root = state.project.as_ref().map(|p| p.root().join("plugins"));
-                state.plugins = root
-                    .as_deref()
-                    .map(jetthing_plugins::discover)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(Result::ok)
-                    .collect();
-                Ok(json!({"count": state.plugins.len()}))
             },
         ))
         .expect("unique built-in id");

@@ -1,0 +1,10 @@
+[package]
+name = "jetthing-plugin-hello"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal example plugin: a command, a tool window, an editor tab, settings, a status widget and an app view."
+
+[dependencies]
+jetthing-plugin-api = { path = "../../crates/jetthing-plugin-api" }
+jetthing-plugin-ui = { path = "../../crates/jetthing-plugin-ui" }

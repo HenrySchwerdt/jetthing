@@ -41,6 +41,11 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
         .frame(island_frame())
         .show(ctx, |ui| {
             tabs(app, ui);
+            if app.state.plugin_host.active_tab.is_some() {
+                crate::plugin_ui::active_tab_body(app, ui);
+                app.caret_screen_pos = None;
+                return;
+            }
             if app.state.active_document.is_none() {
                 empty_state(ui);
                 app.caret_screen_pos = None;
@@ -157,7 +162,8 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     for index in 0..app.state.documents.len() {
         let doc = &app.state.documents[index];
         let name = IdeApp::file_name(&doc.path);
-        let active = app.state.active_document == Some(index);
+        let active =
+            app.state.active_document == Some(index) && app.state.plugin_host.active_tab.is_none();
         let color = if active {
             theme::TEXT_BRIGHT
         } else {
@@ -233,6 +239,7 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             close = Some(index);
         }
     }
+    crate::plugin_ui::editor_tabs(app, ui, bar, x);
     if let Some(index) = close {
         app.dispatch("editor.close", json!({"index": index}));
     } else if let Some(index) = activate {
