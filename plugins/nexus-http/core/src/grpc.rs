@@ -914,8 +914,9 @@ message SayReply { string message = 1; }
     }
 
     fn pool_to_set(pool: &DescriptorPool) -> Vec<u8> {
-        let mut set = prost_reflect::prost_types::FileDescriptorSet::default();
-        set.file = pool.file_descriptor_protos().cloned().collect();
+        let set = prost_reflect::prost_types::FileDescriptorSet {
+            file: pool.file_descriptor_protos().cloned().collect(),
+        };
         set.encode_to_vec()
     }
 
