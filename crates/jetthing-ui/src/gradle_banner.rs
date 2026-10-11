@@ -21,13 +21,23 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     RichText::new("Gradle build scripts have changed").color(theme::TEXT_BRIGHT),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Links underline on hover, like the other banners' actions.
                     let link = |ui: &mut egui::Ui, text: &str, color| {
-                        ui.add(
+                        let response = ui.add(
                             egui::Label::new(RichText::new(text).color(color))
                                 .sense(egui::Sense::click()),
-                        )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
+                        );
+                        if response.hovered() {
+                            let line = response.rect.shrink2(egui::vec2(0.0, 1.0));
+                            ui.painter().hline(
+                                line.x_range(),
+                                line.bottom(),
+                                egui::Stroke::new(1.0_f32, color),
+                            );
+                        }
+                        response
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
                     };
                     if link(ui, "Ignore", theme::TEXT_SECONDARY) {
                         action = Some("gradle.dismissChanges");
