@@ -1258,27 +1258,68 @@ fn editor_surface(
                     );
                 }
 
-                // Rename preview: the occurrences show the name being typed.
+                // Rename preview: the occurrences show the name being typed. The rest
+                // of the line is repainted (without highlighting) so a longer or
+                // shorter name pushes it along like the real text would.
                 if let Some((occurrences, name)) = rename {
-                    let name_width = name.chars().count();
-                    for &(start, end) in occurrences {
-                        if start < line_start || end > line_end {
-                            continue;
+                    let here: Vec<(usize, usize)> = occurrences
+                        .iter()
+                        .copied()
+                        .filter(|&(start, end)| start >= line_start && end <= line_end)
+                        .collect();
+                    if let Some(&(first, _)) = here.first() {
+                        let chars: Vec<char> = content.chars().collect();
+                        let mut tail = String::new();
+                        let mut boxes = Vec::new();
+                        let mut cursor = first - line_start;
+                        let mut column = cursor;
+                        for &(start, end) in &here {
+                            let (start, end) = (start - line_start, end - line_start);
+                            if start < cursor {
+                                continue;
+                            }
+                            tail.extend(&chars[cursor..start]);
+                            column += start - cursor;
+                            boxes.push((column, name.chars().count()));
+                            tail.push_str(name);
+                            column += name.chars().count();
+                            cursor = end;
                         }
-                        let x1 = rect.left() + text_left + (start - line_start) as f32 * char_width;
-                        let columns = (end - start).max(name_width);
-                        let area = Rect::from_min_size(
-                            egui::pos2(x1, y + 1.0),
-                            vec2(columns as f32 * char_width, ROW_HEIGHT - 2.0),
+                        tail.extend(&chars[cursor.min(chars.len())..]);
+                        let x1 = rect.left() + text_left + (first - line_start) as f32 * char_width;
+                        let background =
+                            if line == caret_line && document.selections.primary().is_caret() {
+                                *theme::editor::CARET_ROW
+                            } else {
+                                *theme::editor::BACKGROUND
+                            };
+                        painter.rect_filled(
+                            Rect::from_min_max(
+                                egui::pos2(x1, y),
+                                egui::pos2(rect.right(), y + ROW_HEIGHT),
+                            ),
+                            0.0,
+                            background,
                         );
-                        painter.rect_filled(area, 3.0, *theme::editor::RENAME_OCCURRENCE);
                         painter.text(
                             egui::pos2(x1, y + ROW_HEIGHT / 2.0),
                             egui::Align2::LEFT_CENTER,
-                            name,
+                            &tail,
                             font.clone(),
-                            *theme::TEXT_BRIGHT,
+                            *theme::editor::TEXT,
                         );
+                        for (column, width) in boxes {
+                            let left = rect.left() + text_left + column as f32 * char_width;
+                            painter.rect_stroke(
+                                Rect::from_min_size(
+                                    egui::pos2(left, y + 1.0),
+                                    vec2(width as f32 * char_width, ROW_HEIGHT - 2.0),
+                                ),
+                                3.0,
+                                Stroke::new(1.0_f32, *theme::editor::RENAME_OCCURRENCE),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
                     }
                 }
                 let column_x = |column: usize| rect.left() + text_left + column as f32 * char_width;
