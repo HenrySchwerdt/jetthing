@@ -22,6 +22,7 @@ mod build_variants_ui;
 mod build_window;
 mod change_popup;
 mod chrome;
+mod clone_dialog;
 mod completion_ui;
 mod context_menus;
 mod control;
@@ -51,6 +52,7 @@ mod markdown_ui;
 mod merged_manifest_ui;
 mod native_dialog;
 mod navigation_ui;
+mod new_project;
 mod notifications;
 mod palette;
 mod plugin_manager;
@@ -152,6 +154,7 @@ pub struct IdeApp {
     pending_dialog: Option<native_dialog::PendingDialog>,
     /// Java type kinds peeked from disk for file icons.
     kind_cache: std::cell::RefCell<file_icon::KindCache>,
+    welcome: welcome::State,
     /// Open push dialog.
     push_dialog: Option<push_dialog::PushDialog>,
     /// Open branch name/confirmation dialog.
@@ -229,6 +232,9 @@ impl IdeApp {
         state.init_plugins(jetthing_plugins::PluginStore::user(), plugins);
         // Tests use in-memory statistics; the app keeps the user's.
         state.completion_stats = jetthing_core::CompletionStats::user();
+        if !cfg!(test) {
+            state.load_recent_projects();
+        }
         state.init_ai(None);
         if let Some(path) = project {
             if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
@@ -306,6 +312,7 @@ impl IdeApp {
             file_dialogs: std::sync::Arc::new(native_dialog::SystemDialogs),
             pending_dialog: None,
             kind_cache: Default::default(),
+            welcome: Default::default(),
         }
     }
 
@@ -359,10 +366,17 @@ impl IdeApp {
             native_dialog::Purpose::OpenProject => ("Open Project", None),
             native_dialog::Purpose::NewProjectLocation => {
                 let start = match &self.dialog {
-                    Some(popups::Dialog::NewProject { parent, .. }) => Some(PathBuf::from(parent)),
+                    Some(popups::Dialog::NewProject(form)) => Some(PathBuf::from(&form.location)),
                     _ => None,
                 };
                 ("Choose Project Location", start)
+            }
+            native_dialog::Purpose::CloneLocation => {
+                let start = match &self.dialog {
+                    Some(popups::Dialog::Clone(form)) => Some(PathBuf::from(&form.parent)),
+                    _ => None,
+                };
+                ("Choose Clone Location", start)
             }
         };
         let dialogs: std::sync::Arc<dyn native_dialog::FileDialogs> =
@@ -400,12 +414,17 @@ impl IdeApp {
                 }
             }
             (Purpose::NewProjectLocation, DialogOutcome::Picked(path)) => {
-                if let Some(popups::Dialog::NewProject { parent, .. }) = &mut self.dialog {
-                    *parent = path.to_string_lossy().into_owned();
+                if let Some(popups::Dialog::NewProject(form)) = &mut self.dialog {
+                    form.location = path.to_string_lossy().into_owned();
+                }
+            }
+            (Purpose::CloneLocation, DialogOutcome::Picked(path)) => {
+                if let Some(popups::Dialog::Clone(form)) = &mut self.dialog {
+                    form.set_parent(path.to_string_lossy().into_owned());
                 }
             }
             (Purpose::OpenProject, DialogOutcome::Unavailable) => self.open_project_fallback(),
-            (Purpose::NewProjectLocation, DialogOutcome::Unavailable) => {
+            (Purpose::NewProjectLocation | Purpose::CloneLocation, DialogOutcome::Unavailable) => {
                 self.state.status =
                     "No native file dialog is available; type the location instead".into();
             }
@@ -413,15 +432,15 @@ impl IdeApp {
     }
 
     fn new_project_dialog(&mut self) {
-        self.open_dialog(popups::Dialog::NewProject {
-            name: "untitled".into(),
-            parent: std::env::var("HOME")
-                .or_else(|_| std::env::var("USERPROFILE"))
-                .unwrap_or_else(|_| ".".into()),
-            kind: "java-gradle-kotlin".into(),
-            group: "org.example".into(),
-            error: None,
-        });
+        let jdks = self.state.jdk_choices();
+        self.open_dialog(popups::Dialog::NewProject(Box::new(
+            new_project::Form::new(jdks),
+        )));
+    }
+
+    /// Get from Version Control (welcome screen, File > New > Project from Version Control).
+    fn clone_dialog(&mut self) {
+        self.open_dialog(popups::Dialog::Clone(Box::default()));
     }
 
     fn open_project_path(&mut self, path: &str, ctx: &egui::Context) -> Result<(), String> {
@@ -810,6 +829,15 @@ impl IdeApp {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
         self.state.poll_remote();
+        if self.state.clone_busy() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+        if self.state.poll_clone() {
+            if matches!(self.dialog, Some(popups::Dialog::Clone(_))) {
+                self.dialog = None;
+            }
+            self.project_opened(ctx);
+        }
         if self.state.lsp.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(100));
         } else if !self.state.lsp.servers().is_empty() || self.state.android.devices.is_tracking() {
@@ -878,11 +906,13 @@ impl IdeApp {
         theme::apply_settings(ctx, &self.state.settings);
 
         chrome::window_resize_handles(ctx);
-        chrome::main_toolbar(self, ctx);
-        chrome::status_bar(self, ctx);
-        if self.state.project.is_none() {
+        if self.state.project.is_none() && welcome::active(self) {
             welcome::show(self, ctx);
         } else {
+            chrome::main_toolbar(self, ctx);
+            chrome::status_bar(self, ctx);
+        }
+        if self.state.project.is_some() {
             chrome::left_stripe(self, ctx);
             plugin_ui::right_side(self, ctx);
             toolwindows::left(self, ctx);
