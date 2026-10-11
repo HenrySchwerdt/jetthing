@@ -20,6 +20,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p xtask -- parity --check
 ```
 
+Commit messages and PR titles must be Conventional Commits (`feat`, `fix`, `perf`,
+`refactor`, `docs`, `test`, `chore`, `ci`; `!` for breaking); they drive automatic
+versioning. See `docs/contributing.md`.
+
 ## Layering
 
 `jetthing-app -> jetthing-ui -> jetthing-core -> {command, project, plugins}`.

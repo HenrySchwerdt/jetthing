@@ -218,7 +218,60 @@ Publishing GitHub release `v<version>` (`version` from `[workspace.package]` in
 - **Manual runs on other branches**: the workflow never publishes. Pull requests do
   not run it.
 
-To ship a version, bump `[workspace.package] version` and merge it to `main`.
+To ship a version, merge the release PR described below (or bump
+`[workspace.package] version` by hand and merge that to `main`). When `CHANGELOG.md`
+has a section for the version, the release body is that section; otherwise GitHub's
+generated notes are used.
+
+## Automatic versioning
+
+`.github/workflows/release-please.yml` runs [release-please](https://github.com/googleapis/release-please-action)
+on every push to `main`. It reads the [Conventional Commits](https://www.conventionalcommits.org)
+since the last release and opens (and keeps updating) one **release PR** that:
+
+- bumps `[workspace.package] version` in `Cargo.toml`;
+- refreshes `Cargo.lock` (a follow-up commit running `cargo update --workspace`);
+- adds the section to `CHANGELOG.md`.
+
+Merging the release PR changes the version on `main`, and `release.yml` publishes it as
+above. release-please runs with `skip-github-release`, so it creates no tag or release
+itself. Config: `release-please-config.json` and `.release-please-manifest.json`. The
+manifest holds the last released version and is updated by the release PR. The version is
+read from the workspace table with a TOML extra-file updater (release-please's `rust`
+strategy handles `[package]` versions, not `[workspace.package]`).
+
+| Commit | Bump while `0.0.x` / `0.x` |
+|---|---|
+| `fix:`, `perf:`, `feat:` | patch (`0.0.7` → `0.0.8`) |
+| `feat!:` / `BREAKING CHANGE:` footer | minor (`0.0.7` → `0.1.0`) |
+| `docs:`, `test:`, `chore:`, `ci:`, `refactor:` | no release |
+
+This is `bump-minor-pre-major` plus `bump-patch-for-minor-pre-major`. After 1.0.0 the
+usual rules apply: `feat` is minor, breaking changes are major.
+
+**Moving to 0.1.0 (or 1.0.0) deliberately.** Push an empty commit to `main`, or put the
+footer in a squash-merge commit, with a `Release-As` footer:
+
+```
+chore: release 0.1.0
+
+Release-As: 0.1.0
+```
+
+The release PR then proposes exactly that version.
+
+**CI on the release PR.** Pushes made with the default `GITHUB_TOKEN` do not trigger other
+workflows, so `ci.yml` does not run on the release PR unless the repository secret
+`RELEASE_PLEASE_TOKEN` (a PAT or GitHub App token with contents and pull-requests write)
+is set. Without it, close and reopen the PR to run CI. `main` is checked again by
+`release.yml` after the merge.
+
+**Pending label.** With `skip-github-release`, release-please never relabels merged release
+PRs, and it will not open another release PR while one is `autorelease: pending`. The
+workflow relabels them `autorelease: tagged` on each run.
+
+PR titles are linted against Conventional Commits by `pr-title.yml` (non-blocking for
+now). See [contributing](contributing.md).
 
 ## Optional signing
 
