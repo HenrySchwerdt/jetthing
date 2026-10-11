@@ -8,7 +8,7 @@
 
 use crate::{IdeApp, icons, keybindings, theme};
 use eframe::egui::{self, RichText};
-use jetthing_actions::{Catalog, MenuItem};
+use jetthing_actions::{Catalog, MenuItem, filter_menu};
 use jetthing_command::CommandSpec;
 use jetthing_core::keymap_commands::ACTION_COMMANDS;
 use serde_json::Value;
@@ -48,7 +48,7 @@ fn plugin_menu_title(menu: &str) -> Option<&'static str> {
 
 /// Commands that never get a menu entry of their own (reached through other items).
 fn hidden_extra(id: &str) -> bool {
-    id.starts_with("toolwindow.activate.") || id == "search.cancel"
+    id.starts_with("toolwindow.activate.") || id == "search.cancel" || id == "plugin.refresh"
 }
 
 /// Action ids anywhere in `items`.
@@ -88,11 +88,10 @@ pub(crate) fn extras<'a>(
 
 /// Entries the reference IDE (Community edition on Linux) hides at runtime although
 /// its action groups list them; observed in `reference/*/07-main-menu.png`.
-const HIDDEN_AT_RUNTIME: [&str; 5] = [
+const HIDDEN_AT_RUNTIME: [&str; 4] = [
     "AttachProject",
     "CloseAllProjects",
     "CloseOtherProjects",
-    "ShowPlugins",
     "ConvertModuleGroupsToQualifiedNames",
 ];
 
@@ -114,7 +113,19 @@ pub(crate) fn main_menu_items() -> Vec<MenuItem> {
             })
             .collect()
     }
-    strip(Catalog::shared_menu("MainMenu").as_ref().clone())
+    // The File menu lists only what Jetthing implements: no disabled placeholders and
+    // no raw action ids; the other menus keep the full reference structure.
+    let menu = strip(Catalog::shared_menu("MainMenu").as_ref().clone());
+    menu.into_iter()
+        .map(|item| match item {
+            MenuItem::Submenu { id, label, items } if id == "FileMenu" => MenuItem::Submenu {
+                items: filter_menu(&items, &|action| keybindings::is_implemented(action)),
+                id,
+                label,
+            },
+            other => other,
+        })
+        .collect()
 }
 
 /// The hamburger button; when clicked, the menu titles expand inline in the main
@@ -145,12 +156,8 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) -> bool {
                     let title = ui.menu_button(label, |ui| {
                         scrolled(ui, |ui| {
                             render(app, ui, items);
-                            if !extra.is_empty() || id == "FileMenu" {
+                            if !extra.is_empty() {
                                 ui.separator();
-                            }
-                            if id == "FileMenu" && ui.button("Plugins…").clicked() {
-                                app.dispatch("plugin.manager.open", Value::Null);
-                                ui.close();
                             }
                             for spec in extra {
                                 command_item(app, ui, spec);
@@ -253,7 +260,27 @@ fn command_item(app: &mut IdeApp, ui: &mut egui::Ui, spec: &CommandSpec) {
     let enabled = app.commands.is_enabled(&spec.id, &app.state);
     let button = egui::Button::new(&spec.label).shortcut_text(app.command_shortcut(spec));
     if ui.add_enabled(enabled, button).clicked() {
-        app.dispatch(&spec.id, Value::Null);
+        // Stash and unstash gather options in the Git dialogs.
+        match spec.id.as_str() {
+            "git.stash" => {
+                app.git_dialog = Some(crate::branches_popup::GitDialog::Stash {
+                    message: String::new(),
+                    keep_index: false,
+                    include_untracked: false,
+                    error: None,
+                });
+                app.dialog_focus = true;
+            }
+            "git.stash.pop" => {
+                app.git_dialog = Some(crate::branches_popup::GitDialog::Unstash {
+                    selected: 0,
+                    pop: true,
+                    error: None,
+                });
+                app.dialog_focus = true;
+            }
+            _ => app.dispatch(&spec.id, Value::Null),
+        }
         ui.close();
     }
 }
@@ -304,6 +331,58 @@ mod tests {
         assert!(code.contains("CodeCompletion"));
     }
 
+    fn labels(items: &[MenuItem], out: &mut Vec<(String, String)>) {
+        for item in items {
+            match item {
+                MenuItem::Action { id, label } => out.push((id.clone(), label.clone())),
+                MenuItem::Submenu { id, label, items } => {
+                    out.push((id.clone(), label.clone()));
+                    labels(items, out);
+                }
+                MenuItem::Separator(_) => {}
+            }
+        }
+    }
+
+    #[test]
+    fn no_menu_item_shows_a_raw_action_id() {
+        let mut all = Vec::new();
+        labels(&main_menu_items(), &mut all);
+        for (id, label) in all {
+            assert!(!label.is_empty(), "{id} has an empty label");
+            // A raw id has no spaces; single-word ids ("Exit") are legitimate labels.
+            let camel = id
+                .chars()
+                .zip(id.chars().skip(1))
+                .any(|(a, b)| a.is_lowercase() && b.is_uppercase());
+            assert!(
+                !(label == id && (camel || id.contains('.'))),
+                "{id} shows as its raw id"
+            );
+        }
+    }
+
+    #[test]
+    fn file_menu_has_one_plugins_entry_and_no_unimplemented_items() {
+        let menu = main_menu_items();
+        let file = top(&menu, "FileMenu");
+        let mut actions = BTreeSet::new();
+        collect_actions(&file, &mut actions);
+        assert!(actions.iter().all(|id| keybindings::is_implemented(id)));
+        assert!(actions.contains("ShowPlugins"));
+        let mut all = Vec::new();
+        labels(&file, &mut all);
+        assert_eq!(
+            all.iter().filter(|(_, l)| l.starts_with("Plugins")).count(),
+            1
+        );
+        let setup = file.iter().find_map(|item| match item {
+            MenuItem::Submenu { id, label, .. } if id == "FileOtherSettingsGroup" => Some(label),
+            _ => None,
+        });
+        assert!(setup.is_none_or(|label| label == "New Projects Setup"));
+    }
+
     #[test]
     fn jetthing_only_commands_are_appended() {
         let menu = main_menu_items();
@@ -318,7 +397,8 @@ mod tests {
         };
         // Run is registered at runtime in the reference IDE, so it is an extra here.
         assert!(ids("RunMenu").contains(&"run.project".to_owned()));
-        assert!(ids("FileMenu").contains(&"plugin.refresh".to_owned()));
+        assert!(!ids("FileMenu").contains(&"plugin.refresh".to_owned()));
+        assert!(!ids("FileMenu").contains(&"plugin.manager.open".to_owned()));
         assert!(ids("VcsGroups").contains(&"git.refresh".to_owned()));
         // Covered by reference entries: not repeated.
         assert!(!ids("BuildMenu").contains(&"build.project".to_owned()));

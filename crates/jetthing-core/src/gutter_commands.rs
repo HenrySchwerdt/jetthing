@@ -312,7 +312,7 @@ impl IdeState {
     }
 
     /// Runs (or opens for editing) the gutter target at `line` of the active document.
-    pub fn run_gutter(&mut self, line: usize, edit: bool) -> Result<(), String> {
+    pub fn run_gutter(&mut self, line: usize, edit: bool, debug: bool) -> Result<(), String> {
         self.refresh_runnables();
         let config = self
             .runnable_cache
@@ -332,6 +332,21 @@ impl IdeState {
             }
             self.edit_run_configurations = Some(name);
             return Ok(());
+        }
+        if debug {
+            if self.is_debugging() {
+                return Err("A debug session is already running; stop it first.".into());
+            }
+            let name = config.name.clone();
+            if self
+                .run_configurations
+                .get(&name)
+                .is_none_or(|existing| existing.temporary)
+            {
+                self.run_configurations.add_temporary(config);
+            }
+            self.run_configurations.select(&name)?;
+            return self.start_debugging();
         }
         self.run_temporary(config)
     }
@@ -354,7 +369,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 "Run Gutter Target",
                 "Run",
                 Some("⌃⇧R"),
-                r#"{"line":0,"edit":false}"#,
+                r#"{"line":0,"edit":false,"debug":false}"#,
             ),
             |state: &IdeState| state.active_document.is_some() && !state.runner.is_running(),
             |state: &mut IdeState, params| {
@@ -366,8 +381,31 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                         .ok_or_else(|| CommandError::Failed("no runnable at the caret".into()))?,
                 };
                 let edit = params.get("edit").and_then(Value::as_bool).unwrap_or(false);
-                state.run_gutter(line, edit).map_err(CommandError::Failed)?;
+                let debug = params
+                    .get("debug")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                state
+                    .run_gutter(line, edit, debug)
+                    .map_err(CommandError::Failed)?;
                 Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "project.runFile",
+                "Run File",
+                "Run",
+                None,
+                r#"{"path":"string"}"#,
+            ),
+            |state: &IdeState| state.project.is_some() && !state.runner.is_running(),
+            |state: &mut IdeState, params| {
+                let path = PathBuf::from(crate::string_param(&params, "path")?);
+                let label = state.run_file(&path).map_err(CommandError::Failed)?;
+                Ok(json!({"label": label}))
             },
         ))
         .expect("unique built-in id");
@@ -389,6 +427,24 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
 }
 
 impl IdeState {
+    /// Opens `path` and runs its entry point (`Main`), else its test container.
+    pub fn run_file(&mut self, path: &Path) -> Result<String, String> {
+        self.open_file(path)?;
+        self.refresh_runnables();
+        let pick = |kind: RunnableKind| {
+            self.runnable_cache
+                .marks
+                .iter()
+                .find(|(mark, _)| mark.kind == kind)
+                .cloned()
+        };
+        let (mark, config) = pick(RunnableKind::Main)
+            .or_else(|| pick(RunnableKind::TestContainer))
+            .ok_or_else(|| format!("nothing to run in {}", path.display()))?;
+        self.run_temporary(config)?;
+        Ok(mark.label)
+    }
+
     /// The closest runnable at or above the caret line (context run action).
     fn caret_runnable_line(&mut self) -> Option<usize> {
         let caret = self.active_caret()?;

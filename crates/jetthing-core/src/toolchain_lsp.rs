@@ -37,6 +37,17 @@ impl ToolchainServerResolver {
     /// Eclipse JDT LS from a managed install: run the Equinox launcher on the
     /// resolved JDK directly (its `bin/jdtls` launcher needs Python).
     fn jdtls(&self, located: &Located) -> Option<ResolvedProgram> {
+        let mut resolved = self.jdtls_program(located)?;
+        if let Some(plugin) = self.toolchains.locate("java-debug") {
+            resolved.env.push((
+                jetthing_lsp::JAVA_DEBUG_PLUGIN_ENV.into(),
+                plugin.executable.display().to_string(),
+            ));
+        }
+        Some(resolved)
+    }
+
+    fn jdtls_program(&self, located: &Located) -> Option<ResolvedProgram> {
         let home = &located.home;
         let Some(launcher) = equinox_launcher(&home.join("plugins")) else {
             // A launcher script configured by the user; run it as is.

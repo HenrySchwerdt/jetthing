@@ -597,6 +597,23 @@ fn page(
         .id_salt(("settings_page", &page_id))
         .auto_shrink([false, false])
         .show(ui, |ui| {
+            match page_id.as_str() {
+                crate::settings_pages::FILE_TEMPLATES_PAGE => {
+                    crate::settings_pages::file_templates(ui);
+                    return;
+                }
+                crate::settings_pages::VCS_PAGE => {
+                    crate::settings_pages::version_control(ui, state);
+                    ui.add_space(12.0);
+                    for child in registry.children(Some(&page_id)) {
+                        if ui.link(&child.label).clicked() {
+                            dialog.select(registry, &child.id);
+                        }
+                    }
+                    return;
+                }
+                _ => {}
+            }
             if settings.is_empty() {
                 empty_page(ui, dialog, registry, &page_id);
                 return;

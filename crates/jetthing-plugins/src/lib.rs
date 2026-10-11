@@ -3,6 +3,7 @@
 //! application core provides.
 
 pub mod archive;
+pub mod catalog;
 mod store;
 
 pub use jetthing_plugin_api::*;

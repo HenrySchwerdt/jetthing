@@ -63,6 +63,7 @@ const fn editor(action: &'static str, command: &'static str) -> ActionCommand {
 /// listed here are shown in the keymap as unbound ("not available in Jetthing").
 pub const ACTION_COMMANDS: &[ActionCommand] = &[
     global("ShowSettings", "settings.open", "{}"),
+    menu("ShowPlugins", "plugin.manager.open"),
     global("SearchEverywhere", "navigate.searchEverywhere", "{}"),
     global("GotoAction", "navigate.findAction", "{}"),
     global("GotoClass", "navigate.gotoClass", "{}"),

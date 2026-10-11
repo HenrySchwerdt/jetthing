@@ -33,6 +33,9 @@
 //!   "Building" progress from `initialized` on, answer the first `n`
 //!   completion requests with an empty list, and end the progress 300 ms
 //!   after the last of them.
+//! - `--java-debug <port>`: answer the java-debug plugin's `vscode.java.*` commands
+//!   (main class `demo.App` in `<root>/App.java`, a one-entry class path, and the
+//!   given debug port).
 //!
 //! Completion lists start with an item `trigger<kind>` naming the request's
 //! `triggerKind`.
@@ -63,6 +66,7 @@ fn main() {
         .and_then(|ms| ms.parse().ok())
         .map(Duration::from_millis);
     let publish = value("--publish");
+    let java_debug_port: Option<u16> = value("--java-debug").and_then(|p| p.parse().ok());
     let prepare_rename = !flag("--no-prepare-rename");
     let mut importing: u32 = value("--importing")
         .and_then(|n| n.parse().ok())
@@ -392,6 +396,28 @@ fn main() {
                     "edits": [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
                         "newText": "// resolved\n"}]}]});
                 send(json!({"jsonrpc":"2.0","id":id,"result":action}));
+            }
+            ("workspace/executeCommand", Some(id))
+                if java_debug_port.is_some()
+                    && params["command"]
+                        .as_str()
+                        .is_some_and(|c| c.starts_with("vscode.java.")) =>
+            {
+                let result = match params["command"].as_str().unwrap_or_default() {
+                    "vscode.java.resolveMainClass" => json!([{
+                        "mainClass": "demo.App", "projectName": "app",
+                        "filePath": format!("{}/App.java", root.trim_start_matches("file://"))}]),
+                    "vscode.java.resolveClasspath" => json!([
+                        [],
+                        [format!(
+                            "{}/build/classes",
+                            root.trim_start_matches("file://")
+                        )]
+                    ]),
+                    "vscode.java.startDebugSession" => json!(java_debug_port),
+                    _ => Value::Null,
+                };
+                send(json!({"jsonrpc":"2.0","id":id,"result":result}));
             }
             ("workspace/executeCommand", Some(id)) => {
                 let uri = params["arguments"][0]

@@ -23,6 +23,7 @@ mod android_devices;
 mod android_logcat;
 mod android_manifest;
 mod android_resources;
+mod android_sdk_repo;
 mod android_variants;
 mod annotations;
 mod bazel_commands;
@@ -42,6 +43,7 @@ mod folds;
 mod git_log;
 mod gradle_commands;
 mod gutter_commands;
+mod java_debug;
 pub mod keymap_commands;
 mod line_changes;
 mod lsp_commands;
@@ -51,8 +53,9 @@ mod new_class;
 mod plugin_host;
 mod problems;
 pub mod quick_nav;
-pub use new_class::{JavaKind, KotlinKind};
+pub use new_class::{FileTemplate, JavaKind, KotlinKind, file_templates};
 mod project_commands;
+pub mod project_view;
 mod quick_doc;
 mod refactor;
 mod remote_commands;
@@ -82,8 +85,8 @@ pub use gutter_commands::GutterMark;
 pub use jetthing_runnables::RunnableKind;
 pub use jetthing_search::SearchOptions;
 pub use plugin_host::{
-    PluginHostState, PluginStatusWidget, PluginTab, plugin_dirs, sync_plugin_commands,
-    user_plugin_dir,
+    PluginHostState, PluginStatusWidget, PluginTab, plugin_dirs, plugin_registry_dirs,
+    sync_plugin_commands, user_plugin_dir,
 };
 mod workspace_edit;
 pub use ai_agent::{
@@ -106,7 +109,7 @@ pub use toolchain_commands::ToolchainState;
 mod worktree_commands;
 pub use branch_commands::abort_label;
 pub use folds::{CollapsedFold, FoldState};
-pub use git_log::GitLogState;
+pub use git_log::{DateRange, GitLogState};
 pub use line_changes::hunk_at_line;
 pub use toolwindow::{
     Anchor, BOTTOM_DEFAULT_HEIGHT, BOTTOM_MIN_HEIGHT, EDITOR_MIN_HEIGHT, ToolWindow,
@@ -115,7 +118,7 @@ pub use toolwindow::{
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
 };
-pub use vcs::{DiffTab, DiffViewer, RepaintHook};
+pub use vcs::{DiffHighlight, DiffTab, DiffViewer, RepaintHook};
 pub use workspace_edit::EditSummary;
 
 #[derive(Debug, Clone)]
@@ -263,6 +266,8 @@ pub struct IdeState {
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
+    /// Project view options, directory marks and the file clipboard.
+    pub project_view: project_view::ProjectView,
     /// Most recently used files, newest first (Recent Files, ⌘E).
     pub recent_files: Vec<PathBuf>,
     pub updates: jetthing_update::UpdateService,
@@ -498,7 +503,7 @@ impl IdeState {
         let linked = path.ancestors().any(|ancestor| {
             self.files
                 .iter()
-                .any(|entry| entry.is_symlink && entry.relative_path == ancestor)
+                .any(|entry| (entry.is_symlink || entry.lazy) && entry.relative_path == ancestor)
         });
         if loaded || !linked {
             return Ok(());
@@ -586,15 +591,26 @@ impl IdeState {
     }
 
     pub fn open_terminal(&mut self) -> Result<(), String> {
-        if self
+        self.open_terminal_in(None)
+    }
+
+    /// Opens the Terminal; a new shell starts in `dir` (default: the project
+    /// root) and a running shell is sent a `cd` there.
+    pub fn open_terminal_in(&mut self, dir: Option<&Path>) -> Result<(), String> {
+        if let Some(dir) = dir
+            && let Some(terminal) = self.terminal.as_mut().filter(|t| !t.is_exited())
+        {
+            let quoted = dir.display().to_string().replace('\'', "'\\''");
+            terminal
+                .send(&format!("cd '{quoted}'\n"))
+                .map_err(|error| error.to_string())?;
+        } else if self
             .terminal
             .as_ref()
             .is_none_or(|terminal| terminal.is_exited())
         {
-            let cwd = self
-                .project
-                .as_ref()
-                .map(Project::root)
+            let cwd = dir
+                .or_else(|| self.project.as_ref().map(Project::root))
                 .unwrap_or_else(|| Path::new("."));
             let shell = self
                 .settings
@@ -631,6 +647,12 @@ impl IdeState {
             .files
             .iter()
             .filter(|entry| !entry.is_dir)
+            .filter(|entry| {
+                self.project_view
+                    .search_scope
+                    .as_ref()
+                    .is_none_or(|scope| entry.relative_path.starts_with(scope))
+            })
             .map(|entry| entry.relative_path.clone())
             .collect();
         self.search_results.clear();
@@ -891,6 +913,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_resources::register(&mut registry);
     android_manifest::register(&mut registry);
     android_logcat::register(&mut registry);
+    android_sdk_repo::register(&mut registry);
     bazel_commands::register(&mut registry);
     build_commands::register(&mut registry);
     debug_commands::register(&mut registry);
@@ -903,6 +926,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     run_config_commands::register(&mut registry);
     folds::register(&mut registry);
     project_commands::register(&mut registry);
+    project_view::register(&mut registry);
     new_class::register(&mut registry);
     update_commands::register(&mut registry);
     diagnostic_commands::register(&mut registry);
@@ -983,13 +1007,26 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Stage File",
                 "Git",
                 None,
-                r#"{"path":"string"}"#,
+                r#"{"path":"string","hunks":"[usize]?"}"#,
             ),
             |state: &IdeState| state.git.is_some(),
             |state: &mut IdeState, params| {
-                state
-                    .stage_path(Path::new(&string_param(&params, "path")?))
-                    .map_err(CommandError::Failed)?;
+                let path = string_param(&params, "path")?;
+                // With `hunks`, only those chunks of the open diff are staged.
+                match params.get("hunks").and_then(Value::as_array) {
+                    Some(hunks) => {
+                        let hunks: Vec<usize> = hunks
+                            .iter()
+                            .filter_map(|hunk| hunk.as_u64().map(|hunk| hunk as usize))
+                            .collect();
+                        state
+                            .stage_hunks(Path::new(&path), &hunks)
+                            .map_err(CommandError::Failed)?;
+                    }
+                    None => state
+                        .stage_path(Path::new(&path))
+                        .map_err(CommandError::Failed)?,
+                }
                 Ok(Value::Null)
             },
         ))
@@ -1019,7 +1056,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Find in Files",
                 "Search",
                 Some("⇧⌘F"),
-                r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?","fileMask":"string?"}"#,
+                r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?","fileMask":"string?","scope":"string?"}"#,
             ),
             |state: &IdeState| state.project.is_some(),
             |state: &mut IdeState, params| {
@@ -1035,6 +1072,12 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                         .unwrap_or_default()
                         .to_owned(),
                 };
+                // `scope` limits the search to a directory ("Find in Files" on a folder).
+                state.project_view.search_scope = params
+                    .get("scope")
+                    .and_then(Value::as_str)
+                    .filter(|scope| !scope.is_empty())
+                    .map(PathBuf::from);
                 let job = state
                     .start_search_with(query, options)
                     .map_err(CommandError::InvalidParams)?;

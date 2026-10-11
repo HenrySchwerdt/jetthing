@@ -3,9 +3,10 @@
 
 use crate::{CommandError, IdeState, spec, string_param};
 use jetthing_command::{Command, CommandRegistry};
-use jetthing_git::{ChangeKind, FileDiff, Notify, RepositoryStatus, StatusWatcher};
+use jetthing_git::{ChangeKind, FileDiff, Notify, RepositoryStatus, StatusWatcher, WhitespaceMode};
 use jetthing_language::{LanguageAnalysis, analyze};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -43,6 +44,39 @@ impl DiffViewer {
     }
 }
 
+/// Word-level highlighting of changed lines (the "Highlight words" combo).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiffHighlight {
+    #[default]
+    Words,
+    Lines,
+    None,
+}
+
+impl DiffHighlight {
+    pub const ALL: [DiffHighlight; 3] = [Self::Words, Self::Lines, Self::None];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Words => "words",
+            Self::Lines => "lines",
+            Self::None => "none",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Words => "Highlight words",
+            Self::Lines => "Highlight lines",
+            Self::None => "Do not highlight",
+        }
+    }
+
+    pub fn parse(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|mode| mode.id() == id)
+    }
+}
+
 /// An open "HEAD vs working copy" comparison, shown as an editor tab.
 #[derive(Debug, Clone)]
 pub struct DiffTab {
@@ -59,6 +93,10 @@ pub struct DiffTab {
     /// Short hash of the new side when comparing two commits; `None` for the
     /// working copy (which then updates live).
     pub new_revision: Option<String>,
+    pub whitespace: WhitespaceMode,
+    pub highlight: DiffHighlight,
+    /// Chunks ticked for partial staging.
+    pub selected: BTreeSet<usize>,
 }
 
 impl DiffTab {
@@ -75,11 +113,15 @@ impl DiffTab {
             old_analysis,
             new_analysis,
             new_revision: None,
+            whitespace: WhitespaceMode::default(),
+            highlight: DiffHighlight::default(),
+            selected: BTreeSet::new(),
         }
     }
 
     /// Replaces the compared content, keeping viewer and position.
     fn update(&mut self, diff: FileDiff) {
+        let diff = diff.with_whitespace(self.whitespace);
         if diff == self.diff {
             return;
         }
@@ -93,6 +135,7 @@ impl DiffTab {
             .current
             .filter(|&index| index < diff.hunks.len())
             .or((!diff.hunks.is_empty()).then_some(0));
+        self.selected.retain(|&index| index < diff.hunks.len());
         self.diff = diff;
     }
 }
@@ -186,8 +229,17 @@ impl IdeState {
     pub fn show_diff(&mut self, path: &Path) -> Result<(), String> {
         let diff = self.compute_diff(path)?;
         let viewer = self.diff.as_ref().map(|tab| tab.viewer).unwrap_or_default();
+        let (whitespace, highlight) = self
+            .diff
+            .as_ref()
+            .map(|tab| (tab.whitespace, tab.highlight))
+            .unwrap_or_default();
+        let diff = diff.with_whitespace(whitespace);
         let count = diff.hunks.len();
-        self.diff = Some(DiffTab::new(path.to_owned(), diff, viewer));
+        let mut tab = DiffTab::new(path.to_owned(), diff, viewer);
+        tab.whitespace = whitespace;
+        tab.highlight = highlight;
+        self.diff = Some(tab);
         self.diff_active = true;
         self.plugin_host.active_tab = None;
         self.status = format!(
@@ -235,10 +287,78 @@ impl IdeState {
             .diff_revisions(path, parent.as_deref(), hash)
             .map_err(|error| error.to_string())?;
         let viewer = self.diff.as_ref().map(|tab| tab.viewer).unwrap_or_default();
-        let mut tab = DiffTab::new(path.to_owned(), diff, viewer);
+        let (whitespace, highlight) = self
+            .diff
+            .as_ref()
+            .map(|tab| (tab.whitespace, tab.highlight))
+            .unwrap_or_default();
+        let mut tab = DiffTab::new(path.to_owned(), diff.with_whitespace(whitespace), viewer);
+        tab.whitespace = whitespace;
+        tab.highlight = highlight;
         tab.new_revision = Some(short);
         self.diff = Some(tab);
         self.diff_active = true;
+        Ok(())
+    }
+
+    /// Stages the ticked chunks of the open diff (`hunks`) of project-relative
+    /// `path`, leaving the other changes of the file unstaged.
+    pub fn stage_hunks(&mut self, path: &Path, hunks: &[usize]) -> Result<(), String> {
+        let git = self
+            .git
+            .as_ref()
+            .ok_or("the project is not a Git repository")?;
+        let tab = self
+            .diff
+            .as_ref()
+            .filter(|tab| tab.path == path && tab.new_revision.is_none())
+            .ok_or("no working-copy diff is open for this file")?;
+        if let Some(bad) = hunks.iter().find(|&&index| index >= tab.diff.hunks.len()) {
+            return Err(format!("the diff has no chunk {bad}"));
+        }
+        let repo_path = self.repo_relative(git, path)?;
+        git.stage_text(&repo_path, &tab.diff.old_with_hunks(hunks))
+            .map_err(|error| error.to_string())?;
+        if let Some(tab) = self.diff.as_mut() {
+            tab.selected.clear();
+        }
+        self.status = format!(
+            "Staged {} chunk{} of {}",
+            hunks.len(),
+            if hunks.len() == 1 { "" } else { "s" },
+            path.display()
+        );
+        self.refresh_git()
+    }
+
+    /// Copies chunk `index` from the left side into the working copy (the
+    /// `>>` arrow of the diff viewer): the editor buffer when the file is open,
+    /// else the file on disk.
+    pub fn apply_chunk(&mut self, index: usize) -> Result<(), String> {
+        let tab = self
+            .diff
+            .as_ref()
+            .filter(|tab| tab.new_revision.is_none())
+            .ok_or("only the working copy can be changed")?;
+        let text = tab
+            .diff
+            .new_with_hunk_reverted(index)
+            .ok_or_else(|| format!("the diff has no chunk {index}"))?;
+        let path = tab.path.clone();
+        if let Some(document) = self.documents.iter_mut().find(|d| d.path == path) {
+            let len = document.text.len_chars();
+            document
+                .text
+                .edit(0, len, &text)
+                .map_err(|error| error.to_string())?;
+            let source = document.text.text();
+            document.refresh_analysis(&source);
+        } else {
+            let root = self.project.as_ref().ok_or("no project is open")?.root();
+            std::fs::write(root.join(&path), &text).map_err(|error| error.to_string())?;
+        }
+        self.refresh_diff();
+        self.status = format!("Applied chunk {} to the working copy", index + 1);
         Ok(())
     }
 
@@ -333,6 +453,109 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                     tab.viewer = viewer;
                     tab.reveal = tab.current;
                 }
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "diff.setWhitespace",
+                "Diff Whitespace Mode",
+                "Diff",
+                None,
+                r#"{"mode":"none|trim|all"}"#,
+            ),
+            |state: &IdeState| state.diff.is_some(),
+            |state: &mut IdeState, params| {
+                let id = string_param(&params, "mode")?;
+                let mode = WhitespaceMode::parse(&id).ok_or_else(|| {
+                    CommandError::InvalidParams(format!("unknown whitespace mode `{id}`"))
+                })?;
+                if let Some(tab) = state.diff.as_mut() {
+                    tab.whitespace = mode;
+                    tab.diff = tab.diff.clone().with_whitespace(mode);
+                    tab.selected.clear();
+                    tab.current = (!tab.diff.hunks.is_empty()).then_some(0);
+                    tab.reveal = tab.current;
+                }
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "diff.setHighlight",
+                "Diff Highlight Mode",
+                "Diff",
+                None,
+                r#"{"mode":"words|lines|none"}"#,
+            ),
+            |state: &IdeState| state.diff.is_some(),
+            |state: &mut IdeState, params| {
+                let id = string_param(&params, "mode")?;
+                let mode = DiffHighlight::parse(&id).ok_or_else(|| {
+                    CommandError::InvalidParams(format!("unknown highlight mode `{id}`"))
+                })?;
+                if let Some(tab) = state.diff.as_mut() {
+                    tab.highlight = mode;
+                }
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "diff.toggleChunk",
+                "Select Chunk for Staging",
+                "Diff",
+                None,
+                r#"{"index":0}"#,
+            ),
+            |state: &IdeState| state.diff.is_some(),
+            |state: &mut IdeState, params| {
+                let index = params
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| CommandError::InvalidParams("`index` is required".into()))?
+                    as usize;
+                let tab = state.diff.as_mut().expect("enabled only with a diff");
+                if index >= tab.diff.hunks.len() {
+                    return Err(CommandError::InvalidParams(format!(
+                        "the diff has no chunk {index}"
+                    )));
+                }
+                if !tab.selected.remove(&index) {
+                    tab.selected.insert(index);
+                }
+                Ok(json!({"selected": tab.selected.len()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "diff.applyChunk",
+                "Apply Chunk to Working Copy",
+                "Diff",
+                None,
+                r#"{"index":0}"#,
+            ),
+            |state: &IdeState| {
+                state
+                    .diff
+                    .as_ref()
+                    .is_some_and(|t| t.new_revision.is_none())
+            },
+            |state: &mut IdeState, params| {
+                let index = params
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| CommandError::InvalidParams("`index` is required".into()))?
+                    as usize;
+                state.apply_chunk(index).map_err(CommandError::Failed)?;
                 Ok(Value::Null)
             },
         ))
@@ -459,6 +682,63 @@ mod tests {
         assert!(
             commands
                 .execute("git.showDiff", &mut state, json!({"path": "missing.txt"}))
+                .is_err()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stages_and_applies_single_chunks() {
+        let root = repo("chunks");
+        fs::write(root.join("App.java"), "A\nb\nc\nd\nE\n").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        commands
+            .execute("git.showDiff", &mut state, json!({"path": "App.java"}))
+            .unwrap();
+        commands
+            .execute("diff.toggleChunk", &mut state, json!({"index": 1}))
+            .unwrap();
+        assert!(state.diff.as_ref().unwrap().selected.contains(&1));
+        assert!(
+            commands
+                .execute("diff.toggleChunk", &mut state, json!({"index": 9}))
+                .is_err()
+        );
+        commands
+            .execute(
+                "git.stage",
+                &mut state,
+                json!({"path": "App.java", "hunks": [1]}),
+            )
+            .unwrap();
+        let staged = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["show", ":App.java"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&staged.stdout), "a\nb\nc\nd\nE\n");
+        // The working copy is untouched; chunk 0 can be reverted from the left side.
+        commands
+            .execute("diff.applyChunk", &mut state, json!({"index": 0}))
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("App.java")).unwrap(),
+            "a\nb\nc\nd\nE\n"
+        );
+        commands
+            .execute("diff.setWhitespace", &mut state, json!({"mode": "all"}))
+            .unwrap();
+        commands
+            .execute("diff.setHighlight", &mut state, json!({"mode": "none"}))
+            .unwrap();
+        assert!(
+            commands
+                .execute("diff.setWhitespace", &mut state, json!({"mode": "x"}))
                 .is_err()
         );
         fs::remove_dir_all(root).unwrap();
