@@ -59,7 +59,8 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     if !app.state.git_log.loaded {
         app.dispatch("git.log.refresh", Value::Null);
     }
-    tab_strip(ui);
+    let mut actions: Vec<(&'static str, Value)> = Vec::new();
+    tab_strip(app, ui, &mut actions);
     let area = ui.available_rect_before_wrap();
     ui.allocate_rect(area, Sense::hover());
     let branches_rect = Rect::from_min_size(area.min, vec2(BRANCHES_WIDTH, area.height()));
@@ -78,7 +79,6 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         .vline(branches_rect.right(), area.y_range(), divider);
     ui.painter()
         .vline(details_rect.left(), area.y_range(), divider);
-    let mut actions: Vec<(&'static str, Value)> = Vec::new();
     ui.scope_builder(egui::UiBuilder::new().max_rect(branches_rect), |ui| {
         branches_pane(app, ui, &mut actions);
     });
@@ -95,26 +95,81 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The `Log` tab (file history opens in this tab; further tabs are not offered).
-fn tab_strip(ui: &mut egui::Ui) {
+/// The `Log` tab and one closable `History: <file>` tab per opened file history.
+fn tab_strip(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str, Value)>) {
+    let log = &app.state.git_log;
+    let active = log.active_history_tab();
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-    let galley = ui.painter().layout_no_wrap(
-        "Log".to_owned(),
-        theme::semibold(theme::UI_FONT_SIZE),
-        *theme::TEXT_BRIGHT,
-    );
-    let left = rect.left() + 12.0;
-    let width = galley.size().x;
-    ui.painter().galley(
-        pos2(left, rect.center().y - galley.size().y / 2.0),
-        galley,
-        *theme::TEXT_BRIGHT,
-    );
-    ui.painter().hline(
-        left..=left + width,
-        rect.bottom() - 1.0,
-        Stroke::new(2.0_f32, theme::ACCENT),
-    );
+    let mut left = rect.left() + 12.0;
+    let tab = |ui: &mut egui::Ui, left: &mut f32, label: String, selected: bool, close| {
+        let color = if selected {
+            *theme::TEXT_BRIGHT
+        } else {
+            *theme::TEXT_SECONDARY
+        };
+        let galley =
+            ui.painter()
+                .layout_no_wrap(label.clone(), theme::semibold(theme::UI_FONT_SIZE), color);
+        let width = galley.size().x;
+        let hit = Rect::from_min_size(
+            pos2(*left - 4.0, rect.top()),
+            vec2(width + 8.0 + if close { 18.0 } else { 0.0 }, rect.height()),
+        );
+        let response = ui.interact(hit, ui.id().with(("log_tab", &label)), Sense::click());
+        ui.painter().galley(
+            pos2(*left, rect.center().y - galley.size().y / 2.0),
+            galley,
+            color,
+        );
+        if selected {
+            ui.painter().hline(
+                *left..=*left + width,
+                rect.bottom() - 1.0,
+                Stroke::new(2.0_f32, theme::ACCENT),
+            );
+        }
+        let mut closed = false;
+        if close {
+            let x = Rect::from_center_size(
+                pos2(*left + width + 12.0, rect.center().y),
+                vec2(14.0, 14.0),
+            );
+            let close_response = ui
+                .interact(x, ui.id().with(("log_tab_close", &label)), Sense::click())
+                .on_hover_text("Close tab");
+            ui.painter().text(
+                x.center(),
+                egui::Align2::CENTER_CENTER,
+                "×",
+                egui::FontId::proportional(theme::UI_FONT_SIZE),
+                *theme::TEXT_SECONDARY,
+            );
+            closed = close_response.clicked();
+        }
+        *left += width + 20.0 + if close { 18.0 } else { 0.0 };
+        (response.clicked() && !closed, closed)
+    };
+    if tab(ui, &mut left, "Log".to_owned(), active.is_none(), false).0 && active.is_some() {
+        actions.push(("git.log.selectTab", json!({})));
+    }
+    for path in &log.history_tabs {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (clicked, closed) = tab(
+            ui,
+            &mut left,
+            format!("History: {name}"),
+            active == Some(path),
+            true,
+        );
+        if closed {
+            actions.push(("git.log.closeTab", json!({ "path": path })));
+        } else if clicked && active != Some(path) {
+            actions.push(("git.log.selectTab", json!({ "path": path })));
+        }
+    }
     ui.painter().hline(
         rect.x_range(),
         rect.bottom() - 0.5,

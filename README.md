@@ -5,7 +5,7 @@ modelled on the observable layout of the IntelliJ New UI ("Islands Dark"): merge
 toolbar with project, VCS and run widgets, a tool window stripe, rounded editor and tool
 window islands, Search Everywhere, and a status bar with navigation breadcrumbs.
 
-![Jetthing editor](docs/parity/evidence/linux-editor-project-tree.png)
+![Jetthing debugging a Gradle Java project](docs/parity/evidence/debugger/146-java-step-over.png)
 
 ## Run
 

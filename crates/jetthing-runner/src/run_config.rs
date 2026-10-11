@@ -70,6 +70,9 @@ pub enum RunTarget {
         /// Gradle project path of the module (`:app`); the root project when empty.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         module: String,
+        /// JDK home the program runs on (`JAVA_HOME`); the configured Gradle JDK when empty.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        jdk: String,
         main_class: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         program_arguments: Vec<String>,
@@ -159,6 +162,7 @@ impl RunTarget {
             },
             "application" => RunTarget::Application {
                 module: String::new(),
+                jdk: String::new(),
                 main_class: String::new(),
                 program_arguments: Vec::new(),
             },

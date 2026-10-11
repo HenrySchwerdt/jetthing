@@ -158,6 +158,37 @@ impl Document {
         true
     }
 
+    /// Fold Selection (IntelliJ `CollapseSelection`, Ctrl+.): collapses the
+    /// selected lines into a custom `...` region, or expands the region that
+    /// selection already folded. Without a selection it toggles the region at
+    /// the caret. A selection within one line cannot be folded.
+    pub fn fold_selection(&mut self) -> bool {
+        let selection = self.selections.primary();
+        if selection.is_caret() {
+            return self.expand_at_caret() || self.collapse_at_caret();
+        }
+        let (start, end) = (selection.start(), selection.end());
+        let (start_line, end_line) = (self.text.char_to_line(start), self.text.char_to_line(end));
+        if start_line == end_line {
+            return false;
+        }
+        let fold = FoldRange {
+            start_byte: self.text.char_to_byte(start),
+            end_byte: self.text.char_to_byte(end),
+            start_line,
+            end_line,
+            placeholder: "...".into(),
+            kind: FoldKind::Block,
+        };
+        if self.folds.is_collapsed(&fold) {
+            self.folds.expand(&fold);
+        } else {
+            self.folds.collapse(&fold);
+        }
+        self.selections.set_single(Selection::caret(start));
+        true
+    }
+
     /// Toggles the region starting on `line` (gutter marker click).
     pub fn toggle_fold_at_line(&mut self, line: usize) -> bool {
         let start = self.text.line_to_char(line).unwrap_or(0);
@@ -253,6 +284,13 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     );
     fold_command(
         registry,
+        "editor.foldSelection",
+        "Fold Selection",
+        "⌘.",
+        Document::fold_selection,
+    );
+    fold_command(
+        registry,
         "editor.collapseAllRegions",
         "Collapse All",
         "⇧⌘-",
@@ -292,6 +330,34 @@ mod tests {
     use super::*;
 
     const SOURCE: &str = "import java.util.List;\nimport java.util.Map;\n\nclass A {\n    void f() {\n        g();\n        h();\n    }\n    String s(String n) {\n        return n + \"!\";\n    }\n}\n";
+
+    #[test]
+    fn fold_selection_collapses_and_expands_the_selected_lines() {
+        let mut document = Document::new("A.java".into(), SOURCE);
+        // A one-line selection cannot be folded.
+        document.selections.set_single(Selection {
+            anchor: 25,
+            head: 31,
+        });
+        assert!(!document.fold_selection());
+        let start = document.text.line_to_char(5).unwrap();
+        let end = document.text.line_to_char(7).unwrap();
+        document.selections.set_single(Selection {
+            anchor: start,
+            head: end,
+        });
+        assert!(document.fold_selection());
+        assert_eq!(document.folds.collapsed().len(), 1);
+        assert_eq!(document.folds.collapsed()[0].placeholder, "...");
+        assert!(document.selections.primary().is_caret());
+        // The same selection again expands it.
+        document.selections.set_single(Selection {
+            anchor: start,
+            head: end,
+        });
+        assert!(document.fold_selection());
+        assert!(document.folds.collapsed().is_empty());
+    }
 
     #[test]
     fn imports_collapse_by_default_and_commands_fold_at_caret() {

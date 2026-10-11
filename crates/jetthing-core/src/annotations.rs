@@ -102,6 +102,9 @@ impl IdeState {
     pub fn show_file_history(&mut self) -> Result<(), String> {
         let index = self.active_document.ok_or("no active document")?;
         let path = self.repo_path_of(&self.documents[index].path.clone())?;
+        if !self.git_log.history_tabs.contains(&path) {
+            self.git_log.history_tabs.push(path.clone());
+        }
         self.git_log.path = Some(path);
         self.git_log.filter.clear();
         self.tool_windows.show(ToolWindow::Git);
@@ -209,9 +212,32 @@ mod tests {
         assert_eq!(result["commits"], 1);
         assert!(state.tool_windows.is_visible(ToolWindow::Git));
         assert_eq!(state.git_log.commits[0].subject, "First");
+        // File history is a sibling tab of `Log`: it can be left and reopened.
+        let tab = state.git_log.history_tabs[0].clone();
+        assert_eq!(state.git_log.active_history_tab(), Some(&tab));
         commands
-            .execute("git.log.clearPath", &mut state, Value::Null)
+            .execute("git.log.selectTab", &mut state, json!({}))
             .unwrap();
+        assert!(state.git_log.active_history_tab().is_none());
+        assert_eq!(state.git_log.commits.len(), 2);
+        commands
+            .execute("git.log.selectTab", &mut state, json!({"path": tab}))
+            .unwrap();
+        assert_eq!(state.git_log.commits.len(), 1);
+        assert!(
+            commands
+                .execute("git.log.selectTab", &mut state, json!({"path": "nope"}))
+                .is_err()
+        );
+        commands
+            .execute("git.fileHistory", &mut state, Value::Null)
+            .unwrap();
+        assert_eq!(state.git_log.history_tabs.len(), 1, "no duplicate tabs");
+        commands
+            .execute("git.log.closeTab", &mut state, json!({"path": tab}))
+            .unwrap();
+        assert!(state.git_log.history_tabs.is_empty());
+        assert!(state.git_log.path.is_none());
         assert_eq!(state.git_log.commits.len(), 2);
 
         let result = commands

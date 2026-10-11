@@ -141,6 +141,27 @@ fn incomplete_lists_are_requeried_while_typing() {
 }
 
 #[test]
+fn commit_characters_accept_the_selected_item_and_stay_typed() {
+    let Some(server) = fake_server() else {
+        eprintln!("jetthing-fake-lsp not built; run `cargo test --workspace`");
+        return;
+    };
+    let (root, mut state) = open_fake_project(server, &[], "commit");
+    type_text(&mut state, "g");
+    assert!(wait(&mut state, |state| {
+        state.completion.as_ref().is_some_and(|s| {
+            s.visible() && s.selected_item().is_some_and(|i| i.label == "greeting")
+        })
+    }));
+    type_text(&mut state, ";");
+    let text = state.documents[0].text.text();
+    assert!(text.starts_with("app.greeting"), "{text}");
+    assert!(text.ends_with(';'), "{text}");
+    assert!(state.completion.is_none());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn completion_resolves_docs_applies_imports_and_shows_quick_doc() {
     let Some(server) = fake_server() else {
         eprintln!("jetthing-fake-lsp not built; run `cargo test --workspace`");

@@ -73,6 +73,25 @@ pub struct SearchOptions {
     pub file_mask: String,
 }
 
+/// A file-mask filter on its own: the body of a user-defined search scope
+/// (same syntax as [`SearchOptions::file_mask`]; an empty mask admits everything).
+pub struct FileMaskFilter(Matcher);
+
+impl FileMaskFilter {
+    pub fn new(mask: &str) -> Result<Self, SearchError> {
+        let options = SearchOptions {
+            file_mask: mask.to_owned(),
+            ..SearchOptions::default()
+        };
+        Matcher::new("-", &options).map(Self)
+    }
+
+    /// Whether the project-relative `path` is in the scope.
+    pub fn accepts(&self, path: &Path) -> bool {
+        self.0.accepts(path)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SearchError {
     #[error("search query cannot be empty")]
@@ -469,6 +488,21 @@ pub fn plan_replacements(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_mask_filters_define_scopes() {
+        let scope = super::FileMaskFilter::new("*.rs, src/api/**, !**/generated/**").unwrap();
+        assert!(scope.accepts(std::path::Path::new("crates/a/lib.rs")));
+        assert!(scope.accepts(std::path::Path::new("src/api/v1/x.txt")));
+        assert!(!scope.accepts(std::path::Path::new("docs/readme.md")));
+        assert!(!scope.accepts(std::path::Path::new("a/generated/b.rs")));
+        assert!(
+            super::FileMaskFilter::new("")
+                .unwrap()
+                .accepts("any/file".as_ref())
+        );
+        assert!(super::FileMaskFilter::new("[").is_err());
+    }
+
     use super::*;
     use std::time::{Duration, Instant};
 

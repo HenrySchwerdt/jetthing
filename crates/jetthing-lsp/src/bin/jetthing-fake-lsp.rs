@@ -451,7 +451,7 @@ fn main() {
                 send(
                     json!({"jsonrpc":"2.0","id":id,"result":{"isIncomplete":incomplete,"items":[
                         {"label":format!("trigger{kind}"),"kind":1,"sortText":"9"},
-                        {"label":"greeting","kind":2,"detail":"String","labelDetails":{"detail":"(String name)","description":"String"},"sortText":"0"},
+                        {"label":"greeting","kind":2,"commitCharacters":[";"],"detail":"String","labelDetails":{"detail":"(String name)","description":"String"},"sortText":"0"},
                         {"label":"getRequiredField","kind":2,"detail":"Field","sortText":"1"},
                         {"label":"getClass","kind":2,"detail":"Class<?>","sortText":"2"},
                         {"label":"hashCode","kind":2,"detail":"int","sortText":"3"}
