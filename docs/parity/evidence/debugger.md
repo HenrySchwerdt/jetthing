@@ -103,3 +103,7 @@ consumed it first).
 The same real-input pass was repeated at 1440x900 (right-click popup: Enter applies the condition,
 Escape closes it; Alt+F8 dialog: Enter evaluates, Escape closes; double-click edits a watch):
 `debugger/19-mouse-08-1440-evaluate.png`, `debugger/19-mouse-09-1440-watches-after-escape.png`.
+
+Editor splits (#217): with two groups (`main.c` left, `util.c` right, made with the tab menu's Move to
+Opposite Group), a right-click on the right group's line number opens the properties popup at that
+position (`debugger/19-mouse-10-split-right-popup.png`); inline values and the hover preview are painted per group.
