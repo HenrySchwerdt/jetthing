@@ -77,7 +77,7 @@ pub fn egui_chord(chord: &KeyChord) -> Option<(egui::Key, egui::Modifiers)> {
 
 /// Dispatches contributed keybindings of active plugins.
 pub fn handle_keybindings(app: &mut IdeApp, ctx: &egui::Context) {
-    if app.dialog.is_some() || app.palette.open {
+    if app.dialog.is_some() || app.palette.open || app.find_popup.open {
         return;
     }
     let bindings: Vec<(String, egui::Key, egui::Modifiers)> = app

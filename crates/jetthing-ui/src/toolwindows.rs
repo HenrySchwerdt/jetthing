@@ -1146,7 +1146,7 @@ fn location_job(path: &std::path::Path, line: usize) -> egui::text::LayoutJob {
 }
 
 /// Result preview with every occurrence on a search-result background.
-fn highlighted_preview(
+pub(crate) fn highlighted_preview(
     preview: &str,
     highlights: &[std::ops::Range<usize>],
 ) -> egui::text::LayoutJob {

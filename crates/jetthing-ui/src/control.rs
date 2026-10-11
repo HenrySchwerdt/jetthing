@@ -270,12 +270,15 @@ impl IdeApp {
 
     fn background_idle(&self) -> bool {
         !self.state.search.is_running()
+            && !self.state.quick_nav.text.is_running()
+            && !self.find_popup.pending()
             && !self.state.runner.is_running()
             && !self.state.updates.is_busy()
     }
 
     fn popup_visible(&self, ctx: &egui::Context) -> bool {
         self.palette.open
+            || self.find_popup.open
             || self.dialog.is_some()
             || self.state.about_open
             || self.state.first_run_open
@@ -385,6 +388,7 @@ impl IdeApp {
             "terminal": self.terminal_text(),
             "popups": {
                 "searchEverywhere": self.palette.open.then(|| self.palette.tab_name()),
+                "findInFilesPopup": self.find_popup.open,
                 "switcher": self.state.quick_nav.switcher.as_ref().map(|switcher| match switcher.selected_entry() {
                     jetthing_core::quick_nav::SwitcherEntry::File(path) => relative(path),
                     jetthing_core::quick_nav::SwitcherEntry::ToolWindow(window) => window.title().to_owned(),
@@ -401,6 +405,9 @@ impl IdeApp {
             "findInFiles": {
                 "query": self.state.search_query,
                 "results": self.state.search_results.len(),
+                "popup": self.find_popup.open,
+                "scope": self.state.search_scope_kind.id(),
+                "selected": self.find_popup.selected(),
             },
             "problems": active.map(|_| self.state.active_problems().len()),
             "run": {

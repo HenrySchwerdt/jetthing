@@ -326,6 +326,12 @@ impl IdeApp {
                     // Scoped to the clicked directory (or file); the project root is everything.
                     self.state.project_view.search_scope =
                         (!path.as_os_str().is_empty()).then(|| path.clone());
+                    self.state.search_scope_kind = if self.state.project_view.search_scope.is_some()
+                    {
+                        jetthing_core::SearchScopeKind::Directory
+                    } else {
+                        jetthing_core::SearchScopeKind::Project
+                    };
                     self.run_menu_action(action, ctx);
                 }
             }

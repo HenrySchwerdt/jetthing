@@ -30,7 +30,7 @@ pub struct SettingsDialog {
     forward: Vec<String>,
     error: Option<String>,
     focus_search: bool,
-    keymap_page: crate::settings_keymap::KeymapPage,
+    pub(crate) keymap_page: crate::settings_keymap::KeymapPage,
     /// Settings › Plugins (`preferences.pluginManager`).
     pub(crate) plugins_page: crate::plugin_manager::PluginManager,
 }
@@ -93,11 +93,15 @@ impl SettingsDialog {
 /// Opens the dialog when a `settings.open` command asked for it.
 pub fn take_request(app: &mut IdeApp) {
     if let Some(page) = app.state.settings_request.take() {
+        let search = app.keymap_search.take();
         match app.settings_dialog.as_mut() {
             Some(dialog) => dialog.select(&app.state.settings.registry, &page),
             None => {
                 app.settings_dialog = Some(SettingsDialog::new(&app.state.settings.registry, &page))
             }
+        }
+        if let (Some(search), Some(dialog)) = (search, app.settings_dialog.as_mut()) {
+            dialog.keymap_page.set_query(search);
         }
     }
 }

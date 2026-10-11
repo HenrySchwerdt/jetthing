@@ -188,7 +188,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
             }
         }
     }
-    if !response.has_focus() || app.dialog.is_some() || app.palette.open {
+    if !response.has_focus() || app.dialog.is_some() || app.palette.open || app.find_popup.open {
         return;
     }
     let events = ui.input_mut(|input| {
