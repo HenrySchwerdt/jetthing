@@ -429,12 +429,12 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                             "no Logcat tab {index} (or it is the last one)"
                         )));
                     };
-                    if tab.serial != state.android.logcat.serial {
-                        if let Some(serial) = tab.serial.clone() {
-                            state
-                                .start_logcat(Some(serial))
-                                .map_err(CommandError::Failed)?;
-                        }
+                    if tab.serial != state.android.logcat.serial
+                        && let Some(serial) = tab.serial.clone()
+                    {
+                        state
+                            .start_logcat(Some(serial))
+                            .map_err(CommandError::Failed)?;
                     }
                     Ok(json!({"active": state.android.logcat.active_tab}))
                 },

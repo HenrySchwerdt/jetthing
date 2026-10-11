@@ -122,21 +122,19 @@ fn filter_menus(app: &mut IdeApp, ui: &mut egui::Ui) {
         )
         .response;
     star.on_hover_text("Favourite filters");
-    let history = ui
-        .menu_button("▾", |ui| {
-            let history = app.state.android.logcat.history.clone();
-            if history.is_empty() {
-                ui.label(RichText::new("No filter history").color(theme::TEXT_INFO));
+    let history = icons::button(ui, Icon::ChevronDown, "Filter history");
+    egui::Popup::menu(&history).show(|ui| {
+        let entries = app.state.android.logcat.history.clone();
+        if entries.is_empty() {
+            ui.label(RichText::new("No filter history").color(theme::TEXT_INFO));
+        }
+        for entry in entries {
+            if ui.button(&entry).clicked() {
+                apply = Some(entry);
+                ui.close();
             }
-            for entry in history {
-                if ui.button(&entry).clicked() {
-                    apply = Some(entry);
-                    ui.close();
-                }
-            }
-        })
-        .response;
-    history.on_hover_text("Filter history");
+        }
+    });
     if let Some(query) = apply {
         app.logcat.query = query.clone();
         app.dispatch(
@@ -286,7 +284,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         ui.add_space(8.0);
         let has_error = app.state.android.logcat.filter_error.is_some();
-        let field_width = (ui.available_width() - 70.0).max(120.0);
+        let field_width = (ui.available_width() - 150.0).max(80.0);
         let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
             let mut job = filter_job(text.as_str(), has_error);
             job.wrap.max_width = wrap;
