@@ -329,15 +329,17 @@ jobs:
       group: publish-release
       cancel-in-progress: false
     steps:
+      # Check out before downloading: a checkout cleans the workspace and would
+      # delete the downloaded artifacts (v0.0.8 was published without assets).
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
       - run: ls -la artifacts
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: CHANGELOG.md
-          sparse-checkout-cone-mode: false
       - name: Extract release notes from CHANGELOG.md
         id: notes
         shell: bash
@@ -367,3 +369,4 @@ jobs:
           body_path: ${{ steps.notes.outputs.body_path }}
           generate_release_notes: ${{ steps.notes.outputs.generate == 'true' }}
           files: artifacts/*
+          fail_on_unmatched_files: true

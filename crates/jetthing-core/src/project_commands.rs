@@ -25,6 +25,8 @@ pub struct Workspace {
     /// `Some(false)` when Compact Middle Packages was switched off.
     pub compact_packages: Option<bool>,
     pub include_disabled_actions: bool,
+    /// The editor split tree (`jetthing_split::SplitTree`), when the editor is split.
+    pub splits: Option<Value>,
 }
 
 pub const WORKSPACE_FILE: &str = ".jetthing/workspace.json";
@@ -223,6 +225,7 @@ impl IdeState {
             marked_dirs: self.project_view.marks.clone(),
             compact_packages: Some(self.project_view.compact_packages),
             include_disabled_actions: self.include_disabled_actions,
+            splits: self.splits_json(),
             selected_run_configuration: self
                 .run_configurations
                 .selected()
@@ -294,6 +297,11 @@ impl IdeState {
             self.active_document = Some(index);
         }
         self.recent_files = recent;
+        if let Some(splits) = &workspace.splits {
+            let open: Vec<PathBuf> = self.documents.iter().map(|d| d.path.clone()).collect();
+            self.restore_splits(splits, &|path| open.contains(path));
+            self.sync_splits();
+        }
         if let Some(name) = &workspace.selected_run_configuration {
             let _ = self.run_configurations.select(name);
         }
