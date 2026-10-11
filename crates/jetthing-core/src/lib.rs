@@ -59,6 +59,7 @@ pub mod project_view;
 mod quick_doc;
 mod refactor;
 mod remote_commands;
+mod search_replace;
 mod welcome_commands;
 pub use welcome_commands::{CloneJob, JdkChoice, jdk_major, repository_name};
 mod run_config_commands;
@@ -633,16 +634,9 @@ impl IdeState {
     }
 
     /// Find in Files with match-case, whole-word, regex and file-mask options.
-    pub fn start_search_with(
-        &mut self,
-        query: String,
-        options: SearchOptions,
-    ) -> Result<u64, String> {
-        // Validate before clearing the previous results.
-        jetthing_search::Matcher::new(&query, &options).map_err(|error| error.to_string())?;
-        let project = self.project.as_ref().ok_or("no project is open")?;
-        let files = self
-            .files
+    /// Project files in the current Find in Files scope.
+    pub(crate) fn search_files(&self) -> Vec<PathBuf> {
+        self.files
             .iter()
             .filter(|entry| !entry.is_dir)
             .filter(|entry| {
@@ -652,7 +646,18 @@ impl IdeState {
                     .is_none_or(|scope| entry.relative_path.starts_with(scope))
             })
             .map(|entry| entry.relative_path.clone())
-            .collect();
+            .collect()
+    }
+
+    pub fn start_search_with(
+        &mut self,
+        query: String,
+        options: SearchOptions,
+    ) -> Result<u64, String> {
+        // Validate before clearing the previous results.
+        jetthing_search::Matcher::new(&query, &options).map_err(|error| error.to_string())?;
+        let project = self.project.as_ref().ok_or("no project is open")?;
+        let files = self.search_files();
         self.search_results.clear();
         self.search_files_scanned = 0;
         self.search_truncated = false;
@@ -945,6 +950,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     welcome_commands::register(&mut registry);
     annotations::register(&mut registry);
     worktree_commands::register(&mut registry);
+    search_replace::register(&mut registry);
     navigation::register(&mut registry);
     code_actions::register(&mut registry);
     refactor::register(&mut registry);
