@@ -10,8 +10,8 @@ pub mod session;
 pub mod transport;
 
 pub use session::{
-    BreakpointStatus, LaunchRequest, OutputCategory, OutputLine, Scope, Session, SessionState,
-    StackFrame, Step, ThreadInfo, Variable,
+    BreakpointOptions, BreakpointStatus, LaunchRequest, OutputCategory, OutputLine, Scope, Session,
+    SessionState, StackFrame, Step, ThreadInfo, Variable, Watch,
 };
 
 use jetthing_runner::find_program;
@@ -120,6 +120,7 @@ impl Adapter {
         };
         LaunchRequest {
             adapter_id: self.id().into(),
+            attach: false,
             arguments,
         }
     }
@@ -158,6 +159,33 @@ impl JavaLaunch {
         }
         LaunchRequest {
             adapter_id: "java-debug".into(),
+            attach: false,
+            arguments,
+        }
+    }
+}
+
+/// `attach` arguments for a JVM that listens for a debugger (e.g. `gradle test --debug-jvm`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JavaAttach {
+    pub host: String,
+    pub port: u16,
+    pub project_name: Option<String>,
+}
+
+impl JavaAttach {
+    pub fn request(&self) -> LaunchRequest {
+        let mut arguments = json!({
+            "hostName": self.host,
+            "port": self.port,
+            "timeout": 30_000,
+        });
+        if let Some(project) = &self.project_name {
+            arguments["projectName"] = json!(project);
+        }
+        LaunchRequest {
+            adapter_id: "java-debug".into(),
+            attach: true,
             arguments,
         }
     }
@@ -260,6 +288,20 @@ mod tests {
         assert_eq!(gdb.command().1, ["-i", "dap"]);
         let launch = gdb.launch_request(Path::new("/w/app"), &[], Path::new("/w"), &env);
         assert_eq!(launch.arguments["env"]["RUST_BACKTRACE"], "1");
+    }
+
+    #[test]
+    fn java_attach_sends_host_and_port() {
+        let request = JavaAttach {
+            host: "localhost".into(),
+            port: 5005,
+            project_name: None,
+        }
+        .request();
+        assert!(request.attach);
+        assert_eq!(request.arguments["port"], 5005);
+        assert_eq!(request.arguments["hostName"], "localhost");
+        assert!(request.arguments.get("projectName").is_none());
     }
 
     #[test]

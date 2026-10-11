@@ -47,6 +47,7 @@ mod folds;
 mod git_log;
 mod gradle_commands;
 mod gutter_commands;
+mod inline_values;
 mod java_debug;
 pub mod keymap_commands;
 mod line_changes;
@@ -155,11 +156,12 @@ pub use build_window::{BuildSnapshot, BuildTab, BuildWindowState};
 pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
 pub use code_vision::{CodeLens, InlayLabel};
 pub use completion_stats::CompletionStats;
-pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
+pub use debug_commands::{BREAKPOINTS_FILE, DEBUG_STATE_FILE, ExecutionPoint};
 pub use generate::{GenerateKind, GenerateState};
 pub use hierarchy::{
     Hierarchy, HierarchyDirection, HierarchyKind, HierarchyNode, HierarchyRow, HierarchyState,
 };
+pub use inline_values::InlineValue;
 pub use live_templates::context_labels;
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};

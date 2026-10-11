@@ -481,6 +481,11 @@ mod tests {
             let mut seen = std::collections::HashMap::new();
             for action in actions.iter().filter(|a| keybindings::is_implemented(a)) {
                 for shortcut in keymap.shortcuts(action) {
+                    // Force touch is a trackpad gesture the reference macOS keymap
+                    // gives to both Go to Declaration and Run to Cursor.
+                    if shortcut.to_string() == "Force touch" {
+                        continue;
+                    }
                     if let Some(previous) = seen.insert(shortcut.clone(), action.clone()) {
                         panic!("{id}: {previous} and {action} share {shortcut}");
                     }
