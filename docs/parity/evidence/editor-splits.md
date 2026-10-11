@@ -51,3 +51,7 @@ Bugs found by this run and fixed:
   the file; the tree now keeps keyboard focus after a preview click.
 - Shift+Return in the tree was missed when Shift was released within the same frame; the
   key event's own modifiers are used.
+
+The same drags were repeated at 1440x900 (`04-fixed-mouse-1440-tab-drag-highlight.png` edge drop
+zone, `04-fixed-mouse-1440-tab-drag-to-group-highlight.png` drop zone over another group,
+`04-fixed-mouse-1440-tab-moved-to-group.png` result: `README.md` moved into the right group).
