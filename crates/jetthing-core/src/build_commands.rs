@@ -136,7 +136,7 @@ impl IdeState {
         }
         // "Current File": the entry point or test at the caret, resolved like the gutter.
         if let Some(line) = self.caret_runnable_line() {
-            return self.run_gutter(line, false);
+            return self.run_gutter(line, false, false);
         }
         let plan = self.plan(TaskKind::Run);
         self.start_task(plan, "Run", TaskKind::Run)
