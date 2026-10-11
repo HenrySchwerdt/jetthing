@@ -403,6 +403,7 @@ impl LanguageServerProvider for JdtlsProvider {
         if config.initialization_options.is_none() {
             config.initialization_options = Some(serde_json::json!({
                 "settings": {"java": {
+                    "import": {"generatesMetadataFilesAtProjectRoot": false},
                     "completion": {"guessMethodArguments": "insertParameterNames"},
                     "signatureHelp": {"enabled": true}
                 }},
