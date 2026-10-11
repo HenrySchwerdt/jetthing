@@ -108,6 +108,7 @@ pub struct IdeApp {
     tree_selection: Option<PathBuf>,
     /// Active editor file last revealed in the Project tree.
     tree_revealed: Option<PathBuf>,
+    window_title: String,
     caret_screen_pos: Option<egui::Pos2>,
     last_shift_release: Option<Instant>,
     shift_tainted: bool,
@@ -275,6 +276,7 @@ impl IdeApp {
             find_synced: Default::default(),
             tree_selection: None,
             tree_revealed: None,
+            window_title: String::new(),
             caret_screen_pos: None,
             last_shift_release: None,
             shift_tainted: false,
@@ -470,6 +472,31 @@ impl IdeApp {
         )));
     }
 
+    /// Keeps the OS window title at `project – File.java [module]`.
+    fn sync_window_title(&mut self, ctx: &egui::Context) {
+        if self.state.project.is_none() {
+            return;
+        }
+        let active = self
+            .state
+            .active_document
+            .and_then(|index| self.state.documents.get(index));
+        let title = chrome::window_title(&self.project_name(), active.map(|d| d.path.as_path()));
+        if title != self.window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
+        }
+    }
+
+    /// Settings, the Android SDK page and the Merged Manifest view are modal
+    /// pages that read Escape themselves; nothing behind them may consume it.
+    fn modal_page_open(&self) -> bool {
+        self.settings_dialog.is_some()
+            || self.state.settings_request.is_some()
+            || self.state.android.sdk_manager_open
+            || self.state.android.merged_manifest.open
+    }
+
     fn editor_focused(&self, ctx: &egui::Context) -> bool {
         ctx.memory(|memory| memory.has_focus(editor::editor_id()))
     }
@@ -579,7 +606,7 @@ impl IdeApp {
                 self.dispatch("snippet.previous", Value::Null);
             }
         }
-        if self.settings_dialog.is_some() || self.state.settings_request.is_some() {
+        if self.modal_page_open() {
             // The dialog is modal and handles its own keys (Escape closes it).
             return;
         }
@@ -904,6 +931,11 @@ impl IdeApp {
         plugin_ui::handle_keybindings(self, ctx);
         self.follow_tool_window_focus(ctx);
         theme::apply_settings(ctx, &self.state.settings);
+        self.sync_window_title(ctx);
+        if self.modal_page_open() {
+            // Command-opened pages must not leave keyboard focus in the editor.
+            ctx.memory_mut(|memory| memory.surrender_focus(editor::editor_id()));
+        }
 
         chrome::window_resize_handles(ctx);
         if self.state.project.is_none() && welcome::active(self) {
@@ -1168,6 +1200,33 @@ mod tests {
             let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
         }
         assert!(ctx.memory(|m| m.has_focus(editor::editor_id())));
+    }
+
+    #[test]
+    fn escape_closes_command_opened_modal_pages() {
+        let (mut app, ctx) = headless_app("modal-escape", "a.txt", "hello\n");
+        let escape = || {
+            frame_input(vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }])
+        };
+        app.state.android.sdk_manager_open = true;
+        for _ in 0..2 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        let _ = ctx.run(escape(), |ctx| app.frame(ctx));
+        assert!(!app.state.android.sdk_manager_open);
+        app.dispatch("settings.open", Value::Null);
+        for _ in 0..2 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        assert!(app.settings_dialog.is_some());
+        let _ = ctx.run(escape(), |ctx| app.frame(ctx));
+        assert!(app.settings_dialog.is_none());
     }
 
     #[test]
