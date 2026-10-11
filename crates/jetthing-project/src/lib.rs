@@ -41,10 +41,20 @@ pub struct FileEntry {
     /// when expanded rather than walked (they often point at large build trees).
     #[serde(default)]
     pub is_symlink: bool,
+    /// A build-output directory (`target`, `node_modules`) that is shown but not
+    /// walked; its children are listed when it is expanded.
+    #[serde(default)]
+    pub lazy: bool,
 }
 
 /// Names never shown in the Project tree.
-const HIDDEN: [&str; 4] = [".git", ".jetthing", "target", "node_modules"];
+const HIDDEN: [&str; 2] = [".git", ".jetthing"];
+/// Huge generated directories: listed (as excluded folders) but only walked on demand.
+const LAZY: [&str; 2] = ["target", "node_modules"];
+
+fn is_lazy_dir(name: &std::ffi::OsStr, is_dir: bool) -> bool {
+    is_dir && name.to_str().is_some_and(|name| LAZY.contains(&name))
+}
 
 fn file_entry(path: &Path, root: &Path, file_type: fs::FileType) -> Option<FileEntry> {
     let is_symlink = file_type.is_symlink();
@@ -52,6 +62,7 @@ fn file_entry(path: &Path, root: &Path, file_type: fs::FileType) -> Option<FileE
         relative_path: path.strip_prefix(root).ok()?.to_owned(),
         is_dir: file_type.is_dir() || (is_symlink && path.is_dir()),
         is_symlink,
+        lazy: false,
     })
 }
 
@@ -72,7 +83,7 @@ impl Project {
         &self.root
     }
     pub fn entries(&self, max: usize) -> Vec<FileEntry> {
-        WalkDir::new(&self.root)
+        let mut walk = WalkDir::new(&self.root)
             .follow_links(false)
             .sort_by(|a, b| {
                 // Project view order: directories first, then case-insensitive names.
@@ -86,12 +97,26 @@ impl Project {
                     })
             })
             .into_iter()
-            .filter_entry(|e| !e.file_name().to_str().is_some_and(|n| HIDDEN.contains(&n)))
-            .filter_map(Result::ok)
-            .skip(1)
-            .take(max)
-            .filter_map(|e| file_entry(e.path(), &self.root, e.file_type()))
-            .collect()
+            .filter_entry(|e| !e.file_name().to_str().is_some_and(|n| HIDDEN.contains(&n)));
+        let mut entries = Vec::new();
+        while let Some(entry) = walk.next() {
+            let Ok(entry) = entry else { continue };
+            if entry.depth() == 0 {
+                continue;
+            }
+            if entries.len() >= max {
+                break;
+            }
+            let lazy = is_lazy_dir(entry.file_name(), entry.file_type().is_dir());
+            if lazy {
+                walk.skip_current_dir();
+            }
+            if let Some(mut file) = file_entry(entry.path(), &self.root, entry.file_type()) {
+                file.lazy = lazy;
+                entries.push(file);
+            }
+        }
+        entries
     }
 
     /// Direct children of a directory (following symbolic links), in Project
@@ -237,6 +262,80 @@ impl Project {
         Ok(target)
     }
 
+    /// Copies a file or directory into the directory `dest_dir` (project-relative,
+    /// empty for the root). A name clash gets a ` copy` suffix like the reference
+    /// IDE's paste. Returns the new project-relative path.
+    pub fn copy_into(&self, relative: &Path, dest_dir: &Path) -> Result<PathBuf, ProjectError> {
+        let from = self.checked(relative)?;
+        let dir = self.checked(dest_dir)?;
+        if !dir.is_dir() {
+            return Err(ProjectError::NotDirectory(dest_dir.to_owned()));
+        }
+        if from == self.root {
+            return Err(ProjectError::InvalidName(relative.display().to_string()));
+        }
+        if from.is_dir() && dir.starts_with(&from) {
+            return Err(ProjectError::InvalidName(format!(
+                "cannot copy {} into itself",
+                relative.display()
+            )));
+        }
+        let target = self.free_name(dest_dir, relative)?;
+        copy_tree(&from, &self.root.join(&target))?;
+        Ok(target)
+    }
+
+    /// Moves a file or directory into `dest_dir`. Returns the new relative path.
+    pub fn move_into(&self, relative: &Path, dest_dir: &Path) -> Result<PathBuf, ProjectError> {
+        let from = self.checked(relative)?;
+        let dir = self.checked(dest_dir)?;
+        if !dir.is_dir() {
+            return Err(ProjectError::NotDirectory(dest_dir.to_owned()));
+        }
+        if from == self.root || (from.is_dir() && dir.starts_with(&from)) {
+            return Err(ProjectError::InvalidName(relative.display().to_string()));
+        }
+        let name = relative
+            .file_name()
+            .ok_or_else(|| ProjectError::InvalidName(relative.display().to_string()))?;
+        let target = dest_dir.join(name);
+        if target == relative {
+            return Ok(target);
+        }
+        let to = self.checked_new(&target)?;
+        fs::rename(from, to)?;
+        Ok(target)
+    }
+
+    /// `dest_dir/<name>`, or `dest_dir/<stem> copy[ N].<ext>` when taken.
+    fn free_name(&self, dest_dir: &Path, source: &Path) -> Result<PathBuf, ProjectError> {
+        let name = source
+            .file_name()
+            .ok_or_else(|| ProjectError::InvalidName(source.display().to_string()))?
+            .to_string_lossy()
+            .into_owned();
+        let direct = dest_dir.join(&name);
+        if self.root.join(&direct).symlink_metadata().is_err() {
+            return Ok(direct);
+        }
+        let (stem, ext) = match name.rfind('.').filter(|&i| i > 0) {
+            Some(i) => (&name[..i], &name[i..]),
+            None => (name.as_str(), ""),
+        };
+        for n in 1..1000 {
+            let suffix = if n == 1 {
+                " copy".to_owned()
+            } else {
+                format!(" copy {n}")
+            };
+            let candidate = dest_dir.join(format!("{stem}{suffix}{ext}"));
+            if self.root.join(&candidate).symlink_metadata().is_err() {
+                return Ok(candidate);
+            }
+        }
+        Err(ProjectError::AlreadyExists(dest_dir.join(name)))
+    }
+
     /// Deletes a file or a directory tree. The project root itself cannot be deleted.
     pub fn delete(&self, relative: &Path) -> Result<(), ProjectError> {
         // Delete a link itself, never its target (which may lie outside).
@@ -280,6 +379,21 @@ impl Project {
         };
         fs::write(path, text).map_err(ProjectError::from)
     }
+}
+
+/// Recursive copy that skips symlinks (they could point outside the project).
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    let metadata = from.symlink_metadata()?;
+    if metadata.is_dir() {
+        fs::create_dir_all(to)?;
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &to.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() {
+        fs::copy(from, to)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -389,6 +503,40 @@ mod tests {
         assert!(!root.join("src").exists());
         assert!(project.delete(Path::new("")).is_err());
         assert!(project.delete(Path::new(".")).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copy_and_move_into_directories() {
+        let root = std::env::temp_dir().join(format!("jetthing-copy-move-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("a/sub")).unwrap();
+        fs::create_dir_all(root.join("b")).unwrap();
+        fs::write(root.join("a/sub/x.txt"), "x").unwrap();
+        fs::write(root.join("a/f.txt"), "f").unwrap();
+        let project = Project::open(&root).unwrap();
+        let copied = project
+            .copy_into(Path::new("a/f.txt"), Path::new("a"))
+            .unwrap();
+        assert_eq!(copied, Path::new("a/f copy.txt"));
+        let copied = project.copy_into(Path::new("a"), Path::new("b")).unwrap();
+        assert_eq!(copied, Path::new("b/a"));
+        assert!(root.join("b/a/sub/x.txt").is_file());
+        assert!(
+            project
+                .copy_into(Path::new("a"), Path::new("a/sub"))
+                .is_err()
+        );
+        let moved = project
+            .move_into(Path::new("a/f.txt"), Path::new("b"))
+            .unwrap();
+        assert_eq!(moved, Path::new("b/f.txt"));
+        assert!(!root.join("a/f.txt").exists());
+        assert!(
+            project
+                .move_into(Path::new("../x"), Path::new("b"))
+                .is_err()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
