@@ -550,6 +550,8 @@ impl IdeState {
     /// Closes a tab. Like the reference IDE, modified content is saved first
     /// rather than discarded.
     pub fn close_document(&mut self, index: usize) -> Result<(), String> {
+        // Tabs opened since the last frame must be in their group before one closes.
+        self.sync_splits();
         let document = self.documents.get(index).ok_or("document does not exist")?;
         if document.text.is_dirty() {
             self.save(index)?;

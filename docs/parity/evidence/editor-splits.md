@@ -25,3 +25,29 @@ Behavior notes:
   covered by `editor.splitAt` / `editor.moveToGroup` tests in `jetthing-core` and the pure
   `jetthing_split::drop_edge` test.
 - Splits are stored in `.jetthing/workspace.json` (`splits`) and restored with the tabs.
+
+## Real mouse and keyboard run (1280x800)
+
+Captured under Xvfb at 1280x800 with `xdotool` only (real clicks, double clicks, drags,
+`Shift+Return`, window focus set with `xdotool windowfocus`); no command dispatch. All
+UI stays inside the window.
+
+| File | Shows |
+|---|---|
+| `audit-v0.0.5/04-fixed-mouse-1280-preview-tab.png` | single click in the tree: italic preview tab |
+| `audit-v0.0.5/04-fixed-mouse-1280-tab-drag-highlight.png` | mouse-down on a tab and drag towards the right edge: the drop zone is highlighted |
+| `audit-v0.0.5/04-fixed-mouse-1280-tab-drag-split.png` | after the release the tab sits in a new right group |
+| `audit-v0.0.5/04-fixed-mouse-1280-tab-context-menu.png` | right click on a tab, hover on "Split Down" |
+| `audit-v0.0.5/04-fixed-mouse-1280-divider-resized.png` | divider dragged left with the mouse |
+| `audit-v0.0.5/04-fixed-mouse-1280-search-everywhere-shift-enter.png` | Search Everywhere opened with the toolbar icon; Shift+Return then opened the hit in the opposite group |
+| `audit-v0.0.5/04-fixed-mouse-1280-tree-shift-enter.png` | tree row clicked, Shift+Return: the file moved to the opposite group |
+
+Bugs found by this run and fixed:
+
+- Replacing a preview tab inside a split left the previous tab active (the close ran
+  before the split tree knew about the new tab); regression test
+  `replacing_a_preview_in_a_split_keeps_the_new_tab_active`.
+- A single click in the tree took the keyboard to the editor, so Enter / Shift+Enter edited
+  the file; the tree now keeps keyboard focus after a preview click.
+- Shift+Return in the tree was missed when Shift was released within the same frame; the
+  key event's own modifiers are used.

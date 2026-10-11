@@ -705,6 +705,24 @@ mod tests {
     }
 
     #[test]
+    fn replacing_a_preview_in_a_split_keeps_the_new_tab_active() {
+        let (mut state, commands, root) = project(&["a", "b", "c", "d"], "splitpreview");
+        open(&mut state, &commands, &["a", "b"]);
+        commands
+            .execute("editor.splitRight", &mut state, json!({}))
+            .unwrap();
+        for file in ["c", "d"] {
+            commands
+                .execute("editor.openPreview", &mut state, json!({"path": file}))
+                .unwrap();
+        }
+        assert_eq!(active(&state), "d", "the replaced preview must not win");
+        assert_eq!(state.documents.len(), 3);
+        assert!(state.is_preview(state.active_document.unwrap()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn preview_can_be_switched_off() {
         let (mut state, commands, root) = project(&["a", "b"], "nopreview");
         let crate::Settings { registry, store } = &mut state.settings;

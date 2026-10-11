@@ -334,6 +334,12 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
             tree_context_menu(app, &response, path, *is_dir, &mut context_choice);
             if response.clicked() {
                 app.tree_selection = Some(path.clone());
+                // The tree takes the keyboard (Enter, Shift+Enter) from the editor.
+                ui.memory_mut(|memory| {
+                    if let Some(id) = memory.focused() {
+                        memory.surrender_focus(id);
+                    }
+                });
                 let on_chevron = response
                     .interact_pointer_pos()
                     .is_some_and(|pos| chevron.expand(4.0).contains(pos));
@@ -363,7 +369,21 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
             .any(|row| row.kind == RowKind::Directory && row.path.as_ref() == Some(&selected));
         if is_directory {
             toggle = Some(selected);
-        } else if ui.input(|input| input.modifiers.shift) {
+        } else if ui.input(|input| {
+            // The key event's own modifiers: Shift may be released again within the frame.
+            input.modifiers.shift
+                || input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key {
+                            key: egui::Key::Enter,
+                            pressed: true,
+                            modifiers,
+                            ..
+                        } if modifiers.shift
+                    )
+                })
+        }) {
             open_right = Some(selected);
         } else {
             open = Some(selected);
@@ -416,6 +436,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
         app.dispatch("project.toggleGroup", json!({"id": id}));
     }
     if let Some(path) = preview {
+        app.keep_tree_focus = true;
         app.dispatch("editor.openPreview", json!({"path": path}));
     }
     if let Some(path) = open {
