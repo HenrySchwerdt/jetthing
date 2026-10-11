@@ -330,13 +330,14 @@ mod tests {
         labels(&main_menu_items(), &mut all);
         for (id, label) in all {
             assert!(!label.is_empty(), "{id} has an empty label");
+            // A raw id has no spaces; single-word ids ("Exit") are legitimate labels.
             let camel = id
                 .chars()
                 .zip(id.chars().skip(1))
                 .any(|(a, b)| a.is_lowercase() && b.is_uppercase());
             assert!(
-                !(camel && label == id) && !label.contains('.'),
-                "{id} shows as {label:?}"
+                !(label == id && (camel || id.contains('.'))),
+                "{id} shows as its raw id"
             );
         }
     }
