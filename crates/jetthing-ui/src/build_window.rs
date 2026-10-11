@@ -582,10 +582,13 @@ fn message_row(
 
 /// Spinner for a running step, centred on the row's icon slot.
 fn spinner(ui: &mut egui::Ui, slot: egui::Rect) {
-    ui.put(
-        egui::Rect::from_center_size(slot.center(), vec2(12.0, 12.0)),
-        egui::Spinner::new().size(12.0).color(*theme::ACCENT),
+    let mut child = ui.new_child(
+        egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(
+            slot.center(),
+            vec2(12.0, 12.0),
+        )),
     );
+    widgets::busy_spinner(&mut child, 12.0, *theme::ACCENT);
 }
 
 /// Height for the console viewport that holds whole rows only, so a view

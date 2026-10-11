@@ -68,6 +68,48 @@ pub struct BreakpointStatus {
     pub message: Option<String>,
 }
 
+/// Per-breakpoint options from the breakpoint properties popup.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BreakpointOptions {
+    /// Only suspend when this expression is true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
+    /// Logpoint: print this message (with `{expr}` interpolation) instead of suspending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_message: Option<String>,
+    /// Only suspend once the hit count satisfies this (`3`, `>= 2`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hit_condition: Option<String>,
+}
+
+impl BreakpointOptions {
+    pub fn is_empty(&self) -> bool {
+        self.condition.is_none() && self.log_message.is_none() && self.hit_condition.is_none()
+    }
+
+    /// Trims the fields and turns blank ones into `None`.
+    pub fn normalized(self) -> Self {
+        let clean = |value: Option<String>| {
+            value
+                .map(|text| text.trim().to_owned())
+                .filter(|text| !text.is_empty())
+        };
+        Self {
+            condition: clean(self.condition),
+            log_message: clean(self.log_message),
+            hit_condition: clean(self.hit_condition),
+        }
+    }
+}
+
+/// A watch expression and its latest value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Watch {
+    pub expression: String,
+    /// `None` until evaluated at a stop.
+    pub result: Option<Result<String, String>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputCategory {
     Console,
@@ -85,6 +127,8 @@ pub struct OutputLine {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LaunchRequest {
     pub adapter_id: String,
+    /// Send `attach` instead of `launch` (the debuggee already runs and listens).
+    pub attach: bool,
     pub arguments: Value,
 }
 
@@ -96,6 +140,8 @@ pub enum Step {
     StepIn,
     StepOut,
     Pause,
+    /// Step into the first call of the line even when the adapter would skip it.
+    ForceStepIn,
 }
 
 pub struct Session {
@@ -116,6 +162,10 @@ pub struct Session {
     output: Vec<OutputLine>,
     evaluations: Vec<(String, Result<String, String>)>,
     error: Option<String>,
+    options: BTreeMap<(PathBuf, usize), BreakpointOptions>,
+    watches: Vec<Watch>,
+    /// Temporary "run to cursor" breakpoint, removed at the next stop.
+    run_to: Option<(PathBuf, usize)>,
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +179,8 @@ enum Pending {
     Scopes { frame_id: i64 },
     Variables { reference: i64 },
     Evaluate { expression: String },
+    EvaluateWatch { expression: String, frame_id: i64 },
+    StepInTargets { thread_id: i64 },
     Step,
     Disconnect,
 }
@@ -156,6 +208,9 @@ impl Session {
             output: Vec::new(),
             evaluations: Vec::new(),
             error: None,
+            options: BTreeMap::new(),
+            watches: Vec::new(),
+            run_to: None,
         };
         let adapter_id = session.launch.adapter_id.clone();
         session.request(
@@ -233,6 +288,11 @@ impl Session {
                 Pending::Evaluate { expression } => {
                     self.evaluations.push((expression, Err(reason)))
                 }
+                Pending::EvaluateWatch {
+                    expression,
+                    frame_id,
+                } => self.set_watch_result(&expression, frame_id, Err(reason)),
+                Pending::StepInTargets { thread_id } => self.plain_step_in(thread_id),
                 Pending::Launch | Pending::Initialize => {
                     self.error = Some(format!("debugger failed to start: {reason}"));
                     self.state = SessionState::Terminated { exit_code: None };
@@ -251,7 +311,12 @@ impl Session {
                 self.capabilities = body.clone();
                 let arguments = self.launch.arguments.clone();
                 self.state = SessionState::Launching;
-                self.request("launch", arguments, Pending::Launch);
+                let command = if self.launch.attach {
+                    "attach"
+                } else {
+                    "launch"
+                };
+                self.request(command, arguments, Pending::Launch);
             }
             Pending::Launch => {
                 if self.state == SessionState::Launching {
@@ -359,6 +424,34 @@ impl Session {
                 let value = body["result"].as_str().unwrap_or_default().to_owned();
                 self.evaluations.push((expression, Ok(value)));
             }
+            Pending::EvaluateWatch {
+                expression,
+                frame_id,
+            } => {
+                let value = body["result"].as_str().unwrap_or_default().to_owned();
+                self.set_watch_result(&expression, frame_id, Ok(value));
+            }
+            Pending::StepInTargets { thread_id } => {
+                if !matches!(self.state, SessionState::Stopped { thread_id: t, .. } if t == thread_id)
+                {
+                    return;
+                }
+                let target = body["targets"]
+                    .as_array()
+                    .and_then(|targets| targets.first())
+                    .and_then(|target| target["id"].as_i64());
+                match target {
+                    Some(id) => {
+                        self.request(
+                            "stepIn",
+                            json!({"threadId": thread_id, "targetId": id}),
+                            Pending::Step,
+                        );
+                        self.mark_running();
+                    }
+                    None => self.plain_step_in(thread_id),
+                }
+            }
         }
     }
 
@@ -391,6 +484,9 @@ impl Session {
                 self.scopes.clear();
                 self.variables.clear();
                 self.selected_frame = None;
+                if let Some((path, _)) = self.run_to.take() {
+                    self.send_breakpoints(&path);
+                }
                 self.request("threads", json!({}), Pending::Threads);
                 self.request(
                     "stackTrace",
@@ -461,6 +557,13 @@ impl Session {
     }
 
     fn set_status(&mut self, path: &PathBuf, line: usize, verified: bool, message: Option<String>) {
+        let user_owned = self
+            .breakpoints
+            .get(path)
+            .is_some_and(|lines| lines.contains(&line));
+        if !user_owned {
+            return;
+        }
         self.statuses
             .retain(|status| !(status.path == *path && status.line == line));
         self.statuses.push(BreakpointStatus {
@@ -478,23 +581,54 @@ impl Session {
             .map(|lines| lines.iter().copied().collect())
             .unwrap_or_default();
         self.statuses.retain(|status| status.path != *path);
-        let breakpoints: Vec<Value> = lines.iter().map(|line| json!({"line": line + 1})).collect();
+        let mut breakpoints: Vec<Value> = lines
+            .iter()
+            .map(|line| {
+                let mut breakpoint = json!({"line": line + 1});
+                if let Some(options) = self.options.get(&(path.clone(), *line)) {
+                    if let Some(condition) = &options.condition {
+                        breakpoint["condition"] = json!(condition);
+                    }
+                    if let Some(message) = &options.log_message {
+                        breakpoint["logMessage"] = json!(message);
+                    }
+                    if let Some(hits) = &options.hit_condition {
+                        breakpoint["hitCondition"] = json!(hits);
+                    }
+                }
+                breakpoint
+            })
+            .collect();
+        let mut sent_lines: Vec<usize> = lines.clone();
+        // The run-to-cursor target is sent last so statuses of user breakpoints keep
+        // their index; it is not reported as a user breakpoint.
+        let temporary = self
+            .run_to
+            .as_ref()
+            .filter(|(target, line)| target == path && !lines.contains(line))
+            .map(|(_, line)| *line);
+        if let Some(line) = temporary {
+            breakpoints.push(json!({"line": line + 1}));
+            sent_lines.push(line);
+        }
         self.request(
             "setBreakpoints",
             json!({
                 "source": {"path": path, "name": path.file_name().map(|n| n.to_string_lossy().into_owned())},
                 "breakpoints": breakpoints,
-                "lines": lines.iter().map(|line| line + 1).collect::<Vec<_>>(),
+                "lines": sent_lines.iter().map(|line| line + 1).collect::<Vec<_>>(),
             }),
             Pending::SetBreakpoints {
                 path: path.clone(),
-                lines,
+                lines: sent_lines,
             },
         );
     }
 
     /// Replaces the breakpoints of `path` (sent immediately when the adapter is configured).
     pub fn update_breakpoints(&mut self, path: PathBuf, lines: BTreeSet<usize>) {
+        self.options
+            .retain(|(file, line), _| *file != path || lines.contains(line));
         if lines.is_empty() {
             self.breakpoints.remove(&path);
         } else {
@@ -508,7 +642,75 @@ impl Session {
         }
     }
 
+    /// Loads the stored breakpoint options (used when a session starts).
+    pub fn load_options(&mut self, options: BTreeMap<(PathBuf, usize), BreakpointOptions>) {
+        self.options = options;
+    }
+
+    /// Sets the condition / logpoint / hit-count options of one breakpoint line and
+    /// resends the file's breakpoints. Empty options clear them.
+    pub fn set_breakpoint_options(
+        &mut self,
+        path: PathBuf,
+        line: usize,
+        options: BreakpointOptions,
+    ) {
+        let options = options.normalized();
+        if options.is_empty() {
+            self.options.remove(&(path.clone(), line));
+        } else {
+            self.options.insert((path.clone(), line), options);
+        }
+        if matches!(
+            self.state,
+            SessionState::Running | SessionState::Stopped { .. }
+        ) {
+            self.send_breakpoints(&path);
+        }
+    }
+
+    pub fn breakpoint_options(
+        &self,
+        path: &std::path::Path,
+        line: usize,
+    ) -> Option<&BreakpointOptions> {
+        self.options.get(&(path.to_owned(), line))
+    }
+
+    /// Resumes until `line` (zero-based) of `path` is reached, or another breakpoint stops
+    /// first. DAP has no such request, so a temporary breakpoint is set and removed at
+    /// the next stop.
+    pub fn run_to_line(&mut self, path: PathBuf, line: usize) {
+        let SessionState::Stopped { .. } = self.state else {
+            return;
+        };
+        let previous = self.run_to.replace((path.clone(), line));
+        if let Some((old, _)) = previous
+            && old != path
+        {
+            self.send_breakpoints(&old);
+        }
+        self.send_breakpoints(&path);
+        self.step(Step::Continue);
+    }
+
     pub fn step(&mut self, step: Step) {
+        if step == Step::ForceStepIn {
+            let SessionState::Stopped { thread_id, .. } = self.state else {
+                return;
+            };
+            match self.selected_frame {
+                Some(frame_id) => {
+                    self.request(
+                        "stepInTargets",
+                        json!({"frameId": frame_id}),
+                        Pending::StepInTargets { thread_id },
+                    );
+                }
+                None => self.plain_step_in(thread_id),
+            }
+            return;
+        }
         let thread_id = match &self.state {
             SessionState::Stopped { thread_id, .. } => *thread_id,
             SessionState::Running if step == Step::Pause => {
@@ -522,14 +724,116 @@ impl Session {
             Step::StepIn => "stepIn",
             Step::StepOut => "stepOut",
             Step::Pause => "pause",
+            Step::ForceStepIn => unreachable!("handled above"),
         };
         self.request(command, json!({"threadId": thread_id}), Pending::Step);
         if step != Step::Pause {
             // Optimistically running; a `stopped` event follows for steps.
-            self.state = SessionState::Running;
-            self.frames.clear();
-            self.scopes.clear();
-            self.variables.clear();
+            self.mark_running();
+        }
+    }
+
+    fn mark_running(&mut self) {
+        self.state = SessionState::Running;
+        self.frames.clear();
+        self.scopes.clear();
+        self.variables.clear();
+    }
+
+    fn plain_step_in(&mut self, thread_id: i64) {
+        if matches!(self.state, SessionState::Stopped { thread_id: t, .. } if t == thread_id) {
+            self.request("stepIn", json!({"threadId": thread_id}), Pending::Step);
+            self.mark_running();
+        }
+    }
+
+    pub fn watches(&self) -> &[Watch] {
+        &self.watches
+    }
+
+    /// Adds a watch (duplicates ignored) and evaluates it when stopped.
+    pub fn add_watch(&mut self, expression: &str) {
+        let expression = expression.trim();
+        if expression.is_empty() || self.watches.iter().any(|w| w.expression == expression) {
+            return;
+        }
+        self.watches.push(Watch {
+            expression: expression.to_owned(),
+            result: None,
+        });
+        self.evaluate_watches();
+    }
+
+    pub fn remove_watch(&mut self, index: usize) {
+        if index < self.watches.len() {
+            self.watches.remove(index);
+        }
+    }
+
+    /// Replaces the expression of a watch; an empty expression removes it.
+    pub fn edit_watch(&mut self, index: usize, expression: &str) {
+        let expression = expression.trim();
+        if index >= self.watches.len() {
+            return;
+        }
+        if expression.is_empty() {
+            self.remove_watch(index);
+            return;
+        }
+        if self
+            .watches
+            .iter()
+            .enumerate()
+            .any(|(i, w)| i != index && w.expression == expression)
+        {
+            return;
+        }
+        self.watches[index] = Watch {
+            expression: expression.to_owned(),
+            result: None,
+        };
+        self.evaluate_watches();
+    }
+
+    /// Re-evaluates the watches that have no value in the selected frame.
+    fn evaluate_watches(&mut self) {
+        let (SessionState::Stopped { .. }, Some(frame_id)) = (&self.state, self.selected_frame)
+        else {
+            return;
+        };
+        let pending: Vec<String> = self
+            .watches
+            .iter()
+            .filter(|watch| watch.result.is_none())
+            .map(|watch| watch.expression.clone())
+            .collect();
+        for expression in pending {
+            self.request(
+                "evaluate",
+                json!({"expression": expression, "context": "watch", "frameId": frame_id}),
+                Pending::EvaluateWatch {
+                    expression,
+                    frame_id,
+                },
+            );
+        }
+    }
+
+    fn set_watch_result(
+        &mut self,
+        expression: &str,
+        frame_id: i64,
+        result: Result<String, String>,
+    ) {
+        if self.selected_frame != Some(frame_id) {
+            return;
+        }
+        for watch in self
+            .watches
+            .iter_mut()
+            .filter(|w| w.expression == expression)
+        {
+            watch.result = Some(result.clone());
         }
     }
 
@@ -540,11 +844,15 @@ impl Session {
         self.selected_frame = Some(frame_id);
         self.scopes.clear();
         self.variables.clear();
+        for watch in &mut self.watches {
+            watch.result = None;
+        }
         self.request(
             "scopes",
             json!({"frameId": frame_id}),
             Pending::Scopes { frame_id },
         );
+        self.evaluate_watches();
     }
 
     /// Loads the children of a structured variable or scope.
@@ -657,6 +965,7 @@ mod tests {
         let mut session = Session::new(
             LaunchRequest {
                 adapter_id: "lldb-dap".into(),
+                attach: false,
                 arguments: json!({"program": "/w/target/debug/app"}),
             },
             breakpoints,
@@ -769,6 +1078,7 @@ mod tests {
         let mut failing = Session::new(
             LaunchRequest {
                 adapter_id: "gdb".into(),
+                attach: false,
                 arguments: json!({}),
             },
             BTreeMap::new(),
@@ -806,5 +1116,258 @@ mod tests {
             session.evaluations()[0],
             ("1 + 1".to_owned(), Ok("2".to_owned()))
         );
+    }
+
+    /// Stops at /w/src/main.rs:5 with frame 101 selected; returns the session.
+    fn stopped_at_main() -> Session {
+        let mut session = started();
+        session.handle(&json!({"type": "event", "event": "stopped", "body": {"reason": "breakpoint", "threadId": 7}}));
+        let outgoing = session.take_outgoing();
+        let trace = outgoing
+            .iter()
+            .find(|m| m["command"] == "stackTrace")
+            .unwrap()
+            .clone();
+        session.handle(&response(
+            &trace,
+            json!({"stackFrames": [{"id": 101, "name": "main", "line": 5, "column": 1, "source": {"path": "/w/src/main.rs"}}]}),
+        ));
+        session
+    }
+
+    #[test]
+    fn attach_sessions_send_attach_instead_of_launch() {
+        let mut session = Session::new(
+            LaunchRequest {
+                adapter_id: "java-debug".into(),
+                attach: true,
+                arguments: json!({"hostName": "localhost", "port": 5005}),
+            },
+            BTreeMap::new(),
+        );
+        let initialize = take(&mut session, "initialize");
+        session.handle(&response(&initialize, json!({})));
+        let attach = take(&mut session, "attach");
+        assert_eq!(attach["arguments"]["port"], 5005);
+    }
+
+    #[test]
+    fn conditions_and_logpoints_are_sent_with_the_breakpoint() {
+        let mut session = started();
+        let path = PathBuf::from("/w/src/main.rs");
+        session.set_breakpoint_options(
+            path.clone(),
+            4,
+            BreakpointOptions {
+                condition: Some(" n > 3 ".into()),
+                log_message: None,
+                hit_condition: Some("2".into()),
+            },
+        );
+        session.set_breakpoint_options(
+            path.clone(),
+            9,
+            BreakpointOptions {
+                log_message: Some("n={n}".into()),
+                ..Default::default()
+            },
+        );
+        let sent = take(&mut session, "setBreakpoints");
+        // Both calls resend the file; the first one carries only the first option.
+        assert_eq!(
+            sent["arguments"]["breakpoints"][0],
+            json!({"line": 5, "condition": "n > 3", "hitCondition": "2"})
+        );
+        let all = session.breakpoint_options(&path, 9).unwrap();
+        assert_eq!(all.log_message.as_deref(), Some("n={n}"));
+        session.set_breakpoint_options(path.clone(), 4, BreakpointOptions::default());
+        assert!(session.breakpoint_options(&path, 4).is_none());
+        let last = session
+            .take_outgoing()
+            .into_iter()
+            .rfind(|m| m["command"] == "setBreakpoints")
+            .unwrap();
+        assert_eq!(
+            last["arguments"]["breakpoints"],
+            json!([{"line": 5}, {"line": 10, "logMessage": "n={n}"}])
+        );
+    }
+
+    #[test]
+    fn options_are_dropped_when_the_breakpoint_is_removed() {
+        let mut session = started();
+        let path = PathBuf::from("/w/src/main.rs");
+        session.set_breakpoint_options(
+            path.clone(),
+            4,
+            BreakpointOptions {
+                condition: Some("x".into()),
+                ..Default::default()
+            },
+        );
+        session.update_breakpoints(path.clone(), BTreeSet::from([9]));
+        assert!(session.breakpoint_options(&path, 4).is_none());
+    }
+
+    #[test]
+    fn watches_are_evaluated_on_each_stop() {
+        let mut session = started();
+        session.add_watch("n * 2");
+        // Not stopped: nothing is sent yet.
+        assert!(
+            session
+                .take_outgoing()
+                .iter()
+                .all(|m| m["command"] != "evaluate")
+        );
+        session.handle(&json!({"type": "event", "event": "stopped", "body": {"reason": "breakpoint", "threadId": 7}}));
+        let outgoing = session.take_outgoing();
+        let trace = outgoing
+            .iter()
+            .find(|m| m["command"] == "stackTrace")
+            .unwrap()
+            .clone();
+        session.handle(&response(
+            &trace,
+            json!({"stackFrames": [{"id": 101, "name": "main", "line": 5, "column": 1, "source": {"path": "/w/src/main.rs"}}]}),
+        ));
+        let evaluate = take(&mut session, "evaluate");
+        assert_eq!(evaluate["arguments"]["context"], "watch");
+        assert_eq!(evaluate["arguments"]["frameId"], 101);
+        session.handle(&response(&evaluate, json!({"result": "84"})));
+        assert_eq!(session.watches()[0].result, Some(Ok("84".into())));
+
+        // Step: the next stop clears and re-evaluates.
+        session.step(Step::Next);
+        session.handle(&json!({"type": "event", "event": "stopped", "body": {"reason": "step", "threadId": 7}}));
+        let outgoing = session.take_outgoing();
+        let trace = outgoing
+            .iter()
+            .find(|m| m["command"] == "stackTrace")
+            .unwrap()
+            .clone();
+        session.handle(&response(
+            &trace,
+            json!({"stackFrames": [{"id": 102, "name": "main", "line": 6, "column": 1, "source": {"path": "/w/src/main.rs"}}]}),
+        ));
+        assert_eq!(session.watches()[0].result, None);
+        let evaluate = take(&mut session, "evaluate");
+        assert_eq!(evaluate["arguments"]["frameId"], 102);
+        session.handle(&json!({
+            "type": "response", "request_seq": evaluate["seq"], "command": "evaluate",
+            "success": false, "message": "n is not defined"
+        }));
+        assert_eq!(
+            session.watches()[0].result,
+            Some(Err("n is not defined".into()))
+        );
+    }
+
+    #[test]
+    fn watches_can_be_added_edited_and_removed() {
+        let mut session = stopped_at_main();
+        session.add_watch("a");
+        session.add_watch(" a ");
+        session.add_watch("");
+        assert_eq!(session.watches().len(), 1);
+        let evaluate = take(&mut session, "evaluate");
+        assert_eq!(evaluate["arguments"]["expression"], "a");
+        session.add_watch("b");
+        session.edit_watch(0, "c");
+        assert_eq!(session.watches()[0].expression, "c");
+        // A stale response for the edited expression does not fill the new one.
+        session.handle(&response(&evaluate, json!({"result": "1"})));
+        assert_eq!(session.watches()[0].result, None);
+        session.edit_watch(0, "b"); // duplicate: ignored
+        assert_eq!(session.watches()[0].expression, "c");
+        session.edit_watch(1, "");
+        assert_eq!(session.watches().len(), 1);
+        session.remove_watch(0);
+        assert!(session.watches().is_empty());
+    }
+
+    #[test]
+    fn run_to_line_sets_a_temporary_breakpoint_and_removes_it_at_the_next_stop() {
+        let mut session = stopped_at_main();
+        let path = PathBuf::from("/w/src/main.rs");
+        session.run_to_line(path.clone(), 20);
+        let outgoing = session.take_outgoing();
+        let set = outgoing
+            .iter()
+            .find(|m| m["command"] == "setBreakpoints")
+            .unwrap();
+        assert_eq!(
+            set["arguments"]["breakpoints"],
+            json!([{"line": 5}, {"line": 10}, {"line": 21}])
+        );
+        assert!(outgoing.iter().any(|m| m["command"] == "continue"));
+        // The temporary line never shows up as a user breakpoint.
+        session.handle(&response(
+            set,
+            json!({"breakpoints": [{"verified": true}, {"verified": true}, {"verified": true}]}),
+        ));
+        assert!(session.breakpoint_statuses().iter().all(|s| s.line != 20));
+        session.handle(&json!({"type": "event", "event": "stopped", "body": {"reason": "breakpoint", "threadId": 7}}));
+        let set = take(&mut session, "setBreakpoints");
+        assert_eq!(
+            set["arguments"]["breakpoints"],
+            json!([{"line": 5}, {"line": 10}])
+        );
+    }
+
+    #[test]
+    fn run_to_line_in_another_file_cleans_up_both() {
+        let mut session = stopped_at_main();
+        session.run_to_line(PathBuf::from("/w/src/lib.rs"), 2);
+        let outgoing = session.take_outgoing();
+        let set = outgoing
+            .iter()
+            .find(|m| m["arguments"]["source"]["path"] == "/w/src/lib.rs")
+            .unwrap();
+        assert_eq!(set["arguments"]["breakpoints"], json!([{"line": 3}]));
+        session.handle(&json!({"type": "event", "event": "stopped", "body": {"reason": "breakpoint", "threadId": 7}}));
+        let set = take(&mut session, "setBreakpoints");
+        assert_eq!(set["arguments"]["breakpoints"], json!([]));
+    }
+
+    #[test]
+    fn run_to_line_requires_a_stop() {
+        let mut session = started();
+        session.run_to_line(PathBuf::from("/w/src/main.rs"), 20);
+        assert!(session.take_outgoing().is_empty());
+    }
+
+    #[test]
+    fn force_step_into_uses_the_first_step_in_target() {
+        let mut session = stopped_at_main();
+        session.step(Step::ForceStepIn);
+        let targets = take(&mut session, "stepInTargets");
+        assert_eq!(targets["arguments"]["frameId"], 101);
+        session.handle(&response(
+            &targets,
+            json!({"targets": [{"id": 3, "label": "helper()"}, {"id": 4, "label": "other()"}]}),
+        ));
+        let step_in = take(&mut session, "stepIn");
+        assert_eq!(step_in["arguments"], json!({"threadId": 7, "targetId": 3}));
+        assert_eq!(session.state(), &SessionState::Running);
+    }
+
+    #[test]
+    fn force_step_into_falls_back_to_a_plain_step_in() {
+        let mut session = stopped_at_main();
+        session.step(Step::ForceStepIn);
+        let targets = take(&mut session, "stepInTargets");
+        session.handle(&response(&targets, json!({"targets": []})));
+        let step_in = take(&mut session, "stepIn");
+        assert!(step_in["arguments"].get("targetId").is_none());
+
+        let mut session = stopped_at_main();
+        session.step(Step::ForceStepIn);
+        let targets = take(&mut session, "stepInTargets");
+        session.handle(&json!({
+            "type": "response", "request_seq": targets["seq"], "command": "stepInTargets",
+            "success": false, "message": "unsupported"
+        }));
+        take(&mut session, "stepIn");
     }
 }

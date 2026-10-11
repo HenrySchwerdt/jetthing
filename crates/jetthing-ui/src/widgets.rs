@@ -401,6 +401,31 @@ pub fn toolbar_row<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -
     .inner
 }
 
+/// Status-bar spinner that advances in 10 Hz steps instead of repainting every
+/// frame like `egui::Spinner`, so a busy background task costs ~10 frames/s.
+pub fn busy_spinner(ui: &mut egui::Ui, size: f32, color: Color32) {
+    const STEP_SECONDS: f64 = 0.1;
+    const STEPS: u32 = 10;
+    let (rect, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let time = ui.input(|input| input.time);
+    let step = (time / STEP_SECONDS) as u32 % STEPS;
+    let start = step as f32 / STEPS as f32 * std::f32::consts::TAU;
+    let radius = size / 2.0 - 2.0;
+    let points: Vec<egui::Pos2> = (0..=8)
+        .map(|i| {
+            let angle = start + i as f32 / 8.0 * std::f32::consts::PI * 1.5;
+            rect.center() + radius * vec2(angle.cos(), angle.sin())
+        })
+        .collect();
+    ui.painter()
+        .add(egui::Shape::line(points, egui::Stroke::new(3.0_f32, color)));
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_secs_f64(STEP_SECONDS));
+}
+
 /// A borderless menu-style button (popup and dropdown entries) that still shows
 /// the hover and pressed fill; `Button::frame(false)` would paint nothing.
 pub fn menu_button(button: egui::Button<'_>) -> egui::Button<'_> {

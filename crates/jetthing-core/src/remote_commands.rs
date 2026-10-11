@@ -65,7 +65,7 @@ impl IdeState {
                     if pull {
                         self.reload_documents_from_disk();
                         if let Some(project) = &self.project {
-                            self.files = project.entries(20_000);
+                            self.set_files(project.entries(20_000));
                         }
                     }
                     self.status = match result {

@@ -28,6 +28,7 @@ mod console_links;
 mod context_menus;
 mod control;
 mod crash_notice;
+mod debug_dialogs;
 mod debug_window;
 mod device_manager;
 mod diff_ui;
@@ -118,6 +119,8 @@ pub struct IdeApp {
     tree_selection: Option<PathBuf>,
     /// Active editor file last revealed in the Project tree.
     tree_revealed: Option<PathBuf>,
+    /// Editor context menu, rebuilt only while the popup is open or opening.
+    editor_menu: Option<context_menus::Model>,
     window_title: String,
     caret_screen_pos: Option<egui::Pos2>,
     last_shift_release: Option<Instant>,
@@ -290,6 +293,7 @@ impl IdeApp {
             find_synced: Default::default(),
             tree_selection: None,
             tree_revealed: None,
+            editor_menu: None,
             window_title: String::new(),
             caret_screen_pos: None,
             last_shift_release: None,
@@ -668,6 +672,10 @@ impl IdeApp {
                 egui::Popup::close_all(ctx);
             } else if gutter_popup::is_open(ctx) {
                 gutter_popup::close(ctx);
+            } else if self.state.debugger.evaluate_dialog.is_some() {
+                self.dispatch("debug.closeEvaluateDialog", Value::Null);
+            } else if self.state.debugger.editing_breakpoint.is_some() {
+                self.dispatch("debug.closeBreakpointEditor", Value::Null);
             } else if self.menu_bar_open {
                 self.menu_bar_open = false;
             } else if self.state.about_open {
@@ -1021,6 +1029,7 @@ impl IdeApp {
         }
         run_config_dialog::show(self, ctx);
         gutter_popup::show(self, ctx);
+        debug_dialogs::show(self, ctx);
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
         first_run::show(self, ctx);

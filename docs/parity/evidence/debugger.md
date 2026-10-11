@@ -22,7 +22,7 @@ always failed with "cannot tell which binary to debug". Fixed, with a test.
 ## Remaining differences from the reference
 
 - Java debugging works against real jdtls (see below); the remaining items apply to it as well.
-- No Breakpoints dialog, conditional breakpoints, logpoints, watches, inline values or run to cursor.
+- No Breakpoints dialog (Ctrl+Shift+F8 edits the breakpoint at the caret), no suspend policy, Smart Step Into or Quick Evaluate.
 - The tool window has no separate Threads and Variables panes, only one combined view.
 - Locals only list the adapter's `Locals` scope; Rust-aware pretty printing is lldb's.
 
@@ -54,3 +54,56 @@ Found and fixed: the `java-debug` install failed (`…0.53.1.jar.sha256` → HTT
 publishes only `.sha1`/`.md5` for it, so the debugger could never be provisioned. The provider now pins the
 SHA-256 of 0.53.1 (computed from a download whose SHA-1 matched Central's `.sha1`). Central rate-limited
 (HTTP 429) once during capture; the download was retried with backoff.
+
+
+## Watches, conditions, logpoints, Evaluate, inline values, Run to Cursor (#19)
+
+Protocol-level evidence (scripted adapter, no I/O): `cargo test -p jetthing-dap session::` covers
+conditions/logpoints/hit counts in `setBreakpoints`, watch evaluation on each stop (`context: watch`),
+Run to Cursor (temporary breakpoint removed at the next stop), Force Step Into (`stepInTargets` →
+`stepIn` + `targetId`, plain `stepIn` fallback) and `attach` sessions. Core tests:
+`cargo test -p jetthing-core debug_commands inline_values java_debug`.
+
+Screenshots (Xvfb 1600x1000, `JETTHING_RENDERER=glow`, debug build, gdb DAP adapter, a small C
+program with `square(int)` called from a loop; shell run configuration `./app`):
+
+| File | Steps → result |
+|---|---|
+| `debugger/19-breakpoint-properties.png` | right-click the line number of a breakpoint → properties popup with Condition `i == 3`, Log message and Hit count |
+| `debugger/19-watches-inline-values.png` | stopped at the conditional breakpoint: Watches `total`, `i * 2` evaluated in the Variables pane and `name = value` hints at the end of the lines of the current function |
+| `debugger/19-evaluate-dialog.png` | Alt+F8: Evaluate Expression dialog with the result of `total + i` |
+| `debugger/19-run-to-cursor.png` | `debug.runToCursor` (caret on line 15, past the loop): execution moves there; the watch `i * 2` shows the out-of-scope error. Alt+F9 is the default chord only in some keymaps (the XWin keymap used here binds another one) |
+
+JUnit: the gutter Debug entry of a Gradle test runs `test --tests … --debug-jvm` and attaches
+java-debug to the test JVM. Verified at the unit level only (banner parsing, `attach` request); no
+live jdtls run in this session.
+
+### Real mouse and keyboard pass (Xvfb 1280x800, `xdotool` only)
+
+Same sample, no control socket and no command dispatch: double-click `main.c`, hover and click the
+line number, right-click for the breakpoint properties, type the condition, click Done, click the
+Debug toolbar button, type watches into the add field, double-click a watch to edit it inline,
+Alt+F8 for Evaluate. Everything stays inside the 1280x800 window.
+
+| File | What it shows |
+|---|---|
+| `debugger/19-mouse-01-gutter-hover.png` | hovering a line number previews the breakpoint dot |
+| `debugger/19-mouse-02-breakpoint-popup.png` | right-click on the breakpoint: properties popup, condition typed, filled default `Done` button (Escape closes it) |
+| `debugger/19-mouse-03-watches-hover.png` | stopped at the conditional breakpoint (`i = 3`), watch row hover highlight with Edit / × |
+| `debugger/19-mouse-04-watch-inline-edit.png` | double-click on a watch row edits it inline (Enter commits, Escape cancels) |
+| `debugger/19-mouse-05-evaluate-dialog.png` | Alt+F8: the dialog takes keyboard focus, `Evaluate` is the filled default button |
+| `debugger/19-mouse-06-evaluate-result.png` | Enter evaluates (`total + i = 8`) and the edited watch shows `total * 2 = 10` |
+| `debugger/19-mouse-07-after-escape.png` | Escape closed the dialog |
+
+Found and fixed by this pass: Enter did not commit an inline watch edit (focus was re-requested every
+frame), the add-watch field lost focus after the first Enter (unstable widget id), the Evaluate dialog
+did not take focus when another field held it, and Escape did not close either popup (the workbench
+consumed it first).
+
+The same real-input pass was repeated at 1440x900 (right-click popup: Enter applies the condition,
+Escape closes it; Alt+F8 dialog: Enter evaluates, Escape closes; double-click edits a watch):
+`debugger/19-mouse-08-1440-evaluate.png`, `debugger/19-mouse-09-1440-watches-after-escape.png`.
+
+Editor splits (#217): with two groups (`main.c` left, `util.c` right, made with the tab menu's Move to
+Opposite Group), a right-click on the right group's line number opens the properties popup at that
+position (`debugger/19-mouse-10-split-right-popup.png`); inline values and the hover preview are painted per group.

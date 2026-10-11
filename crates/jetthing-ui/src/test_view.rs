@@ -110,10 +110,10 @@ pub fn tree(app: &IdeApp, ui: &mut egui::Ui, running: bool) {
                 },
             );
             if running {
-                ui.put(
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(
                     egui::Rect::from_center_size(out.icon.center(), vec2(12.0, 12.0)),
-                    egui::Spinner::new().size(12.0).color(*theme::ACCENT),
-                );
+                ));
+                widgets::busy_spinner(&mut child, 12.0, *theme::ACCENT);
             }
             let (rect, response) = (out.rect, out.response);
             right_text(ui, rect, &duration_text(results.duration()));

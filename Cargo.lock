@@ -3002,6 +3002,7 @@ name = "jetthing-dap"
 version = "0.0.9"
 dependencies = [
  "jetthing-runner",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
 ]

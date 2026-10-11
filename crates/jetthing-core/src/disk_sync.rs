@@ -92,7 +92,7 @@ impl IdeState {
         if changes.structure_changed
             && let Some(project) = &self.project
         {
-            self.files = project.entries(20_000);
+            self.set_files(project.entries(20_000));
         }
         let affected: Vec<_> = self
             .documents
@@ -107,7 +107,7 @@ impl IdeState {
     /// (Reload All from Disk).
     pub fn synchronize_all(&mut self) {
         if let Some(project) = &self.project {
-            self.files = project.entries(20_000);
+            self.set_files(project.entries(20_000));
         }
         self.vcs_stale = true;
         self.request_git_refresh();

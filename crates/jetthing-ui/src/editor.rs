@@ -33,6 +33,8 @@ pub enum EditorRequest {
     ShowCommit(String),
     /// Click on a gutter run icon (line, screen position for the popup).
     Gutter(usize, egui::Pos2),
+    /// Right-click on a line number: breakpoint properties at line, popup position.
+    BreakpointProperties(usize, egui::Pos2),
     /// A code-vision lens was clicked: Find Usages of the name at line, column.
     Usages(usize, usize),
 }
@@ -150,7 +152,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 let Some(index) = app.state.active_document else {
                     return;
                 };
-                let problems = app.state.active_problems();
+                let problems = app.state.cached_active_problems();
                 let mut highlights = if app.find.open {
                     app.find.matches(&app.state.documents[index])
                 } else {
@@ -185,9 +187,13 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 let line_count = app.state.documents[index].text.len_lines();
                 let row_height =
                     theme::editor_row_height(ui.ctx(), &theme::editor_font(ui.style()), ROW_HEIGHT);
-                if let Some((line, column)) =
-                    problems_ui::error_stripe(ui, stripe_rect, &problems, line_count, row_height)
-                {
+                if let Some((line, column)) = problems_ui::error_stripe(
+                    ui,
+                    stripe_rect,
+                    &problems[..],
+                    line_count,
+                    row_height,
+                ) {
                     move_caret_to(app, line, column);
                     ui.memory_mut(|memory| memory.request_focus(editor_id()));
                 }
@@ -200,10 +206,19 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     .execution_point()
                     .filter(|point| point.path == path)
                     .map(|point| point.line);
-                let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
+                // The menu model is only needed while the popup is open (or opening).
+                let menu_wanted = app.editor_menu.is_none()
+                    || ui.input(|input| input.pointer.secondary_clicked())
+                    || egui::Popup::is_any_open(ui.ctx());
+                if menu_wanted {
+                    app.editor_menu =
+                        Some(app.context_menu_model(&crate::context_menus::Target::Editor));
+                }
+                let context_model = app.editor_menu.take().expect("built above");
                 let changes = app.state.document_changes(index).to_vec();
                 let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
                 let (lenses, inlays) = app.state.code_vision(index);
+                let inline_values = app.state.inline_values(&path);
                 let gutter = run_icons(app, ui.ctx());
                 let doc_path = app.state.absolute_path(&app.state.documents[index].path);
                 if md_layout.is_some() {
@@ -221,7 +236,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 let surface = editor_surface(
                     &mut text_ui,
                     doc,
-                    &problems,
+                    &problems[..],
                     &highlights,
                     rename,
                     &context_model,
@@ -233,11 +248,13 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                         execution_line,
                         lenses: &lenses,
                         inlays: &inlays,
+                        inline_values: &inline_values,
                     },
                     navigable,
                     editor_scroll,
                 );
-                let counts = jetthing_core::ProblemCounts::of(&problems);
+                app.editor_menu = Some(context_model);
+                let counts = jetthing_core::ProblemCounts::of(&problems[..]);
                 let widget_anchor = if md_layout == Some(jetthing_markdown::Layout::EditorOnly) {
                     text_rect.right_top() - vec2(MARKDOWN_ISLAND_WIDTH, 0.0)
                 } else {
@@ -381,6 +398,13 @@ pub(crate) fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: Edi
             app.run_context_action(&action, &crate::context_menus::Target::Editor, ctx)
         }
         EditorRequest::Gutter(line, position) => crate::gutter_popup::open(ctx, line, position),
+        EditorRequest::BreakpointProperties(line, position) => {
+            crate::debug_dialogs::anchor_breakpoint_popup(ctx, position);
+            if let Some(index) = app.state.active_document {
+                let path = app.state.documents[index].path.clone();
+                app.dispatch("debug.editBreakpoint", json!({"path": path, "line": line}));
+            }
+        }
         EditorRequest::Usages(line, column) => {
             move_caret_to(app, line, column);
             app.dispatch("navigate.findUsages", Value::Null);
@@ -1284,6 +1308,8 @@ struct GutterData<'a> {
     lenses: &'a [jetthing_core::CodeLens],
     /// Parameter-name hints shown inside lines.
     inlays: &'a [jetthing_core::InlayLabel],
+    /// End-of-line variable values while the debugger is suspended in this file.
+    inline_values: &'a [jetthing_core::InlineValue],
 }
 
 #[allow(clippy::too_many_arguments)] // paint inputs of one editor frame
@@ -1306,6 +1332,7 @@ fn editor_surface(
         execution_line,
         lenses,
         inlays,
+        inline_values,
     } = gutter_data;
     let mut requests = Vec::new();
     let font = theme::editor_font(ui.style());
@@ -1505,6 +1532,11 @@ fn editor_surface(
                     .any(|mark| mark.line == line)
                     .then_some((line, position))
             });
+        // Hovering a line number previews the breakpoint a click would set.
+        let hovered_number_line = response
+            .hover_pos()
+            .filter(|position| layout.in_number_column(position.x - rect.left()))
+            .map(|position| folds.row_to_line(row_at(position)));
         // Clicking a line number toggles a breakpoint, as in the reference.
         let number_hit = response
             .interact_pointer_pos()
@@ -1613,7 +1645,22 @@ fn editor_surface(
                 .selections
                 .set_single(Selection::caret(position_to_offset(position)));
         }
+        // Right-click on a line number opens the breakpoint's properties instead of the
+        // editor menu, anchored where the user clicked.
+        let breakpoint_properties = response
+            .secondary_clicked()
+            .then(|| response.interact_pointer_pos())
+            .flatten()
+            .filter(|position| layout.in_number_column(position.x - rect.left()))
+            .map(|position| (folds.row_to_line(row_at(position)), position));
+        if let Some((line, position)) = breakpoint_properties {
+            requests.push(EditorRequest::BreakpointProperties(line, position));
+        }
         response.context_menu(|ui| {
+            if breakpoint_properties.is_some() {
+                ui.close();
+                return;
+            }
             let mut chosen = None;
             crate::context_menus::show(ui, context_model, &mut chosen);
             match chosen.as_deref() {
@@ -1748,6 +1795,8 @@ fn editor_surface(
             let dot = egui::pos2(rect.left() + layout.breakpoint_center, y + row_height / 2.0);
             if breakpoints.contains(&line) {
                 painter.circle_filled(dot, 6.0, *theme::ERROR);
+            } else if hovered_number_line == Some(line) {
+                painter.circle_filled(dot, 6.0, theme::ERROR.gamma_multiply(0.35));
             }
             if execution_line == Some(line) {
                 crate::debug_window::paint_execution_arrow(&painter, dot);
@@ -1930,6 +1979,15 @@ fn editor_surface(
                         requests.push(EditorRequest::Usages(lens.line, lens.column));
                     }
                 }
+            }
+            if collapsed.is_none()
+                && let Some(value) = inline_values.iter().find(|value| value.line == line)
+            {
+                let origin = egui::pos2(
+                    rect.left() + text_left + shifted(line, visible_chars) + 3.0 * char_width,
+                    y,
+                );
+                crate::debug_dialogs::paint_inline_value(&painter, origin, row_height, &value.text);
             }
             if let Some(row) = collapsed {
                 paint_collapsed_tail(

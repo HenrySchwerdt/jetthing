@@ -47,6 +47,7 @@ mod folds;
 mod git_log;
 mod gradle_commands;
 mod gutter_commands;
+mod inline_values;
 mod java_debug;
 pub mod keymap_commands;
 mod line_changes;
@@ -155,11 +156,12 @@ pub use build_window::{BuildSnapshot, BuildTab, BuildWindowState};
 pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
 pub use code_vision::{CodeLens, InlayLabel};
 pub use completion_stats::CompletionStats;
-pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
+pub use debug_commands::{BREAKPOINTS_FILE, DEBUG_STATE_FILE, ExecutionPoint};
 pub use generate::{GenerateKind, GenerateState};
 pub use hierarchy::{
     Hierarchy, HierarchyDirection, HierarchyKind, HierarchyNode, HierarchyRow, HierarchyState,
 };
+pub use inline_values::InlineValue;
 pub use live_templates::context_labels;
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
@@ -239,6 +241,13 @@ impl Document {
 pub struct IdeState {
     pub project: Option<Project>,
     pub files: Vec<FileEntry>,
+    /// Bumped whenever [`IdeState::files`] is replaced; keys the tree-row cache.
+    pub(crate) files_generation: u64,
+    /// Bumped when the Gradle model changes; keys the tree-row cache.
+    pub(crate) model_generation: u64,
+    pub(crate) tree_cache: Option<project_view::TreeCache>,
+    pub(crate) problems_cache:
+        std::collections::HashMap<std::path::PathBuf, problems::ActiveProblemsCache>,
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
     /// Markdown editor layout per file (Editor / Split / Preview).
@@ -427,6 +436,7 @@ impl IdeState {
         self.lsp.set_project(None);
         self.close_diff();
         self.files.clear();
+        self.files_generation += 1;
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -447,7 +457,7 @@ impl IdeState {
     }
 
     pub(crate) fn install_project(&mut self, project: Project) -> Result<(), String> {
-        self.files = project.entries(20_000);
+        self.set_files(project.entries(20_000));
         self.documents.clear();
         self.active_document = None;
         self.splits = Default::default();

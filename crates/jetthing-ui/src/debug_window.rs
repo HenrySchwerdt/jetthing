@@ -29,6 +29,10 @@ struct View {
     console: bool,
     expanded: HashSet<i64>,
     expression: String,
+    /// Text of the "add watch" field.
+    watch_input: String,
+    /// Watch being edited: index and text.
+    editing_watch: Option<(usize, String)>,
 }
 
 fn view_id() -> egui::Id {
@@ -177,6 +181,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     let mut select_frame = None;
     let mut load = None;
     let mut evaluate = None;
+    let mut watch_actions: Vec<(&'static str, Value)> = Vec::new();
     if view.console {
         console(ui, session);
     } else {
@@ -270,6 +275,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
             .auto_shrink([false, false])
             .show(&mut right, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
+                watches_panel(ui, session, &mut view, &mut watch_actions);
                 for (expression, result) in session.evaluations().iter().rev().take(5) {
                     let (text, color) = match result {
                         Ok(value) => (format!("{expression} = {value}"), *theme::editor::TEXT),
@@ -308,6 +314,102 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     if let Some(expression) = evaluate {
         app.dispatch("debug.evaluate", json!({"expression": expression}));
     }
+    for (command, params) in watch_actions {
+        app.dispatch(command, params);
+    }
+}
+
+/// The Watches section: one row per watch with its value, edit/remove buttons and an
+/// "add watch" field. Changes are returned as commands for the caller to dispatch.
+fn watches_panel(
+    ui: &mut egui::Ui,
+    session: &Session,
+    view: &mut View,
+    actions: &mut Vec<(&'static str, Value)>,
+) {
+    ui.label(RichText::new("Watches").color(*theme::TEXT_SECONDARY));
+    for (index, watch) in session.watches().iter().enumerate() {
+        if let Some((editing, text)) = view.editing_watch.as_mut()
+            && *editing == index
+        {
+            let response = ui.add(
+                egui::TextEdit::singleline(text)
+                    .id(egui::Id::new("debug_watch_edit"))
+                    .desired_width(f32::INFINITY)
+                    .font(egui::FontId::monospace(theme::UI_FONT_SIZE - 0.5)),
+            );
+            // Keep the field focused while editing, but let Enter/Escape end the edit.
+            if !response.lost_focus() {
+                response.request_focus();
+            }
+            let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+            if response.lost_focus() && !escape {
+                actions.push((
+                    "debug.editWatch",
+                    json!({"index": index, "expression": text.clone()}),
+                ));
+            }
+            if response.lost_focus() || escape {
+                view.editing_watch = None;
+            }
+            continue;
+        }
+        // Hover highlight is painted behind the row once its size is known.
+        let background = ui.painter().add(egui::Shape::Noop);
+        let row = ui.horizontal(|ui| {
+            let (text, color) = match &watch.result {
+                Some(Ok(value)) => (
+                    format!("{} = {value}", watch.expression),
+                    *theme::editor::TEXT,
+                ),
+                Some(Err(error)) => (format!("{}: {error}", watch.expression), *theme::ERROR),
+                None => (format!("{} = …", watch.expression), *theme::TEXT_INFO),
+            };
+            ui.label(RichText::new(text).monospace().color(color));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("×").on_hover_text("Remove Watch").clicked() {
+                    actions.push(("debug.removeWatch", json!({"index": index})));
+                }
+                if ui
+                    .small_button("Edit")
+                    .on_hover_text("Edit Watch (or double-click the row)")
+                    .clicked()
+                {
+                    view.editing_watch = Some((index, watch.expression.clone()));
+                }
+            });
+        });
+        let rect = row.response.rect;
+        let area = ui.interact(
+            rect,
+            ui.id().with(("watch_row", index)),
+            egui::Sense::click(),
+        );
+        if area.hovered() {
+            ui.painter().set(
+                background,
+                egui::Shape::rect_filled(rect.shrink2(vec2(0.0, -1.0)), 3.0, *theme::HOVER),
+            );
+        }
+        if area.double_clicked() {
+            view.editing_watch = Some((index, watch.expression.clone()));
+        }
+    }
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut view.watch_input)
+            .id(egui::Id::new("debug_watch_input"))
+            .hint_text(RichText::new("Add watch (Enter)").color(*theme::TEXT_DISABLED))
+            .desired_width(f32::INFINITY)
+            .font(egui::FontId::monospace(theme::UI_FONT_SIZE - 0.5)),
+    );
+    if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+        let expression = std::mem::take(&mut view.watch_input);
+        if !expression.trim().is_empty() {
+            actions.push(("debug.addWatch", json!({"expression": expression})));
+        }
+        response.request_focus();
+    }
+    ui.add_space(4.0);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -463,6 +565,7 @@ mod tests {
         let session = Session::new(
             LaunchRequest {
                 adapter_id: "lldb-dap".into(),
+                attach: false,
                 arguments: json!({}),
             },
             BTreeMap::new(),

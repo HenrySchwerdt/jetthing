@@ -5,7 +5,7 @@
 
 use crate::IdeState;
 use crate::debug_commands::PendingJava;
-use jetthing_dap::{Adapter, DebugClient, JavaLaunch};
+use jetthing_dap::{Adapter, DebugClient, JavaAttach, JavaLaunch, LaunchRequest};
 use jetthing_lsp::{Feature, LspError, RequestHandle};
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -24,10 +24,19 @@ pub(crate) enum JavaStage {
         project: String,
         handle: RequestHandle,
     },
+    /// A Gradle test JVM started with `--debug-jvm`: wait until it prints that it listens
+    /// (probing the port would consume the single JDWP connection).
+    AwaitListening,
     StartSession {
-        launch: JavaLaunch,
+        launch: LaunchRequest,
         handle: RequestHandle,
     },
+}
+
+/// The port from the JVM banner `Listening for transport dt_socket at address: 5005`.
+pub(crate) fn parse_listening_port(text: &str) -> Option<u16> {
+    let (_, rest) = text.split_once("Listening for transport dt_socket at address:")?;
+    rest.split_whitespace().next()?.parse().ok()
 }
 
 /// One entry of `vscode.java.resolveMainClass`.
@@ -129,6 +138,50 @@ impl IdeState {
     fn step_java_debug(&mut self, pending: &mut PendingJava) -> Result<bool, String> {
         let anchor = pending.anchor.clone();
         match &pending.stage {
+            JavaStage::Build if pending.attach => {
+                if !self.runner.is_running() {
+                    return Err(
+                        "The Gradle test task ended before the test JVM was listening; see the Build window".into(),
+                    );
+                }
+                pending.stage = JavaStage::AwaitListening;
+            }
+            JavaStage::AwaitListening => {
+                let port = self
+                    .runner
+                    .output()
+                    .iter()
+                    .find_map(|chunk| parse_listening_port(&chunk.text));
+                match port {
+                    Some(port) => {
+                        let launch = JavaAttach {
+                            host: "localhost".into(),
+                            port,
+                            project_name: None,
+                        }
+                        .request();
+                        match self.java_command(&anchor, "vscode.java.startDebugSession", json!([]))
+                        {
+                            Ok(handle) => {
+                                pending.stage = JavaStage::StartSession { launch, handle }
+                            }
+                            Err(LspError::NotReady(_) | LspError::Starting { .. })
+                                if pending.started.elapsed() < READY_TIMEOUT =>
+                            {
+                                self.status =
+                                    "Waiting for the Java language server to debug…".into();
+                            }
+                            Err(error) => return Err(plugin_hint(&error)),
+                        }
+                    }
+                    None if !self.runner.is_running() => {
+                        return Err(
+                            "The Gradle test task ended before the test JVM was listening".into(),
+                        );
+                    }
+                    None => {}
+                }
+            }
             JavaStage::Build => {
                 match self.java_command(&anchor, "vscode.java.buildWorkspace", json!([false])) {
                     Ok(handle) => pending.stage = JavaStage::Building(handle),
@@ -200,7 +253,10 @@ impl IdeState {
                     let handle = self
                         .java_command(&anchor, "vscode.java.startDebugSession", json!([]))
                         .map_err(|error| plugin_hint(&error))?;
-                    pending.stage = JavaStage::StartSession { launch, handle };
+                    pending.stage = JavaStage::StartSession {
+                        launch: launch.request(),
+                        handle,
+                    };
                 }
             }
             JavaStage::StartSession { launch, handle } => {
@@ -209,13 +265,14 @@ impl IdeState {
                     let port = parse_port(&response)
                         .ok_or_else(|| format!("java-debug returned no debug port ({response})"))?;
                     let breakpoints = self.absolute_breakpoints()?;
-                    let client = DebugClient::start(
+                    let mut client = DebugClient::start(
                         Adapter::Java { port },
-                        launch.request(),
+                        launch.clone(),
                         breakpoints,
                         &pending.cwd,
                     )
                     .map_err(|error| error.to_string())?;
+                    self.seed_session(&mut client);
                     self.debugger.name = pending.name.clone();
                     self.debugger.client = Some(client);
                     self.debugger.reset_revealed();
@@ -232,6 +289,15 @@ impl IdeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_listening_port_from_the_jvm_banner() {
+        assert_eq!(
+            parse_listening_port("Listening for transport dt_socket at address: 5005\n"),
+            Some(5005)
+        );
+        assert_eq!(parse_listening_port("> Task :test"), None);
+    }
 
     #[test]
     fn parses_plugin_results() {
