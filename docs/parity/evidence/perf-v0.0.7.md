@@ -3,7 +3,8 @@
 Release build (`cargo build --release`), Xvfb 1440×900, `JETTHING_RENDERER=glow`, 4 vCPU
 container, measured over the control socket on 2026-10-11. "Before" is `main` at
 `1725ba7`; "after" is the same tree with the fixes in this PR. The container was also
-compiling the test suite during both runs, so treat differences under ~30% as noise;
+compiling the test suite during the "before" run and idle during the "after" run, so the
+wall-time gains are mostly the quieter machine, not the fixes;
 the numbers are for spotting order-of-magnitude problems, not for regression gating.
 
 Method (script: see "Reproduction"): wall time is measured around a control request plus
@@ -15,26 +16,26 @@ trip and three settled frames, roughly 20 ms of overhead.
 
 | Measurement | Before | After |
 |---|---:|---:|
-| Startup to first control-socket reply (welcome screen) | 177 ms | see below |
-| RSS on the welcome screen | 145 MB | |
-| Idle CPU on the welcome screen | 0 % | |
-| Open the generated Gradle project (4 files) | 172 ms | |
-| Idle CPU with the project open, `Main.java` active | 10 % | |
-| RSS with the project open | 154 MB | |
-| Open a 1 MB Rust file (`editor.rs` ×9) | 844 ms | |
-| Typing, 1 MB Rust file: CPU per keystroke | 102 ms | |
-| Scrolling, 1 MB Rust file: CPU per Page Down | 108 ms | |
-| Idle CPU 1 s after settling with the 1 MB Rust file open | 69 % | |
-| Open a 1 MB Java file (valid classes, ~2,900 of them) | 1,249 ms | |
-| Typing, 1 MB Java file: CPU per keystroke | 216 ms | |
-| Scrolling, 1 MB Java file: CPU per Page Down | 119 ms | |
-| Idle CPU 1 s after settling with the 1 MB Java file open | 44 % | |
-| RSS after opening both 1 MB files | 211 MB | |
-| Search Everywhere, Double Shift + `main`, until results settle | 283 ms | |
-| Open this repository (~400 Rust files, rust-analyzer starts) | 539 ms | |
-| Idle CPU 1 s after settling with this repository open | 59 % | |
-| RSS with this repository open | 227 MB | |
-| Search Everywhere in this repository, `editor` | 435 ms | |
+| Startup to first control-socket reply (welcome screen) | 177 ms | 129 ms |
+| RSS on the welcome screen | 145 MB | 146 MB |
+| Idle CPU on the welcome screen | 0 % | 0 % |
+| Open the generated Gradle project (4 files) | 172 ms | 55 ms |
+| Idle CPU with the project open, `Main.java` active | 10 % | 11 % |
+| RSS with the project open | 154 MB | 154 MB |
+| Open a 1 MB Rust file (`editor.rs` ×9) | 844 ms | 427 ms |
+| Typing, 1 MB Rust file: CPU per keystroke | 102 ms | 92 ms |
+| Scrolling, 1 MB Rust file: CPU per Page Down | 108 ms | 110 ms |
+| Idle CPU 1 s after settling with the 1 MB Rust file open | 69 % | 227 % (highlighter thread still running, see finding 1) |
+| Open a 1 MB Java file (valid classes, ~2,900 of them) | 1,249 ms | 600 ms |
+| Typing, 1 MB Java file: CPU per keystroke | 216 ms | 98 ms |
+| Scrolling, 1 MB Java file: CPU per Page Down | 119 ms | 106 ms |
+| Idle CPU 1 s after settling with the 1 MB Java file open | 44 % | 54 % |
+| RSS after opening both 1 MB files | 211 MB | 210 MB |
+| Search Everywhere, Double Shift + `main`, until results settle | 283 ms | 184 ms |
+| Open this repository (~400 Rust files, rust-analyzer starts) | 539 ms | 339 ms |
+| Idle CPU 1 s after settling with this repository open | 59 % | 3 % |
+| RSS with this repository open | 227 MB | 224 MB |
+| Search Everywhere in this repository, `editor` | 435 ms | 247 ms |
 
 ## Findings
 
@@ -61,6 +62,11 @@ trip and three settled frames, roughly 20 ms of overhead.
    under 200 ms to the first frame, under 600 ms to open this repository, under 450 ms
    for a Search Everywhere query, and about 230 MB with the repository open.
 4. No hang or stall over 2 s was observed in any step.
+5. **Idle CPU snapshots vary with background work**: the 227 % reading with the 1 MB
+   Rust file open was taken while the background highlighter was still working through
+   the file and the editor repaints until the viewport is fully highlighted; the 3 %
+   reading with this repository open was taken after rust-analyzer had already settled.
+   The CPU-per-keystroke figures are the comparable ones and are unchanged within noise.
 
 ## Reproduction
 
