@@ -367,6 +367,9 @@ impl LanguageServerProvider for SpecProvider {
     }
 }
 
+/// Environment variable through which a resolver passes the java-debug plugin jar.
+pub const JAVA_DEBUG_PLUGIN_ENV: &str = "JETTHING_JAVA_DEBUG_PLUGIN";
+
 /// Eclipse JDT LS needs a writable workspace data directory per project.
 pub struct JdtlsProvider(pub ServerSpec);
 
@@ -408,6 +411,20 @@ impl LanguageServerProvider for JdtlsProvider {
                 }},
                 "extendedClientCapabilities": {"progressReportProvider": false}
             }));
+        }
+        // The java-debug plugin jar (found by the toolchain resolver) is loaded as an
+        // OSGi bundle; it provides the `vscode.java.*` commands the debugger uses.
+        let bundle = config
+            .env
+            .iter()
+            .position(|(key, _)| key == JAVA_DEBUG_PLUGIN_ENV)
+            .map(|index| config.env.remove(index).1);
+        if let (Some(bundle), Some(Value::Object(options))) =
+            (bundle, config.initialization_options.as_mut())
+        {
+            options
+                .entry("bundles")
+                .or_insert_with(|| serde_json::json!([bundle]));
         }
         Ok(config)
     }

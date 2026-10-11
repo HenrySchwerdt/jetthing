@@ -4,6 +4,7 @@
 //! |---|---|
 //! | `jdk` | foojay Disco API (Temurin by default) |
 //! | `jdtls` | download.eclipse.org milestones |
+//! | `java-debug` | Maven Central (microsoft/java-debug jdtls plugin) |
 //! | `gradle` | services.gradle.org distributions (for projects without `gradlew`) |
 //! | `rust-analyzer` | GitHub releases of rust-lang/rust-analyzer |
 //! | `bazelisk` | GitHub releases of bazelbuild/bazelisk |
@@ -11,6 +12,7 @@
 
 pub mod github;
 pub mod gradle;
+pub mod java_debug;
 pub mod jdk;
 pub mod jdtls;
 
@@ -23,6 +25,7 @@ pub fn builtin_catalog() -> Catalog {
     let mut catalog = Catalog::new();
     catalog.register(Arc::new(jdk::FoojayJdk::default()));
     catalog.register(Arc::new(jdtls::EclipseJdtls::default()));
+    catalog.register(Arc::new(java_debug::JavaDebugPlugin::default()));
     catalog.register(Arc::new(gradle::GradleDistributions::default()));
     catalog.register(Arc::new(rust_analyzer()));
     catalog.register(Arc::new(bazelisk()));
@@ -168,7 +171,7 @@ const REQUIREMENTS: &[(&[&str], ProjectRequirement)] = &[
         ],
         ProjectRequirement {
             language: "Java",
-            components: &["jdk", "jdtls"],
+            components: &["jdk", "jdtls", "java-debug"],
             extensions: &["java", "gradle", "kts", "kt"],
             file_names: &["pom.xml"],
         },
@@ -208,7 +211,7 @@ const GRADLE_MARKERS: &[&str] = &[
 /// A Gradle project without the wrapper also needs a Gradle distribution.
 const JAVA_GRADLE_WITHOUT_WRAPPER: ProjectRequirement = ProjectRequirement {
     language: "Java",
-    components: &["jdk", "gradle", "jdtls"],
+    components: &["jdk", "gradle", "jdtls", "java-debug"],
     extensions: &["java", "gradle", "kts", "kt"],
     file_names: &["pom.xml"],
 };
@@ -251,9 +254,15 @@ mod tests {
         assert!(!found[0].applies_to(Path::new("README.md")));
         assert!(found[1].applies_to(Path::new("pkg/BUILD")));
         // Without a wrapper the Java project also needs Gradle; with one it does not.
-        assert_eq!(found[0].components, ["jdk", "gradle", "jdtls"]);
+        assert_eq!(
+            found[0].components,
+            ["jdk", "gradle", "jdtls", "java-debug"]
+        );
         std::fs::write(dir.join("gradlew"), "").unwrap();
-        assert_eq!(project_requirements(&dir)[0].components, ["jdk", "jdtls"]);
+        assert_eq!(
+            project_requirements(&dir)[0].components,
+            ["jdk", "jdtls", "java-debug"]
+        );
         // Every required component is in the built-in catalog.
         let catalog = builtin_catalog();
         let all = REQUIREMENTS
