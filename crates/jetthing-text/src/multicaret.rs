@@ -68,6 +68,7 @@ fn occurrence_matches(doc: &TextDocument, needle: &str, whole_words: bool) -> Ve
         FindOptions {
             match_case: true,
             whole_words,
+            regex: false,
         },
     )
 }

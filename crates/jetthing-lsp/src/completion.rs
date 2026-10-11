@@ -244,7 +244,19 @@ pub fn rank(
     prefix: &str,
     relevance: impl Fn(&CompletionItem) -> i32,
 ) -> Vec<RankedItem> {
-    let mut ranked: Vec<(RankedItem, i32)> = items
+    rank_with_usage(items, prefix, relevance, |_| 0)
+}
+
+/// Like [`rank`], with `usage` (completion statistics: how often the user
+/// picked an item) ranking frequently chosen items first among equally good
+/// matches, before the server's relevance.
+pub fn rank_with_usage(
+    items: &[CompletionItem],
+    prefix: &str,
+    relevance: impl Fn(&CompletionItem) -> i32,
+    usage: impl Fn(&CompletionItem) -> i32,
+) -> Vec<RankedItem> {
+    let mut ranked: Vec<(RankedItem, (i32, i32))> = items
         .iter()
         .enumerate()
         .filter_map(|(index, item)| {
@@ -269,11 +281,11 @@ pub fn rank(
                     score: matched.score,
                     label_positions,
                 },
-                relevance(item),
+                (usage(item), relevance(item)),
             ))
         })
         .collect();
-    ranked.sort_by(|(a, a_relevance), (b, b_relevance)| {
+    ranked.sort_by(|(a, (a_usage, a_relevance)), (b, (b_usage, b_relevance))| {
         let (item_a, item_b) = (&items[a.index], &items[b.index]);
         // Exact and prefix matches first, as in the reference IDE; camel-hump
         // and inner matches are grouped after them.
@@ -286,6 +298,9 @@ pub fn rank(
         group(a.class)
             .cmp(&group(b.class))
             .then_with(|| is_deprecated(item_a).cmp(&is_deprecated(item_b)))
+            // Templates (postfix `nnull`, `sysout`, …) after real members.
+            .then_with(|| is_snippet(item_a).cmp(&is_snippet(item_b)))
+            .then_with(|| b_usage.cmp(a_usage))
             .then_with(|| b_relevance.cmp(a_relevance))
             .then_with(|| compare_sort_text(item_a, item_b))
             .then_with(|| a.class.cmp(&b.class))
@@ -311,6 +326,10 @@ fn compare_labels(a: &str, b: &str) -> Ordering {
     a.to_lowercase()
         .cmp(&b.to_lowercase())
         .then_with(|| a.cmp(b))
+}
+
+fn is_snippet(item: &CompletionItem) -> bool {
+    item.kind == Some(CompletionItemKind::SNIPPET)
 }
 
 #[allow(deprecated)] // `deprecated` is the pre-3.15 field some servers still send.
@@ -482,6 +501,40 @@ mod tests {
             .map(|ranked| items[ranked.index].label.as_str())
             .collect();
         assert_eq!(ranked, ["greeting", "clone", "finalize"]);
+    }
+
+    #[test]
+    fn frequently_chosen_items_rank_first_among_equal_matches() {
+        let items = vec![
+            item("greeting", "0"),
+            item("getClass", "1"),
+            item("hashCode", "2"),
+        ];
+        let used = |item: &CompletionItem| i32::from(item.label == "hashCode") * 4;
+        let ranked: Vec<_> = rank_with_usage(&items, "", |_| 0, used)
+            .into_iter()
+            .map(|row| items[row.index].label.as_str())
+            .collect();
+        assert_eq!(ranked, ["hashCode", "greeting", "getClass"]);
+        // A better match class still wins over usage.
+        let ranked: Vec<_> = rank_with_usage(&items, "ge", |_| 0, used)
+            .into_iter()
+            .map(|row| items[row.index].label.as_str())
+            .collect();
+        assert_eq!(ranked, ["getClass"]);
+    }
+
+    #[test]
+    fn templates_rank_after_members_unless_they_match_better() {
+        let mut items = vec![
+            item("nnull", "1"),
+            item("notify", "5"),
+            item("getClass", "5"),
+        ];
+        items[0].kind = Some(CompletionItemKind::SNIPPET);
+        assert_eq!(labels(&items, ""), ["getClass", "notify", "nnull"]);
+        assert_eq!(labels(&items, "nn"), ["nnull"]);
+        assert_eq!(labels(&items, "n"), ["notify", "nnull"]);
     }
 
     #[test]

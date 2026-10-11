@@ -9,6 +9,8 @@ description = "mongo-raabit: a MongoDB GUI plugin for Jetthing (egui views over 
 
 [dependencies]
 mongo-raabit-core = { path = "core" }
+jetthing-plugin-api = { path = "../../crates/jetthing-plugin-api" }
+jetthing-plugin-ui = { path = "../../crates/jetthing-plugin-ui" }
 egui.workspace = true
 egui_extras = { version = "0.33", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }

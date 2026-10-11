@@ -17,6 +17,7 @@ pub struct Workspace {
     pub bottom_tool_window: Option<String>,
     pub right_tool_window: Option<String>,
     pub selected_run_configuration: Option<String>,
+    pub bottom_tool_height: Option<u32>,
     pub recent_files: Vec<PathBuf>,
     pub pinned_files: Vec<PathBuf>,
 }
@@ -24,7 +25,7 @@ pub struct Workspace {
 pub const WORKSPACE_FILE: &str = ".jetthing/workspace.json";
 
 impl IdeState {
-    fn refresh_files(&mut self) {
+    pub(crate) fn refresh_files(&mut self) {
         if let Some(project) = &self.project {
             self.files = project.entries(20_000);
         }
@@ -201,13 +202,14 @@ impl IdeState {
                 .tool_windows
                 .visible(Anchor::Right)
                 .map(|window| window.id().to_owned()),
+            bottom_tool_height: self.tool_windows.bottom_height().map(|h| h as u32),
             recent_files: self.recent_files.clone(),
+            pinned_files: self.tabs.pinned.iter().cloned().collect(),
             selected_run_configuration: self
                 .run_configurations
                 .selected()
                 .filter(|config| !config.temporary)
                 .map(|config| config.name.clone()),
-            pinned_files: self.tabs.pinned.iter().cloned().collect(),
         }
     }
 
@@ -218,7 +220,10 @@ impl IdeState {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         let json = serde_json::to_string_pretty(&self.workspace()).map_err(|e| e.to_string())?;
-        std::fs::write(path, json).map_err(|error| error.to_string())
+        std::fs::write(path, json).map_err(|error| error.to_string())?;
+        // Completion statistics are per user; flush them with the workspace.
+        self.completion_stats.save()?;
+        self.save_ai_chat()
     }
 
     /// Restores tabs, tree expansion and tool windows; missing files are skipped.
@@ -265,6 +270,9 @@ impl IdeState {
             let _ = self.run_configurations.select(name);
         }
         self.tool_windows.hide_all();
+        if let Some(height) = workspace.bottom_tool_height {
+            self.tool_windows.set_bottom_height(height as f32);
+        }
         for id in [
             &workspace.left_tool_window,
             &workspace.bottom_tool_window,
@@ -529,6 +537,7 @@ mod tests {
         commands
             .execute("toolwindow.activate.problems", &mut state, Value::Null)
             .unwrap();
+        state.tool_windows.set_bottom_height(420.0);
         commands
             .execute("workspace.save", &mut state, Value::Null)
             .unwrap();
@@ -542,6 +551,7 @@ mod tests {
         assert_eq!(reopened.recent_files[0], Path::new("src/a.rs"));
         assert!(reopened.expanded_dirs.contains(Path::new("src")));
         assert!(reopened.tool_windows.is_visible(ToolWindow::Problems));
+        assert_eq!(reopened.tool_windows.bottom_height(), Some(420.0));
         assert!(reopened.tool_windows.is_visible(ToolWindow::Project));
         // The workspace directory itself stays out of the Project tree.
         assert!(

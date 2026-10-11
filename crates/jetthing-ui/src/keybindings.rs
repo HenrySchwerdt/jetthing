@@ -5,21 +5,19 @@
 //! run either a typed command (`jetthing_core::keymap_commands::ACTION_COMMANDS`) or one
 //! of the workbench popups below.
 
-use crate::{IdeApp, palette, popups, toolwindows};
+use crate::{IdeApp, popups, toolwindows};
 use eframe::egui;
 use jetthing_core::ToolWindow;
 use jetthing_core::keymap_commands::{BindingScope, command_for_action};
 use jetthing_keymap::{KeyStroke, Lookup, Modifier, Modifiers, Notation, Shortcut};
 use serde_json::Value;
+use std::path::PathBuf;
 
 /// Actions that open workbench popups rather than run engine commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiAction {
-    SearchEverywhere,
-    GotoAction,
-    GotoFile,
-    RecentFiles,
     GotoLine,
+    FileStructure,
     Find,
     Replace,
     FindNext,
@@ -30,17 +28,16 @@ pub enum UiAction {
     OpenProject,
     NewFile,
     NewDirectory,
+    NewJavaClass,
+    NewKotlinFile,
     Push,
     Exit,
 }
 
 pub fn ui_action(action: &str) -> Option<UiAction> {
     Some(match action {
-        "SearchEverywhere" => UiAction::SearchEverywhere,
-        "GotoAction" => UiAction::GotoAction,
-        "GotoFile" => UiAction::GotoFile,
-        "RecentFiles" => UiAction::RecentFiles,
         "GotoLine" => UiAction::GotoLine,
+        "FileStructurePopup" => UiAction::FileStructure,
         "Find" => UiAction::Find,
         "Replace" => UiAction::Replace,
         "FindNext" => UiAction::FindNext,
@@ -51,6 +48,8 @@ pub fn ui_action(action: &str) -> Option<UiAction> {
         "OpenFile" => UiAction::OpenProject,
         "NewFile" => UiAction::NewFile,
         "NewDir" => UiAction::NewDirectory,
+        "NewClass" => UiAction::NewJavaClass,
+        "Kotlin.NewFile" => UiAction::NewKotlinFile,
         "Vcs.Push" => UiAction::Push,
         "Exit" => UiAction::Exit,
         _ => return None,
@@ -164,12 +163,35 @@ impl IdeApp {
             .unwrap_or_else(|| crate::keys::display(spec.shortcut.as_deref().unwrap_or_default()))
     }
 
+    /// Directory (project-relative) that New entries go into: the selected directory,
+    /// or the parent of the selected file, like the Project view's New group.
+    fn new_entry_parent(&self) -> Option<PathBuf> {
+        let root = self.state.project.as_ref()?.root().to_owned();
+        Some(
+            self.tree_selection
+                .as_ref()
+                .map(|path| {
+                    if root.join(path).is_dir() {
+                        path.clone()
+                    } else {
+                        path.parent().map(Into::into).unwrap_or_default()
+                    }
+                })
+                .unwrap_or_default(),
+        )
+    }
+
     fn ui_action_available(&self, action: UiAction) -> bool {
         let document = self.state.active_document.is_some();
         match action {
-            UiAction::GotoLine | UiAction::Find | UiAction::Replace => document,
+            UiAction::GotoLine | UiAction::FileStructure | UiAction::Find | UiAction::Replace => {
+                document
+            }
             UiAction::FindNext | UiAction::FindPrevious => document && !self.find.query.is_empty(),
-            UiAction::NewFile | UiAction::NewDirectory => self.state.project.is_some(),
+            UiAction::NewFile
+            | UiAction::NewDirectory
+            | UiAction::NewJavaClass
+            | UiAction::NewKotlinFile => self.state.project.is_some(),
             UiAction::Push => self.state.git.is_some(),
             _ => true,
         }
@@ -177,15 +199,12 @@ impl IdeApp {
 
     pub(crate) fn run_ui_action(&mut self, action: UiAction, ctx: &egui::Context) {
         match action {
-            UiAction::SearchEverywhere => self.palette.show(),
-            UiAction::GotoAction => self.palette.show_tab(palette::Tab::Actions),
-            UiAction::GotoFile => self.palette.show_tab(palette::Tab::Files),
-            UiAction::RecentFiles => self.open_dialog(popups::Dialog::Recent {
-                query: String::new(),
-                selected: usize::from(self.state.recent_files.len() > 1),
-            }),
             UiAction::GotoLine => self.open_dialog(popups::Dialog::GotoLine {
                 input: String::new(),
+            }),
+            UiAction::FileStructure => self.open_dialog(popups::Dialog::FileStructure {
+                query: String::new(),
+                selected: None,
             }),
             UiAction::Find | UiAction::Replace => {
                 let selection = self.primary_selection_text();
@@ -207,24 +226,22 @@ impl IdeApp {
             UiAction::NewProject => self.new_project_dialog(),
             UiAction::OpenProject => self.open_project_dialog(),
             UiAction::NewFile | UiAction::NewDirectory => {
-                if let Some(root) = self.state.project.as_ref().map(|p| p.root().to_owned()) {
-                    // New entries go next to the selection, like the Project view's New.
-                    let parent = self
-                        .tree_selection
-                        .as_ref()
-                        .map(|path| {
-                            let absolute = root.join(path);
-                            if absolute.is_dir() {
-                                path.clone()
-                            } else {
-                                path.parent().map(Into::into).unwrap_or_default()
-                            }
-                        })
-                        .unwrap_or_default();
+                if let Some(parent) = self.new_entry_parent() {
                     self.open_dialog(popups::Dialog::NewEntry {
                         parent,
                         directory: action == UiAction::NewDirectory,
                         name: String::new(),
+                    });
+                }
+            }
+            UiAction::NewJavaClass | UiAction::NewKotlinFile => {
+                if let Some(dir) = self.new_entry_parent() {
+                    self.open_dialog(popups::Dialog::NewClass {
+                        dir,
+                        kotlin: action == UiAction::NewKotlinFile,
+                        name: String::new(),
+                        kind: 0,
+                        error: None,
                     });
                 }
             }
@@ -266,11 +283,10 @@ impl IdeApp {
             if binding.command.starts_with("diff.") && !diff_tab {
                 continue;
             }
-            // Go to Declaration only resolves Android resource references so far.
-            if binding.command.starts_with("android.resources.")
-                && self.state.android.project.is_none()
-            {
-                continue;
+            let mut params = serde_json::from_str(binding.params).unwrap_or(Value::Null);
+            if binding.command == "navigate.switcher" {
+                // Ctrl+Shift+Tab walks the Switcher backwards.
+                params = serde_json::json!({"backward": ctx.input(|input| input.modifiers.shift)});
             }
             // Debugger keys (F7/F8/F9, ...) stay free outside a debug session.
             if binding.command.starts_with("debug.")
@@ -279,8 +295,19 @@ impl IdeApp {
             {
                 continue;
             }
-            let params = serde_json::from_str(binding.params).unwrap_or(Value::Null);
-            if binding.command == "editor.close" && diff_tab {
+            if binding.command == "navigate.declaration"
+                && self.state.android.project.is_some()
+                && self.state.resource_at_caret().is_some()
+            {
+                // `R.x.y` references resolve against the merged Android resources.
+                self.dispatch("android.resources.gotoDeclaration", Value::Null);
+            } else if binding.command == "code.showIntentions" {
+                crate::intentions_ui::reset_selection(ctx);
+                self.dispatch(binding.command, params);
+            } else if matches!(binding.command, "navigate.back" | "navigate.forward") {
+                self.dispatch(binding.command, params);
+                ctx.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
+            } else if binding.command == "editor.close" && diff_tab {
                 self.dispatch("diff.close", Value::Null);
             } else if binding.command == "run.project" && self.state.android.project.is_some() {
                 // Android apps run by deploying 'app' (like the toolbar Run button).

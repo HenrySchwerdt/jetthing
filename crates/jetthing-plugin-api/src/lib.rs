@@ -13,11 +13,13 @@
 mod contributions;
 mod manifest;
 pub mod testing;
+mod view;
 
 pub use contributions::*;
 pub use jetthing_command::{CommandError, CommandResult};
 pub use manifest::*;
 pub use serde_json::{Value, json};
+pub use view::*;
 
 use std::any::Any;
 use std::path::{Path, PathBuf};

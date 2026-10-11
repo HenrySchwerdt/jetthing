@@ -122,7 +122,7 @@ pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
     let mut copy = None;
     let mut setup = None;
     egui::Area::new(egui::Id::new("lsp_notices"))
-        .order(egui::Order::Foreground)
+        .order(crate::notifications::BALLOON_ORDER)
         .anchor(egui::Align2::RIGHT_BOTTOM, vec2(-16.0, -bottom))
         .show(ctx, |ui| {
             ui.set_width(width);

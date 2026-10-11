@@ -1,0 +1,40 @@
+{
+  "id": "23",
+  "title": "Go to Symbol (Ctrl+Alt+Shift+N, query \"gr\")",
+  "fixture": "java-gradle",
+  "open": [
+    "src/main/java/com/example/App.java",
+    "src/test/java/com/example/AppTest.java"
+  ],
+  "steps": [
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "key",
+      "chord": "Primary+Alt+Shift+N"
+    },
+    {
+      "op": "wait",
+      "until": "popup"
+    },
+    {
+      "op": "type",
+      "text": "gr"
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "assert",
+      "pointer": "/popups/searchEverywhere",
+      "equals": "symbols"
+    },
+    {
+      "op": "screenshot",
+      "name": "23-go-to-symbol.png"
+    }
+  ]
+}

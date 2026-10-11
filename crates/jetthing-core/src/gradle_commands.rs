@@ -71,11 +71,65 @@ impl IdeState {
             .unwrap_or_else(|| "Gradle".into())
     }
 
+    /// After the first sync, offers the run configurations the reference IDE
+    /// suggests: `run` for application projects and `test` for Java projects.
+    /// Nothing is created when the project already has saved configurations.
+    pub(crate) fn create_gradle_run_configurations(&mut self) {
+        let (Some(model), Some(root)) = (&self.gradle_model, self.project_root()) else {
+            return;
+        };
+        if self
+            .run_configurations
+            .configurations()
+            .iter()
+            .any(|config| !config.temporary)
+        {
+            return;
+        }
+        let mut configs = Vec::new();
+        for project in &model.projects {
+            for (wanted, applies) in [
+                ("run", project.plugins.application),
+                ("test", project.plugins.java),
+            ] {
+                let Some(task) = project
+                    .tasks
+                    .iter()
+                    .find(|task| task.name == wanted)
+                    .filter(|_| applies)
+                else {
+                    continue;
+                };
+                configs.push(RunConfiguration::new(
+                    format!("{} [{wanted}]", project.name),
+                    RunTarget::Gradle {
+                        tasks: vec![task.path.clone()],
+                        options: Vec::new(),
+                        program_arguments: Vec::new(),
+                    },
+                ));
+            }
+        }
+        // Run configurations first, so the run widget selects one of them.
+        configs.sort_by_key(|config| !config.name.ends_with("[run]"));
+        let first = configs.first().map(|config| config.name.clone());
+        for config in configs {
+            if let Err(error) = self.run_configurations.save(&root, None, config) {
+                self.status = format!("Could not create run configuration: {error}");
+                return;
+            }
+        }
+        if let Some(name) = first {
+            let _ = self.run_configurations.select(&name);
+        }
+    }
+
     /// Applies the result of a finished sync.
     pub(crate) fn finish_gradle_sync(&mut self) {
         match self.runner.state() {
             TaskState::Exited(0) => {
                 self.load_gradle_model();
+                self.create_gradle_run_configurations();
                 if let Some(model) = &self.gradle_model {
                     let plural = |count: usize, word: &str| {
                         format!("{count} {word}{}", if count == 1 { "" } else { "s" })
@@ -198,7 +252,7 @@ for arg in "$@"; do
   case "$arg" in -Pjetthing.modelFile=*) out="${arg#-Pjetthing.modelFile=}";; esac
 done
 if [ -n "$out" ]; then
-  printf '{"gradleVersion":"8.14.3","rootDir":"%s","projects":[{"path":":","name":"r","dir":"%s"},{"path":":app","name":"app","dir":"%s/app","tasks":[{"name":"run","path":":app:run","group":"application"}]}]}' "$PWD" "$PWD" "$PWD" > "$out"
+  printf '{"gradleVersion":"8.14.3","rootDir":"%s","projects":[{"path":":","name":"r","dir":"%s"},{"path":":app","name":"app","dir":"%s/app","plugins":{"java":true,"application":true},"tasks":[{"name":"run","path":":app:run","group":"application"},{"name":"test","path":":app:test","group":"verification"}]}]}' "$PWD" "$PWD" "$PWD" > "$out"
   echo "> Task :jetthingModel"
 else
   echo "ran $*"
@@ -228,8 +282,21 @@ fi
             .as_ref()
             .expect("model loaded after sync");
         assert_eq!(model.project(":app").unwrap().tasks[0].path, ":app:run");
+        // The first sync creates run and test configurations and selects run.
+        let names: Vec<&str> = state
+            .run_configurations
+            .configurations()
+            .iter()
+            .map(|config| config.name.as_str())
+            .collect();
+        assert_eq!(names, ["app [run]", "app [test]"]);
+        assert_eq!(
+            state.run_configurations.selected().map(|c| c.name.as_str()),
+            Some("app [run]")
+        );
+        assert!(root.join(".jetthing/runConfigurations").is_dir());
         assert!(
-            state.status.contains("2 projects, 1 task "),
+            state.status.contains("2 projects, 2 tasks "),
             "{}",
             state.status
         );

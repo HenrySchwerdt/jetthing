@@ -1,7 +1,7 @@
 //! Workbench chrome: merged main toolbar, tool window stripes and status bar.
 
 use crate::icons::{self, Icon};
-use crate::widgets::{self, chrome_frame};
+use crate::widgets::{self, chrome_frame, glow_through_frame};
 use crate::{IdeApp, keys, theme};
 use eframe::egui::{self, Color32, Rect, Sense, vec2};
 use jetthing_core::{Anchor, ToolWindow};
@@ -10,6 +10,15 @@ use serde_json::{Value, json};
 pub const TOOLBAR_HEIGHT: f32 = 40.0;
 pub const STATUS_BAR_HEIGHT: f32 = 26.0;
 pub const STRIPE_WIDTH: f32 = 40.0;
+
+/// Width reserved at the left of the main toolbar for the macOS traffic-light
+/// buttons, which overlay the content in the unified title bar.
+pub const MAC_TRAFFIC_LIGHT_INSET: f32 = 72.0;
+
+/// Left inset of the toolbar content: room for the traffic lights on macOS only.
+pub fn toolbar_leading_inset(macos: bool) -> f32 {
+    if macos { MAC_TRAFFIC_LIGHT_INSET } else { 0.0 }
+}
 
 /// Whether the window draws its own title bar (no OS decorations).
 pub fn custom_title_bar() -> bool {
@@ -45,6 +54,7 @@ pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
             );
             let ui = &mut content;
             ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_space(toolbar_leading_inset(cfg!(target_os = "macos")));
             if !crate::main_menu::show(app, ui) {
                 ui.add_space(4.0);
                 let badge = project_widget(app, ui);
@@ -76,7 +86,7 @@ pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
                 )
                 .clicked()
                 {
-                    app.palette.show();
+                    app.dispatch("navigate.searchEverywhere", serde_json::Value::Null);
                 }
                 ui.add_space(6.0);
                 run_widget(app, ui);
@@ -264,7 +274,7 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
             format!(
                 "Run '{}' ({})",
                 app.state.run_widget_label().unwrap_or_default(),
-                keys::display("⌃R")
+                app.action_shortcut("Run").unwrap_or_default()
             )
         }
         Some(build) if build.run_unavailable.is_some() => {
@@ -535,12 +545,13 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
         .exact_width(STRIPE_WIDTH)
         .resizable(false)
         .show_separator_line(false)
-        .frame(chrome_frame().inner_margin(egui::Margin::symmetric(4, 6)))
+        .frame(glow_through_frame().inner_margin(egui::Margin::symmetric(4, 6)))
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.vertical(|ui| {
                 stripe_button(app, ui, ToolWindow::Project, Icon::Project);
                 stripe_button(app, ui, ToolWindow::Commit, Icon::Commit);
+                stripe_button(app, ui, ToolWindow::Structure, Icon::Structure);
                 if app.state.android.project.is_some() {
                     stripe_button(app, ui, ToolWindow::BuildVariants, Icon::Variants);
                 }
@@ -584,20 +595,11 @@ pub(crate) fn right_stripe_windows(app: &IdeApp) -> Vec<(ToolWindow, Icon)> {
     windows
 }
 
-/// Right tool window stripe. Without right-anchored tool windows it is a narrow
-/// gutter so the editor island keeps its rounded edge. Plugin tool windows join
-/// this stripe (`plugin_ui::right_side`).
+/// Right tool window stripe: the project's right-anchored tool windows (Gradle,
+/// Bazel, Device Manager) and AI Chat, which is always offered. Plugin tool
+/// windows join this stripe (`plugin_ui::right_side`).
 pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
     let windows = right_stripe_windows(app);
-    if windows.is_empty() {
-        egui::SidePanel::right("right_stripe")
-            .exact_width(6.0)
-            .resizable(false)
-            .show_separator_line(false)
-            .frame(chrome_frame())
-            .show(ctx, |_| {});
-        return;
-    }
     egui::SidePanel::right("right_stripe")
         .exact_width(STRIPE_WIDTH)
         .resizable(false)
@@ -608,6 +610,7 @@ pub fn right_stripe(app: &mut IdeApp, ctx: &egui::Context) {
             for (window, icon) in windows {
                 stripe_button(app, ui, window, icon);
             }
+            stripe_button(app, ui, ToolWindow::AiChat, Icon::Ai);
         });
 }
 
@@ -632,8 +635,11 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 let font = egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0);
-                // Navigation bar breadcrumbs: project › directories › file.
+                // Navigation bar breadcrumbs: project › directories › file, then
+                // the declarations around the caret (class › method).
                 let mut crumbs = vec![app.project_name()];
+                let mut code_crumbs = Vec::new();
+                let mut file_replaced = false;
                 if let Some(document) = app
                     .state
                     .active_document
@@ -645,17 +651,33 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                             .components()
                             .map(|part| part.as_os_str().to_string_lossy().into_owned()),
                     );
+                    code_crumbs = crate::structure_view::breadcrumbs(ctx, document);
+                    // Like IntelliJ, a top-level declaration named after the file
+                    // stands in for the file itself (`App.java` → `App`).
+                    let stem = document.path.file_stem().map(|stem| stem.to_string_lossy());
+                    if code_crumbs.first().map(|(_, name)| name.as_str()) == stem.as_deref() {
+                        crumbs.pop();
+                        file_replaced = true;
+                    }
                 }
                 let last = crumbs.len().saturating_sub(1);
+                let file_icon = app
+                    .state
+                    .active_document
+                    .and_then(|index| app.state.documents.get(index))
+                    .map(|document| app.file_icon(&document.path));
                 for (index, crumb) in crumbs.iter().enumerate() {
                     let icon = if index == 0 {
                         Some((Icon::Project, *theme::TEXT_SECONDARY))
-                    } else if index == last {
-                        Some((Icon::for_file(crumb), *icons::ICON))
+                    } else if index == last && !file_replaced {
+                        Some((
+                            file_icon.unwrap_or_else(|| Icon::for_file(crumb)),
+                            *icons::ICON,
+                        ))
                     } else {
                         None
                     };
-                    let color = if index == last {
+                    let color = if index == last && !file_replaced {
                         *theme::TEXT
                     } else {
                         *theme::TEXT_SECONDARY
@@ -665,10 +687,19 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                         icons::show(ui, Icon::ChevronRight, 12.0, *theme::TEXT_INFO);
                     }
                 }
+                for (kind, name) in code_crumbs {
+                    icons::show(ui, Icon::ChevronRight, 12.0, theme::TEXT_INFO);
+                    let (rect, _) = ui.allocate_exact_size(vec2(20.0, 22.0), Sense::hover());
+                    crate::structure_view::paint_badge(ui.painter(), rect.center(), kind);
+                    widgets::flat_widget(ui, None, &name, font.clone(), theme::TEXT, false, 22.0);
+                }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    crate::plugin_ui::status_widgets(app, ui, &font);
-                    let secondary = *theme::TEXT_SECONDARY;
+                    crate::plugin_ui::status_widgets(app, ui, &font, None);
+                    if app.state.project.is_some() {
+                        crate::ai_chat::status_widget(app, ui, font.clone());
+                    }
+                    let secondary = theme::TEXT_SECONDARY;
                     crate::lsp_status::status_widget(app, ui, font.clone());
                     crate::toolchain_status::status_widget(app, ui, font.clone());
                     let active = app
@@ -801,6 +832,11 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_macos_reserves_room_for_the_traffic_lights() {
+        assert_eq!(toolbar_leading_inset(true), MAC_TRAFFIC_LIGHT_INSET);
+        assert_eq!(toolbar_leading_inset(false), 0.0);
+    }
     use super::*;
 
     #[test]

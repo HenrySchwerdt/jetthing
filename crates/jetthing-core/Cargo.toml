@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 jetthing-android = { path = "../jetthing-android" }
+jetthing-ai = { path = "../jetthing-ai" }
 jetthing-bazel = { path = "../jetthing-bazel" }
 jetthing-command = { path = "../jetthing-command" }
 jetthing-gradle = { path = "../jetthing-gradle" }
@@ -14,6 +15,7 @@ jetthing-git = { path = "../jetthing-git" }
 jetthing-keymap = { path = "../jetthing-keymap" }
 jetthing-language = { path = "../jetthing-language" }
 jetthing-lsp = { path = "../jetthing-lsp" }
+jetthing-markdown = { path = "../jetthing-markdown" }
 jetthing-plugins = { path = "../jetthing-plugins" }
 jetthing-project = { path = "../jetthing-project" }
 jetthing-runnables = { path = "../jetthing-runnables" }
@@ -27,6 +29,7 @@ jetthing-update = { path = "../jetthing-update" }
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 flate2 = "1"

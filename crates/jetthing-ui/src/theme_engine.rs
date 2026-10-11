@@ -119,6 +119,8 @@ pub mod tokens {
         SUCCESS = ["ui:Label.successForeground"] or 0x6DB083;
         /// `*.modifiedItemForeground`.
         MODIFIED = ["ui:*.modifiedItemForeground"] or 0x71A1FE;
+        /// `Link.activeForeground` (links in documentation popups).
+        LINK = ["ui:Link.activeForeground"] or 0x71A1FE;
         /// Added file color (`FILESTATUS_ADDED`).
         ADDED = ["color:FILESTATUS_ADDED"] or 0x73BD79;
         /// Untracked file color (`Red8` dark, `FILESTATUS_UNKNOWN` light).
@@ -166,9 +168,9 @@ pub mod tokens {
         /// `WARNING_ATTRIBUTES` effect (or error-stripe) color.
         EDITOR_WARNING_EFFECT = ["attr:WARNING_ATTRIBUTES.EFFECT_COLOR", "attr:WARNING_ATTRIBUTES.ERROR_STRIPE_COLOR"] or 0xF2C55C;
         /// `BREAKPOINT_ATTRIBUTES` background (line tint of a breakpoint line).
-        EDITOR_BREAKPOINT_LINE = ["attr:BREAKPOINT_ATTRIBUTES.BACKGROUND"] or 0x3A2323;
+        EDITOR_BREAKPOINT_LINE = ["attr:BREAKPOINT_ATTRIBUTES.BACKGROUND"] or 0x40252B;
         /// `EXECUTIONPOINT_ATTRIBUTES` background (suspended line).
-        EDITOR_EXECUTION_LINE = ["attr:EXECUTIONPOINT_ATTRIBUTES.BACKGROUND"] or 0x2D6099;
+        EDITOR_EXECUTION_LINE = ["attr:EXECUTIONPOINT_ATTRIBUTES.BACKGROUND"] or 0x2A5091;
         /// `INFO_ATTRIBUTES` (weak warning) effect color.
         EDITOR_WEAK_WARNING_EFFECT = ["attr:INFO_ATTRIBUTES.EFFECT_COLOR", "attr:WARNING_ATTRIBUTES.EFFECT_COLOR"] or 0x857042;
         /// `ERRORS_ATTRIBUTES` error-stripe color.

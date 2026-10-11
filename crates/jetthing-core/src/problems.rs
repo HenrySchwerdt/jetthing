@@ -435,8 +435,6 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
 mod tests {
     use super::*;
     use crate::built_in_commands;
-    use jetthing_language::analyze;
-    use jetthing_text::SelectionSet;
 
     fn diagnostic(severity: u8, line: usize, start: usize, end: usize) -> LspDiagnostic {
         LspDiagnostic {
@@ -450,18 +448,12 @@ mod tests {
             source: Some("test".into()),
             unnecessary: false,
             deprecated: false,
+            raw: serde_json::Value::Null,
         }
     }
 
     fn document(path: &str, text: &str) -> Document {
-        Document {
-            path: path.into(),
-            text: TextDocument::new(text),
-            analysis: analyze(Path::new(path), text),
-            selections: SelectionSet::default(),
-            disk_hash: crate::content_hash(text),
-            conflict: None,
-        }
+        Document::new(path.into(), text)
     }
 
     #[test]

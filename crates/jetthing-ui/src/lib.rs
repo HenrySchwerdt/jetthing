@@ -6,6 +6,12 @@
 //! dispatched through the typed command registry.
 
 mod about;
+mod ai_actions;
+mod ai_agent;
+mod ai_chat;
+mod ai_inline;
+mod ai_terminal;
+mod ai_vcs;
 mod android_run_ui;
 mod android_sdk;
 mod android_view;
@@ -24,21 +30,30 @@ mod debug_window;
 mod device_manager;
 mod diff_ui;
 mod disk_banner;
+mod doc_ui;
 mod editor;
 mod editor_keys;
+mod file_icon;
 mod findbar;
+mod first_run;
+mod folding;
 mod git_log_ui;
 mod gradle_window;
 mod gutter_popup;
 mod icons;
+mod intentions_ui;
 mod keybindings;
 mod keys;
 mod logcat_ui;
 mod lsp_status;
 mod main_menu;
+mod markdown_ui;
 mod merged_manifest_ui;
+mod native_dialog;
+mod navigation_ui;
 mod notifications;
 mod palette;
+mod plugin_manager;
 mod plugin_ui;
 mod popups;
 mod problems_ui;
@@ -46,13 +61,15 @@ mod push_dialog;
 mod run_config_dialog;
 mod settings_dialog;
 mod settings_keymap;
-mod settings_plugins;
+mod structure_view;
+mod switcher;
 mod syntax;
 mod terminal_ui;
 mod test_view;
 mod theme;
 mod theme_engine;
 mod toolbar_gradient;
+mod toolchain_banner;
 mod toolchain_status;
 mod toolwindows;
 mod welcome;
@@ -67,17 +84,23 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub use jetthing_core::{build_info, diagnostics};
-pub use jetthing_plugins::PluginFactory;
+pub use jetthing_plugins::{PluginFactory, PluginLoader, PluginSet};
 pub use theme::install as install_theme;
 
 pub struct IdeApp {
     state: IdeState,
     commands: CommandRegistry<IdeState>,
     palette: palette::Palette,
+    /// Whether Ctrl was down when the Switcher opened (`None` while it is closed).
+    switcher_ctrl: Option<bool>,
     terminal_selection: Option<(terminal_ui::GridPoint, terminal_ui::GridPoint)>,
     search_input: String,
     /// Find in Files option toggles and file mask.
     find_options: jetthing_core::SearchOptions,
+    /// Query and options of the last search shown in the Find inputs, so a
+    /// search started elsewhere (`search.project` from automation, the palette
+    /// or a context menu) fills them in.
+    find_synced: (String, jetthing_core::SearchOptions),
     tree_selection: Option<PathBuf>,
     /// Active editor file last revealed in the Project tree.
     tree_revealed: Option<PathBuf>,
@@ -85,12 +108,18 @@ pub struct IdeApp {
     last_shift_release: Option<Instant>,
     shift_tainted: bool,
     last_bottom: Option<ToolWindow>,
+    /// Right-anchored tool window seen last frame (Gradle, Bazel, Device Manager).
+    last_right: Option<ToolWindow>,
+    /// Active editor file seen last frame; opening another one focuses the editor.
+    last_active_file: Option<PathBuf>,
     find: findbar::FindBar,
     /// Text of the last whole-line copy, so pasting it inserts a line.
     clipboard_line: Option<String>,
     dialog: Option<popups::Dialog>,
     settings_dialog: Option<settings_dialog::SettingsDialog>,
     dialog_focus: bool,
+    /// Pending choices in the first-run "Customize Jetthing" wizard.
+    customize: Option<first_run::Draft>,
     commit_message: String,
     /// Commit checkbox overrides; by default tracked changes are included and
     /// unversioned files are not.
@@ -113,9 +142,14 @@ pub struct IdeApp {
     plugin_commands: Vec<String>,
     /// Registry generation the contributed commands were synced at.
     plugin_generation: u64,
-    plugins_window: Option<plugin_ui::PluginsWindow>,
     /// Amend toggle of the Commit tool window.
     commit_amend: bool,
+    /// The OS file dialog implementation (replaced by a fake in tests).
+    file_dialogs: std::sync::Arc<dyn native_dialog::FileDialogs>,
+    /// A native dialog that is open right now.
+    pending_dialog: Option<native_dialog::PendingDialog>,
+    /// Java type kinds peeked from disk for file icons.
+    kind_cache: std::cell::RefCell<file_icon::KindCache>,
     /// Open push dialog.
     push_dialog: Option<push_dialog::PushDialog>,
     /// Open branch name/confirmation dialog.
@@ -123,6 +157,10 @@ pub struct IdeApp {
     /// Open gutter change-marker popup.
     change_popup: Option<change_popup::ChangePopup>,
     deploy_balloon: android_run_ui::DeployBalloon,
+    /// Markdown preview, scroll sync and floating bar state.
+    markdown_ui: markdown_ui::State,
+    doc_view: doc_ui::DocView,
+    ai_ui: ai_chat::AiChatUi,
 }
 
 impl IdeApp {
@@ -139,10 +177,29 @@ impl IdeApp {
         files: Vec<PathBuf>,
         bundled: Vec<PluginFactory>,
     ) -> Self {
+        Self::with_plugin_set(
+            project,
+            files,
+            PluginSet {
+                bundled,
+                ..PluginSet::default()
+            },
+        )
+    }
+
+    /// Like [`Self::with_plugins`], also registering script plugin runtimes.
+    pub fn with_plugin_set(
+        project: Option<PathBuf>,
+        files: Vec<PathBuf>,
+        plugins: PluginSet,
+    ) -> Self {
         let check_updates = std::env::var_os("JETTHING_NO_UPDATE_CHECK").is_none();
-        let mut app = Self::build(project, files, bundled, check_updates);
+        let mut app = Self::build(project, files, plugins, check_updates);
         if let Some(dir) = diagnostics::active_log_dir() {
             app.state.check_crash_reports(&dir);
+        }
+        if let Some(dir) = jetthing_settings::default_config_dir() {
+            app.state.detect_first_run(&dir);
         }
         app
     }
@@ -153,13 +210,13 @@ impl IdeApp {
         files: Vec<PathBuf>,
         check_updates: bool,
     ) -> Self {
-        Self::build(project, files, Vec::new(), check_updates)
+        Self::build(project, files, PluginSet::default(), check_updates)
     }
 
     fn build(
         project: Option<PathBuf>,
         files: Vec<PathBuf>,
-        bundled: Vec<PluginFactory>,
+        plugins: PluginSet,
         check_updates: bool,
     ) -> Self {
         let commands = built_in_commands();
@@ -167,7 +224,10 @@ impl IdeApp {
         if let Some(dir) = jetthing_settings::default_config_dir() {
             state.load_user_settings(&dir);
         }
-        state.init_plugins(jetthing_plugins::PluginStore::user(), bundled);
+        state.init_plugins(jetthing_plugins::PluginStore::user(), plugins);
+        // Tests use in-memory statistics; the app keeps the user's.
+        state.completion_stats = jetthing_core::CompletionStats::user();
+        state.init_ai(None);
         if let Some(path) = project {
             if let Err(error) = commands.execute("project.open", &mut state, json!({"path": path}))
             {
@@ -200,20 +260,25 @@ impl IdeApp {
             state,
             commands,
             palette: palette::Palette::default(),
+            switcher_ctrl: None,
             terminal_selection: None,
             search_input: String::new(),
             find_options: jetthing_core::SearchOptions::default(),
+            find_synced: Default::default(),
             tree_selection: None,
             tree_revealed: None,
             caret_screen_pos: None,
             last_shift_release: None,
             shift_tainted: false,
             last_bottom: None,
+            last_right: None,
+            last_active_file: None,
             find: findbar::FindBar::default(),
             clipboard_line: None,
             dialog: None,
             settings_dialog: None,
             dialog_focus: false,
+            customize: None,
             commit_message: String::new(),
             commit_overrides: std::collections::HashMap::new(),
             window_focused: true,
@@ -228,19 +293,24 @@ impl IdeApp {
             repaint_hook_installed: false,
             plugin_commands: Vec::new(),
             plugin_generation: u64::MAX,
-            plugins_window: None,
             change_popup: None,
             git_dialog: None,
             push_dialog: None,
             deploy_balloon: android_run_ui::DeployBalloon::default(),
+            markdown_ui: markdown_ui::State::default(),
             commit_amend: false,
+            doc_view: doc_ui::DocView::default(),
+            ai_ui: ai_chat::AiChatUi::default(),
+            file_dialogs: std::sync::Arc::new(native_dialog::SystemDialogs),
+            pending_dialog: None,
+            kind_cache: Default::default(),
         }
     }
 
     /// Standalone app mode (`jetthing --app <plugin-id>`): a window showing
     /// only the plugin's app view.
-    pub fn standalone(plugin: &str, bundled: Vec<PluginFactory>) -> Result<Self, String> {
-        let mut app = Self::with_plugins(None, Vec::new(), bundled);
+    pub fn standalone(plugin: &str, plugins: PluginSet) -> Result<Self, String> {
+        let mut app = Self::with_plugin_set(None, Vec::new(), plugins);
         plugin_ui::app_mode_error(&app.state.plugin_host.registry, plugin)?;
         app.state.plugin_host.app_mode = Some(plugin.to_owned());
         Ok(app)
@@ -260,16 +330,84 @@ impl IdeApp {
         }
     }
 
-    fn open_dialog(&mut self, dialog: popups::Dialog) {
+    pub(crate) fn open_dialog(&mut self, dialog: popups::Dialog) {
         self.dialog = Some(dialog);
         self.dialog_focus = true;
     }
 
+    /// File › Open…: the OS folder dialog, or the in-app path field when none exists.
     fn open_project_dialog(&mut self) {
+        self.browse(native_dialog::Purpose::OpenProject);
+    }
+
+    fn open_project_fallback(&mut self) {
         self.open_dialog(popups::Dialog::OpenProject {
             path: String::new(),
             error: None,
         });
+    }
+
+    /// Starts a native folder dialog without blocking the UI; `poll_native_dialog`
+    /// delivers the result. A path queued by `dialog.injectPath` answers instead.
+    fn browse(&mut self, purpose: native_dialog::Purpose) {
+        if self.pending_dialog.is_some() {
+            return;
+        }
+        let (title, start_dir) = match purpose {
+            native_dialog::Purpose::OpenProject => ("Open Project", None),
+            native_dialog::Purpose::NewProjectLocation => {
+                let start = match &self.dialog {
+                    Some(popups::Dialog::NewProject { parent, .. }) => Some(PathBuf::from(parent)),
+                    _ => None,
+                };
+                ("Choose Project Location", start)
+            }
+        };
+        let dialogs: std::sync::Arc<dyn native_dialog::FileDialogs> =
+            match self.state.injected_dialog_paths.pop_front() {
+                Some(path) => std::sync::Arc::new(native_dialog::InjectedDialog(path)),
+                None => self.file_dialogs.clone(),
+            };
+        let request = native_dialog::DialogRequest {
+            title: title.into(),
+            start_dir,
+            folder: true,
+        };
+        self.pending_dialog = Some(native_dialog::PendingDialog::spawn(
+            dialogs, purpose, request,
+        ));
+    }
+
+    fn poll_native_dialog(&mut self, ctx: &egui::Context) {
+        let Some(pending) = &self.pending_dialog else {
+            return;
+        };
+        let Ok(outcome) = pending.poll() else {
+            ctx.request_repaint_after(Duration::from_millis(50));
+            return;
+        };
+        let purpose = pending.purpose;
+        self.pending_dialog = None;
+        use native_dialog::{DialogOutcome, Purpose};
+        match (purpose, outcome) {
+            (_, DialogOutcome::Cancelled) => {}
+            (Purpose::OpenProject, DialogOutcome::Picked(path)) => {
+                self.dialog = None;
+                if let Err(message) = self.open_project_path(&path.to_string_lossy(), ctx) {
+                    self.state.status = message;
+                }
+            }
+            (Purpose::NewProjectLocation, DialogOutcome::Picked(path)) => {
+                if let Some(popups::Dialog::NewProject { parent, .. }) = &mut self.dialog {
+                    *parent = path.to_string_lossy().into_owned();
+                }
+            }
+            (Purpose::OpenProject, DialogOutcome::Unavailable) => self.open_project_fallback(),
+            (Purpose::NewProjectLocation, DialogOutcome::Unavailable) => {
+                self.state.status =
+                    "No native file dialog is available; type the location instead".into();
+            }
+        }
     }
 
     fn new_project_dialog(&mut self) {
@@ -439,14 +577,20 @@ impl IdeApp {
             self.toggle_tool_window(ToolWindow::Terminal);
         }
         self.detect_double_shift(ctx);
-        if !terminal_focused && consume(Modifiers::NONE, Key::Escape) {
+        // The Run/Debug Configurations modal closes itself on Escape.
+        if !terminal_focused
+            && !run_config_dialog::is_open(ctx)
+            && consume(Modifiers::NONE, Key::Escape)
+        {
             if egui::Popup::is_any_open(ctx) {
                 // Context menus and main-menu dropdowns close first.
                 egui::Popup::close_all(ctx);
             } else if self.menu_bar_open {
                 self.menu_bar_open = false;
             } else if self.state.about_open {
-                self.state.about_open = false;
+                self.dispatch("app.closeAbout", Value::Null);
+            } else if self.state.first_run_open {
+                self.dispatch("app.skipCustomize", Value::Null);
             } else if self.dialog.is_some() {
                 self.dialog = None;
             } else if self.git_dialog.is_some() {
@@ -455,10 +599,18 @@ impl IdeApp {
                 self.push_dialog = None;
             } else if self.change_popup.is_some() {
                 self.change_popup = None;
+            } else if self.state.quick_nav.switcher.is_some() {
+                self.dispatch("navigate.switcherCancel", Value::Null);
+            } else if self.state.ai.pending_apply.is_some() {
+                self.dispatch("ai.chat.applyCancel", Value::Null);
             } else if self.palette.open {
                 self.palette.open = false;
+            } else if self.state.docs.popup.is_some() {
+                self.dispatch("language.closeQuickDoc", Value::Null);
             } else if self.state.completion.is_some() {
                 self.dispatch("completion.close", Value::Null);
+            } else if self.state.signature.popup.is_some() {
+                self.dispatch("language.closeParameterInfo", Value::Null);
             } else if self.state.snippet.is_some() {
                 self.dispatch("snippet.exit", Value::Null);
             } else if self.find.open
@@ -492,6 +644,27 @@ impl IdeApp {
     /// Activating a tool window moves keyboard focus into it; hiding it returns
     /// focus to the editor.
     fn follow_tool_window_focus(&mut self, ctx: &egui::Context) {
+        // Opening or switching to a file (tree, Go to File, search results,
+        // automation) moves keyboard focus into its editor, as in the reference.
+        let active = self
+            .state
+            .active_document
+            .and_then(|index| self.state.documents.get(index))
+            .map(|document| document.path.clone());
+        if active != self.last_active_file {
+            if active.is_some() && self.dialog.is_none() && !self.palette.open {
+                ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
+            }
+            self.last_active_file = active;
+        }
+        // Hiding a right-anchored tool window also hands focus back to the editor.
+        let right = self.state.tool_windows.visible(Anchor::Right);
+        if right != self.last_right {
+            if right.is_none() && self.state.active_document.is_some() {
+                ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
+            }
+            self.last_right = right;
+        }
         let bottom = self.state.tool_windows.visible(Anchor::Bottom);
         if bottom == self.last_bottom {
             return;
@@ -608,6 +781,7 @@ impl IdeApp {
             self.waker_installed = true;
         }
         self.state.poll_files();
+        self.poll_native_dialog(ctx);
         if !self.repaint_hook_installed {
             let ctx = ctx.clone();
             self.state
@@ -615,6 +789,8 @@ impl IdeApp {
                 .set(std::sync::Arc::new(move || ctx.request_repaint()));
             self.repaint_hook_installed = true;
         }
+        // Ctrl+-/= are Collapse/Expand in the editor (IntelliJ keymap), not UI zoom.
+        ctx.options_mut(|options| options.zoom_with_keyboard = false);
         self.state.poll_search();
         self.state.poll_runner();
         self.state.poll_debug();
@@ -638,12 +814,24 @@ impl IdeApp {
             // Diagnostics, server messages and device changes arrive without user input.
             ctx.request_repaint_after(Duration::from_millis(500));
         }
+        self.state.poll_ai();
+        let agent_running = self
+            .state
+            .ai
+            .agent
+            .as_ref()
+            .is_some_and(|a| a.phase == jetthing_core::AgentPhase::RunningCommand);
+        if self.state.ai.service.is_busy() || agent_running {
+            ctx.request_repaint_after(Duration::from_millis(30));
+        }
         plugin_ui::sync(self, ctx);
         if let Some(plugin) = self.state.plugin_host.app_mode.clone() {
             plugin_ui::handle_keybindings(self, ctx);
             chrome::window_resize_handles(ctx);
             plugin_ui::app_window(self, ctx, &plugin);
+            switcher::frame(self, ctx);
             palette::show(self, ctx);
+            switcher::show(self, ctx);
             plugin_ui::notifications(self, ctx);
             self.control_after_frame(ctx);
             return;
@@ -672,6 +860,16 @@ impl IdeApp {
             self.state.request_git_refresh();
         }
         self.window_focused = focused;
+        ai_actions::tick(self, ctx);
+        ai_inline::tick(self, ctx);
+        ai_inline::handle_keys(self, ctx);
+        if self.dialog.is_none()
+            && !self.palette.open
+            && !ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
+        {
+            navigation_ui::handle_shortcuts(self, ctx);
+            intentions_ui::handle(self, ctx);
+        }
         self.handle_shortcuts(ctx);
         plugin_ui::handle_keybindings(self, ctx);
         self.follow_tool_window_focus(ctx);
@@ -687,6 +885,7 @@ impl IdeApp {
             plugin_ui::right_side(self, ctx);
             toolwindows::left(self, ctx);
             device_manager::right(self, ctx);
+            ai_chat::right(self, ctx);
             gradle_window::show(self, ctx);
             bazel_window::show(self, ctx);
             toolwindows::bottom(self, ctx);
@@ -695,24 +894,35 @@ impl IdeApp {
         change_popup::show(self, ctx);
         branches_popup::show_dialog(self, ctx);
         push_dialog::show(self, ctx);
-        completion_ui::show(self, ctx);
+        let lookup = completion_ui::show(self, ctx);
+        doc_ui::show_completion_panel(self, ctx, lookup);
+        doc_ui::show_quick_doc(self, ctx);
+        doc_ui::show_parameter_info(self, ctx);
+        navigation_ui::choices_popup(self, ctx);
+        intentions_ui::popup(self, ctx);
+        switcher::frame(self, ctx);
         palette::show(self, ctx);
+        switcher::show(self, ctx);
         popups::show(self, ctx);
         settings_dialog::show(self, ctx);
         android_sdk::show(self, ctx);
+        merged_manifest_ui::show(self, ctx);
+        ai_chat::diff_preview(self, ctx);
         if let Some(focus) = self.state.edit_run_configurations.take() {
             run_config_dialog::open(self, ctx, Some(focus.as_str()).filter(|f| !f.is_empty()));
         }
         run_config_dialog::show(self, ctx);
         gutter_popup::show(self, ctx);
-        merged_manifest_ui::show(self, ctx);
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
+        first_run::show(self, ctx);
         about::show(self, ctx);
         android_run_ui::show(self, ctx);
         lsp_status::notices(self, ctx);
-        plugin_ui::plugins_window(self, ctx);
         plugin_ui::notifications(self, ctx);
+        if self.settings_dialog.is_some() {
+            settings_dialog::backdrop_to_top(ctx);
+        }
         // Include operations started by controls in this frame, and keep
         // polling even when their notification balloon is hidden.
         if self.state.updates.is_busy() {
@@ -767,6 +977,274 @@ mod tests {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             assert!(!popup_owns_keyboard(ctx), "no menu, shortcuts run normally");
         });
+    }
+
+    /// A headless workbench with `file` open, for frame-level UI tests.
+    pub(crate) fn headless_app(name: &str, file: &str, text: &str) -> (IdeApp, egui::Context) {
+        let root =
+            std::env::temp_dir().join(format!("jetthing-ui-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(file), text).unwrap();
+        let app = IdeApp::new(Some(root.clone()), vec![root.join(file)]);
+        let ctx = egui::Context::default();
+        install_theme(&ctx);
+        (app, ctx)
+    }
+
+    pub(crate) fn frame_input(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1440.0, 900.0),
+            )),
+            focused: true,
+            events,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn escape_in_the_editor_keeps_keyboard_focus() {
+        let (mut app, ctx) = headless_app("escape-focus", "a.txt", "hello\n");
+        for _ in 0..3 {
+            app.focus_editor(&ctx);
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        assert!(ctx.memory(|m| m.has_focus(editor::editor_id())));
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = ctx.run(frame_input(vec![escape]), |ctx| app.frame(ctx));
+        let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        assert!(
+            ctx.memory(|m| m.has_focus(editor::editor_id())),
+            "Escape with no popup open keeps the editor focused"
+        );
+        // Typing right after Escape still reaches the buffer.
+        let typed = egui::Event::Text("x".into());
+        let _ = ctx.run(frame_input(vec![typed]), |ctx| app.frame(ctx));
+        assert_eq!(app.state.documents[0].text.text(), "xhello\n");
+    }
+
+    #[test]
+    fn ctrl_w_extends_the_selection_through_the_keymap() {
+        let source = "class A {\n    int f() { return 1 + 42; }\n}\n";
+        let (mut app, ctx) = headless_app("extend-selection", "A.java", source);
+        for keymap in ["$default", "Default for XWin"] {
+            app.dispatch(
+                "settings.set",
+                json!({"id": "keymap.active", "value": keymap}),
+            );
+            let caret = source.find("42").unwrap();
+            app.state.documents[0]
+                .selections
+                .set_single(jetthing_text::Selection::caret(caret));
+            for _ in 0..2 {
+                app.focus_editor(&ctx);
+                let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+            }
+            let press = |key, modifiers| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            };
+            let selected = |app: &IdeApp| {
+                let document = &app.state.documents[0];
+                let selection = document.selections.primary();
+                document
+                    .text
+                    .slice(selection.start(), selection.end())
+                    .unwrap()
+            };
+            let ctrl_w = press(egui::Key::W, egui::Modifiers::CTRL);
+            let _ = ctx.run(frame_input(vec![ctrl_w.clone()]), |ctx| app.frame(ctx));
+            assert_eq!(selected(&app), "42", "{keymap}");
+            let _ = ctx.run(frame_input(vec![ctrl_w]), |ctx| app.frame(ctx));
+            assert_eq!(selected(&app), "1 + 42", "{keymap}");
+            let shrink = press(egui::Key::W, egui::Modifiers::CTRL | egui::Modifiers::SHIFT);
+            let _ = ctx.run(frame_input(vec![shrink]), |ctx| app.frame(ctx));
+            assert_eq!(selected(&app), "42", "{keymap}");
+            assert_eq!(app.state.documents.len(), 1, "Ctrl+W never closes the tab");
+        }
+        let close = egui::Event::Key {
+            key: egui::Key::F4,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL,
+        };
+        let _ = ctx.run(frame_input(vec![close]), |ctx| app.frame(ctx));
+        assert!(app.state.documents.is_empty(), "Ctrl+F4 closes the tab");
+    }
+
+    #[test]
+    fn opening_a_file_by_command_focuses_its_editor() {
+        let (mut app, ctx) = headless_app("open-focus", "a.txt", "hello\n");
+        let root = app.state.project.as_ref().unwrap().root().to_owned();
+        std::fs::write(root.join("b.txt"), "other\n").unwrap();
+        let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        ctx.memory_mut(|m| m.surrender_focus(editor::editor_id()));
+        app.dispatch("editor.openFile", json!({"path": "b.txt"}));
+        for _ in 0..2 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        assert!(ctx.memory(|m| m.has_focus(editor::editor_id())));
+        let _ = ctx.run(frame_input(vec![egui::Event::Text("x".into())]), |ctx| {
+            app.frame(ctx)
+        });
+        let active = app.state.active_document.unwrap();
+        assert_eq!(app.state.documents[active].text.text(), "xother\n");
+    }
+
+    #[test]
+    fn escape_closes_the_run_configurations_dialog() {
+        let (mut app, ctx) = headless_app("run-config-escape", "a.txt", "hello\n");
+        app.dispatch("runConfig.edit", Value::Null);
+        for _ in 0..2 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        assert!(run_config_dialog::is_open(&ctx));
+        let escape = egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = ctx.run(frame_input(vec![escape]), |ctx| app.frame(ctx));
+        let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        assert!(!run_config_dialog::is_open(&ctx));
+    }
+
+    #[test]
+    fn hiding_a_right_tool_window_returns_focus_to_the_editor() {
+        let (mut app, ctx) = headless_app("right-focus", "a.txt", "hello\n");
+        app.dispatch("toolwindow.toggle", json!({"id": "deviceManager"}));
+        for _ in 0..2 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        ctx.memory_mut(|m| m.surrender_focus(editor::editor_id()));
+        app.dispatch("toolwindow.toggle", json!({"id": "deviceManager"}));
+        for _ in 0..2 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        assert!(ctx.memory(|m| m.has_focus(editor::editor_id())));
+    }
+
+    #[test]
+    fn modal_dialogs_render_above_notification_balloons() {
+        let (mut app, ctx) = headless_app("balloon-order", "a.txt", "hello\n");
+        app.state.update_notification = true;
+        let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        app.dispatch("settings.open", Value::Null);
+        for _ in 0..3 {
+            let _ = ctx.run(frame_input(Vec::new()), |ctx| app.frame(ctx));
+        }
+        assert!(app.settings_dialog.is_some());
+        let balloon = ctx
+            .memory(|m| m.area_rect(egui::Id::new("notification_balloon")))
+            .expect("the update balloon is shown");
+        let dialog = ctx
+            .memory(|m| m.area_rect(egui::Id::new("settings_dialog")))
+            .expect("the settings dialog is shown");
+        let overlap = balloon.intersect(dialog);
+        assert!(overlap.is_positive(), "{balloon:?} vs {dialog:?}");
+        let top = ctx.layer_id_at(overlap.center()).unwrap();
+        assert_eq!(top.id, egui::Id::new("settings_dialog"));
+        // Outside the dialog the dimming backdrop still covers the balloon.
+        let outside = egui::pos2(balloon.right() - 2.0, balloon.bottom() - 2.0);
+        if !dialog.contains(outside) {
+            let top = ctx.layer_id_at(outside).unwrap();
+            assert_eq!(top.id, egui::Id::new("settings_backdrop"));
+        }
+    }
+
+    fn run_frames(app: &mut IdeApp, ctx: &egui::Context, until: impl Fn(&IdeApp) -> bool) {
+        for _ in 0..200 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| app.frame(ctx));
+            if until(app) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("condition not reached");
+    }
+
+    fn temp_project(name: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("jetthing-dialog-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn open_project_uses_the_injected_native_dialog() {
+        let root = temp_project("open");
+        let fake = std::sync::Arc::new(native_dialog::FakeDialogs::new(
+            native_dialog::DialogOutcome::Picked(root.clone()),
+        ));
+        let mut app = IdeApp::with_update_check(None, Vec::new(), false);
+        app.file_dialogs = fake.clone();
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        app.open_project_dialog();
+        run_frames(&mut app, &ctx, |app| app.state.project.is_some());
+        assert_eq!(app.state.project.as_ref().unwrap().root(), root);
+        assert!(
+            app.dialog.is_none(),
+            "no in-app picker when the native dialog answers"
+        );
+        let requests = fake.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].folder);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unavailable_native_dialog_falls_back_to_the_in_app_picker() {
+        let mut app = IdeApp::with_update_check(None, Vec::new(), false);
+        app.file_dialogs = std::sync::Arc::new(native_dialog::FakeDialogs::new(
+            native_dialog::DialogOutcome::Unavailable,
+        ));
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        app.open_project_dialog();
+        run_frames(&mut app, &ctx, |app| app.dialog.is_some());
+        assert_eq!(app.dialog.as_ref().unwrap().kind(), "openProject");
+        // A cancelled dialog does nothing.
+        app.dialog = None;
+        app.file_dialogs = std::sync::Arc::new(native_dialog::FakeDialogs::new(
+            native_dialog::DialogOutcome::Cancelled,
+        ));
+        app.open_project_dialog();
+        for _ in 0..20 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| app.frame(ctx));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.dialog.is_none() && app.state.project.is_none());
+    }
+
+    #[test]
+    fn injected_paths_answer_before_the_system_dialog() {
+        let root = temp_project("inject");
+        let mut app = IdeApp::with_update_check(None, Vec::new(), false);
+        app.file_dialogs = std::sync::Arc::new(native_dialog::FakeDialogs::new(
+            native_dialog::DialogOutcome::Cancelled,
+        ));
+        app.dispatch("dialog.injectPath", json!({"path": root}));
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        app.open_project_dialog();
+        run_frames(&mut app, &ctx, |app| app.state.project.is_some());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

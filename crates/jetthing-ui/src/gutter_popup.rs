@@ -1,7 +1,7 @@
 //! Gutter run icons and their popup (Run / Debug / Modify Run Configuration…).
 
 use crate::icons::{self, Icon};
-use crate::{IdeApp, keys, theme};
+use crate::{IdeApp, theme};
 use eframe::egui::{self, vec2};
 use jetthing_core::RunnableKind;
 use serde_json::json;
@@ -65,7 +65,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                     !running,
                     egui::Button::new(format!("▶  {}", mark.label))
                         .frame(false)
-                        .shortcut_text(keys::display("⌃⇧R"))
+                        .shortcut_text(app.action_shortcut("RunClass").unwrap_or_default())
                         .min_size(vec2(270.0, 24.0)),
                 );
                 if run.clicked() {

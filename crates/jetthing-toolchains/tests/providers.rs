@@ -4,7 +4,9 @@ mod support;
 
 use jetthing_toolchains::download::{HttpClient, sha256_hex};
 use jetthing_toolchains::providers::github::GithubReleaseProvider;
-use jetthing_toolchains::providers::{jdk::FoojayJdk, jdtls::EclipseJdtls, rust_analyzer};
+use jetthing_toolchains::providers::{
+    gradle::GradleDistributions, jdk::FoojayJdk, jdtls::EclipseJdtls, rust_analyzer,
+};
 use jetthing_toolchains::{
     ArchiveKind, Checksum, ComponentProvider, ComponentSettings, Platform, ToolchainError,
     VersionRequest,
@@ -151,6 +153,86 @@ fn jdtls_resolves_milestones_and_installs_with_sidecar_checksum() {
     server.serve("/jdtls/milestones/1.9.0/latest.txt", "../../evil.tar.gz");
     assert!(matches!(
         provider.resolve(&VersionRequest::parse("1.9"), &linux(), &http, None),
+        Err(ToolchainError::Catalog { .. })
+    ));
+}
+
+#[test]
+fn gradle_resolves_current_and_prefix_versions_with_published_checksums() {
+    let server = FakeServer::start();
+    // The binary distribution has a single `gradle-<v>/` root.
+    let archive = {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
+        zip.start_file("gradle-9.1.0/bin/gradle", options).unwrap();
+        std::io::Write::write_all(&mut zip, b"#!/bin/sh\n").unwrap();
+        zip.start_file("gradle-9.1.0/lib/gradle-launcher.jar", options)
+            .unwrap();
+        std::io::Write::write_all(&mut zip, b"jar").unwrap();
+        zip.finish().unwrap().into_inner()
+    };
+    let zip_path = "/distributions/gradle-9.1.0-bin.zip";
+    server.serve(zip_path, archive.clone());
+    server.serve(&format!("{zip_path}.sha256"), sha256_hex(&archive));
+    let entry = |version: &str, extra: &str| {
+        format!(
+            r#"{{"version":"{version}","snapshot":false,"nightly":false,"releaseNightly":false,"activeRc":false,"rcFor":"","milestoneFor":"","broken":false,"downloadUrl":"{}","checksumUrl":"{}"{extra}}}"#,
+            server.url(&format!("/distributions/gradle-{version}-bin.zip")),
+            server.url(&format!("/distributions/gradle-{version}-bin.zip.sha256")),
+        )
+    };
+    server.serve("/gradle/versions/current", entry("9.1.0", ""));
+    server.serve(
+        "/gradle/versions/all",
+        format!(
+            "[{},{},{},{}]",
+            entry("9.2.0-rc-1", "").replace(r#""rcFor":"""#, r#""rcFor":"9.2.0""#),
+            entry("9.1.0", ""),
+            entry("8.14.3", ""),
+            entry("8.14.2", ""),
+        ),
+    );
+    let provider = GradleDistributions::with_base(&server.url("/gradle"));
+    let http = HttpClient::new();
+    let release = provider
+        .resolve(&VersionRequest::Latest, &linux(), &http, None)
+        .unwrap();
+    assert_eq!(release.version.as_str(), "9.1.0");
+    assert_eq!(release.artifact.archive, ArchiveKind::Zip);
+    assert_eq!(
+        release.artifact.checksum,
+        Checksum::Sha256Url(server.url(&format!("{zip_path}.sha256")))
+    );
+    // Prefix requests use the full listing and skip release candidates.
+    let older = provider
+        .resolve(&VersionRequest::parse("8.14"), &linux(), &http, None)
+        .unwrap();
+    assert_eq!(older.version.as_str(), "8.14.3");
+    assert!(matches!(
+        provider.resolve(&VersionRequest::parse("9.2"), &linux(), &http, None),
+        Err(ToolchainError::NoMatchingVersion { .. })
+    ));
+    // Installing verifies the published SHA-256 and strips the root directory.
+    let dir = tempfile::tempdir().unwrap();
+    let store = jetthing_toolchains::ToolchainStore::new(dir.path());
+    let installed = store
+        .install(&release, &http, &mut |_| {}, &AtomicBool::new(false))
+        .unwrap();
+    let launcher = installed.path.join("bin/gradle");
+    assert!(launcher.is_file());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&launcher).unwrap().permissions().mode();
+        assert!(mode & 0o111 != 0, "bin/gradle stays executable");
+    }
+    // A download URL that is not the named distribution is refused.
+    server.serve(
+        "/gradle/versions/current",
+        r#"{"version":"9.1.0","downloadUrl":"https://example.com/evil.zip","checksumUrl":"https://example.com/evil.zip.sha256"}"#,
+    );
+    assert!(matches!(
+        provider.resolve(&VersionRequest::Latest, &linux(), &http, None),
         Err(ToolchainError::Catalog { .. })
     ));
 }

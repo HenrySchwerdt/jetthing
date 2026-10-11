@@ -194,7 +194,8 @@ pub fn find_program(name: &str) -> Option<PathBuf> {
     if candidate.components().count() > 1 {
         return candidate.is_file().then(|| candidate.to_owned());
     }
-    let paths = std::env::var_os("PATH")?;
+    // Managed tool directories come before the system PATH.
+    let paths = crate::tool_env::tool_environment().joined_path(std::env::var_os("PATH"))?;
     let extensions: Vec<String> = if cfg!(windows) {
         std::env::var("PATHEXT")
             .unwrap_or_else(|_| ".EXE;.BAT;.CMD".into())
@@ -228,7 +229,18 @@ fn is_executable(path: &Path) -> bool {
 /// Resolves a tool on `PATH` or returns an actionable error.
 pub fn require_program(name: &str, hint: &str) -> Result<String, RunnerError> {
     find_program(name)
-        .map(|_| name.to_owned())
+        .map(|found| {
+            // Managed installs are not on the system PATH: run them by full path.
+            if crate::tool_env::tool_environment()
+                .path_dirs
+                .iter()
+                .any(|dir| found.starts_with(dir))
+            {
+                found.display().to_string()
+            } else {
+                name.to_owned()
+            }
+        })
         .ok_or_else(|| RunnerError::ToolNotFound {
             program: name.into(),
             hint: hint.into(),

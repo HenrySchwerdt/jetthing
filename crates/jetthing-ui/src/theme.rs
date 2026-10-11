@@ -16,7 +16,7 @@ const fn hex(rgb: u32) -> Color32 {
 pub use crate::theme_engine::Token;
 pub use crate::theme_engine::tokens::{
     ACCENT, ADDED, BANNER_WARNING, BANNER_WARNING_BORDER, BORDER, COMPLETION_SELECTION, ERROR,
-    FIELD, FOLDER_FILL, FRAME, HOVER, ICON, ISLAND, MODIFIED, MUTED, NOTIFICATION, POPUP,
+    FIELD, FOLDER_FILL, FRAME, HOVER, ICON, ISLAND, LINK, MODIFIED, MUTED, NOTIFICATION, POPUP,
     POPUP_BORDER, PRESSED, RUN_GREEN, SELECTION, SELECTION_DISABLED, STOP_RED, SUCCESS,
     TAB_SELECTED, TAB_SELECTED_BORDER, TEXT, TEXT_BRIGHT, TEXT_DISABLED, TEXT_INFO, TEXT_SECONDARY,
     TOOLBAR_SEPARATOR, UNTRACKED, WARNING,
@@ -140,6 +140,7 @@ pub fn apply_settings(ctx: &egui::Context, settings: &jetthing_core::Settings) {
     if let Ok(true) = crate::theme_engine::set_active(&theme, scheme.as_deref()) {
         apply_visuals(ctx);
     }
+    sync_window_theme(ctx);
     let line_height = settings
         .float(jetthing_settings::ids::EDITOR_LINE_HEIGHT)
         .map(|value| value as f32)
@@ -243,6 +244,31 @@ pub fn install(ctx: &egui::Context) {
 }
 
 /// Rebuilds egui's visuals from the active theme's tokens.
+/// Window appearance for a theme: dark NSAppearance (title bar, native dialogs)
+/// for dark themes, light otherwise.
+pub fn window_theme(dark: bool) -> egui::SystemTheme {
+    if dark {
+        egui::SystemTheme::Dark
+    } else {
+        egui::SystemTheme::Light
+    }
+}
+
+/// Keeps the native window appearance in step with the active theme. Only
+/// macOS needs it (its title bar and dialogs follow the window appearance);
+/// elsewhere the OS controls are left alone.
+fn sync_window_theme(ctx: &egui::Context) {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let wanted = window_theme(crate::theme_engine::active().dark);
+    let id = egui::Id::new("window_theme");
+    if ctx.data(|data| data.get_temp::<egui::SystemTheme>(id)) != Some(wanted) {
+        ctx.data_mut(|data| data.insert_temp(id, wanted));
+        ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(wanted));
+    }
+}
+
 fn apply_visuals(ctx: &egui::Context) {
     let dark = crate::theme_engine::active().dark;
     ctx.style_mut(|style| {
@@ -306,6 +332,11 @@ fn apply_visuals(ctx: &egui::Context) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn window_appearance_follows_the_theme() {
+        assert_eq!(window_theme(true), egui::SystemTheme::Dark);
+        assert_eq!(window_theme(false), egui::SystemTheme::Light);
+    }
     use super::*;
 
     #[test]

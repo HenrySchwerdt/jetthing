@@ -7,11 +7,11 @@ members = [
     "plugins/mongo-raabit/core",
     "xtask",
 ]
-# Manifest-only plugins (no Rust crate).
-exclude = ["plugins/rust"]
+# Plugins that are not host crates (manifest-only, Lua, wasm32 guests).
+exclude = ["plugins/rust", "plugins/hello-lua", "plugins/hello-wasm"]
 
 [workspace.package]
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 rust-version = "1.91"
@@ -23,6 +23,7 @@ egui = "0.33"
 lsp-types = "0.95"
 parking_lot = "0.12"
 portable-pty = "0.9"
+pulldown-cmark = { version = "0.13", default-features = false }
 quick-xml = "0.37"
 ropey = "1.6"
 serde = { version = "1.0", features = ["derive"] }
@@ -36,6 +37,7 @@ tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"
 tree-sitter-css = "0.25"
 tree-sitter-go = "0.25"
+tree-sitter-groovy = { package = "dekobon-tree-sitter-groovy", version = "0.3" }
 tree-sitter-html = "0.23"
 tree-sitter-java = "0.23"
 tree-sitter-javascript = "0.25"

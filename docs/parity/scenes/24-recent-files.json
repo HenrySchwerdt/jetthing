@@ -1,0 +1,36 @@
+{
+  "id": "24",
+  "title": "Recent Files (Ctrl+E)",
+  "fixture": "java-gradle",
+  "open": [
+    "src/main/java/com/example/App.java",
+    "src/test/java/com/example/AppTest.java"
+  ],
+  "steps": [
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "key",
+      "chord": "Primary+E"
+    },
+    {
+      "op": "wait",
+      "until": "popup"
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "assert",
+      "pointer": "/popups/dialog",
+      "equals": "recentFiles"
+    },
+    {
+      "op": "screenshot",
+      "name": "24-recent-files.png"
+    }
+  ]
+}

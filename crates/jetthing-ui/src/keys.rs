@@ -35,6 +35,12 @@ pub fn for_windows_linux(mac: &str) -> String {
         "⇧⌘8" => return "Alt+Shift+Insert".into(),
         "⌘↩" => return "Ctrl+Enter".into(),
         "⌥⌘↩" => return "Ctrl+Alt+Enter".into(),
+        "⌘[" => return "Ctrl+Alt+Left".into(),
+        "⌘]" => return "Ctrl+Alt+Right".into(),
+        // Quick Documentation.
+        "F1" => return "Ctrl+Q".into(),
+        "⌥↑" => return "Ctrl+W".into(),
+        "⌥↓" => return "Ctrl+Shift+W".into(),
         _ => {}
     }
     let mut chars = mac.chars().peekable();
@@ -111,10 +117,14 @@ mod tests {
         assert_eq!(for_windows_linux("⌃R"), "Shift+F10");
         assert_eq!(for_windows_linux("⌃⇧R"), "Ctrl+Shift+F10");
         assert_eq!(for_windows_linux("Double ⇧"), "Double Shift");
+        assert_eq!(for_windows_linux("⌥↑"), "Ctrl+W");
+        assert_eq!(for_windows_linux("⌥↓"), "Ctrl+Shift+W");
         assert_eq!(for_windows_linux(""), "");
         assert_eq!(for_windows_linux("⌘S"), "Ctrl+S");
         assert_eq!(for_windows_linux("⌃G"), "Alt+J");
         assert_eq!(for_windows_linux("⇧⌘8"), "Alt+Shift+Insert");
+        assert_eq!(for_windows_linux("⌘["), "Ctrl+Alt+Left");
+        assert_eq!(for_windows_linux("⌥⌘B"), "Ctrl+Alt+B");
     }
 
     fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
