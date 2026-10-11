@@ -644,7 +644,7 @@ impl IdeState {
             .unwrap_or_default();
         let column = text
             .find(&format!("{word}("))
-            .or_else(|| text.find(&word))
+            .or_else(|| text.find(word))
             .map_or(0, |byte| text[..byte].chars().count());
         (text, column)
     }
