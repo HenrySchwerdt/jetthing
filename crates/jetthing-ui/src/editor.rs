@@ -185,6 +185,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let changes = app.state.document_changes(index).to_vec();
             let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
             let (lenses, inlays) = app.state.code_vision(index);
+            let inline_values = app.state.inline_values(&path);
             let gutter = run_icons(app, ui.ctx());
             let doc_path = app.state.absolute_path(&app.state.documents[index].path);
             if md_layout.is_some() {
@@ -214,6 +215,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     execution_line,
                     lenses: &lenses,
                     inlays: &inlays,
+                    inline_values: &inline_values,
                 },
                 navigable,
                 editor_scroll,
@@ -961,6 +963,8 @@ struct GutterData<'a> {
     lenses: &'a [jetthing_core::CodeLens],
     /// Parameter-name hints shown inside lines.
     inlays: &'a [jetthing_core::InlayLabel],
+    /// End-of-line variable values while the debugger is suspended in this file.
+    inline_values: &'a [jetthing_core::InlineValue],
 }
 
 #[allow(clippy::too_many_arguments)] // paint inputs of one editor frame
@@ -983,6 +987,7 @@ fn editor_surface(
         execution_line,
         lenses,
         inlays,
+        inline_values,
     } = gutter_data;
     let mut requests = Vec::new();
     let font = theme::editor_font(ui.style());
@@ -1291,7 +1296,24 @@ fn editor_surface(
                 .selections
                 .set_single(Selection::caret(position_to_offset(position)));
         }
+        // Right-click on a breakpoint opens its properties instead of the editor menu.
+        let breakpoint_properties = response.secondary_clicked().then_some(()).and_then(|()| {
+            response
+                .interact_pointer_pos()
+                .filter(|position| layout.in_number_column(position.x - rect.left()))
+                .map(|position| folds.row_to_line(row_at(position)))
+        });
+        if let Some(line) = breakpoint_properties {
+            requests.push(EditorRequest::Command(
+                "debug.editBreakpoint",
+                json!({"path": document.path, "line": line}),
+            ));
+        }
         response.context_menu(|ui| {
+            if breakpoint_properties.is_some() {
+                ui.close();
+                return;
+            }
             let mut chosen = None;
             crate::context_menus::show(ui, context_model, &mut chosen);
             match chosen.as_deref() {
@@ -1587,6 +1609,15 @@ fn editor_surface(
                         requests.push(EditorRequest::Usages(lens.line, lens.column));
                     }
                 }
+            }
+            if collapsed.is_none()
+                && let Some(value) = inline_values.iter().find(|value| value.line == line)
+            {
+                let origin = egui::pos2(
+                    rect.left() + text_left + shifted(line, visible_chars) + 3.0 * char_width,
+                    y,
+                );
+                crate::debug_dialogs::paint_inline_value(&painter, origin, row_height, &value.text);
             }
             if let Some(row) = collapsed {
                 paint_collapsed_tail(
