@@ -685,15 +685,18 @@ impl IdeApp {
                 self.find_popup.open = false;
             } else if self.state.docs.popup.is_some() {
                 self.dispatch("language.closeQuickDoc", Value::Null);
-            } else if self.state.completion.is_some() {
+            } else if completion_open {
+                // Only a visible popup takes Escape; a hidden session must not
+                // swallow the key meant for the find bar or a tool window.
                 self.dispatch("completion.close", Value::Null);
             } else if self.state.signature.popup.is_some() {
                 self.dispatch("language.closeParameterInfo", Value::Null);
             } else if self.state.snippet.is_some() {
                 self.dispatch("snippet.exit", Value::Null);
-            } else if self.find.open
-                && (self.editor_focused(ctx) || ctx.memory(|m| m.has_focus(findbar::query_id())))
-            {
+            } else if self.find.open {
+                // One Escape closes the find bar from the query field or the
+                // editor. Do not test focus here: egui already surrendered the
+                // focused text field on this very Escape, so nothing is focused.
                 self.find.open = false;
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
             } else if self.state.tool_windows.visible(Anchor::Bottom).is_some()
