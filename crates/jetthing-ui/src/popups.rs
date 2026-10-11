@@ -38,6 +38,16 @@ pub enum Dialog {
     Delete {
         path: PathBuf,
     },
+    /// Refactor | Safe Delete: lists the remaining usages before deleting.
+    SafeDelete {
+        path: PathBuf,
+        usages: Vec<jetthing_core::project_view::Usage>,
+    },
+    /// Refactor | Move: the destination directory is typed.
+    Move {
+        path: PathBuf,
+        destination: String,
+    },
     GotoLine {
         input: String,
     },
@@ -66,6 +76,8 @@ impl Dialog {
             Dialog::NewClass { .. } => "newClass",
             Dialog::Rename { .. } => "rename",
             Dialog::Delete { .. } => "delete",
+            Dialog::SafeDelete { .. } => "safeDelete",
+            Dialog::Move { .. } => "move",
             Dialog::GotoLine { .. } => "gotoLine",
             Dialog::Recent { .. } => "recentFiles",
             Dialog::RecentLocations { .. } => "recentLocations",
@@ -389,6 +401,98 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 keep = false;
                 app.dispatch("project.delete", json!({"path": path}));
                 app.tree_selection = None;
+            }
+        }
+        Dialog::SafeDelete { path, usages } => {
+            let mut confirm = false;
+            let mut cancel =
+                ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            popup_frame(ctx, "dialog_safe_delete", 460.0, |ui| {
+                title(ui, "Safe Delete");
+                ui.label(format!("Delete \"{}\"?", path.display()));
+                if usages.is_empty() {
+                    ui.label(RichText::new("No usages found.").color(theme::TEXT_INFO));
+                } else {
+                    let count = usages.len();
+                    let more = if count >= jetthing_core::project_view::MAX_USAGES {
+                        "+"
+                    } else {
+                        ""
+                    };
+                    ui.label(
+                        RichText::new(format!("{count}{more} usage(s) of the name remain:"))
+                            .color(theme::WARNING),
+                    );
+                    egui::ScrollArea::vertical()
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            for usage in usages.iter() {
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{}:{}  {}",
+                                        usage.path.display(),
+                                        usage.line,
+                                        usage.text
+                                    ))
+                                    .monospace()
+                                    .color(theme::TEXT_SECONDARY),
+                                );
+                            }
+                        });
+                }
+                ui.add_space(10.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = if usages.is_empty() {
+                        "Delete"
+                    } else {
+                        "Delete Anyway"
+                    };
+                    let delete =
+                        egui::Button::new(RichText::new(label).color(egui::Color32::WHITE))
+                            .fill(theme::ACCENT);
+                    if ui.add(delete).clicked() {
+                        confirm = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+            if cancel {
+                keep = false;
+            } else if confirm {
+                keep = false;
+                app.dispatch("project.safeDelete", json!({"path": path, "force": true}));
+                app.tree_selection = None;
+            }
+        }
+        Dialog::Move { path, destination } => {
+            let mut submit = false;
+            let label = format!("Move {}", IdeApp::file_name(path));
+            popup_frame(ctx, "dialog_move", 400.0, |ui| {
+                title(ui, &label);
+                ui.label(RichText::new("To directory (project-relative):").color(theme::TEXT_INFO));
+                (submit, _) = name_field(ui, destination, focus);
+            });
+            if submit {
+                let target = destination.trim().trim_matches('/').to_owned();
+                let moved = app
+                    .commands
+                    .execute("project.cutPaths", &mut app.state, json!({"paths": [path]}))
+                    .and_then(|_| {
+                        app.commands.execute(
+                            "project.paste",
+                            &mut app.state,
+                            json!({"dir": target}),
+                        )
+                    });
+                match moved {
+                    Ok(result) => {
+                        keep = false;
+                        app.tree_selection = result["paths"][0].as_str().map(PathBuf::from);
+                    }
+                    Err(e) => error = Some(e.to_string()),
+                }
             }
         }
         Dialog::GotoLine { input } => {
