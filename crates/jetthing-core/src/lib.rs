@@ -226,6 +226,12 @@ impl Document {
 pub struct IdeState {
     pub project: Option<Project>,
     pub files: Vec<FileEntry>,
+    /// Bumped whenever [`IdeState::files`] is replaced; keys the tree-row cache.
+    pub(crate) files_generation: u64,
+    /// Bumped when the Gradle model changes; keys the tree-row cache.
+    pub(crate) model_generation: u64,
+    pub(crate) tree_cache: Option<project_view::TreeCache>,
+    pub(crate) problems_cache: Option<problems::ActiveProblemsCache>,
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
     /// Markdown editor layout per file (Editor / Split / Preview).
@@ -400,6 +406,7 @@ impl IdeState {
         self.lsp.set_project(None);
         self.close_diff();
         self.files.clear();
+        self.files_generation += 1;
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.tool_windows = ToolWindowLayout::default();
@@ -420,7 +427,7 @@ impl IdeState {
     }
 
     pub(crate) fn install_project(&mut self, project: Project) -> Result<(), String> {
-        self.files = project.entries(20_000);
+        self.set_files(project.entries(20_000));
         self.documents.clear();
         self.active_document = None;
         self.tabs = tabs::EditorTabs {

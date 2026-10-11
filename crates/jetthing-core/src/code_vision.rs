@@ -82,6 +82,9 @@ struct InlayEntry {
 #[derive(Debug, Default)]
 struct DocVision {
     revision: Option<u64>,
+    /// Revision `lenses` were built for: retries while the server is not ready
+    /// must not re-run the structure query and `git blame` of an unchanged text.
+    lenses_revision: Option<u64>,
     requested_at: Option<Instant>,
     lenses: Vec<LensEntry>,
     inlays: Vec<InlayEntry>,
@@ -266,45 +269,49 @@ impl IdeState {
         };
         let identifier = TextDocumentIdentifier { uri };
 
-        let structure = document.analysis.structure();
-        let mut declarations = Vec::new();
-        flatten(&structure, &mut declarations);
-        declarations.truncate(MAX_LENSES);
-        let blame = self.blame_document(index).ok();
-        let document = &self.documents[index];
-        let lenses: Vec<LensEntry> = declarations
-            .into_iter()
-            .filter_map(|item| {
-                let limit = document.text.char_to_byte(document.text.len_chars());
-                let start = document.text.byte_to_char(item.name_range.start.min(limit));
-                let (line, character) = document.text.lsp_position(start).ok()?;
-                let line_text = document.text.line(item.line)?;
-                let author = blame
-                    .as_ref()
-                    .and_then(|lines| lines.get(item.line))
-                    .map(|line| {
-                        if line.is_uncommitted() {
-                            "You".to_owned()
-                        } else {
-                            line.author.clone()
-                        }
-                    });
-                let line_start = document.text.line_to_char(item.line)?;
-                Some(LensEntry {
-                    line: item.line,
-                    column: start.saturating_sub(line_start),
-                    line_text: line_text.trim_end_matches(['\r', '\n']).to_owned(),
-                    position: (line, character),
-                    usages: vision
-                        .lenses
-                        .iter()
-                        .find(|old| old.line == item.line)
-                        .and_then(|old| old.usages),
-                    author,
+        if vision.lenses_revision != Some(revision) {
+            let structure = document.analysis.structure();
+            let mut declarations = Vec::new();
+            flatten(&structure, &mut declarations);
+            declarations.truncate(MAX_LENSES);
+            let blame = self.blame_document(index).ok();
+            let document = &self.documents[index];
+            let lenses: Vec<LensEntry> = declarations
+                .into_iter()
+                .filter_map(|item| {
+                    let limit = document.text.char_to_byte(document.text.len_chars());
+                    let start = document.text.byte_to_char(item.name_range.start.min(limit));
+                    let (line, character) = document.text.lsp_position(start).ok()?;
+                    let line_text = document.text.line(item.line)?;
+                    let author =
+                        blame
+                            .as_ref()
+                            .and_then(|lines| lines.get(item.line))
+                            .map(|line| {
+                                if line.is_uncommitted() {
+                                    "You".to_owned()
+                                } else {
+                                    line.author.clone()
+                                }
+                            });
+                    let line_start = document.text.line_to_char(item.line)?;
+                    Some(LensEntry {
+                        line: item.line,
+                        column: start.saturating_sub(line_start),
+                        line_text: line_text.trim_end_matches(['\r', '\n']).to_owned(),
+                        position: (line, character),
+                        usages: vision
+                            .lenses
+                            .iter()
+                            .find(|old| old.line == item.line)
+                            .and_then(|old| old.usages),
+                        author,
+                    })
                 })
-            })
-            .collect();
-        vision.lenses = lenses;
+                .collect();
+            vision.lenses = lenses;
+            vision.lenses_revision = Some(revision);
+        }
 
         if let Some((handle, _)) = vision.hints.take() {
             self.lsp.cancel_request(&handle);

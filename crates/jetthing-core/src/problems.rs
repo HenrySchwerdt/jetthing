@@ -109,7 +109,7 @@ pub struct ProblemIndex {
     files: Vec<FileProblems>,
     /// Files with errors and all of their ancestor directories.
     error_paths: BTreeSet<PathBuf>,
-    key: Option<(u64, Vec<(PathBuf, u64)>)>,
+    key: Option<u64>,
 }
 
 impl ProblemIndex {
@@ -274,7 +274,41 @@ pub fn build_index<'a>(
     }
 }
 
+/// Problems of the active document and the state they were computed for.
+pub(crate) struct ActiveProblemsCache {
+    key: (usize, PathBuf, u64, u64),
+    problems: std::sync::Arc<Vec<Problem>>,
+}
+
 impl IdeState {
+    /// [`IdeState::active_problems`], recomputed only when the document revision
+    /// or the diagnostics generation changed.
+    pub fn cached_active_problems(&mut self) -> std::sync::Arc<Vec<Problem>> {
+        let Some(index) = self.active_document else {
+            return Default::default();
+        };
+        let Some(document) = self.documents.get(index) else {
+            return Default::default();
+        };
+        let key = (
+            index,
+            document.path.clone(),
+            document.text.revision(),
+            self.lsp.diagnostics_generation(),
+        );
+        if let Some(cache) = &self.problems_cache
+            && cache.key == key
+        {
+            return cache.problems.clone();
+        }
+        let problems = std::sync::Arc::new(self.problems_for_document(index));
+        self.problems_cache = Some(ActiveProblemsCache {
+            key,
+            problems: problems.clone(),
+        });
+        problems
+    }
+
     /// All problems (including hints) of an open document, sorted by position.
     pub fn problems_for_document(&self, index: usize) -> Vec<Problem> {
         let (Some(document), Some(project)) = (self.documents.get(index), &self.project) else {
@@ -298,14 +332,17 @@ impl IdeState {
             self.problems = ProblemIndex::default();
             return;
         };
-        let key = (
-            self.lsp.diagnostics_generation(),
-            self.documents
-                .iter()
-                .map(|document| (document.path.clone(), document.text.revision()))
-                .collect(),
-        );
-        if self.problems.key.as_ref() == Some(&key) {
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            self.lsp.diagnostics_generation().hash(&mut hasher);
+            for document in &self.documents {
+                document.path.hash(&mut hasher);
+                document.text.revision().hash(&mut hasher);
+            }
+            hasher.finish()
+        };
+        if self.problems.key == Some(key) {
             return;
         }
         let root = project
@@ -454,6 +491,35 @@ mod tests {
 
     fn document(path: &str, text: &str) -> Document {
         Document::new(path.into(), text)
+    }
+
+    #[test]
+    fn active_problem_cache_follows_the_document_revision() {
+        let root =
+            std::env::temp_dir().join(format!("jetthing-problems-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("main.rs"), "fn main() { let = ; }\n").unwrap();
+        let mut state = IdeState::default();
+        state.open_project(&root).unwrap();
+        state.open_file(Path::new("main.rs")).unwrap();
+        let first = state.cached_active_problems();
+        assert!(!first.is_empty());
+        assert!(std::sync::Arc::ptr_eq(
+            &first,
+            &state.cached_active_problems()
+        ));
+        built_in_commands()
+            .execute(
+                "editor.insertText",
+                &mut state,
+                json!({"position": 0, "text": "// fixed\nfn ok() {}\n"}),
+            )
+            .unwrap();
+        let second = state.cached_active_problems();
+        assert!(!std::sync::Arc::ptr_eq(&first, &second));
+        assert_eq!(*second, state.active_problems());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

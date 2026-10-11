@@ -132,7 +132,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let Some(index) = app.state.active_document else {
                 return;
             };
-            let problems = app.state.active_problems();
+            let problems = app.state.cached_active_problems();
             let mut highlights = if app.find.open {
                 app.find.matches(&app.state.documents[index])
             } else {
@@ -167,7 +167,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let row_height =
                 theme::editor_row_height(ui.ctx(), &theme::editor_font(ui.style()), ROW_HEIGHT);
             if let Some((line, column)) =
-                problems_ui::error_stripe(ui, stripe_rect, &problems, line_count, row_height)
+                problems_ui::error_stripe(ui, stripe_rect, &problems[..], line_count, row_height)
             {
                 move_caret_to(app, line, column);
                 ui.memory_mut(|memory| memory.request_focus(editor_id()));
@@ -181,7 +181,15 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 .execution_point()
                 .filter(|point| point.path == path)
                 .map(|point| point.line);
-            let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
+            // The menu model is only needed while the popup is open (or opening).
+            let menu_wanted = app.editor_menu.is_none()
+                || ui.input(|input| input.pointer.secondary_clicked())
+                || egui::Popup::is_any_open(ui.ctx());
+            if menu_wanted {
+                app.editor_menu =
+                    Some(app.context_menu_model(&crate::context_menus::Target::Editor));
+            }
+            let context_model = app.editor_menu.take().expect("built above");
             let changes = app.state.document_changes(index).to_vec();
             let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
             let (lenses, inlays) = app.state.code_vision(index);
@@ -202,7 +210,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let surface = editor_surface(
                 &mut text_ui,
                 doc,
-                &problems,
+                &problems[..],
                 &highlights,
                 rename,
                 &context_model,
@@ -218,7 +226,8 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 navigable,
                 editor_scroll,
             );
-            let counts = jetthing_core::ProblemCounts::of(&problems);
+            app.editor_menu = Some(context_model);
+            let counts = jetthing_core::ProblemCounts::of(&problems[..]);
             let widget_anchor = if md_layout == Some(jetthing_markdown::Layout::EditorOnly) {
                 text_rect.right_top() - vec2(MARKDOWN_ISLAND_WIDTH, 0.0)
             } else {

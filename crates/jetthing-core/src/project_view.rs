@@ -10,7 +10,9 @@ use jetthing_project::FileEntry;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 /// Project-relative directory holding scratch files.
 pub const SCRATCH_DIR: &str = ".jetthing/scratches";
@@ -184,6 +186,12 @@ pub struct FileClipboard {
     pub cut: bool,
 }
 
+/// Cached result of [`IdeState::tree_rows`] and the key it was built for.
+pub(crate) struct TreeCache {
+    key: u64,
+    rows: Arc<Vec<TreeRow>>,
+}
+
 /// Project view state that is not part of the file list.
 #[derive(Debug, Clone)]
 pub struct ProjectView {
@@ -277,6 +285,56 @@ impl IdeState {
         }
         marks.extend(self.project_view.marks.clone());
         marks
+    }
+
+    /// Replaces the project file list and invalidates the cached tree rows.
+    pub(crate) fn set_files(&mut self, files: Vec<FileEntry>) {
+        self.files = files;
+        self.files_generation += 1;
+    }
+
+    /// Fingerprint of everything [`IdeState::tree_rows`] reads other than the
+    /// (large) file list, which is covered by its generation counter.
+    fn tree_key(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (self.files_generation, self.model_generation).hash(&mut hasher);
+        self.files.len().hash(&mut hasher);
+        self.project
+            .as_ref()
+            .map(|project| project.root())
+            .hash(&mut hasher);
+        self.expanded_dirs.hash(&mut hasher);
+        self.project_view.compact_packages.hash(&mut hasher);
+        self.project_view.expanded_groups.hash(&mut hasher);
+        for (path, mark) in &self.project_view.marks {
+            path.hash(&mut hasher);
+            std::mem::discriminant(mark).hash(&mut hasher);
+        }
+        if self
+            .project_view
+            .expanded_groups
+            .contains(GROUP_SCRATCHES_ROOT)
+            && self.project_view.expanded_groups.contains(GROUP_SCRATCHES)
+        {
+            self.scratch_files().hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// [`IdeState::tree_rows`], rebuilt only when its inputs changed.
+    pub fn cached_tree_rows(&mut self) -> Arc<Vec<TreeRow>> {
+        let key = self.tree_key();
+        if let Some(cache) = &self.tree_cache
+            && cache.key == key
+        {
+            return cache.rows.clone();
+        }
+        let rows = Arc::new(self.tree_rows());
+        self.tree_cache = Some(TreeCache {
+            key,
+            rows: rows.clone(),
+        });
+        rows
     }
 
     /// Rows of the Project tree below the root row: files and directories (with
@@ -1022,6 +1080,31 @@ mod tests {
         state.toggle_directory(Path::new("target")).unwrap();
         let rows = state.tree_rows();
         assert!(rows.iter().any(|row| row.label == "debug" && row.excluded));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tree_row_cache_reuses_rows_until_an_input_changes() {
+        let (root, mut state) = project("tree-cache", &["a/f.txt", "b/g.txt"]);
+        let first = state.cached_tree_rows();
+        assert!(Arc::ptr_eq(&first, &state.cached_tree_rows()));
+        assert_eq!(*first, state.tree_rows());
+        // Expanding a directory changes the rows.
+        state.toggle_directory(Path::new("a")).unwrap();
+        let expanded = state.cached_tree_rows();
+        assert!(!Arc::ptr_eq(&first, &expanded));
+        assert_eq!(*expanded, state.tree_rows());
+        assert!(Arc::ptr_eq(&expanded, &state.cached_tree_rows()));
+        // A new file list bumps the generation even when the length is equal.
+        let mut files = state.files.clone();
+        files.reverse();
+        state.set_files(files);
+        let reloaded = state.cached_tree_rows();
+        assert!(!Arc::ptr_eq(&expanded, &reloaded));
+        assert_eq!(*reloaded, state.tree_rows());
+        // Marks and compaction are part of the key.
+        state.project_view.compact_packages = !state.project_view.compact_packages;
+        assert!(!Arc::ptr_eq(&reloaded, &state.cached_tree_rows()));
         std::fs::remove_dir_all(root).unwrap();
     }
 

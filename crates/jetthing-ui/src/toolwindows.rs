@@ -157,7 +157,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     let colors = git_colors(app);
     app.state.refresh_problems();
     let root_has_errors = app.state.problems.counts().errors > 0;
-    let rows = app.state.tree_rows();
+    let rows = app.state.cached_tree_rows();
     let mut toggle = None;
     let mut toggle_group: Option<&'static str> = None;
     let mut open = None;
