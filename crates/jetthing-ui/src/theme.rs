@@ -50,7 +50,6 @@ pub mod editor {
     pub const BREAKPOINT_LINE: Token = t::EDITOR_BREAKPOINT_LINE;
     pub const EXECUTION_LINE: Token = t::EDITOR_EXECUTION_LINE;
     pub const INLINE_VALUE: Token = t::EDITOR_INLINE_VALUE;
-    pub const INLINE_VALUE_BACKGROUND: Token = t::EDITOR_INLINE_VALUE_BACKGROUND;
     pub const WEAK_WARNING_EFFECT: Token = t::EDITOR_WEAK_WARNING_EFFECT;
     pub const ERROR_STRIPE: Token = t::EDITOR_ERROR_STRIPE;
     pub const WARNING_STRIPE: Token = t::EDITOR_WARNING_STRIPE;

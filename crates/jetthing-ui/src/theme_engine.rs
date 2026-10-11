@@ -174,9 +174,7 @@ pub mod tokens {
         /// `EXECUTIONPOINT_ATTRIBUTES` background (suspended line).
         EDITOR_EXECUTION_LINE = ["attr:EXECUTIONPOINT_ATTRIBUTES.BACKGROUND"] or 0x2A5091;
         /// `DEBUGGER_INLINED_VALUES` foreground (inline variable values while suspended).
-        EDITOR_INLINE_VALUE = ["attr:DEBUGGER_INLINED_VALUES.FOREGROUND"] or 0x9DA3B4;
-        /// `DEBUGGER_INLINED_VALUES` background.
-        EDITOR_INLINE_VALUE_BACKGROUND = ["attr:DEBUGGER_INLINED_VALUES.BACKGROUND"] or 0x2B3040;
+        EDITOR_INLINE_VALUE = ["attr:DEBUGGER_INLINED_VALUES.FOREGROUND"] or 0x666D75;
         /// `INFO_ATTRIBUTES` (weak warning) effect color.
         EDITOR_WEAK_WARNING_EFFECT = ["attr:INFO_ATTRIBUTES.EFFECT_COLOR", "attr:WARNING_ATTRIBUTES.EFFECT_COLOR"] or 0x857042;
         /// `ERRORS_ATTRIBUTES` error-stripe color.

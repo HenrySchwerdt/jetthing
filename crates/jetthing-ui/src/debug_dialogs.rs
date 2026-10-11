@@ -38,11 +38,6 @@ pub fn paint_inline_value(
         egui::pos2(origin.x, origin.y + (row_height - galley.size().y) / 2.0),
         galley.size(),
     );
-    painter.rect_filled(
-        rect.expand2(egui::vec2(4.0, 0.0)),
-        3.0,
-        theme::editor::INLINE_VALUE_BACKGROUND,
-    );
     painter.galley(rect.min, galley, Color32::WHITE);
 }
 
@@ -101,7 +96,7 @@ fn breakpoint_properties(app: &mut IdeApp, ctx: &egui::Context) {
                 ui.add(
                     egui::TextEdit::singleline(&mut form.log_message)
                         .id(egui::Id::new("breakpoint_log_message"))
-                        .hint_text("Logpoint: print instead of suspending, {expr} interpolates")
+                        .hint_text("Logpoint: print, {expr} interpolates")
                         .desired_width(320.0),
                 );
                 ui.end_row();
