@@ -253,7 +253,27 @@ fn command_item(app: &mut IdeApp, ui: &mut egui::Ui, spec: &CommandSpec) {
     let enabled = app.commands.is_enabled(&spec.id, &app.state);
     let button = egui::Button::new(&spec.label).shortcut_text(app.command_shortcut(spec));
     if ui.add_enabled(enabled, button).clicked() {
-        app.dispatch(&spec.id, Value::Null);
+        // Stash and unstash gather options in the Git dialogs.
+        match spec.id.as_str() {
+            "git.stash" => {
+                app.git_dialog = Some(crate::branches_popup::GitDialog::Stash {
+                    message: String::new(),
+                    keep_index: false,
+                    include_untracked: false,
+                    error: None,
+                });
+                app.dialog_focus = true;
+            }
+            "git.stash.pop" => {
+                app.git_dialog = Some(crate::branches_popup::GitDialog::Unstash {
+                    selected: 0,
+                    pop: true,
+                    error: None,
+                });
+                app.dialog_focus = true;
+            }
+            _ => app.dispatch(&spec.id, Value::Null),
+        }
         ui.close();
     }
 }

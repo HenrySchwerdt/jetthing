@@ -5,9 +5,11 @@ use crate::icons::{self, Icon};
 use crate::widgets::{self, list_row, row_text, tool_window_header};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, RichText, Sense, Stroke, pos2, vec2};
+use jetthing_core::DateRange;
 use jetthing_core::ToolWindow;
-use jetthing_git::{ChangeKind, CommitInfo, GraphEdge, GraphRow};
+use jetthing_git::{ChangeKind, CommitFile, CommitInfo, GraphEdge, GraphRow};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const BRANCHES_WIDTH: f32 = 240.0;
@@ -57,16 +59,16 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     if !app.state.git_log.loaded {
         app.dispatch("git.log.refresh", Value::Null);
     }
+    tab_strip(ui);
     let area = ui.available_rect_before_wrap();
     ui.allocate_rect(area, Sense::hover());
     let branches_rect = Rect::from_min_size(area.min, vec2(BRANCHES_WIDTH, area.height()));
-    let details_rect = Rect::from_min_max(
-        pos2(
-            (area.right() - DETAILS_WIDTH).max(branches_rect.right() + 200.0),
-            area.top(),
-        ),
-        area.max,
-    );
+    let details_left = if app.state.git_log.hide_details {
+        area.right()
+    } else {
+        (area.right() - DETAILS_WIDTH).max(branches_rect.right() + 200.0)
+    };
+    let details_rect = Rect::from_min_max(pos2(details_left, area.top()), area.max);
     let commits_rect = Rect::from_min_max(
         pos2(branches_rect.right(), area.top()),
         pos2(details_rect.left(), area.bottom()),
@@ -83,12 +85,41 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     ui.scope_builder(egui::UiBuilder::new().max_rect(commits_rect), |ui| {
         commits_pane(app, ui, &mut actions);
     });
-    ui.scope_builder(egui::UiBuilder::new().max_rect(details_rect), |ui| {
-        details_pane(app, ui, &mut actions);
-    });
+    if !app.state.git_log.hide_details {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(details_rect), |ui| {
+            details_pane(app, ui, &mut actions);
+        });
+    }
     for (id, params) in actions {
         app.dispatch(id, params);
     }
+}
+
+/// The `Log` tab (file history opens in this tab; further tabs are not offered).
+fn tab_strip(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
+    let galley = ui.painter().layout_no_wrap(
+        "Log".to_owned(),
+        theme::semibold(theme::UI_FONT_SIZE),
+        *theme::TEXT_BRIGHT,
+    );
+    let left = rect.left() + 12.0;
+    let width = galley.size().x;
+    ui.painter().galley(
+        pos2(left, rect.center().y - galley.size().y / 2.0),
+        galley,
+        *theme::TEXT_BRIGHT,
+    );
+    ui.painter().hline(
+        left..=left + width,
+        rect.bottom() - 1.0,
+        Stroke::new(2.0_f32, theme::ACCENT),
+    );
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        Stroke::new(1.0_f32, theme::POPUP_BORDER),
+    );
 }
 
 fn branches_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str, Value)>) {
@@ -199,37 +230,30 @@ fn group(ui: &mut egui::Ui, title: &str) {
 fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str, Value)>) {
     let log = &app.state.git_log;
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.add_space(8.0);
         let mut filter = log.filter.clone();
-        let response = widgets::search_field(ui, filter_id(), &mut filter, "Text or hash", 180.0);
-        if response.changed() {
-            actions.push(("git.log.filterText", json!({ "text": filter })));
+        let response = widgets::search_field(ui, filter_id(), &mut filter, "Text or hash", 160.0);
+        let (mut regex, mut case) = (log.regex, log.match_case);
+        let regex_changed = toggle(ui, &mut regex, ".*", "Regular expression");
+        let case_changed = toggle(ui, &mut case, "Cc", "Match case");
+        if response.changed() || regex_changed || case_changed {
+            actions.push((
+                "git.log.filterText",
+                json!({ "text": filter, "regex": regex, "matchCase": case }),
+            ));
         }
-        ui.add_space(8.0);
-        if let Some(path) = &log.path {
-            let name = path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            if ui
-                .button(format!("Path: {name}  ×"))
-                .on_hover_text(format!(
-                    "History of {}; click to show all files",
-                    path.display()
-                ))
-                .clicked()
-            {
-                actions.push(("git.log.clearPath", Value::Null));
-            }
+        if log.regex_error() {
+            ui.label(RichText::new("Invalid regex").color(theme::ERROR));
         }
+        ui.add_space(4.0);
         let label = match &log.branch {
             Some(branch) => format!("Branch: {branch}"),
             None => "Branch".to_owned(),
         };
         egui::ComboBox::from_id_salt("git_log_branch_filter")
             .selected_text(label)
-            .width(140.0)
+            .width(120.0)
             .show_ui(ui, |ui| {
                 if ui.selectable_label(log.branch.is_none(), "All").clicked() {
                     actions.push(("git.log.filterBranch", json!({})));
@@ -249,6 +273,106 @@ fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
                     }
                 }
             });
+        egui::ComboBox::from_id_salt("git_log_user_filter")
+            .selected_text(match &log.user {
+                Some(user) => format!("User: {user}"),
+                None => "User".to_owned(),
+            })
+            .width(100.0)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(log.user.is_none(), "All").clicked() {
+                    actions.push(("git.log.filterUser", json!({})));
+                }
+                for user in log.users() {
+                    if ui
+                        .selectable_label(log.user.as_deref() == Some(user.as_str()), &user)
+                        .clicked()
+                    {
+                        actions.push(("git.log.filterUser", json!({ "user": user })));
+                    }
+                }
+            });
+        egui::ComboBox::from_id_salt("git_log_date_filter")
+            .selected_text(log.date.label())
+            .width(100.0)
+            .show_ui(ui, |ui| {
+                for range in DateRange::ALL {
+                    let label = if range == DateRange::Any {
+                        "Any date"
+                    } else {
+                        range.label()
+                    };
+                    if ui.selectable_label(log.date == range, label).clicked() {
+                        actions.push(("git.log.filterDate", json!({ "range": range.id() })));
+                    }
+                }
+            });
+        // Paths: a repository-relative file or directory.
+        let path_id = egui::Id::new("git_log_path_filter");
+        let mut path: String = ui.data_mut(|data| {
+            data.get_temp(path_id).unwrap_or_else(|| {
+                log.path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
+            })
+        });
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut path)
+                .id(path_id.with("edit"))
+                .hint_text("Paths")
+                .desired_width(90.0),
+        );
+        ui.data_mut(|data| data.insert_temp(path_id, path.clone()));
+        if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+            actions.push(("git.log.filterPath", json!({ "path": path })));
+        }
+        if let Some(file_path) = &log.path {
+            let name = file_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if ui
+                .button(format!("Path: {name}  ×"))
+                .on_hover_text(format!(
+                    "History of {}; click to show all files",
+                    file_path.display()
+                ))
+                .clicked()
+            {
+                ui.data_mut(|data| data.insert_temp(path_id, String::new()));
+                actions.push(("git.log.clearPath", Value::Null));
+            }
+        }
+        ui.add_space(8.0);
+        if icons::button(ui, Icon::Refresh, "Refresh").clicked() {
+            actions.push(("git.log.refresh", Value::Null));
+        }
+        let can_pick =
+            log.selected.is_some() && app.commands.is_enabled("git.cherryPick", &app.state);
+        if ui
+            .add_enabled_ui(can_pick, |ui| {
+                icons::button(ui, Icon::Rollback, "Cherry-Pick the selected commit")
+            })
+            .inner
+            .clicked()
+            && let Some(hash) = &log.selected
+        {
+            actions.push(("git.cherryPick", json!({ "commit": hash })));
+        }
+        if icons::button(
+            ui,
+            Icon::Diff,
+            if log.hide_details {
+                "Show Details"
+            } else {
+                "Hide Details"
+            },
+        )
+        .clicked()
+        {
+            actions.push(("git.log.toggleDetails", Value::Null));
+        }
     });
     ui.add_space(4.0);
     if let Some(error) = &log.error {
@@ -308,6 +432,23 @@ fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
                 }
             }
         });
+}
+
+/// A small text toggle button; returns whether it was clicked.
+fn toggle(ui: &mut egui::Ui, on: &mut bool, label: &str, tooltip: &str) -> bool {
+    let text = RichText::new(label).color(if *on {
+        *theme::TEXT_BRIGHT
+    } else {
+        *theme::TEXT_SECONDARY
+    });
+    let clicked = ui
+        .add(egui::Button::selectable(*on, text))
+        .on_hover_text(tooltip)
+        .clicked();
+    if clicked {
+        *on = !*on;
+    }
+    clicked
 }
 
 fn row_width(row: &GraphRow) -> usize {
@@ -434,48 +575,16 @@ fn details_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.add_space(4.0);
+            let mut root = FileTree::default();
             for file in &details.files {
-                let (rect, response) = list_row(ui, false);
-                let name = IdeApp::file_name(&file.path);
-                let mut x = rect.left() + 12.0;
-                icons::paint(
-                    ui.painter(),
-                    Rect::from_min_size(pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-                    Icon::for_file(&name),
-                    icons::ICON,
-                );
-                x += 22.0;
-                x = row_text(
-                    ui,
-                    rect,
-                    x,
-                    &name,
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    crate::toolwindows::change_color(Some(file.kind)),
-                );
-                if let Some(parent) = file.path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                    row_text(
-                        ui,
-                        rect,
-                        x + 8.0,
-                        &parent.display().to_string(),
-                        egui::FontId::proportional(theme::UI_FONT_SIZE),
-                        theme::TEXT_INFO,
-                    );
-                }
-                let response = response.on_hover_text(match file.kind {
-                    ChangeKind::Added => "Added",
-                    ChangeKind::Deleted => "Deleted",
-                    ChangeKind::Renamed => "Renamed",
-                    _ => "Modified",
-                });
-                if response.double_clicked() {
-                    actions.push((
-                        "git.log.showFileDiff",
-                        json!({ "hash": details.hash, "path": file.path }),
-                    ));
-                }
+                root.insert(&file.path, file);
             }
+            let total = details.files.len();
+            ui.label(
+                RichText::new(widgets::pluralize(total, "file", "files"))
+                    .color(theme::TEXT_SECONDARY),
+            );
+            tree_rows(ui, &root, 0, "", &details.hash, actions);
         });
     ui.painter().hline(
         ui.max_rect().x_range(),
@@ -528,6 +637,105 @@ fn details_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
                     }
                 });
         });
+}
+
+/// Changed files grouped by directory.
+#[derive(Default)]
+struct FileTree<'a> {
+    dirs: BTreeMap<String, FileTree<'a>>,
+    files: Vec<&'a CommitFile>,
+}
+
+impl<'a> FileTree<'a> {
+    fn insert(&mut self, path: &std::path::Path, file: &'a CommitFile) {
+        let parts: Vec<String> = path
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let mut node = self;
+        for dir in &parts[..parts.len().saturating_sub(1)] {
+            node = node.dirs.entry(dir.clone()).or_default();
+        }
+        node.files.push(file);
+    }
+
+    fn count(&self) -> usize {
+        self.files.len() + self.dirs.values().map(FileTree::count).sum::<usize>()
+    }
+}
+
+fn tree_rows(
+    ui: &mut egui::Ui,
+    node: &FileTree,
+    depth: usize,
+    prefix: &str,
+    hash: &str,
+    actions: &mut Vec<(&'static str, Value)>,
+) {
+    let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
+    for (name, child) in &node.dirs {
+        let key = format!("{prefix}{name}/");
+        let id = egui::Id::new(("git_log_dir_collapsed", &key));
+        let collapsed: bool = ui.data(|data| data.get_temp(id)).unwrap_or(false);
+        let (rect, response) = list_row(ui, false);
+        let x = rect.left() + 8.0 + depth as f32 * 14.0;
+        icons::paint(
+            ui.painter(),
+            Rect::from_min_size(pos2(x, rect.center().y - 7.0), vec2(14.0, 14.0)),
+            if collapsed {
+                Icon::ChevronRight
+            } else {
+                Icon::ChevronDown
+            },
+            theme::TEXT_SECONDARY,
+        );
+        let end = row_text(ui, rect, x + 20.0, name, font.clone(), theme::TEXT);
+        row_text(
+            ui,
+            rect,
+            end + 8.0,
+            &widgets::pluralize(child.count(), "file", "files"),
+            font.clone(),
+            theme::TEXT_INFO,
+        );
+        if response.clicked() {
+            ui.data_mut(|data| data.insert_temp(id, !collapsed));
+        }
+        if !collapsed {
+            tree_rows(ui, child, depth + 1, &key, hash, actions);
+        }
+    }
+    for file in &node.files {
+        let (rect, response) = list_row(ui, false);
+        let name = IdeApp::file_name(&file.path);
+        let x = rect.left() + 8.0 + depth as f32 * 14.0 + 20.0;
+        icons::paint(
+            ui.painter(),
+            Rect::from_min_size(pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
+            Icon::for_file(&name),
+            icons::ICON,
+        );
+        row_text(
+            ui,
+            rect,
+            x + 22.0,
+            &name,
+            font.clone(),
+            crate::toolwindows::change_color(Some(file.kind)),
+        );
+        let response = response.on_hover_text(match file.kind {
+            ChangeKind::Added => "Added",
+            ChangeKind::Deleted => "Deleted",
+            ChangeKind::Renamed => "Renamed",
+            _ => "Modified",
+        });
+        if response.double_clicked() {
+            actions.push((
+                "git.log.showFileDiff",
+                json!({ "hash": hash, "path": file.path }),
+            ));
+        }
+    }
 }
 
 /// "just now", "15 minutes ago", "3 hours ago", "Yesterday", else a date.

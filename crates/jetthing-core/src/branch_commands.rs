@@ -221,6 +221,25 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     registry
         .register(Command::new(
             spec(
+                "git.cherryPick",
+                "Cherry-Pick",
+                "Git",
+                None,
+                r#"{"commit":"string"}"#,
+            ),
+            has_git,
+            move |state: &mut IdeState, params| {
+                let commit = string_param(&params, "commit")?;
+                let message = state
+                    .run_git_operation(|root| jetthing_git::cherry_pick(root, &commit))
+                    .map_err(CommandError::Failed)?;
+                ok(message)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
                 "git.abortOperation",
                 "Abort Merge / Rebase",
                 "Git",

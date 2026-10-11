@@ -102,7 +102,7 @@ pub use toolchain_commands::ToolchainState;
 mod worktree_commands;
 pub use branch_commands::abort_label;
 pub use folds::{CollapsedFold, FoldState};
-pub use git_log::GitLogState;
+pub use git_log::{DateRange, GitLogState};
 pub use line_changes::hunk_at_line;
 pub use toolwindow::{
     Anchor, BOTTOM_DEFAULT_HEIGHT, BOTTOM_MIN_HEIGHT, EDITOR_MIN_HEIGHT, ToolWindow,
@@ -111,7 +111,7 @@ pub use toolwindow::{
 pub use update_commands::{
     CURRENT_VERSION, UpdateState, installable_executable as update_installable,
 };
-pub use vcs::{DiffTab, DiffViewer, RepaintHook};
+pub use vcs::{DiffHighlight, DiffTab, DiffViewer, RepaintHook};
 pub use workspace_edit::EditSummary;
 
 #[derive(Debug, Clone)]
@@ -970,13 +970,26 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Stage File",
                 "Git",
                 None,
-                r#"{"path":"string"}"#,
+                r#"{"path":"string","hunks":"[usize]?"}"#,
             ),
             |state: &IdeState| state.git.is_some(),
             |state: &mut IdeState, params| {
-                state
-                    .stage_path(Path::new(&string_param(&params, "path")?))
-                    .map_err(CommandError::Failed)?;
+                let path = string_param(&params, "path")?;
+                // With `hunks`, only those chunks of the open diff are staged.
+                match params.get("hunks").and_then(Value::as_array) {
+                    Some(hunks) => {
+                        let hunks: Vec<usize> = hunks
+                            .iter()
+                            .filter_map(|hunk| hunk.as_u64().map(|hunk| hunk as usize))
+                            .collect();
+                        state
+                            .stage_hunks(Path::new(&path), &hunks)
+                            .map_err(CommandError::Failed)?;
+                    }
+                    None => state
+                        .stage_path(Path::new(&path))
+                        .map_err(CommandError::Failed)?,
+                }
                 Ok(Value::Null)
             },
         ))

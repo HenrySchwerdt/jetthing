@@ -5,8 +5,8 @@
 use crate::icons::{self, Icon};
 use crate::{IdeApp, editor, theme};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, pos2, vec2};
-use jetthing_core::{DiffTab, DiffViewer};
-use jetthing_git::{Hunk, HunkKind, LineRange};
+use jetthing_core::{DiffHighlight, DiffTab, DiffViewer};
+use jetthing_git::{Hunk, HunkKind, LineRange, WhitespaceMode};
 use jetthing_language::LanguageAnalysis;
 use serde_json::{Value, json};
 
@@ -70,7 +70,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     let reveal = tab.reveal;
     let scroll_id = egui::Id::new(("diff_scroll", &tab.path, tab.viewer.id()));
     match tab.viewer {
-        DiffViewer::SideBySide => side_by_side(ui, tab, scroll_id, reveal),
+        DiffViewer::SideBySide => side_by_side(ui, tab, scroll_id, reveal, &mut actions),
         DiffViewer::Unified => unified(ui, tab, scroll_id, reveal),
     }
     if let Some(tab) = app.state.diff.as_mut() {
@@ -140,6 +140,50 @@ fn toolbar(ui: &mut egui::Ui, tab: &DiffTab, actions: &mut Vec<(&'static str, Va
     if viewer != tab.viewer {
         actions.push(("diff.setViewer", json!({"viewer": viewer.id()})));
     }
+    x += 154.0;
+    let whitespace = combo(
+        ui,
+        bar,
+        &mut x,
+        150.0,
+        "diff_whitespace",
+        tab.whitespace.label(),
+        WhitespaceMode::ALL.map(|mode| (mode.id(), mode.label())),
+        tab.whitespace.id(),
+    );
+    if let Some(mode) = whitespace {
+        actions.push(("diff.setWhitespace", json!({ "mode": mode })));
+    }
+    let highlight = combo(
+        ui,
+        bar,
+        &mut x,
+        130.0,
+        "diff_highlight",
+        tab.highlight.label(),
+        DiffHighlight::ALL.map(|mode| (mode.id(), mode.label())),
+        tab.highlight.id(),
+    );
+    if let Some(mode) = highlight {
+        actions.push(("diff.setHighlight", json!({ "mode": mode })));
+    }
+    if tab.new_revision.is_none() && !tab.selected.is_empty() {
+        let rect = Rect::from_min_size(pos2(x, bar.center().y - 11.0), vec2(150.0, 22.0));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+        let label = format!(
+            "Stage {} chunk{}",
+            tab.selected.len(),
+            if tab.selected.len() == 1 { "" } else { "s" }
+        );
+        if child
+            .button(label)
+            .on_hover_text("Stage the ticked chunks only")
+            .clicked()
+        {
+            let hunks: Vec<usize> = tab.selected.iter().copied().collect();
+            actions.push(("git.stage", json!({ "path": tab.path, "hunks": hunks })));
+        }
+    }
     let count = diff.hunks.len();
     let summary = match count {
         0 => "No differences".to_owned(),
@@ -158,6 +202,51 @@ fn toolbar(ui: &mut egui::Ui, tab: &DiffTab, actions: &mut Vec<(&'static str, Va
         bar.bottom() - 0.5,
         Stroke::new(1.0_f32, colors::DIVIDER),
     );
+}
+
+/// A toolbar dropdown at `*x`; returns the id of a newly chosen option.
+#[allow(clippy::too_many_arguments)]
+fn combo(
+    ui: &mut egui::Ui,
+    bar: Rect,
+    x: &mut f32,
+    width: f32,
+    salt: &str,
+    selected: &str,
+    options: impl IntoIterator<Item = (&'static str, &'static str)>,
+    current: &str,
+) -> Option<String> {
+    let rect = Rect::from_min_size(pos2(*x, bar.center().y - 12.0), vec2(width, 24.0));
+    *x += width + 6.0;
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    let mut chosen = None;
+    egui::ComboBox::from_id_salt(salt)
+        .selected_text(selected)
+        .width(width - 4.0)
+        .show_ui(&mut child, |ui| {
+            for (id, label) in options {
+                if ui.selectable_label(id == current, label).clicked() {
+                    chosen = Some(id.to_owned());
+                }
+            }
+        });
+    chosen
+}
+
+/// A small padlock: the read-only marker of the left header.
+fn paint_lock(painter: &egui::Painter, center: Pos2, color: Color32) {
+    let body = Rect::from_center_size(center + vec2(0.0, 2.0), vec2(9.0, 7.0));
+    painter.rect_filled(body, 1.5, color);
+    let shackle = [
+        pos2(center.x - 3.0, body.top()),
+        pos2(center.x - 3.0, body.top() - 3.0),
+        pos2(center.x + 3.0, body.top() - 3.0),
+        pos2(center.x + 3.0, body.top()),
+    ];
+    painter.add(egui::Shape::line(
+        shackle.to_vec(),
+        Stroke::new(1.3_f32, color),
+    ));
 }
 
 /// Byte offset at which each line starts.
@@ -315,6 +404,18 @@ fn header(painter: &egui::Painter, rect: Rect, text: &str, icon: Option<Icon>) {
     );
 }
 
+fn paint_checkbox(painter: &egui::Painter, rect: Rect, checked: bool) {
+    painter.rect_stroke(
+        rect,
+        2.0,
+        Stroke::new(1.0_f32, *theme::TEXT_SECONDARY),
+        egui::StrokeKind::Inside,
+    );
+    if checked {
+        painter.rect_filled(rect.shrink(2.5), 1.0, *theme::TEXT_BRIGHT);
+    }
+}
+
 fn base_label(tab: &DiffTab) -> String {
     let path = tab.diff.path.display();
     match &tab.diff.base_revision {
@@ -330,7 +431,13 @@ fn new_label(tab: &DiffTab) -> String {
         .unwrap_or_else(|| "Current version".to_owned())
 }
 
-fn side_by_side(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: Option<usize>) {
+fn side_by_side(
+    ui: &mut egui::Ui,
+    tab: &DiffTab,
+    scroll_id: egui::Id,
+    reveal: Option<usize>,
+    actions: &mut Vec<(&'static str, Value)>,
+) {
     let diff = &tab.diff;
     let old = Side::new(&diff.old_text, &tab.old_analysis);
     let new = Side::new(&diff.new_text, &tab.new_analysis);
@@ -360,15 +467,52 @@ fn side_by_side(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: O
         &base_label(tab),
         Some(Icon::Commit),
     );
-    header(
+    // The base side is read-only.
+    let left_header = Rect::from_min_max(area.min, pos2(gutter_left, left_pane.top()));
+    paint_lock(
         &painter,
-        Rect::from_min_max(
-            pos2(right_pane.left(), area.top()),
-            pos2(area.right(), left_pane.top()),
-        ),
-        &new_label(tab),
-        None,
+        pos2(left_header.right() - 12.0, left_header.center().y),
+        *theme::TEXT_DISABLED,
     );
+    let right_header = Rect::from_min_max(
+        pos2(right_pane.left(), area.top()),
+        pos2(area.right(), left_pane.top()),
+    );
+    if tab.new_revision.is_none() && !diff.hunks.is_empty() {
+        // "Current version" ticks every chunk for partial staging.
+        let all = tab.selected.len() == diff.hunks.len();
+        let box_rect = Rect::from_center_size(
+            pos2(right_header.left() + 8.0, right_header.center().y),
+            vec2(12.0, 12.0),
+        );
+        let response = ui
+            .interact(
+                Rect::from_min_max(
+                    pos2(box_rect.left() - 2.0, right_header.top()),
+                    pos2(box_rect.left() + 130.0, right_header.bottom()),
+                ),
+                ui.id().with("diff_select_all"),
+                Sense::click(),
+            )
+            .on_hover_text("Tick every chunk for staging");
+        paint_checkbox(&painter, box_rect, all);
+        painter.text(
+            pos2(box_rect.right() + 6.0, right_header.center().y),
+            egui::Align2::LEFT_CENTER,
+            new_label(tab),
+            egui::FontId::proportional(theme::UI_FONT_SIZE),
+            *theme::TEXT_SECONDARY,
+        );
+        if response.clicked() {
+            for index in 0..diff.hunks.len() {
+                if tab.selected.contains(&index) == all {
+                    actions.push(("diff.toggleChunk", json!({ "index": index })));
+                }
+            }
+        }
+    } else {
+        header(&painter, right_header, &new_label(tab), None);
+    }
     painter.hline(
         area.x_range(),
         left_pane.top() - 0.5,
@@ -408,7 +552,11 @@ fn side_by_side(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: O
     // Hunk backgrounds and connectors.
     for (index, hunk) in diff.hunks.iter().enumerate() {
         let kind = hunk.kind();
-        let fill = hunk_fill(kind);
+        let fill = if tab.highlight == DiffHighlight::None {
+            Color32::TRANSPARENT
+        } else {
+            hunk_fill(kind)
+        };
         let (o1, o2) = (y_old(hunk.old.start as f32), y_old(hunk.old.end as f32));
         let (n1, n2) = (y_new(hunk.new.start as f32), y_new(hunk.new.end as f32));
         if o2 < body.top() && n2 < body.top() || o1 > body.bottom() && n1 > body.bottom() {
@@ -440,6 +588,51 @@ fn side_by_side(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: O
             pos2(connector_left, o2.max(o1 + 1.0)),
         ];
         body_painter.add(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
+    }
+    // Per-chunk controls: `>>` copies the chunk into the working copy and the
+    // checkbox ticks it for partial staging.
+    if tab.new_revision.is_none() {
+        for (index, hunk) in diff.hunks.iter().enumerate() {
+            let y = y_new(hunk.new.start as f32);
+            if y < body.top() - ROW_HEIGHT || y > body.bottom() {
+                continue;
+            }
+            let apply = Rect::from_center_size(
+                pos2(connector_right - 9.0, y + ROW_HEIGHT / 2.0),
+                vec2(16.0, 16.0),
+            );
+            let response = ui
+                .interact(apply, ui.id().with(("diff_apply", index)), Sense::click())
+                .on_hover_text("Apply this chunk to the current version");
+            if response.hovered() {
+                body_painter.rect_filled(apply, 3.0, theme::HOVER);
+            }
+            body_painter.text(
+                apply.center(),
+                egui::Align2::CENTER_CENTER,
+                "»",
+                egui::FontId::proportional(theme::UI_FONT_SIZE + 2.0),
+                *theme::TEXT_SECONDARY,
+            );
+            if response.clicked() {
+                actions.push(("diff.applyChunk", json!({ "index": index })));
+            }
+            let check = Rect::from_center_size(
+                pos2(connector_right + 10.0, y + ROW_HEIGHT / 2.0),
+                vec2(12.0, 12.0),
+            );
+            let response = ui
+                .interact(
+                    check.expand(3.0),
+                    ui.id().with(("diff_check", index)),
+                    Sense::click(),
+                )
+                .on_hover_text("Include this chunk when staging");
+            paint_checkbox(&body_painter, check, tab.selected.contains(&index));
+            if response.clicked() {
+                actions.push(("diff.toggleChunk", json!({ "index": index })));
+            }
+        }
     }
     // Text and line numbers.
     let current_hunk = tab.current.and_then(|index| diff.hunks.get(index));
@@ -479,7 +672,10 @@ fn side_by_side(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: O
             });
             line_number(&body_painter, numbers_right, y, line + 1, in_current);
             let (ranges, color) = match hunk {
-                Some(hunk) => (words(hunk), word_fill(hunk.kind())),
+                Some(hunk) if tab.highlight == DiffHighlight::Words => {
+                    (words(hunk), word_fill(hunk.kind()))
+                }
+                Some(hunk) => (&[][..], word_fill(hunk.kind())),
                 None => (&[][..], Color32::TRANSPARENT),
             };
             paint_line(
@@ -635,7 +831,11 @@ fn unified(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: Option
             } else {
                 HunkKind::Deleted
             };
-            let fill = hunk_fill(kind);
+            let fill = if tab.highlight == DiffHighlight::None {
+                Color32::TRANSPARENT
+            } else {
+                hunk_fill(kind)
+            };
             body_painter.rect_filled(
                 Rect::from_min_max(pos2(area.left(), y), pos2(pane.right(), y + ROW_HEIGHT)),
                 0.0,
@@ -674,7 +874,11 @@ fn unified(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: Option
                 &old,
                 line,
                 origin,
-                &hunk.old_words,
+                if tab.highlight == DiffHighlight::Words {
+                    &hunk.old_words
+                } else {
+                    &[]
+                },
                 colors::DELETED_WORD,
             ),
             (None, Some(line), Some(hunk)) => paint_line(
@@ -682,7 +886,11 @@ fn unified(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: Option
                 &new,
                 line,
                 origin,
-                &hunk.new_words,
+                if tab.highlight == DiffHighlight::Words {
+                    &hunk.new_words
+                } else {
+                    &[]
+                },
                 colors::INSERTED_WORD,
             ),
             (_, Some(line), None) => {
