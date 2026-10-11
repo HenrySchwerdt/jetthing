@@ -1,0 +1,421 @@
+{
+ "group": "Java",
+ "extensions": [
+  "java"
+ ],
+ "templates": [
+  {
+   "abbreviation": "sout",
+   "description": "Prints a string to System.out",
+   "text": "System.out.println($END$);",
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "soutv",
+   "description": "Prints a value to System.out",
+   "text": "System.out.println(\"$VAR$ = \" + $VAR$);",
+   "variables": [
+    {
+     "name": "VAR"
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "soutm",
+   "description": "Prints current class and method name to System.out",
+   "text": "System.out.println(\"$CLASS_NAME$.$METHOD_NAME$\");",
+   "variables": [
+    {
+     "name": "CLASS_NAME",
+     "expression": "className()",
+     "skipIfDefined": true
+    },
+    {
+     "name": "METHOD_NAME",
+     "expression": "methodName()",
+     "skipIfDefined": true
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "soutp",
+   "description": "Prints method parameter names and values to System.out",
+   "text": "System.out.println($PARAMS$);$END$",
+   "variables": [
+    {
+     "name": "PARAMS",
+     "expression": "methodParameters()",
+     "default": "\"\""
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "serr",
+   "description": "Prints a string to System.err",
+   "text": "System.err.println($END$);",
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "psvm",
+   "description": "public static void main(String[] args)",
+   "text": "public static void main(String[] args) {\n    $END$\n}",
+   "contexts": [
+    "JAVA_DECLARATION"
+   ]
+  },
+  {
+   "abbreviation": "main",
+   "description": "public static void main(String[] args)",
+   "text": "public static void main(String[] args) {\n    $END$\n}",
+   "contexts": [
+    "JAVA_DECLARATION"
+   ]
+  },
+  {
+   "abbreviation": "fori",
+   "description": "Creates an iteration for loop",
+   "text": "for (int $INDEX$ = 0; $INDEX$ < $LIMIT$; $INDEX$++) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "INDEX",
+     "expression": "suggestIndexName()"
+    },
+    {
+     "name": "LIMIT"
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "iter",
+   "description": "Iterates over an Iterable (for-each)",
+   "text": "for ($ELEMENT_TYPE$ $VAR$ : $ITERABLE$) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "ELEMENT_TYPE",
+     "default": "Object"
+    },
+    {
+     "name": "VAR",
+     "default": "item"
+    },
+    {
+     "name": "ITERABLE"
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "itar",
+   "description": "Iterates over the elements of an array",
+   "text": "for (int $INDEX$ = 0; $INDEX$ < $ARRAY$.length; $INDEX$++) {\n    $ELEMENT_TYPE$ $VAR$ = $ARRAY$[$INDEX$];\n    $END$\n}",
+   "variables": [
+    {
+     "name": "INDEX",
+     "expression": "suggestIndexName()"
+    },
+    {
+     "name": "ARRAY"
+    },
+    {
+     "name": "ELEMENT_TYPE",
+     "default": "Object"
+    },
+    {
+     "name": "VAR",
+     "default": "item"
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "ifn",
+   "description": "Inserts an if statement that checks for null",
+   "text": "if ($VAR$ == null) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "VAR"
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "inn",
+   "description": "Inserts an if statement that checks for non-null",
+   "text": "if ($VAR$ != null) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "VAR"
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "thr",
+   "description": "Inserts a throw statement",
+   "text": "throw new $EXCEPTION$($END$);",
+   "variables": [
+    {
+     "name": "EXCEPTION",
+     "default": "RuntimeException"
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "St",
+   "description": "String",
+   "text": "String",
+   "contexts": [
+    "JAVA_STATEMENT",
+    "JAVA_EXPRESSION",
+    "JAVA_DECLARATION"
+   ]
+  },
+  {
+   "abbreviation": "psf",
+   "description": "public static final",
+   "text": "public static final $END$",
+   "contexts": [
+    "JAVA_DECLARATION"
+   ]
+  },
+  {
+   "abbreviation": "psfs",
+   "description": "public static final String",
+   "text": "public static final String $END$",
+   "contexts": [
+    "JAVA_DECLARATION"
+   ]
+  },
+  {
+   "abbreviation": "psfi",
+   "description": "public static final int",
+   "text": "public static final int $END$",
+   "contexts": [
+    "JAVA_DECLARATION"
+   ]
+  },
+  {
+   "abbreviation": "prsf",
+   "description": "private static final",
+   "text": "private static final $END$",
+   "contexts": [
+    "JAVA_DECLARATION"
+   ]
+  },
+  {
+   "abbreviation": "lazy",
+   "description": "Performs lazy initialization of a variable",
+   "text": "if ($VAR$ == null) {\n    $VAR$ = new $TYPE$($END$);\n}",
+   "variables": [
+    {
+     "name": "VAR"
+    },
+    {
+     "name": "TYPE"
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "toar",
+   "description": "Converts a collection to an array",
+   "text": "$COLLECTION$.toArray(new $TYPE$[0])",
+   "variables": [
+    {
+     "name": "COLLECTION"
+    },
+    {
+     "name": "TYPE",
+     "default": "Object"
+    }
+   ],
+   "contexts": [
+    "JAVA_EXPRESSION"
+   ]
+  },
+  {
+   "abbreviation": "I",
+   "description": "Surround with if",
+   "text": "if ($CONDITION$) {\n    $SELECTION$\n}$END$",
+   "variables": [
+    {
+     "name": "CONDITION",
+     "default": "true"
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "W",
+   "description": "Surround with while",
+   "text": "while ($CONDITION$) {\n    $SELECTION$\n}$END$",
+   "variables": [
+    {
+     "name": "CONDITION",
+     "default": "true"
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "T",
+   "description": "Surround with try/catch",
+   "text": "try {\n    $SELECTION$\n} catch (Exception e) {\n    $END$\n}",
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  },
+  {
+   "abbreviation": "S",
+   "description": "Surround with synchronized",
+   "text": "synchronized ($LOCK$) {\n    $SELECTION$\n}$END$",
+   "variables": [
+    {
+     "name": "LOCK",
+     "default": "this"
+    }
+   ],
+   "contexts": [
+    "JAVA_STATEMENT"
+   ]
+  }
+ ],
+ "postfix": [
+  {
+   "abbreviation": "if",
+   "description": "Checks boolean expression to be true",
+   "text": "if ($EXPR$) {\n    $END$\n}"
+  },
+  {
+   "abbreviation": "else",
+   "description": "Checks boolean expression to be false",
+   "text": "if (!$EXPR$) {\n    $END$\n}"
+  },
+  {
+   "abbreviation": "for",
+   "description": "Iterates over a collection",
+   "text": "for ($ELEMENT_TYPE$ $VAR$ : $EXPR$) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "ELEMENT_TYPE",
+     "default": "Object"
+    },
+    {
+     "name": "VAR",
+     "default": "item"
+    }
+   ]
+  },
+  {
+   "abbreviation": "fori",
+   "description": "Iterates with index over an int",
+   "text": "for (int $INDEX$ = 0; $INDEX$ < $EXPR$; $INDEX$++) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "INDEX",
+     "expression": "suggestIndexName()"
+    }
+   ]
+  },
+  {
+   "abbreviation": "var",
+   "description": "Creates a variable from the expression",
+   "text": "$TYPE$ $NAME$ = $EXPR$;$END$",
+   "variables": [
+    {
+     "name": "TYPE",
+     "expression": "typeOrVar()",
+     "skipIfDefined": true
+    },
+    {
+     "name": "NAME",
+     "expression": "suggestVariableName()"
+    }
+   ]
+  },
+  {
+   "abbreviation": "not",
+   "description": "Negates the expression",
+   "text": "!$EXPR$"
+  },
+  {
+   "abbreviation": "null",
+   "description": "Checks the expression for null",
+   "text": "if ($EXPR$ == null) {\n    $END$\n}"
+  },
+  {
+   "abbreviation": "nn",
+   "description": "Checks the expression for non-null",
+   "text": "if ($EXPR$ != null) {\n    $END$\n}"
+  },
+  {
+   "abbreviation": "return",
+   "description": "Returns the expression",
+   "text": "return $EXPR$;"
+  },
+  {
+   "abbreviation": "sout",
+   "description": "Prints the expression to System.out",
+   "text": "System.out.println($EXPR$);"
+  },
+  {
+   "abbreviation": "try",
+   "description": "Wraps the expression in try/catch",
+   "text": "try {\n    $EXPR$;\n} catch ($EXCEPTION$ e) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "EXCEPTION",
+     "default": "Exception"
+    }
+   ]
+  },
+  {
+   "abbreviation": "cast",
+   "description": "Casts the expression",
+   "text": "(($TYPE$) $EXPR$)",
+   "variables": [
+    {
+     "name": "TYPE"
+    }
+   ]
+  },
+  {
+   "abbreviation": "par",
+   "description": "Parenthesizes the expression",
+   "text": "($EXPR$)"
+  }
+ ]
+}

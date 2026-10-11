@@ -1,0 +1,69 @@
+{
+ "group": "Rust",
+ "extensions": [
+  "rs"
+ ],
+ "templates": [
+  {
+   "abbreviation": "fn",
+   "description": "Function",
+   "text": "fn $NAME$($PARAMS$) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "NAME"
+    },
+    {
+     "name": "PARAMS"
+    }
+   ],
+   "contexts": [
+    "RUST"
+   ]
+  },
+  {
+   "abbreviation": "test",
+   "description": "Unit test function",
+   "text": "#[test]\nfn $NAME$() {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "NAME"
+    }
+   ],
+   "contexts": [
+    "RUST"
+   ]
+  },
+  {
+   "abbreviation": "impl",
+   "description": "Impl block",
+   "text": "impl $TYPE$ {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "TYPE",
+     "expression": "className()"
+    }
+   ],
+   "contexts": [
+    "RUST"
+   ]
+  },
+  {
+   "abbreviation": "match",
+   "description": "Match expression",
+   "text": "match $VALUE$ {\n    $PATTERN$ => $END$,\n}",
+   "variables": [
+    {
+     "name": "VALUE"
+    },
+    {
+     "name": "PATTERN",
+     "default": "_"
+    }
+   ],
+   "contexts": [
+    "RUST"
+   ]
+  }
+ ],
+ "postfix": []
+}

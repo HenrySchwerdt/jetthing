@@ -1,0 +1,231 @@
+{
+ "group": "Kotlin",
+ "extensions": [
+  "kt",
+  "kts"
+ ],
+ "templates": [
+  {
+   "abbreviation": "main",
+   "description": "fun main()",
+   "text": "fun main() {\n    $END$\n}",
+   "contexts": [
+    "KOTLIN"
+   ]
+  },
+  {
+   "abbreviation": "sout",
+   "description": "Prints a line to standard output",
+   "text": "println($END$)",
+   "contexts": [
+    "KOTLIN"
+   ]
+  },
+  {
+   "abbreviation": "fun0",
+   "description": "Function with no parameters",
+   "text": "fun $NAME$() {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "NAME"
+    }
+   ],
+   "contexts": [
+    "KOTLIN"
+   ]
+  },
+  {
+   "abbreviation": "fun1",
+   "description": "Function with one parameter",
+   "text": "fun $NAME$($PARAM$: $TYPE$) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "NAME"
+    },
+    {
+     "name": "PARAM",
+     "default": "param"
+    },
+    {
+     "name": "TYPE",
+     "default": "String"
+    }
+   ],
+   "contexts": [
+    "KOTLIN"
+   ]
+  },
+  {
+   "abbreviation": "ifn",
+   "description": "if null check",
+   "text": "if ($VAR$ == null) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "VAR"
+    }
+   ],
+   "contexts": [
+    "KOTLIN"
+   ]
+  },
+  {
+   "abbreviation": "inn",
+   "description": "if not-null check",
+   "text": "if ($VAR$ != null) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "VAR"
+    }
+   ],
+   "contexts": [
+    "KOTLIN"
+   ]
+  },
+  {
+   "abbreviation": "iter",
+   "description": "Iterates over an Iterable (for-in)",
+   "text": "for ($VAR$ in $ITERABLE$) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "VAR",
+     "default": "item"
+    },
+    {
+     "name": "ITERABLE"
+    }
+   ],
+   "contexts": [
+    "KOTLIN"
+   ]
+  },
+  {
+   "abbreviation": "I",
+   "description": "Surround with if",
+   "text": "if ($CONDITION$) {\n    $SELECTION$\n}$END$",
+   "variables": [
+    {
+     "name": "CONDITION",
+     "default": "true"
+    }
+   ],
+   "contexts": [
+    "KOTLIN"
+   ]
+  },
+  {
+   "abbreviation": "T",
+   "description": "Surround with try/catch",
+   "text": "try {\n    $SELECTION$\n} catch (e: Exception) {\n    $END$\n}",
+   "contexts": [
+    "KOTLIN"
+   ]
+  }
+ ],
+ "postfix": [
+  {
+   "abbreviation": "if",
+   "description": "Checks boolean expression to be true",
+   "text": "if ($EXPR$) {\n    $END$\n}"
+  },
+  {
+   "abbreviation": "else",
+   "description": "Checks boolean expression to be false",
+   "text": "if (!$EXPR$) {\n    $END$\n}"
+  },
+  {
+   "abbreviation": "for",
+   "description": "Iterates over a collection",
+   "text": "for ($VAR$ in $EXPR$) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "VAR",
+     "default": "item"
+    }
+   ]
+  },
+  {
+   "abbreviation": "fori",
+   "description": "Iterates with index over an int",
+   "text": "for ($INDEX$ in 0 until $EXPR$) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "INDEX",
+     "expression": "suggestIndexName()"
+    }
+   ]
+  },
+  {
+   "abbreviation": "var",
+   "description": "Creates a mutable variable",
+   "text": "var $NAME$ = $EXPR$$END$",
+   "variables": [
+    {
+     "name": "NAME",
+     "expression": "suggestVariableName()"
+    }
+   ]
+  },
+  {
+   "abbreviation": "val",
+   "description": "Creates a read-only variable",
+   "text": "val $NAME$ = $EXPR$$END$",
+   "variables": [
+    {
+     "name": "NAME",
+     "expression": "suggestVariableName()"
+    }
+   ]
+  },
+  {
+   "abbreviation": "not",
+   "description": "Negates the expression",
+   "text": "!$EXPR$"
+  },
+  {
+   "abbreviation": "null",
+   "description": "Checks the expression for null",
+   "text": "if ($EXPR$ == null) {\n    $END$\n}"
+  },
+  {
+   "abbreviation": "nn",
+   "description": "Checks the expression for non-null",
+   "text": "if ($EXPR$ != null) {\n    $END$\n}"
+  },
+  {
+   "abbreviation": "return",
+   "description": "Returns the expression",
+   "text": "return $EXPR$"
+  },
+  {
+   "abbreviation": "sout",
+   "description": "Prints the expression",
+   "text": "println($EXPR$)"
+  },
+  {
+   "abbreviation": "try",
+   "description": "Wraps the expression in try/catch",
+   "text": "try {\n    $EXPR$\n} catch (e: $EXCEPTION$) {\n    $END$\n}",
+   "variables": [
+    {
+     "name": "EXCEPTION",
+     "default": "Exception"
+    }
+   ]
+  },
+  {
+   "abbreviation": "cast",
+   "description": "Casts the expression",
+   "text": "($EXPR$ as $TYPE$)",
+   "variables": [
+    {
+     "name": "TYPE"
+    }
+   ]
+  },
+  {
+   "abbreviation": "par",
+   "description": "Parenthesizes the expression",
+   "text": "($EXPR$)"
+  }
+ ]
+}

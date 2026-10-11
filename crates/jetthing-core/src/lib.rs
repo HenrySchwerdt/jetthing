@@ -60,8 +60,10 @@ pub mod project_view;
 mod quick_doc;
 mod refactor;
 mod remote_commands;
+mod search_replace;
 mod welcome_commands;
 pub use welcome_commands::{CloneJob, JdkChoice, jdk_major, repository_name};
+mod live_templates;
 mod run_config_commands;
 mod settings_commands;
 mod signature_help;
@@ -138,6 +140,7 @@ pub use ai_terminal::{ShellSuggestion, ShellSuggestionState};
 pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
 pub use completion_stats::CompletionStats;
 pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
+pub use live_templates::context_labels;
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
 pub use quick_doc::{DocsState, QuickDoc};
@@ -766,6 +769,16 @@ impl IdeState {
     }
 
     /// Find in Files with match-case, whole-word, regex and file-mask options.
+    /// Project files in the current Find in Files scope.
+    pub(crate) fn search_files(&self) -> Vec<PathBuf> {
+        self.files
+            .iter()
+            .filter(|entry| !entry.is_dir)
+            .filter(|entry| self.in_search_scope(&entry.relative_path))
+            .map(|entry| entry.relative_path.clone())
+            .collect()
+    }
+
     pub fn start_search_with(
         &mut self,
         query: String,
@@ -774,13 +787,7 @@ impl IdeState {
         // Validate before clearing the previous results.
         jetthing_search::Matcher::new(&query, &options).map_err(|error| error.to_string())?;
         let project = self.project.as_ref().ok_or("no project is open")?;
-        let files = self
-            .files
-            .iter()
-            .filter(|entry| !entry.is_dir)
-            .filter(|entry| self.in_search_scope(&entry.relative_path))
-            .map(|entry| entry.relative_path.clone())
-            .collect();
+        let files = self.search_files();
         self.search_results.clear();
         self.search_files_scanned = 0;
         self.search_truncated = false;
@@ -1062,6 +1069,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     settings_commands::register(&mut registry);
     quick_nav::register(&mut registry);
     keymap_commands::register(&mut registry);
+    live_templates::register(&mut registry);
     first_run::register(&mut registry);
     lsp_commands::register(&mut registry);
     vcs::register(&mut registry);
@@ -1075,6 +1083,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     welcome_commands::register(&mut registry);
     annotations::register(&mut registry);
     worktree_commands::register(&mut registry);
+    search_replace::register(&mut registry);
     navigation::register(&mut registry);
     code_actions::register(&mut registry);
     refactor::register(&mut registry);
