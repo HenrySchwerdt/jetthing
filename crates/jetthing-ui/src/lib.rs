@@ -61,7 +61,9 @@ mod popups;
 mod problems_ui;
 mod push_dialog;
 mod refactor_ui;
+mod resource_manager_ui;
 mod run_config_dialog;
+mod running_devices_ui;
 mod settings_dialog;
 mod settings_keymap;
 mod settings_pages;
@@ -917,6 +919,7 @@ impl IdeApp {
             plugin_ui::right_side(self, ctx);
             toolwindows::left(self, ctx);
             device_manager::right(self, ctx);
+            running_devices_ui::right(self, ctx);
             ai_chat::right(self, ctx);
             gradle_window::show(self, ctx);
             bazel_window::show(self, ctx);

@@ -639,6 +639,7 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
                 stripe_button(app, ui, ToolWindow::Commit, Icon::Commit);
                 stripe_button(app, ui, ToolWindow::Structure, Icon::Structure);
                 if app.state.android.project.is_some() {
+                    stripe_button(app, ui, ToolWindow::ResourceManager, Icon::Variants);
                     stripe_button(app, ui, ToolWindow::BuildVariants, Icon::Variants);
                 }
                 let (rect, _) = ui.allocate_exact_size(vec2(32.0, 1.0), Sense::hover());
@@ -677,6 +678,14 @@ pub(crate) fn right_stripe_windows(app: &IdeApp) -> Vec<(ToolWindow, Icon)> {
         || app.state.tool_windows.is_visible(ToolWindow::DeviceManager)
     {
         windows.push((ToolWindow::DeviceManager, Icon::Device));
+    }
+    if app.state.android.project.is_some()
+        || app
+            .state
+            .tool_windows
+            .is_visible(ToolWindow::RunningDevices)
+    {
+        windows.push((ToolWindow::RunningDevices, Icon::Device));
     }
     windows
 }

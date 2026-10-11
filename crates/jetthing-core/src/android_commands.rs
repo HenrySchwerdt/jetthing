@@ -28,6 +28,8 @@ pub struct AndroidState {
     pub merged_manifest: crate::android_manifest::MergedManifestView,
     /// Project tool window shows the Android view (default for Android projects).
     pub android_view: bool,
+    pub resource_manager: crate::android_tools::ResourceManagerState,
+    pub mirror: crate::android_tools::MirrorState,
 }
 
 impl AndroidState {

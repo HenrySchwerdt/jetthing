@@ -24,6 +24,7 @@ mod android_logcat;
 mod android_manifest;
 mod android_resources;
 mod android_sdk_repo;
+mod android_tools;
 mod android_variants;
 mod annotations;
 mod bazel_commands;
@@ -909,6 +910,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_deploy::register(&mut registry);
     android_variants::register(&mut registry);
     android_resources::register(&mut registry);
+    android_tools::register(&mut registry);
     android_manifest::register(&mut registry);
     android_logcat::register(&mut registry);
     android_sdk_repo::register(&mut registry);
@@ -1248,7 +1250,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Toggle Tool Window",
                 "Window",
                 None,
-                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat|buildVariants"}"#,
+                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat|buildVariants|resourceManager|runningDevices"}"#,
             ),
             |_| true,
             |state: &mut IdeState, params| {
@@ -1265,6 +1267,12 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 }
                 if window == ToolWindow::Logcat && !state.tool_windows.is_visible(window) {
                     state.logcat_opened();
+                }
+                if window == ToolWindow::ResourceManager && !state.tool_windows.is_visible(window) {
+                    state.resource_manager_opened();
+                }
+                if window == ToolWindow::RunningDevices && !state.tool_windows.is_visible(window) {
+                    state.running_devices_opened();
                 }
                 Ok(json!({"visible": state.tool_windows.toggle(window)}))
             },
@@ -1304,6 +1312,12 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     }
                     if window == ToolWindow::Logcat {
                         state.logcat_opened();
+                    }
+                    if window == ToolWindow::ResourceManager {
+                        state.resource_manager_opened();
+                    }
+                    if window == ToolWindow::RunningDevices {
+                        state.running_devices_opened();
                     }
                     if window == ToolWindow::Terminal {
                         state.open_terminal().map_err(CommandError::Failed)?;
