@@ -58,6 +58,7 @@ mod plugin_ui;
 mod popups;
 mod problems_ui;
 mod push_dialog;
+mod refactor_ui;
 mod run_config_dialog;
 mod settings_dialog;
 mod settings_keymap;
@@ -900,6 +901,7 @@ impl IdeApp {
         doc_ui::show_parameter_info(self, ctx);
         navigation_ui::choices_popup(self, ctx);
         intentions_ui::popup(self, ctx);
+        refactor_ui::popup(self, ctx);
         switcher::frame(self, ctx);
         palette::show(self, ctx);
         switcher::show(self, ctx);

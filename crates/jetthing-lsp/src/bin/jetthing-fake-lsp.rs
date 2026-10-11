@@ -17,6 +17,13 @@
 //! `codeAction/resolve` (inserting `// resolved` at the top) and a command
 //! (`fake.apply`) whose execution sends `workspace/applyEdit`.
 //!
+//! Refactoring: `prepareRename` answers the word's range and placeholder
+//! (`null` off a word; absent with `--no-prepare-rename`), `rename` replaces
+//! the word in every open document, `formatting`/`rangeFormatting` trim
+//! trailing whitespace and `codeAction` requests with `context.only` return
+//! `source.organizeImports` (sorts the `import` lines), `refactor.extract.*`
+//! and `refactor.inline` edits instead of the diagnostic fixes above.
+//!
 //! Completion returns a fixed Java-like member list. `textDocument/didOpen`
 //! and `didChange` publish one diagnostic per `@error`, `@warning`, `@weak`,
 //! `@hint` and `@unused` marker in the text, or one warning at 0:0 when the
@@ -56,6 +63,7 @@ fn main() {
         .and_then(|ms| ms.parse().ok())
         .map(Duration::from_millis);
     let publish = value("--publish");
+    let prepare_rename = !flag("--no-prepare-rename");
     let mut importing: u32 = value("--importing")
         .and_then(|n| n.parse().ok())
         .unwrap_or(0);
@@ -89,7 +97,15 @@ fn main() {
                         json!({"jsonrpc":"2.0","method":"$/progress","params":{"token":"index","value":{"kind":"report","message":"fake","percentage":45}}}),
                     );
                 }
+                let rename_provider = if prepare_rename {
+                    json!({"prepareProvider": true})
+                } else {
+                    json!(true)
+                };
                 send(json!({"jsonrpc":"2.0","id":id,"result":{"capabilities":{
+                    "renameProvider": rename_provider,
+                    "documentFormattingProvider": true,
+                    "documentRangeFormattingProvider": true,
                     "textDocumentSync": {"openClose": true, "change": 1, "save": {"includeText": false}},
                     "completionProvider": {"triggerCharacters": ["."], "resolveProvider": true},
                     "hoverProvider": true,
@@ -194,6 +210,155 @@ fn main() {
                     _ => json!(occurrences),
                 };
                 send(json!({"jsonrpc":"2.0","id":id,"result":result}));
+            }
+            ("textDocument/prepareRename", Some(id)) => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
+                let character = params["position"]["character"].as_u64().unwrap_or(0) as usize;
+                let word = documents
+                    .get(uri)
+                    .and_then(|text| word_at(text, line, character))
+                    .unwrap_or_default();
+                let range = occurrences(uri, documents.get(uri).map_or("", String::as_str), &word)
+                    .into_iter()
+                    .find(|o| {
+                        o["range"]["start"]["line"].as_u64() == Some(line as u64)
+                            && o["range"]["start"]["character"].as_u64() <= Some(character as u64)
+                            && o["range"]["end"]["character"].as_u64() >= Some(character as u64)
+                    })
+                    .map(|o| o["range"].clone());
+                let result = match range {
+                    Some(range) => json!({"range": range, "placeholder": word}),
+                    None => Value::Null,
+                };
+                send(json!({"jsonrpc":"2.0","id":id,"result":result}));
+            }
+            ("textDocument/rename", Some(id)) => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
+                let character = params["position"]["character"].as_u64().unwrap_or(0) as usize;
+                let new_name = params["newName"].as_str().unwrap_or_default();
+                let word = documents
+                    .get(uri)
+                    .and_then(|text| word_at(text, line, character))
+                    .unwrap_or_default();
+                if new_name.is_empty() || word.is_empty() {
+                    send(json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,
+                        "message":"cannot rename here"}}));
+                    continue;
+                }
+                let mut changes = serde_json::Map::new();
+                for (uri, text) in &documents {
+                    let edits: Vec<Value> = occurrences(uri, text, &word)
+                        .into_iter()
+                        .map(|o| json!({"range": o["range"], "newText": new_name}))
+                        .collect();
+                    if !edits.is_empty() {
+                        changes.insert(uri.clone(), Value::Array(edits));
+                    }
+                }
+                send(json!({"jsonrpc":"2.0","id":id,"result":{"changes": changes}}));
+            }
+            ("textDocument/formatting" | "textDocument/rangeFormatting", Some(id)) => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let first = params["range"]["start"]["line"].as_u64().unwrap_or(0) as usize;
+                let last = params["range"]["end"]["line"].as_u64().map(|l| l as usize);
+                let edits: Vec<Value> = documents
+                    .get(uri)
+                    .map(|text| {
+                        text.lines()
+                            .enumerate()
+                            .filter(|(line, content)| {
+                                *line >= first
+                                    && last.is_none_or(|last| *line <= last)
+                                    && content.len() != content.trim_end().len()
+                            })
+                            .map(|(line, content)| {
+                                let keep: usize =
+                                    content.trim_end().chars().map(char::len_utf16).sum();
+                                let all: usize = content.chars().map(char::len_utf16).sum();
+                                json!({"range": {"start": {"line": line, "character": keep},
+                                    "end": {"line": line, "character": all}}, "newText": ""})
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                send(json!({"jsonrpc":"2.0","id":id,"result":edits}));
+            }
+            ("textDocument/codeAction", Some(id)) if params["context"]["only"].is_array() => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let only: Vec<&str> = params["context"]["only"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect();
+                let range = params["range"].clone();
+                let selected = documents
+                    .get(uri)
+                    .and_then(|text| selection_text(text, &range))
+                    .unwrap_or_default();
+                let at = |line: u64, character: u64| json!({"line": line, "character": character});
+                let mut actions = Vec::new();
+                let mut offer = |title: &str, kind: &str, edit: Value| {
+                    if only.iter().any(|only| kind.starts_with(only)) {
+                        actions.push(json!({"title": title, "kind": kind, "edit": edit}));
+                    }
+                };
+                if let Some(text) = documents.get(uri) {
+                    let imports: Vec<(usize, &str)> = text
+                        .lines()
+                        .enumerate()
+                        .filter(|(_, line)| line.starts_with("import "))
+                        .collect();
+                    let mut sorted: Vec<&str> = imports.iter().map(|(_, l)| *l).collect();
+                    sorted.sort_unstable();
+                    sorted.dedup();
+                    if let (Some(first), Some(last)) = (imports.first(), imports.last()) {
+                        let end = text.lines().nth(last.0).map_or(0, |l| l.len()) as u64;
+                        offer(
+                            "Organize Imports",
+                            "source.organizeImports",
+                            json!({"changes": {uri: [{"range": {"start": at(first.0 as u64, 0),
+                                "end": at(last.0 as u64, end)}, "newText": sorted.join("\n")}]}}),
+                        );
+                    }
+                }
+                if !selected.is_empty() {
+                    let (start, end) = (range["start"].clone(), range["end"].clone());
+                    offer(
+                        "Extract to local variable",
+                        "refactor.extract.variable",
+                        json!({"changes": {uri: [
+                            {"range": {"start": start, "end": end}, "newText": "extracted"},
+                            {"range": {"start": at(start["line"].as_u64().unwrap_or(0), 0),
+                                "end": at(start["line"].as_u64().unwrap_or(0), 0)},
+                                "newText": format!("let extracted = {selected};\n")}]}}),
+                    );
+                    offer(
+                        "Extract to method",
+                        "refactor.extract.function",
+                        json!({"changes": {uri: [
+                            {"range": {"start": start, "end": end}, "newText": "extracted()"},
+                            {"range": {"start": at(0, 0), "end": at(0, 0)},
+                                "newText": format!("fn extracted() {{ {selected} }}\n")}]}}),
+                    );
+                    offer(
+                        "Extract to constant",
+                        "refactor.extract.constant",
+                        json!({"changes": {uri: [
+                            {"range": {"start": start, "end": end}, "newText": "EXTRACTED"},
+                            {"range": {"start": at(0, 0), "end": at(0, 0)},
+                                "newText": format!("const EXTRACTED = {selected};\n")}]}}),
+                    );
+                }
+                offer(
+                    "Inline variable",
+                    "refactor.inline",
+                    json!({"changes": {uri: [{"range": {"start": at(0, 0), "end": at(0, 0)},
+                        "newText": "// inlined\n"}]}}),
+                );
+                send(json!({"jsonrpc":"2.0","id":id,"result":actions}));
             }
             ("textDocument/codeAction", Some(id)) => {
                 let uri = params["textDocument"]["uri"].clone();
@@ -379,4 +544,19 @@ fn occurrences(uri: &str, text: &str, word: &str) -> Vec<Value> {
         }
     }
     found
+}
+
+/// The text inside a single-line LSP range (ASCII documents only).
+fn selection_text(text: &str, range: &Value) -> Option<String> {
+    let line = range["start"]["line"].as_u64()? as usize;
+    if range["end"]["line"].as_u64()? as usize != line {
+        return None;
+    }
+    let start = range["start"]["character"].as_u64()? as usize;
+    let end = range["end"]["character"].as_u64()? as usize;
+    let content = text.lines().nth(line)?;
+    content
+        .get(start..end)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
 }
