@@ -44,7 +44,7 @@ pub fn ui_action(action: &str) -> Option<UiAction> {
         "FindPrevious" => UiAction::FindPrevious,
         "FindInPath" | "FindSelectionInPath" => UiAction::FindInPath,
         "SaveAll" => UiAction::SaveAll,
-        "NewProject" => UiAction::NewProject,
+        "NewProject" | "WelcomeScreen.DefaultNewProjectAction" => UiAction::NewProject,
         "OpenFile" => UiAction::OpenProject,
         "NewFile" => UiAction::NewFile,
         "NewDir" => UiAction::NewDirectory,

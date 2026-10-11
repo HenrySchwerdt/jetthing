@@ -57,6 +57,42 @@ fn is_lazy_dir(name: &std::ffi::OsStr, is_dir: bool) -> bool {
     is_dir && name.to_str().is_some_and(|name| LAZY.contains(&name))
 }
 
+/// Eclipse metadata that jdtls / Buildship generate next to a Gradle or Maven build.
+const GENERATED_METADATA: [&str; 4] =
+    [".classpath", ".project", ".settings", "jetthing-model.json"];
+
+/// Whether the project-root entry `name` is an IDE-generated artefact (jdtls metadata or
+/// its `bin/` class output) rather than a user file. Only applies to Gradle/Maven
+/// projects, where Jetthing's language server creates them; `bin/` is hidden only when
+/// it holds nothing but `.class` files.
+pub fn is_generated_artefact(root: &Path, name: &str) -> bool {
+    let built = [
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+        "pom.xml",
+    ]
+    .iter()
+    .any(|file| root.join(file).is_file());
+    if !built {
+        return false;
+    }
+    if GENERATED_METADATA.contains(&name) {
+        return true;
+    }
+    name == "bin" && only_class_files(&root.join("bin"))
+}
+
+fn only_class_files(dir: &Path) -> bool {
+    WalkDir::new(dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .all(|e| e.path().extension().is_some_and(|ext| ext == "class"))
+}
+
 fn file_entry(path: &Path, root: &Path, file_type: fs::FileType) -> Option<FileEntry> {
     let is_symlink = file_type.is_symlink();
     Some(FileEntry {
@@ -98,7 +134,13 @@ impl Project {
                     })
             })
             .into_iter()
-            .filter_entry(|e| !e.file_name().to_str().is_some_and(|n| HIDDEN.contains(&n)));
+            .filter_entry(|e| {
+                let Some(name) = e.file_name().to_str() else {
+                    return true;
+                };
+                !HIDDEN.contains(&name)
+                    && !(e.depth() == 1 && is_generated_artefact(&self.root, name))
+            });
         let mut entries = Vec::new();
         while let Some(entry) = walk.next() {
             let Ok(entry) = entry else { continue };
@@ -131,6 +173,13 @@ impl Project {
                     .file_name()
                     .to_str()
                     .is_some_and(|name| HIDDEN.contains(&name))
+            })
+            .filter(|entry| {
+                !(relative.as_os_str().is_empty()
+                    && entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| is_generated_artefact(&self.root, name)))
             })
             .filter_map(|entry| {
                 let logical = self.root.join(relative).join(entry.file_name());
@@ -399,6 +448,37 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generated_jdtls_artefacts_are_hidden_in_build_projects_only() {
+        let dir = std::env::temp_dir().join(format!("jt-artefacts-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("bin/main")).unwrap();
+        fs::create_dir_all(dir.join(".settings")).unwrap();
+        fs::write(dir.join("bin/main/App.class"), "x").unwrap();
+        fs::write(dir.join(".classpath"), "x").unwrap();
+        fs::write(dir.join("Main.java"), "x").unwrap();
+        let names = |p: &Project| -> Vec<String> {
+            let mut names: Vec<String> = p
+                .entries(100)
+                .iter()
+                .map(|e| e.relative_path.display().to_string())
+                .collect();
+            names.sort();
+            names
+        };
+        let project = Project::open(&dir).unwrap();
+        assert!(
+            names(&project).contains(&".classpath".to_owned()),
+            "no build file"
+        );
+        fs::write(dir.join("build.gradle"), "").unwrap();
+        assert_eq!(names(&project), vec!["Main.java", "build.gradle"]);
+        // A bin/ with user sources stays visible.
+        fs::write(dir.join("bin/run.sh"), "x").unwrap();
+        assert!(names(&project).contains(&"bin".to_owned()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     #[cfg(unix)]

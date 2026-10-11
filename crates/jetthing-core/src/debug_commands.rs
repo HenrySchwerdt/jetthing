@@ -1,5 +1,6 @@
 //! Debugger: line breakpoints and Debug Adapter Protocol sessions.
 
+use crate::java_debug::JavaStage;
 use crate::{IdeState, ToolWindow, spec, string_param, usize_param};
 use jetthing_command::{Command, CommandError, CommandRegistry};
 use jetthing_dap::{Adapter, DebugClient, SessionState, Step};
@@ -7,6 +8,7 @@ use jetthing_runner::{RunConfiguration, RunTarget, TaskKind, TaskPlan, TaskState
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 pub const BREAKPOINTS_FILE: &str = ".jetthing/breakpoints.json";
 
@@ -29,12 +31,26 @@ pub struct ExecutionPoint {
     pub line: usize,
 }
 
+/// A Java debug session being prepared through jdtls (see `java_debug`).
+pub(crate) struct PendingJava {
+    pub name: String,
+    /// Open Java document whose language server runs the plugin commands.
+    pub anchor: PathBuf,
+    pub main_class: Option<String>,
+    pub args: Vec<String>,
+    pub cwd: PathBuf,
+    pub env: Vec<(String, String)>,
+    pub stage: JavaStage,
+    pub started: Instant,
+}
+
 #[derive(Default)]
 pub struct DebuggerState {
     /// Project-relative path → zero-based breakpoint lines.
     pub breakpoints: BTreeMap<PathBuf, BTreeSet<usize>>,
     pub client: Option<DebugClient>,
     pub pending: Option<PendingDebug>,
+    pub(crate) java: Option<PendingJava>,
     /// Name of the configuration being debugged.
     pub name: String,
     /// Frame already revealed in the editor (to reveal each stop only once).
@@ -42,7 +58,25 @@ pub struct DebuggerState {
     pub error: Option<String>,
 }
 
+impl DebuggerState {
+    pub(crate) fn reset_revealed(&mut self) {
+        self.revealed = None;
+    }
+}
+
 impl IdeState {
+    pub(crate) fn absolute_breakpoints(
+        &self,
+    ) -> Result<BTreeMap<PathBuf, BTreeSet<usize>>, String> {
+        let root = self.project.as_ref().ok_or("no project is open")?.root();
+        Ok(self
+            .debugger
+            .breakpoints
+            .iter()
+            .map(|(path, lines)| (root.join(path), lines.clone()))
+            .collect())
+    }
+
     pub(crate) fn load_breakpoints(&mut self) {
         self.debugger = DebuggerState::default();
         let Some(project) = &self.project else {
@@ -103,6 +137,7 @@ impl IdeState {
             .as_ref()
             .is_some_and(|client| !client.session().is_terminated())
             || self.debugger.pending.is_some()
+            || self.debugger.java.is_some()
     }
 
     /// Starts debugging the selected run configuration (or the detected Cargo binary).
@@ -197,11 +232,68 @@ impl IdeState {
                         .collect(),
                 })
             }
+            RunTarget::Gradle {
+                options,
+                program_arguments,
+                ..
+            } => {
+                let main_class = option_value_prefixed(options, "-Pjetthing.mainClass=");
+                self.start_java_debugging(&config, &root, main_class, program_arguments.clone())
+            }
             other => Err(format!(
-                "Debugging {} configurations is not supported yet; native programs (Cargo, shell) can be debugged with lldb-dap or GDB",
+                "Debugging {} configurations is not supported yet; native programs (Cargo, shell) can be debugged with lldb-dap or GDB, Java (Gradle) with the java-debug plugin",
                 other.type_name()
             )),
         }
+    }
+
+    /// Starts a Java debug session through jdtls and the java-debug plugin.
+    fn start_java_debugging(
+        &mut self,
+        config: &RunConfiguration,
+        root: &Path,
+        main_class: Option<String>,
+        args: Vec<String>,
+    ) -> Result<(), String> {
+        let anchor = self.java_anchor(root)?;
+        self.debugger.java = Some(PendingJava {
+            name: config.name.clone(),
+            anchor,
+            main_class,
+            args,
+            cwd: config.cwd(root),
+            env: config
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            stage: JavaStage::Build,
+            started: Instant::now(),
+        });
+        self.tool_windows.show(ToolWindow::Debug);
+        self.status = format!("Starting Java debugger for {}", config.name);
+        Ok(())
+    }
+
+    /// An open Java document: the active one, else the first source with a `main` method
+    /// (opened so the language server knows it).
+    fn java_anchor(&mut self, root: &Path) -> Result<PathBuf, String> {
+        let is_java = |path: &Path| path.extension().is_some_and(|ext| ext == "java");
+        let active = self
+            .active_document
+            .and_then(|index| self.documents.get(index))
+            .map(|document| document.path.clone())
+            .filter(|path| is_java(path));
+        let relative = match active {
+            Some(path) => path,
+            None => {
+                let found = find_java_main(root)
+                    .ok_or("No Java source with a main method was found to debug")?;
+                self.open_file(&found)?;
+                found
+            }
+        };
+        Ok(root.join(relative))
     }
 
     /// Starts the adapter for a built program.
@@ -215,18 +307,7 @@ impl IdeState {
         let adapter = Adapter::discover_native().map_err(|error| error.to_string())?;
         let launch =
             adapter.launch_request(&pending.program, &pending.args, &pending.cwd, &pending.env);
-        let root = self
-            .project
-            .as_ref()
-            .ok_or("no project is open")?
-            .root()
-            .to_owned();
-        let breakpoints = self
-            .debugger
-            .breakpoints
-            .iter()
-            .map(|(path, lines)| (root.join(path), lines.clone()))
-            .collect();
+        let breakpoints = self.absolute_breakpoints()?;
         let client = DebugClient::start(adapter, launch, breakpoints, &pending.cwd)
             .map_err(|error| error.to_string())?;
         self.debugger.name = pending.name.clone();
@@ -257,6 +338,7 @@ impl IdeState {
 
     /// Pumps the adapter and reveals new execution points in the editor.
     pub fn poll_debug(&mut self) {
+        self.poll_java_debug();
         let Some(client) = self.debugger.client.as_mut() else {
             return;
         };
@@ -344,6 +426,42 @@ fn option_value(options: &[String], name: &str) -> Option<String> {
         .position(|option| option == name)
         .and_then(|index| options.get(index + 1))
         .cloned()
+}
+
+fn option_value_prefixed(options: &[String], prefix: &str) -> Option<String> {
+    options
+        .iter()
+        .find_map(|option| option.strip_prefix(prefix))
+        .map(str::to_owned)
+}
+
+/// Project-relative path of a Java file declaring `static void main`, searching
+/// `src/` trees (bounded, skipping build output).
+fn find_java_main(root: &Path) -> Option<PathBuf> {
+    let mut stack = vec![root.to_owned()];
+    let mut visited = 0;
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+            visited += 1;
+            if visited > 20_000 {
+                return None;
+            }
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if path.is_dir() {
+                if !name.starts_with('.') && !matches!(&*name, "build" | "out" | "target") {
+                    stack.push(path);
+                }
+            } else if name.ends_with(".java")
+                && std::fs::read_to_string(&path)
+                    .is_ok_and(|text| text.contains("static void main"))
+            {
+                return path.strip_prefix(root).ok().map(Path::to_path_buf);
+            }
+        }
+    }
+    None
 }
 
 fn cargo_package_name(crate_dir: &Path) -> Option<String> {
