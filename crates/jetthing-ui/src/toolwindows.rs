@@ -161,6 +161,8 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     let mut toggle = None;
     let mut toggle_group: Option<&'static str> = None;
     let mut open = None;
+    let mut open_right = None;
+    let mut preview = None;
     let mut dialog = None;
     let mut context_choice = None;
     // Like "Always Select Opened File": the selection follows the active
@@ -337,6 +339,9 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                     .is_some_and(|pos| chevron.expand(4.0).contains(pos));
                 if *is_dir && on_chevron {
                     toggle = Some(path.clone());
+                } else if !*is_dir {
+                    // A single click shows the file in the preview tab.
+                    preview = Some(path.clone());
                 }
             }
             if response.double_clicked() {
@@ -353,11 +358,13 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
         && ui.input(|input| input.key_pressed(egui::Key::Enter))
         && let Some(selected) = app.tree_selection.clone()
     {
-        if rows
+        let is_directory = rows
             .iter()
-            .any(|row| row.kind == RowKind::Directory && row.path.as_ref() == Some(&selected))
-        {
+            .any(|row| row.kind == RowKind::Directory && row.path.as_ref() == Some(&selected));
+        if is_directory {
             toggle = Some(selected);
+        } else if ui.input(|input| input.modifiers.shift) {
+            open_right = Some(selected);
         } else {
             open = Some(selected);
         }
@@ -408,8 +415,14 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     if let Some(id) = toggle_group {
         app.dispatch("project.toggleGroup", json!({"id": id}));
     }
+    if let Some(path) = preview {
+        app.dispatch("editor.openPreview", json!({"path": path}));
+    }
     if let Some(path) = open {
         app.dispatch("editor.openFile", json!({"path": path}));
+    }
+    if let Some(path) = open_right {
+        app.dispatch("editor.openInRightSplit", json!({"path": path}));
     }
     if let Some((action, target)) = context_choice {
         let ctx = ui.ctx().clone();

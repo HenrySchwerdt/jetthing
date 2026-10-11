@@ -3279,6 +3279,7 @@ dependencies = [
  "jetthing-plugins",
  "jetthing-runner",
  "jetthing-settings",
+ "jetthing-split",
  "jetthing-templates",
  "jetthing-terminal",
  "jetthing-text",
