@@ -31,10 +31,11 @@ pub enum ToolWindow {
     Bazel,
     AiChat,
     Debug,
+    Hierarchy,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 17] = [
+    pub const ALL: [ToolWindow; 18] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Structure,
@@ -52,6 +53,7 @@ impl ToolWindow {
         ToolWindow::Bazel,
         ToolWindow::AiChat,
         ToolWindow::Debug,
+        ToolWindow::Hierarchy,
     ];
 
     pub fn id(self) -> &'static str {
@@ -71,6 +73,7 @@ impl ToolWindow {
             ToolWindow::RunningDevices => "runningDevices",
             ToolWindow::AiChat => "aiChat",
             ToolWindow::Debug => "debug",
+            ToolWindow::Hierarchy => "hierarchy",
             ToolWindow::Gradle => "gradle",
             ToolWindow::Bazel => "bazel",
         }
@@ -93,6 +96,7 @@ impl ToolWindow {
             ToolWindow::RunningDevices => "Running Devices",
             ToolWindow::AiChat => "AI Chat",
             ToolWindow::Debug => "Debug",
+            ToolWindow::Hierarchy => "Hierarchy",
             ToolWindow::Gradle => "Gradle",
             ToolWindow::Bazel => "Bazel",
         }
@@ -118,6 +122,7 @@ impl ToolWindow {
             | ToolWindow::RunningDevices
             | ToolWindow::Gradle
             | ToolWindow::Bazel
+            | ToolWindow::Hierarchy
             | ToolWindow::AiChat => "",
             ToolWindow::Debug => "⌘5",
             ToolWindow::Git => "⌘9",
@@ -137,6 +142,7 @@ impl ToolWindow {
             | ToolWindow::Terminal
             | ToolWindow::Logcat
             | ToolWindow::Debug
+            | ToolWindow::Hierarchy
             | ToolWindow::Git => Anchor::Bottom,
             ToolWindow::DeviceManager
             | ToolWindow::RunningDevices

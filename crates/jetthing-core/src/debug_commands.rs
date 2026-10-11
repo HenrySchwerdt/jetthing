@@ -3,7 +3,7 @@
 use crate::java_debug::JavaStage;
 use crate::{IdeState, ToolWindow, spec, string_param, usize_param};
 use jetthing_command::{Command, CommandError, CommandRegistry};
-use jetthing_dap::{Adapter, DebugClient, SessionState, Step};
+use jetthing_dap::{Adapter, BreakpointOptions, DebugClient, SessionState, Step};
 use jetthing_runner::{RunConfiguration, RunTarget, TaskKind, TaskPlan, TaskState};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -11,6 +11,24 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub const BREAKPOINTS_FILE: &str = ".jetthing/breakpoints.json";
+/// Breakpoint conditions/logpoints and watch expressions.
+pub const DEBUG_STATE_FILE: &str = ".jetthing/debug-state.json";
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct StoredDebugState {
+    #[serde(default)]
+    breakpoints: Vec<StoredBreakpointOptions>,
+    #[serde(default)]
+    watches: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct StoredBreakpointOptions {
+    path: PathBuf,
+    line: usize,
+    #[serde(flatten)]
+    options: BreakpointOptions,
+}
 
 /// What to debug once its build has finished.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +60,8 @@ pub(crate) struct PendingJava {
     pub env: Vec<(String, String)>,
     pub stage: JavaStage,
     pub started: Instant,
+    /// Attach to a JVM started by a Gradle `--debug-jvm` test task instead of launching.
+    pub attach: bool,
 }
 
 #[derive(Default)]
@@ -51,6 +71,14 @@ pub struct DebuggerState {
     pub client: Option<DebugClient>,
     pub pending: Option<PendingDebug>,
     pub(crate) java: Option<PendingJava>,
+    /// Project-relative path and zero-based line → condition / logpoint options.
+    pub breakpoint_options: BTreeMap<(PathBuf, usize), BreakpointOptions>,
+    /// Watch expressions, kept across sessions.
+    pub watches: Vec<String>,
+    /// Breakpoint whose properties popup is open (project-relative path, zero-based line).
+    pub editing_breakpoint: Option<(PathBuf, usize)>,
+    /// Text of the Evaluate Expression dialog while it is open.
+    pub evaluate_dialog: Option<String>,
     /// Name of the configuration being debugged.
     pub name: String,
     /// Frame already revealed in the editor (to reveal each stop only once).
@@ -87,6 +115,176 @@ impl IdeState {
         {
             self.debugger.breakpoints = map;
         }
+        if let Ok(text) = std::fs::read_to_string(project.root().join(DEBUG_STATE_FILE))
+            && let Ok(stored) = serde_json::from_str::<StoredDebugState>(&text)
+        {
+            self.debugger.breakpoint_options = stored
+                .breakpoints
+                .into_iter()
+                .map(|entry| ((entry.path, entry.line), entry.options))
+                .collect();
+            self.debugger.watches = stored.watches;
+        }
+    }
+
+    fn save_debug_state(&self) -> Result<(), String> {
+        let project = self.project.as_ref().ok_or("no project is open")?;
+        let path = project.root().join(DEBUG_STATE_FILE);
+        if self.debugger.breakpoint_options.is_empty() && self.debugger.watches.is_empty() {
+            let _ = std::fs::remove_file(path);
+            return Ok(());
+        }
+        let stored = StoredDebugState {
+            breakpoints: self
+                .debugger
+                .breakpoint_options
+                .iter()
+                .map(|((path, line), options)| StoredBreakpointOptions {
+                    path: path.clone(),
+                    line: *line,
+                    options: options.clone(),
+                })
+                .collect(),
+            watches: self.debugger.watches.clone(),
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        let json = serde_json::to_string_pretty(&stored).map_err(|error| error.to_string())?;
+        std::fs::write(path, json).map_err(|error| error.to_string())
+    }
+
+    /// Gives a new session the project's breakpoint options and watches.
+    pub(crate) fn seed_session(&self, client: &mut DebugClient) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let root = project.root().to_owned();
+        let options = self
+            .debugger
+            .breakpoint_options
+            .iter()
+            .map(|((path, line), options)| ((root.join(path), *line), options.clone()))
+            .collect();
+        let watches = self.debugger.watches.clone();
+        client.with_session(|session| {
+            session.load_options(options);
+            for watch in &watches {
+                session.add_watch(watch);
+            }
+        });
+    }
+
+    /// Conditions/logpoint options of a breakpoint line.
+    pub fn breakpoint_options(&self, path: &Path, line: usize) -> Option<&BreakpointOptions> {
+        self.debugger
+            .breakpoint_options
+            .get(&(path.to_owned(), line))
+    }
+
+    /// Sets the options of an existing breakpoint, creating the breakpoint when the line
+    /// has none (like the properties popup of the reference IDE).
+    pub fn set_breakpoint_options(
+        &mut self,
+        path: &Path,
+        line: usize,
+        options: BreakpointOptions,
+    ) -> Result<(), String> {
+        let options = options.normalized();
+        if !self.breakpoint_lines(path).contains(&line) {
+            self.toggle_breakpoint(path, line)?;
+        }
+        let key = (path.to_owned(), line);
+        if options.is_empty() {
+            self.debugger.breakpoint_options.remove(&key);
+        } else {
+            self.debugger
+                .breakpoint_options
+                .insert(key, options.clone());
+        }
+        if let (Some(client), Some(project)) = (self.debugger.client.as_mut(), &self.project) {
+            let absolute = project.root().join(path);
+            client.with_session(|session| session.set_breakpoint_options(absolute, line, options));
+        }
+        self.save_debug_state()
+    }
+
+    pub fn add_watch(&mut self, expression: &str) -> Result<(), String> {
+        let expression = expression.trim();
+        if expression.is_empty() {
+            return Err("a watch needs an expression".into());
+        }
+        if !self.debugger.watches.iter().any(|w| w == expression) {
+            self.debugger.watches.push(expression.to_owned());
+        }
+        if let Some(client) = self.debugger.client.as_mut() {
+            client.with_session(|session| session.add_watch(expression));
+        }
+        self.save_debug_state()
+    }
+
+    pub fn remove_watch(&mut self, index: usize) -> Result<(), String> {
+        if index >= self.debugger.watches.len() {
+            return Err(format!("no watch at index {index}"));
+        }
+        self.debugger.watches.remove(index);
+        if let Some(client) = self.debugger.client.as_mut() {
+            client.with_session(|session| session.remove_watch(index));
+        }
+        self.save_debug_state()
+    }
+
+    /// Replaces a watch; an empty expression removes it.
+    pub fn edit_watch(&mut self, index: usize, expression: &str) -> Result<(), String> {
+        let expression = expression.trim();
+        if index >= self.debugger.watches.len() {
+            return Err(format!("no watch at index {index}"));
+        }
+        if expression.is_empty() {
+            return self.remove_watch(index);
+        }
+        if self
+            .debugger
+            .watches
+            .iter()
+            .enumerate()
+            .any(|(i, w)| i != index && w == expression)
+        {
+            return Err(format!("`{expression}` is already watched"));
+        }
+        self.debugger.watches[index] = expression.to_owned();
+        if let Some(client) = self.debugger.client.as_mut() {
+            client.with_session(|session| session.edit_watch(index, expression));
+        }
+        self.save_debug_state()
+    }
+
+    /// Runs to the caret line of the active document (Alt+F9).
+    pub fn run_to_cursor(
+        &mut self,
+        path: Option<&Path>,
+        line: Option<usize>,
+    ) -> Result<(), String> {
+        let (path, line) = match (path, line) {
+            (Some(path), Some(line)) => (path.to_owned(), line),
+            _ => {
+                let document = self
+                    .active_document
+                    .and_then(|index| self.documents.get(index))
+                    .ok_or("no editor is active")?;
+                (
+                    document.path.clone(),
+                    document
+                        .text
+                        .char_to_line(document.selections.primary().head),
+                )
+            }
+        };
+        let root = self.project.as_ref().ok_or("no project is open")?.root();
+        let absolute = root.join(path);
+        self.with_debug_client(|client| {
+            client.with_session(|session| session.run_to_line(absolute, line))
+        })
     }
 
     fn save_breakpoints(&self) -> Result<(), String> {
@@ -114,6 +312,15 @@ impl IdeState {
         let lines = lines.clone();
         if lines.is_empty() {
             self.debugger.breakpoints.remove(path);
+        }
+        if !added {
+            let had = self
+                .debugger
+                .breakpoint_options
+                .remove(&(path.to_owned(), line));
+            if had.is_some() {
+                self.save_debug_state()?;
+            }
         }
         if let (Some(client), Some(project)) = (self.debugger.client.as_mut(), &self.project) {
             let absolute = project.root().join(path);
@@ -232,6 +439,10 @@ impl IdeState {
                         .collect(),
                 })
             }
+            RunTarget::Gradle { options, .. } if is_gradle_test(&config.target) => {
+                let _ = options;
+                self.start_test_debugging(&config, &root)
+            }
             RunTarget::Gradle {
                 options,
                 program_arguments,
@@ -245,6 +456,42 @@ impl IdeState {
                 other.type_name()
             )),
         }
+    }
+
+    /// Debugs a Gradle test run (the JUnit gutter's Debug entry): the test task runs with
+    /// `--debug-jvm`, so the forked test JVM suspends and listens on 5005, and java-debug
+    /// attaches to it once it reports that.
+    fn start_test_debugging(
+        &mut self,
+        config: &RunConfiguration,
+        root: &Path,
+    ) -> Result<(), String> {
+        let anchor = self.java_anchor(root)?;
+        let mut debug_config = config.clone();
+        if let RunTarget::Gradle { options, .. } = &mut debug_config.target
+            && !options.iter().any(|option| option == "--debug-jvm")
+        {
+            options.push("--debug-jvm".into());
+        }
+        let plan = self
+            .build_systems
+            .registry()
+            .plan_configuration(root, &debug_config);
+        self.start_task(plan, &config.name, TaskKind::Test)?;
+        self.debugger.java = Some(PendingJava {
+            name: config.name.clone(),
+            anchor,
+            main_class: None,
+            args: Vec::new(),
+            cwd: config.cwd(root),
+            env: Vec::new(),
+            stage: JavaStage::Build,
+            started: Instant::now(),
+            attach: true,
+        });
+        self.tool_windows.show(ToolWindow::Debug);
+        self.status = format!("Starting Java test debugger for {}", config.name);
+        Ok(())
     }
 
     /// Starts a Java debug session through jdtls and the java-debug plugin.
@@ -269,6 +516,7 @@ impl IdeState {
                 .collect(),
             stage: JavaStage::Build,
             started: Instant::now(),
+            attach: false,
         });
         self.tool_windows.show(ToolWindow::Debug);
         self.status = format!("Starting Java debugger for {}", config.name);
@@ -308,8 +556,9 @@ impl IdeState {
         let launch =
             adapter.launch_request(&pending.program, &pending.args, &pending.cwd, &pending.env);
         let breakpoints = self.absolute_breakpoints()?;
-        let client = DebugClient::start(adapter, launch, breakpoints, &pending.cwd)
+        let mut client = DebugClient::start(adapter, launch, breakpoints, &pending.cwd)
             .map_err(|error| error.to_string())?;
+        self.seed_session(&mut client);
         self.debugger.name = pending.name.clone();
         self.debugger.client = Some(client);
         self.debugger.revealed = None;
@@ -418,6 +667,18 @@ impl IdeState {
         action(client);
         Ok(())
     }
+}
+
+/// A Gradle configuration that runs tests (`--tests` filter or a `test` task).
+fn is_gradle_test(target: &RunTarget) -> bool {
+    let RunTarget::Gradle { tasks, options, .. } = target else {
+        return false;
+    };
+    options.iter().any(|option| option == "--tests")
+        || tasks.iter().any(|task| {
+            let name = task.rsplit(':').next().unwrap_or(task);
+            name == "test" || name.ends_with("UnitTest")
+        })
 }
 
 fn option_value(options: &[String], name: &str) -> Option<String> {
@@ -576,6 +837,12 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             Some("⇧F8"),
             Some(Step::StepOut),
         ),
+        (
+            "debug.forceStepInto",
+            "Force Step Into",
+            Some("⌥⇧F7"),
+            Some(Step::ForceStepIn),
+        ),
         ("debug.stop", "Stop Debugging", None, None),
     ] {
         registry
@@ -664,7 +931,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 "debug.evaluate",
                 "Evaluate Expression",
                 "Run",
-                Some("⌥F8"),
+                None,
                 r#"{"expression":"string"}"#,
             ),
             |state: &IdeState| {
@@ -681,6 +948,235 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             },
         ))
         .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "debug.runToCursor",
+                "Run to Cursor",
+                "Run",
+                Some("⌥F9"),
+                r#"{"path":"string?","line":"number?"}"#,
+            ),
+            |state: &IdeState| {
+                state.active_document.is_some()
+                    && state.debugger.client.as_ref().is_some_and(|client| {
+                        matches!(client.session().state(), SessionState::Stopped { .. })
+                    })
+            },
+            |state: &mut IdeState, params| {
+                let path = params
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .map(PathBuf::from);
+                let line = match params.get("line") {
+                    Some(_) => Some(usize_param(&params, "line")?),
+                    None => None,
+                };
+                state
+                    .run_to_cursor(path.as_deref(), line)
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "debug.editBreakpoint",
+                "Edit Breakpoint",
+                "Run",
+                Some("⌘⇧F8"),
+                r#"{"path":"string?","line":"number?"}"#,
+            ),
+            |state: &IdeState| state.project.is_some() && state.active_document.is_some(),
+            |state: &mut IdeState, params| {
+                let (path, line) = breakpoint_target(state, &params)?;
+                if !state.breakpoint_lines(&path).contains(&line) {
+                    state
+                        .toggle_breakpoint(&path, line)
+                        .map_err(CommandError::Failed)?;
+                }
+                state.debugger.editing_breakpoint = Some((path, line));
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "debug.closeBreakpointEditor",
+                "Close Breakpoint Properties",
+                "Run",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.debugger.editing_breakpoint.is_some(),
+            |state: &mut IdeState, _| {
+                state.debugger.editing_breakpoint = None;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "debug.setBreakpointOptions",
+                "Set Breakpoint Condition or Logpoint",
+                "Run",
+                None,
+                r#"{"path":"string?","line":"number?","condition":"string?","logMessage":"string?","hitCondition":"string?"}"#,
+            ),
+            |state: &IdeState| state.project.is_some() && state.active_document.is_some(),
+            |state: &mut IdeState, params| {
+                let (path, line) = breakpoint_target(state, &params)?;
+                let text = |key: &str| {
+                    params
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                };
+                let options = BreakpointOptions {
+                    condition: text("condition"),
+                    log_message: text("logMessage"),
+                    hit_condition: text("hitCondition"),
+                };
+                state
+                    .set_breakpoint_options(&path, line, options)
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "debug.evaluateDialog",
+                "Evaluate Expression…",
+                "Run",
+                Some("⌥F8"),
+                "{}",
+            ),
+            |state: &IdeState| {
+                state.debugger.client.as_ref().is_some_and(|client| {
+                    matches!(client.session().state(), SessionState::Stopped { .. })
+                })
+            },
+            |state: &mut IdeState, _| {
+                let seed = state
+                    .active_document
+                    .and_then(|index| state.documents.get(index))
+                    .and_then(|document| {
+                        let selection = document.selections.primary();
+                        (selection.anchor != selection.head)
+                            .then(|| {
+                                let (from, to) = (
+                                    selection.anchor.min(selection.head),
+                                    selection.anchor.max(selection.head),
+                                );
+                                document.text.slice(from, to).ok()
+                            })
+                            .flatten()
+                    })
+                    .unwrap_or_default();
+                state.debugger.evaluate_dialog = Some(seed);
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "debug.closeEvaluateDialog",
+                "Close Evaluate Expression",
+                "Run",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.debugger.evaluate_dialog.is_some(),
+            |state: &mut IdeState, _| {
+                state.debugger.evaluate_dialog = None;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "debug.addWatch",
+                "Add Watch",
+                "Run",
+                None,
+                r#"{"expression":"string"}"#,
+            ),
+            |state: &IdeState| state.project.is_some(),
+            |state: &mut IdeState, params| {
+                let expression = string_param(&params, "expression")?;
+                state.add_watch(&expression).map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "debug.removeWatch",
+                "Remove Watch",
+                "Run",
+                None,
+                r#"{"index":0}"#,
+            ),
+            |state: &IdeState| !state.debugger.watches.is_empty(),
+            |state: &mut IdeState, params| {
+                let index = usize_param(&params, "index")?;
+                state.remove_watch(index).map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "debug.editWatch",
+                "Edit Watch",
+                "Run",
+                None,
+                r#"{"index":0,"expression":"string"}"#,
+            ),
+            |state: &IdeState| !state.debugger.watches.is_empty(),
+            |state: &mut IdeState, params| {
+                let index = usize_param(&params, "index")?;
+                let expression = string_param(&params, "expression")?;
+                state
+                    .edit_watch(index, &expression)
+                    .map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+}
+
+/// The `path`/`line` params of a breakpoint command, defaulting to the caret.
+fn breakpoint_target(state: &IdeState, params: &Value) -> Result<(PathBuf, usize), CommandError> {
+    let document = state
+        .active_document
+        .and_then(|index| state.documents.get(index));
+    let path = match params.get("path").and_then(Value::as_str) {
+        Some(path) => PathBuf::from(path),
+        None => document
+            .map(|document| document.path.clone())
+            .ok_or_else(|| CommandError::Failed("no editor is active".into()))?,
+    };
+    let line = match params.get("line") {
+        Some(_) => usize_param(params, "line")?,
+        None => {
+            let document =
+                document.ok_or_else(|| CommandError::Failed("no editor is active".into()))?;
+            document
+                .text
+                .char_to_line(document.selections.primary().head)
+        }
+    };
+    Ok((path, line))
 }
 
 #[cfg(all(test, unix))]
@@ -742,6 +1238,135 @@ mod tests {
                 .breakpoint_lines(std::path::Path::new("main.c"))
                 .is_empty()
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn breakpoint_options_and_watches_persist_per_project() {
+        let root = std::env::temp_dir().join(format!("jetthing-debug-opts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("main.c"), "int main(void) {\n  return 0;\n}\n").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        commands
+            .execute("editor.openFile", &mut state, json!({"path": "main.c"}))
+            .unwrap();
+        // Setting a condition on a line without a breakpoint creates one.
+        commands
+            .execute(
+                "debug.setBreakpointOptions",
+                &mut state,
+                json!({"path": "main.c", "line": 1, "condition": " x > 1 ", "logMessage": "  "}),
+            )
+            .unwrap();
+        assert_eq!(state.breakpoint_lines(std::path::Path::new("main.c")), [1]);
+        let options = state
+            .breakpoint_options(std::path::Path::new("main.c"), 1)
+            .unwrap();
+        assert_eq!(options.condition.as_deref(), Some("x > 1"));
+        assert_eq!(options.log_message, None);
+        commands
+            .execute("debug.addWatch", &mut state, json!({"expression": "x + 1"}))
+            .unwrap();
+        commands
+            .execute("debug.addWatch", &mut state, json!({"expression": "y"}))
+            .unwrap();
+        commands
+            .execute(
+                "debug.editWatch",
+                &mut state,
+                json!({"index": 1, "expression": "z"}),
+            )
+            .unwrap();
+        assert!(
+            commands
+                .execute(
+                    "debug.editWatch",
+                    &mut state,
+                    json!({"index": 1, "expression": "x + 1"})
+                )
+                .is_err()
+        );
+        assert!(
+            commands
+                .execute("debug.removeWatch", &mut state, json!({"index": 5}))
+                .is_err()
+        );
+
+        let mut reopened = IdeState::default();
+        commands
+            .execute("project.open", &mut reopened, json!({"path": root}))
+            .unwrap();
+        assert_eq!(reopened.debugger.watches, ["x + 1", "z"]);
+        assert_eq!(
+            reopened
+                .breakpoint_options(std::path::Path::new("main.c"), 1)
+                .and_then(|o| o.condition.as_deref()),
+            Some("x > 1")
+        );
+        // Removing the breakpoint drops its options; removing every watch deletes the file.
+        commands
+            .execute("editor.openFile", &mut reopened, json!({"path": "main.c"}))
+            .unwrap();
+        commands
+            .execute("debug.toggleBreakpoint", &mut reopened, json!({"line": 1}))
+            .unwrap();
+        assert!(
+            reopened
+                .breakpoint_options(std::path::Path::new("main.c"), 1)
+                .is_none()
+        );
+        commands
+            .execute(
+                "debug.editWatch",
+                &mut reopened,
+                json!({"index": 0, "expression": ""}),
+            )
+            .unwrap();
+        commands
+            .execute("debug.removeWatch", &mut reopened, json!({"index": 0}))
+            .unwrap();
+        assert!(!root.join(super::DEBUG_STATE_FILE).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn edit_breakpoint_opens_the_properties_popup_and_debug_dialogs_need_a_stop() {
+        let root = std::env::temp_dir().join(format!("jetthing-debug-edit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("main.c"), "int main(void) {\n  return 0;\n}\n").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        commands
+            .execute("editor.openFile", &mut state, json!({"path": "main.c"}))
+            .unwrap();
+        commands
+            .execute("debug.editBreakpoint", &mut state, json!({"line": 0}))
+            .unwrap();
+        assert_eq!(
+            state.debugger.editing_breakpoint,
+            Some((std::path::PathBuf::from("main.c"), 0))
+        );
+        assert_eq!(state.breakpoint_lines(std::path::Path::new("main.c")), [0]);
+        commands
+            .execute("debug.closeBreakpointEditor", &mut state, Value::Null)
+            .unwrap();
+        assert!(state.debugger.editing_breakpoint.is_none());
+        for id in [
+            "debug.evaluateDialog",
+            "debug.runToCursor",
+            "debug.forceStepInto",
+        ] {
+            assert!(!commands.is_enabled(id, &state), "{id} needs a stop");
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 

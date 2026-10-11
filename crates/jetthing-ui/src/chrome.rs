@@ -666,6 +666,9 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
                 );
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                     stripe_button(app, ui, ToolWindow::Git, Icon::Branch);
+                    if app.state.hierarchy.current.is_some() {
+                        stripe_button(app, ui, ToolWindow::Hierarchy, Icon::Structure);
+                    }
                     if app.state.android.project.is_some() {
                         stripe_button(app, ui, ToolWindow::Logcat, Icon::Logcat);
                     }
@@ -955,7 +958,7 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                         }
                     }
                     if app.state.runner.is_running() || app.state.search.is_running() {
-                        ui.add(egui::Spinner::new().size(12.0).color(theme::ACCENT));
+                        widgets::busy_spinner(ui, 12.0, *theme::ACCENT);
                         ui.add_space(6.0);
                     }
                     if !app.state.status.is_empty() {

@@ -28,6 +28,7 @@ mod console_links;
 mod context_menus;
 mod control;
 mod crash_notice;
+mod debug_dialogs;
 mod debug_window;
 mod device_manager;
 mod diff_ui;
@@ -43,6 +44,7 @@ mod folding;
 mod git_log_ui;
 mod gradle_window;
 mod gutter_popup;
+mod hierarchy_ui;
 mod icons;
 mod intentions_ui;
 mod keybindings;
@@ -117,6 +119,8 @@ pub struct IdeApp {
     tree_selection: Option<PathBuf>,
     /// Active editor file last revealed in the Project tree.
     tree_revealed: Option<PathBuf>,
+    /// Editor context menu, rebuilt only while the popup is open or opening.
+    editor_menu: Option<context_menus::Model>,
     window_title: String,
     caret_screen_pos: Option<egui::Pos2>,
     last_shift_release: Option<Instant>,
@@ -126,6 +130,8 @@ pub struct IdeApp {
     last_right: Option<ToolWindow>,
     /// Active editor file seen last frame; opening another one focuses the editor.
     last_active_file: Option<PathBuf>,
+    /// A single click in the Project tree opened a preview: keep the keyboard in the tree.
+    pub(crate) keep_tree_focus: bool,
     find: findbar::FindBar,
     /// Text of the last whole-line copy, so pasting it inserts a line.
     clipboard_line: Option<String>,
@@ -287,6 +293,7 @@ impl IdeApp {
             find_synced: Default::default(),
             tree_selection: None,
             tree_revealed: None,
+            editor_menu: None,
             window_title: String::new(),
             caret_screen_pos: None,
             last_shift_release: None,
@@ -294,6 +301,7 @@ impl IdeApp {
             last_bottom: None,
             last_right: None,
             last_active_file: None,
+            keep_tree_focus: false,
             find: findbar::FindBar::default(),
             clipboard_line: None,
             dialog: None,
@@ -662,6 +670,12 @@ impl IdeApp {
             if egui::Popup::is_any_open(ctx) {
                 // Context menus and main-menu dropdowns close first.
                 egui::Popup::close_all(ctx);
+            } else if gutter_popup::is_open(ctx) {
+                gutter_popup::close(ctx);
+            } else if self.state.debugger.evaluate_dialog.is_some() {
+                self.dispatch("debug.closeEvaluateDialog", Value::Null);
+            } else if self.state.debugger.editing_breakpoint.is_some() {
+                self.dispatch("debug.closeBreakpointEditor", Value::Null);
             } else if self.menu_bar_open {
                 self.menu_bar_open = false;
             } else if self.state.about_open {
@@ -738,11 +752,13 @@ impl IdeApp {
                 && self.dialog.is_none()
                 && !self.palette.open
                 && !self.find_popup.open
+                && !self.keep_tree_focus
             {
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
             }
             self.last_active_file = active;
         }
+        self.keep_tree_focus = false;
         // Hiding a right-anchored tool window also hands focus back to the editor.
         let right = self.state.tool_windows.visible(Anchor::Right);
         if right != self.last_right {
@@ -1016,6 +1032,7 @@ impl IdeApp {
         }
         run_config_dialog::show(self, ctx);
         gutter_popup::show(self, ctx);
+        debug_dialogs::show(self, ctx);
         notifications::show(self, ctx);
         crash_notice::show(self, ctx);
         first_run::show(self, ctx);
@@ -1031,6 +1048,7 @@ impl IdeApp {
         if self.state.updates.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
+        widgets::apply_pointer_cursor(ctx);
         self.control_after_frame(ctx);
     }
 

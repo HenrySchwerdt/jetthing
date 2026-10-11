@@ -87,3 +87,44 @@ c0=$(ticks); for i in $(seq 20); do cli type x >/dev/null; cli wait idle >/dev/n
 echo "typing cpu/key $(( ($(ticks) - c0) * 10 / 20 )) ms"
 awk '/VmRSS/ {print "rss", $2/1024, "MB"}' /proc/$PID/status
 ```
+
+## Idle CPU follow-up (`perf: cache project tree rows and editor overlays`)
+
+Same method as above (release build, Xvfb 1440×900, `JETTHING_RENDERER=glow`, app
+`utime+stime` from `/proc`, 4 vCPU container), measured 45–55 s after opening the project
+and the file, so rust-analyzer's initial burst is over. "Before" is `origin/main` at
+`e116747`, "after" is this branch. Per-thread CPU is read from `/proc/<pid>/task/*/stat`
+over a 10 s window. The container has no GPU: GL runs on Mesa `llvmpipe`, whose four
+rasteriser threads are counted in the app process, so every repaint is far more
+expensive here than on real hardware. The thread split below separates app logic (the
+`jetthing-app` main thread) from software rasterisation.
+
+| Scenario | Total before | Total after | Main thread before | Main thread after |
+|---|---:|---:|---:|---:|
+| Cargo project, 770 KB `src/big.rs` active | 11–12 % | 7 % | 5.7 % | 0.7 % |
+| This repository, `editor.rs` active | 14–15 % | 12 % | 3.0 % | 1.6 % |
+
+Findings:
+
+- Profiling the main thread with `gdb` samples at idle with the large file open showed
+  the dominant cost was **not** the tree/problems rebuild but `start_code_vision`: while
+  the language server could not yet take requests, every 600 ms retry re-ran the
+  tree-sitter structure query over the whole file and a full `git blame`. Lenses are now
+  rebuilt only when the document revision changes.
+- The Project tree rows (`IdeState::cached_tree_rows`) are cached behind a fingerprint
+  of a file-list generation (bumped by `set_files`), a Gradle-model generation, the
+  expanded directories, marks, compact-packages and virtual-group state. The active
+  file's problems (`cached_active_problems`) are keyed by document revision and the LSP
+  diagnostics generation; `refresh_problems` hashes its key instead of cloning every
+  open path per frame. The editor context-menu model is only rebuilt while the popup is
+  open or opening.
+- The status-bar busy spinners (language server, toolchains, runner/search) used
+  `egui::Spinner`, which repaints at the display rate while it is visible. They now step
+  at 10 Hz.
+- The highlighter does stop: highlighting is lazy per viewport and the editor only
+  requests a repaint when the visible rows change *and* the file is not fully
+  highlighted; samples at idle never showed highlighter frames.
+- The remaining ~7–12 % is almost entirely the four `llvmpipe` threads redrawing at
+  10 Hz while rust-analyzer reports progress (`lsp.is_busy()` keeps a 100 ms repaint
+  timer). The app-logic share is under 2 % in both scenarios, but the under-5 % total
+  target is **not** met in this software-rendered container.

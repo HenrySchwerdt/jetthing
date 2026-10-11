@@ -551,9 +551,12 @@ fn page(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let forward = ui.add_enabled(
                 !dialog.forward.is_empty(),
-                egui::Button::new("→").frame(false),
+                crate::widgets::menu_button(egui::Button::new("→")),
             );
-            let back = ui.add_enabled(!dialog.back.is_empty(), egui::Button::new("←").frame(false));
+            let back = ui.add_enabled(
+                !dialog.back.is_empty(),
+                crate::widgets::menu_button(egui::Button::new("←")),
+            );
             if forward.on_hover_text("Forward").clicked() {
                 dialog.navigate(false);
             }

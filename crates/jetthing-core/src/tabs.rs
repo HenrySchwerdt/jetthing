@@ -27,6 +27,9 @@ pub struct EditorTabs {
     /// Maximum number of tabs; opening one more closes the least recently used
     /// unpinned tab. Zero disables the limit.
     pub limit: usize,
+    /// The italic preview tab: replaced by the next preview, permanent once
+    /// edited, double-clicked or pinned.
+    pub preview: Option<PathBuf>,
 }
 
 impl Default for EditorTabs {
@@ -35,6 +38,7 @@ impl Default for EditorTabs {
             pinned: BTreeSet::new(),
             closed: Vec::new(),
             limit: DEFAULT_TAB_LIMIT,
+            preview: None,
         }
     }
 }
@@ -155,6 +159,9 @@ impl IdeState {
             .path
             .clone();
         if pinned {
+            if self.tabs.preview.as_ref() == Some(&path) {
+                self.tabs.preview = None;
+            }
             self.tabs.pinned.insert(path);
         } else {
             self.tabs.pinned.remove(&path);

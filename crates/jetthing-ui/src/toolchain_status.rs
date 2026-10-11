@@ -19,7 +19,7 @@ pub fn status_widget(app: &mut IdeApp, ui: &mut egui::Ui, font: egui::FontId) {
             );
         }
         None => {
-            ui.add(egui::Spinner::new().size(12.0).color(theme::TEXT_INFO));
+            widgets::busy_spinner(ui, 12.0, *theme::TEXT_INFO);
         }
     }
     ui.add_space(4.0);

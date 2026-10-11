@@ -70,6 +70,7 @@ fn window_icon(window: ToolWindow) -> Icon {
         ToolWindow::Gradle | ToolWindow::Bazel => Icon::Model,
         ToolWindow::AiChat => Icon::Ai,
         ToolWindow::Debug => Icon::Debug,
+        ToolWindow::Hierarchy => Icon::Structure,
     }
 }
 

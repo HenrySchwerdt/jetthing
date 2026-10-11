@@ -200,7 +200,7 @@ impl IdeState {
         self.invalidate_annotations();
         self.refresh_pending_operation();
         if rescan && let Some(project) = &self.project {
-            self.files = project.entries(20_000);
+            self.set_files(project.entries(20_000));
         }
         self.refresh_diff();
     }
