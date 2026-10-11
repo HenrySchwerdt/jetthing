@@ -5,6 +5,7 @@ use crate::popups::Dialog;
 use crate::widgets::{self, island_frame, list_row, row_text, tool_window_header};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, RichText, vec2};
+use jetthing_core::project_view::{RowKind, TreeRow};
 use jetthing_core::{Anchor, ToolWindow};
 use jetthing_git::ChangeKind;
 use serde_json::{Value, json};
@@ -35,6 +36,9 @@ pub fn left(app: &mut IdeApp, ctx: &egui::Context) {
                 crate::android_view::header(app, ui)
             } else {
                 tool_window_header(ui, window.title(), |ui| {
+                    if window == ToolWindow::Project {
+                        project_options_menu(app, ui);
+                    }
                     if window == ToolWindow::Commit
                         && icons::button(ui, Icon::Refresh, "Refresh").clicked()
                     {
@@ -146,13 +150,9 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     let colors = git_colors(app);
     app.state.refresh_problems();
     let root_has_errors = app.state.problems.counts().errors > 0;
-    let entries: Vec<(PathBuf, bool)> = app
-        .state
-        .visible_files()
-        .into_iter()
-        .map(|entry| (entry.relative_path.clone(), entry.is_dir))
-        .collect();
+    let rows = app.state.tree_rows();
     let mut toggle = None;
+    let mut toggle_group: Option<&'static str> = None;
     let mut open = None;
     let mut dialog = None;
     let mut context_choice = None;
@@ -167,7 +167,9 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     if active.is_some() && active != app.tree_revealed {
         app.tree_revealed = active.clone();
         if let Some(path) = active
-            && let Some(row) = entries.iter().position(|(entry, _)| *entry == path)
+            && let Some(row) = rows
+                .iter()
+                .position(|row| row.kind != RowKind::Group && row.path.as_ref() == Some(&path))
         {
             app.tree_selection = Some(path);
             let id = ui.make_persistent_id("project_tree");
@@ -184,7 +186,7 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     if let Some(target) = scroll_target {
         area = area.vertical_scroll_offset(target);
     }
-    area.show_rows(ui, widgets::ROW_HEIGHT, entries.len() + 1, |ui, range| {
+    area.show_rows(ui, widgets::ROW_HEIGHT, rows.len() + 1, |ui, range| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for row in range {
             if row == 0 {
@@ -226,19 +228,40 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                 );
                 continue;
             }
-            let (path, is_dir) = &entries[row - 1];
-            let depth = path.components().count();
+            let tree_row = &rows[row - 1];
+            let Some(path) = tree_row
+                .path
+                .as_ref()
+                .filter(|_| matches!(tree_row.kind, RowKind::Directory | RowKind::File))
+            else {
+                paint_virtual_row(app, ui, tree_row, &mut toggle_group);
+                continue;
+            };
+            let is_dir = &(tree_row.kind == RowKind::Directory);
+            let depth = tree_row.depth + 1;
             let selected = app.tree_selection.as_deref() == Some(path.as_path());
             let (rect, response) = list_row(ui, selected);
+            if !selected {
+                let tint = if tree_row.excluded {
+                    Some(icons::EXCLUDED.gamma_multiply(0.14))
+                } else if tree_row.role.is_test() {
+                    Some(icons::TEST_ROOT.gamma_multiply(0.10))
+                } else {
+                    None
+                };
+                if let Some(tint) = tint {
+                    ui.painter()
+                        .rect_filled(rect.shrink2(vec2(4.0, 0.0)), 4.0, tint);
+                }
+            }
             let mut x = rect.left() + 12.0 + depth as f32 * TREE_INDENT;
             let chevron =
                 Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0));
             if *is_dir {
-                let expanded = app.state.expanded_dirs.contains(path);
                 icons::paint(
                     ui.painter(),
                     chevron,
-                    if expanded {
+                    if tree_row.expanded {
                         Icon::ChevronDown
                     } else {
                         Icon::ChevronRight
@@ -247,9 +270,9 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                 );
             }
             x += 16.0;
-            let name = IdeApp::file_name(path);
+            let name = tree_row.label.clone();
             let icon = if *is_dir {
-                Icon::for_folder(path)
+                Icon::for_role(tree_row.role)
             } else {
                 app.file_icon(path)
             };
@@ -276,7 +299,11 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                 x,
                 &name,
                 egui::FontId::proportional(theme::UI_FONT_SIZE),
-                change_color(kind),
+                if tree_row.excluded {
+                    icons::EXCLUDED.gamma_multiply(0.85)
+                } else {
+                    change_color(kind)
+                },
             );
             if app.state.problems.has_errors(path) {
                 crate::problems_ui::squiggle(
@@ -319,9 +346,9 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
         && ui.input(|input| input.key_pressed(egui::Key::Enter))
         && let Some(selected) = app.tree_selection.clone()
     {
-        if entries
+        if rows
             .iter()
-            .any(|(path, is_dir)| *path == selected && *is_dir)
+            .any(|row| row.kind == RowKind::Directory && row.path.as_ref() == Some(&selected))
         {
             toggle = Some(selected);
         } else {
@@ -335,7 +362,9 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
         && dialog.is_none()
         && let Some(selected) = app.tree_selection.clone()
     {
-        let is_dir = entries.iter().any(|(p, d)| *p == selected && *d);
+        let is_dir = rows
+            .iter()
+            .any(|row| row.kind == RowKind::Directory && row.path.as_ref() == Some(&selected));
         let (delete, rename, new_file) = ui.input_mut(|input| {
             let mac = cfg!(target_os = "macos");
             (
@@ -369,12 +398,94 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     if let Some(path) = toggle {
         app.dispatch("project.toggleDirectory", json!({"path": path}));
     }
+    if let Some(id) = toggle_group {
+        app.dispatch("project.toggleGroup", json!({"id": id}));
+    }
     if let Some(path) = open {
         app.dispatch("editor.openFile", json!({"path": path}));
     }
     if let Some((action, target)) = context_choice {
         let ctx = ui.ctx().clone();
         app.run_context_action(&action, &target, &ctx);
+    }
+}
+
+/// The ⋮ menu of the Project header ("Tree Appearance" options).
+fn project_options_menu(app: &mut IdeApp, ui: &mut egui::Ui) {
+    ui.menu_button("…", |ui| {
+        let compact = app.state.project_view.compact_packages;
+        if ui
+            .checkbox(&mut { compact }, "Compact Middle Packages")
+            .clicked()
+        {
+            app.dispatch("project.toggleCompactPackages", Value::Null);
+            ui.close();
+        }
+    });
+}
+
+/// Draws a virtual node (`External Libraries`, `Scratches and Consoles`, …) or one
+/// of its entries. Clicking a group toggles it.
+fn paint_virtual_row(
+    app: &mut IdeApp,
+    ui: &mut egui::Ui,
+    row: &TreeRow,
+    toggle_group: &mut Option<&'static str>,
+) {
+    let (rect, response) = list_row(ui, false);
+    let mut x = rect.left() + 12.0 + (row.depth + 1) as f32 * TREE_INDENT;
+    if row.kind == RowKind::Group {
+        icons::paint(
+            ui.painter(),
+            Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
+            if row.expanded {
+                Icon::ChevronDown
+            } else {
+                Icon::ChevronRight
+            },
+            theme::TEXT_SECONDARY,
+        );
+    }
+    x += 16.0;
+    icons::paint(
+        ui.painter(),
+        Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
+        Icon::Folder,
+        icons::ICON,
+    );
+    x += 22.0;
+    let (_, elided) = widgets::row_text_elided(
+        ui,
+        rect,
+        x,
+        &row.label,
+        egui::FontId::proportional(theme::UI_FONT_SIZE),
+        *theme::TEXT,
+    );
+    let response = if elided {
+        response.on_hover_text(&row.label)
+    } else {
+        response
+    };
+    if let (RowKind::Group, Some(group)) = (row.kind, row.group) {
+        if response.clicked() {
+            *toggle_group = Some(group);
+        }
+        response.context_menu(|ui| {
+            if group == jetthing_core::project_view::GROUP_SCRATCHES
+                && ui.button("New Scratch File").clicked()
+            {
+                app.dispatch("project.newScratch", Value::Null);
+                ui.close();
+            }
+        });
+    } else if let Some(path) = &row.path {
+        response.context_menu(|ui| {
+            if ui.button("Copy Path").clicked() {
+                ui.ctx().copy_text(path.display().to_string());
+                ui.close();
+            }
+        });
     }
 }
 
@@ -839,6 +950,16 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
             }
         }
         ui.add_space(8.0);
+        if let Some(scope) = app.state.project_view.search_scope.clone() {
+            // Find in Files from the Project tree: limited to one directory.
+            let chip = ui
+                .selectable_label(true, format!("In {} ×", scope.display()))
+                .on_hover_text("Search the whole project instead");
+            if chip.clicked() {
+                app.state.project_view.search_scope = None;
+                submit = true;
+            }
+        }
         let mask = widgets::search_field(
             ui,
             egui::Id::new("find_file_mask"),
@@ -849,9 +970,10 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
         submit |= mask.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if submit && !app.search_input.is_empty() {
             app.state.navigation.usages_selected = false;
+            let scope = app.state.project_view.search_scope.clone();
             app.dispatch(
                 "search.project",
-                find_params(&app.search_input, &app.find_options),
+                find_params(&app.search_input, &app.find_options, scope.as_deref()),
             );
         }
         let count = app.state.search_results.len();
@@ -926,13 +1048,14 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
 }
 
 /// Parameters of `search.project` for the query and the toggled options.
-fn find_params(query: &str, options: &jetthing_core::SearchOptions) -> Value {
+fn find_params(query: &str, options: &jetthing_core::SearchOptions, scope: Option<&Path>) -> Value {
     json!({
         "query": query,
         "matchCase": options.match_case,
         "wholeWords": options.whole_words,
         "regex": options.regex,
         "fileMask": options.file_mask,
+        "scope": scope.map(|scope| scope.display().to_string()).unwrap_or_default(),
     })
 }
 
@@ -1055,17 +1178,17 @@ mod tests {
             file_mask: "*.kt".into(),
             ..Default::default()
         };
-        let params = find_params("gr.*t", &options);
+        let params = find_params("gr.*t", &options, Some(Path::new("src")));
         assert_eq!(
             params,
-            json!({"query": "gr.*t", "matchCase": true, "wholeWords": false, "regex": true, "fileMask": "*.kt"})
+            json!({"query": "gr.*t", "matchCase": true, "wholeWords": false, "regex": true, "fileMask": "*.kt", "scope": "src"})
         );
         let specs = jetthing_core::built_in_commands().specs();
         let spec = specs
             .iter()
             .find(|spec| spec.id == "search.project")
             .unwrap();
-        for key in ["matchCase", "wholeWords", "regex", "fileMask"] {
+        for key in ["matchCase", "wholeWords", "regex", "fileMask", "scope"] {
             assert!(spec.params.contains(key), "{key} documented in the schema");
         }
     }
