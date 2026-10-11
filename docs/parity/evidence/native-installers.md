@@ -24,6 +24,25 @@ ls: cannot access '/usr/lib/jetthing': No such file or directory
 ls: cannot access '/usr/bin/jetthing': No such file or directory
 ```
 
+## Linux AppImage (local, Ubuntu container, x86_64)
+
+```text
+$ APPIMAGETOOL=…/appimagetool-1.9.0 cargo run -p xtask -- dist --installer
+dist/jetthing-0.0.2-linux-x86_64.tar.gz
+dist/jetthing_0.0.2_amd64.deb
+dist/jetthing-0.0.2-linux-x86_64.AppImage
+$ APPIMAGE_EXTRACT_AND_RUN=1 ./dist/jetthing-0.0.2-linux-x86_64.AppImage --version
+jetthing 0.0.2 (ab6c5034e2d2 2026-10-10, x86_64-unknown-linux-gnu, release)
+$ ./dist/jetthing-0.0.2-linux-x86_64.AppImage --appimage-extract && ls -A squashfs-root
+.DirIcon  AppRun  jetthing.desktop  jetthing.png  usr
+```
+
+## Package-manager manifests
+
+`cargo xtask manifests --dir <artifacts>` renders a Homebrew cask, winget manifests
+(1.6.0) and a Scoop manifest. In local checks, the YAML parsed with PyYAML, the JSON
+with `json.load`, and the cask passed `ruby -c` (`Syntax OK`).
+
 ## CI (GitHub-hosted runners)
 
 The `Release` workflow builds every archive and installer, verifies the checksums and

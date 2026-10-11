@@ -141,6 +141,7 @@ impl Release {
             InstallKind::Msi => ("jetthing-", format!("-windows-{arch}.msi")),
             InstallKind::AppBundle => ("jetthing-", format!("-macos-{arch}.dmg")),
             InstallKind::Deb => ("jetthing_", format!("_{}.deb", deb_arch(arch))),
+            InstallKind::AppImage => ("jetthing-", format!("-linux-{arch}.AppImage")),
         };
         self.assets
             .iter()
@@ -183,6 +184,9 @@ pub enum InstallKind {
     AppBundle,
     /// Debian package: the new `.deb` is opened with the package installer.
     Deb,
+    /// Linux AppImage (the running executable is the `.AppImage` file, from
+    /// `$APPIMAGE`): the file is replaced in place by the new AppImage.
+    AppImage,
 }
 
 impl InstallKind {
@@ -202,6 +206,13 @@ impl InstallKind {
         if in_bundle {
             return InstallKind::AppBundle;
         }
+        let appimage = exe
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("appimage"));
+        if appimage {
+            return InstallKind::AppImage;
+        }
         let marker = exe
             .parent()
             .and_then(|dir| fs::read_to_string(dir.join(INSTALL_MARKER)).ok());
@@ -218,13 +229,14 @@ impl InstallKind {
             InstallKind::Msi => "MSI",
             InstallKind::AppBundle => "DMG",
             InstallKind::Deb => "Debian package",
+            InstallKind::AppImage => "AppImage",
         }
     }
 
     /// What happens after the IDE quits, for the update notification.
     pub fn installer_hint(self) -> &'static str {
         match self {
-            InstallKind::Archive => "Restart the IDE to finish the update.",
+            InstallKind::Archive | InstallKind::AppImage => "Restart the IDE to finish the update.",
             InstallKind::Msi => "Quit Jetthing to run the installer; it replaces this version.",
             InstallKind::AppBundle => {
                 "Quit Jetthing; the disk image opens. Drag Jetthing into Applications."
@@ -484,6 +496,10 @@ pub fn install(
         .installer_for(kind, os, arch)
         .ok_or_else(|| UpdateError::NoAsset(format!("{} for {os}-{arch}", kind.label())))?;
     let bytes = download_verified(source, release, asset)?;
+    if kind == InstallKind::AppImage {
+        install_appimage(&bytes, current_exe)?;
+        return Ok(Installed::InPlace);
+    }
     if kind != InstallKind::Archive {
         let path = save_installer(&bytes, &asset.name, downloads)?;
         return Ok(Installed::Installer { path, kind });
@@ -503,6 +519,14 @@ pub fn save_installer(bytes: &[u8], name: &str, downloads: &Path) -> Result<Path
     let path = downloads.join(file_name);
     fs::write(&path, bytes)?;
     Ok(path)
+}
+
+/// Writes the new AppImage next to the old one and swaps it in (the old file
+/// stays as `<name>.old` until the next update).
+fn install_appimage(bytes: &[u8], current: &Path) -> Result<(), UpdateError> {
+    let staged = current.with_extension("AppImage.new");
+    fs::write(&staged, bytes)?;
+    replace_executable(&staged, current)
 }
 
 fn install_archive(archive: &[u8], current_exe: &Path, os: &str) -> Result<(), UpdateError> {
@@ -640,7 +664,8 @@ mod tests {
             {"name": "jetthing-0.0.2-windows-x86_64.zip", "url": "https://api/3", "browser_download_url": "https://dl/3", "size": 10},
             {"name": "jetthing-0.0.2-windows-x86_64.msi", "url": "https://api/4", "browser_download_url": "https://dl/4", "size": 10},
             {"name": "jetthing-0.0.2-macos-aarch64.dmg", "url": "https://api/5", "browser_download_url": "https://dl/5", "size": 10},
-            {"name": "jetthing_0.0.2_amd64.deb", "url": "https://api/6", "browser_download_url": "https://dl/6", "size": 10}
+            {"name": "jetthing_0.0.2_amd64.deb", "url": "https://api/6", "browser_download_url": "https://dl/6", "size": 10},
+            {"name": "jetthing-0.0.2-linux-x86_64.AppImage", "url": "https://api/7", "browser_download_url": "https://dl/7", "size": 10}
         ]
     }"#;
 
@@ -701,6 +726,10 @@ mod tests {
             name(InstallKind::Deb, "linux", "x86_64"),
             Some("jetthing_0.0.2_amd64.deb")
         );
+        assert_eq!(
+            name(InstallKind::AppImage, "linux", "x86_64"),
+            Some("jetthing-0.0.2-linux-x86_64.AppImage")
+        );
         assert_eq!(name(InstallKind::AppBundle, "macos", "x86_64"), None);
         assert_eq!(name(InstallKind::Deb, "linux", "aarch64"), None);
     }
@@ -723,6 +752,24 @@ mod tests {
         assert_eq!(
             InstallKind::detect(Path::new("jetthing")),
             InstallKind::Archive
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn appimage_update_replaces_the_file_in_place() {
+        let dir = temp("appimage");
+        let current = dir.join("jetthing-0.0.1-linux-x86_64.AppImage");
+        fs::write(&current, "old").unwrap();
+        install_appimage(b"new", &current).unwrap();
+        assert_eq!(fs::read(&current).unwrap(), b"new");
+        assert_eq!(
+            fs::read(dir.join("jetthing-0.0.1-linux-x86_64.old")).unwrap(),
+            b"old"
+        );
+        assert!(
+            !dir.join("jetthing-0.0.1-linux-x86_64.AppImage.new")
+                .exists()
         );
         fs::remove_dir_all(dir).unwrap();
     }
