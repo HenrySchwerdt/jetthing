@@ -908,7 +908,6 @@ impl IdeApp {
         popups::show(self, ctx);
         settings_dialog::show(self, ctx);
         android_sdk::show(self, ctx);
-        merged_manifest_ui::show(self, ctx);
         ai_chat::diff_preview(self, ctx);
         if let Some(focus) = self.state.edit_run_configurations.take() {
             run_config_dialog::open(self, ctx, Some(focus.as_str()).filter(|f| !f.is_empty()));

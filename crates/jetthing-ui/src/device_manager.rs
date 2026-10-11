@@ -237,11 +237,173 @@ pub fn right(app: &mut IdeApp, ctx: &egui::Context) {
             if hide {
                 app.toggle_tool_window(window);
             }
-            device_table(app, ui);
+            let id = egui::Id::new("device_manager_state");
+            let mut dm: DmState = ui.data_mut(|d| d.get_temp(id)).unwrap_or_default();
+            dm_toolbar(app, ui, &mut dm);
+            device_table(app, ui, &mut dm);
+            dm_dialogs(app, ui.ctx(), &mut dm);
+            ui.data_mut(|d| d.insert_temp(id, dm));
         });
 }
 
-fn device_table(app: &mut IdeApp, ui: &mut egui::Ui) {
+/// UI-only Device Manager state, kept in egui memory.
+#[derive(Debug, Clone, Default)]
+struct DmState {
+    filter: String,
+    dialog: Option<DmDialog>,
+    name: String,
+    image: String,
+    profile: String,
+    address: String,
+    code: String,
+    message: Option<(String, bool)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DmDialog {
+    Create,
+    Pair,
+}
+
+fn add_device_menu(ui: &mut egui::Ui, dm: &mut DmState) {
+    ui.set_min_width(220.0);
+    if ui.button("Create Virtual Device").clicked() {
+        dm.dialog = Some(DmDialog::Create);
+        dm.message = None;
+        ui.close();
+    }
+    if ui.button("Pair Devices Using Wi-Fi").clicked() {
+        dm.dialog = Some(DmDialog::Pair);
+        dm.message = None;
+        ui.close();
+    }
+}
+
+fn dm_toolbar(app: &mut IdeApp, ui: &mut egui::Ui, dm: &mut DmState) {
+    let _ = app;
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        let add = widgets::flat_widget(
+            ui,
+            Some((Icon::Plus, *icons::ICON)),
+            "",
+            egui::FontId::proportional(theme::UI_FONT_SIZE),
+            *theme::TEXT,
+            true,
+            26.0,
+        );
+        egui::Popup::menu(&add).show(|ui| add_device_menu(ui, dm));
+        add.on_hover_text("Add a new device");
+        ui.add(
+            egui::TextEdit::singleline(&mut dm.filter)
+                .hint_text("Filter devices")
+                .desired_width((ui.available_width() - 40.0).max(80.0)),
+        );
+        icons::button(ui, Icon::Search, "Filter devices by name, API or type");
+    });
+    ui.add_space(2.0);
+}
+
+fn dm_dialogs(app: &mut IdeApp, ctx: &egui::Context, dm: &mut DmState) {
+    let Some(kind) = dm.dialog else { return };
+    let mut close = false;
+    let title = match kind {
+        DmDialog::Create => "Create Virtual Device",
+        DmDialog::Pair => "Pair Devices Using Wi-Fi",
+    };
+    egui::Window::new(title)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
+        .show(ctx, |ui| {
+            match kind {
+                DmDialog::Create => {
+                    let images: Vec<String> = app
+                        .state
+                        .android
+                        .sdk
+                        .as_ref()
+                        .and_then(|d| d.sdk.as_ref())
+                        .map(|sdk| {
+                            sdk.packages
+                                .iter()
+                                .filter(|p| p.category == jetthing_android::PackageCategory::SystemImage)
+                                .map(|p| p.path.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    egui::Grid::new("dm_create").num_columns(2).show(ui, |ui| {
+                        ui.label("Name");
+                        ui.text_edit_singleline(&mut dm.name);
+                        ui.end_row();
+                        ui.label("System image");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut dm.image)
+                                .hint_text("system-images;android-35;google_apis;x86_64"),
+                        );
+                        ui.end_row();
+                        ui.label("Device profile");
+                        ui.add(egui::TextEdit::singleline(&mut dm.profile).hint_text("pixel_6 (optional)"));
+                        ui.end_row();
+                    });
+                    if !images.is_empty() {
+                        ui.label(RichText::new("Installed system images").color(theme::TEXT_INFO));
+                        for image in images {
+                            if ui.link(&image).clicked() {
+                                dm.image = image;
+                            }
+                        }
+                    }
+                }
+                DmDialog::Pair => {
+                    ui.label(
+                        RichText::new("On the device: Developer options › Wireless debugging › Pair device with pairing code.")
+                            .color(theme::TEXT_INFO),
+                    );
+                    egui::Grid::new("dm_pair").num_columns(2).show(ui, |ui| {
+                        ui.label("Address");
+                        ui.add(egui::TextEdit::singleline(&mut dm.address).hint_text("192.168.1.20:37123"));
+                        ui.end_row();
+                        ui.label("Pairing code");
+                        ui.add(egui::TextEdit::singleline(&mut dm.code).hint_text("123456"));
+                        ui.end_row();
+                    });
+                }
+            }
+            if let Some((message, ok)) = &dm.message {
+                ui.label(RichText::new(message).color(if *ok { *theme::SUCCESS } else { *theme::ERROR }));
+            }
+            ui.horizontal(|ui| {
+                let label = if kind == DmDialog::Create { "Create" } else { "Pair" };
+                if ui.button(label).clicked() {
+                    let result = match kind {
+                        DmDialog::Create => app.commands.execute(
+                            "android.avd.create",
+                            &mut app.state,
+                            json!({"name": dm.name.trim(), "systemImage": dm.image.trim(), "device": dm.profile.trim()}),
+                        ),
+                        DmDialog::Pair => app.commands.execute(
+                            "android.devices.pair",
+                            &mut app.state,
+                            json!({"address": dm.address.trim(), "code": dm.code.trim()}),
+                        ),
+                    };
+                    match result {
+                        Ok(_) => close = true,
+                        Err(error) => dm.message = Some((error.to_string(), false)),
+                    }
+                }
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+            });
+        });
+    if close {
+        dm.dialog = None;
+    }
+}
+
+fn device_table(app: &mut IdeApp, ui: &mut egui::Ui, dm: &mut DmState) {
     let width = ui.available_width();
     let api_x = (width - 190.0).max(140.0);
     let type_x = api_x + 52.0;
@@ -295,16 +457,27 @@ fn device_table(app: &mut IdeApp, ui: &mut egui::Ui) {
                 ui.label(RichText::new(error).color(theme::ERROR));
             });
     }
-    let rows = rows(app);
+    let mut rows = rows(app);
+    let needle = dm.filter.trim().to_lowercase();
+    if !needle.is_empty() {
+        rows.retain(|r| {
+            [&r.name, &r.api, &r.kind, &r.detail]
+                .iter()
+                .any(|f| f.to_lowercase().contains(&needle))
+        });
+    }
     if rows.is_empty() {
         ui.add_space((ui.available_height() / 2.0 - 40.0).max(12.0));
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("No devices connected.").color(theme::TEXT_INFO));
+            let text = if needle.is_empty() {
+                "No devices connected."
+            } else {
+                "No devices match the filter."
+            };
+            ui.label(RichText::new(text).color(theme::TEXT_INFO));
             ui.add_space(4.0);
-            ui.label(
-                RichText::new("Create a virtual device with avdmanager create avd, or connect a device with USB debugging enabled.")
-                    .color(theme::TEXT_INFO),
-            );
+            let link = ui.link(RichText::new("Add a new device...").color(theme::MODIFIED));
+            egui::Popup::menu(&link).show(|ui| add_device_menu(ui, dm));
         });
         return;
     }

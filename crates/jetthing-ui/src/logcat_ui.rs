@@ -29,6 +29,176 @@ impl Default for LogcatView {
     }
 }
 
+impl LogcatView {
+    /// Shows a clear (×) button over a non-empty query; returns true on click.
+    fn query_dirty_clear(&mut self, ui: &mut egui::Ui, field: &egui::Response) -> bool {
+        if self.query.is_empty() {
+            return false;
+        }
+        let clicked = icons::button(ui, Icon::Close, "Clear filter").clicked();
+        if clicked {
+            self.query.clear();
+            ui.memory_mut(|m| m.request_focus(field.id));
+        }
+        clicked
+    }
+}
+
+/// Colours `key:` prefixes (and `-key:` / `key=:` / `key~:`) in the filter.
+fn filter_job(text: &str, has_error: bool) -> egui::text::LayoutJob {
+    use egui::text::{LayoutJob, TextFormat};
+    let font = egui::FontId::monospace(theme::EDITOR_FONT_SIZE);
+    let mut job = LayoutJob::default();
+    let base = if has_error {
+        *theme::ERROR
+    } else {
+        *theme::TEXT_BRIGHT
+    };
+    for word in text.split_inclusive(' ') {
+        let trimmed = word.trim_end();
+        let split = trimmed
+            .find(':')
+            .filter(|&i| {
+                let key = trimmed[..i]
+                    .trim_start_matches('-')
+                    .trim_end_matches(['=', '~']);
+                matches!(
+                    key,
+                    "tag" | "message" | "package" | "level" | "age" | "process"
+                )
+            })
+            .map(|i| i + 1);
+        match split {
+            Some(i) => {
+                let (key, rest) = word.split_at(i);
+                let mut chip = TextFormat::simple(font.clone(), *theme::ACCENT);
+                chip.background = theme::SELECTION.gamma_multiply(0.5);
+                job.append(key, 0.0, chip);
+                job.append(rest, 0.0, TextFormat::simple(font.clone(), base));
+            }
+            None => job.append(word, 0.0, TextFormat::simple(font.clone(), base)),
+        }
+    }
+    job
+}
+
+/// Star (favourites) and history (▾) menus beside the filter field.
+fn filter_menus(app: &mut IdeApp, ui: &mut egui::Ui) {
+    let query = app.logcat.query.clone();
+    let is_favourite = app.state.android.logcat.favourites.contains(&query);
+    let mut apply: Option<String> = None;
+    let star = ui
+        .menu_button(
+            RichText::new(if is_favourite { "★" } else { "☆" }).color(if is_favourite {
+                *theme::WARNING
+            } else {
+                *theme::TEXT_SECONDARY
+            }),
+            |ui| {
+                let label = if is_favourite {
+                    "Remove current filter from favourites"
+                } else {
+                    "Add current filter to favourites"
+                };
+                if ui
+                    .add_enabled(!query.trim().is_empty(), egui::Button::new(label))
+                    .clicked()
+                {
+                    app.dispatch("android.logcat.favourite", json!({"query": query}));
+                    ui.close();
+                }
+                ui.separator();
+                let favourites = app.state.android.logcat.favourites.clone();
+                if favourites.is_empty() {
+                    ui.label(RichText::new("No favourite filters").color(theme::TEXT_INFO));
+                }
+                for favourite in favourites {
+                    if ui.button(&favourite).clicked() {
+                        apply = Some(favourite);
+                        ui.close();
+                    }
+                }
+            },
+        )
+        .response;
+    star.on_hover_text("Favourite filters");
+    let history = ui
+        .menu_button("▾", |ui| {
+            let history = app.state.android.logcat.history.clone();
+            if history.is_empty() {
+                ui.label(RichText::new("No filter history").color(theme::TEXT_INFO));
+            }
+            for entry in history {
+                if ui.button(&entry).clicked() {
+                    apply = Some(entry);
+                    ui.close();
+                }
+            }
+        })
+        .response;
+    history.on_hover_text("Filter history");
+    if let Some(query) = apply {
+        app.logcat.query = query.clone();
+        app.dispatch(
+            "android.logcat.filter",
+            json!({"query": query, "remember": true}),
+        );
+    }
+}
+
+/// `Logcat ×` tab strip with a `+` button.
+fn tab_strip(app: &mut IdeApp, ui: &mut egui::Ui) {
+    let tabs = app.state.android.logcat.tabs.clone();
+    let active = app.state.android.logcat.active_tab;
+    let mut select = None;
+    let mut close = None;
+    let mut add = false;
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for (index, tab) in tabs.iter().enumerate() {
+            let title = if index == 0 {
+                "Logcat".to_owned()
+            } else {
+                format!("Logcat ({})", index + 1)
+            };
+            let text = RichText::new(title).color(if index == active {
+                *theme::TEXT_BRIGHT
+            } else {
+                *theme::TEXT_SECONDARY
+            });
+            let response = ui.add(
+                egui::Button::new(text)
+                    .selected(index == active)
+                    .frame(index == active),
+            );
+            let response = match &tab.serial {
+                Some(serial) => response.on_hover_text(format!("{serial}: {}", tab.query)),
+                None => response,
+            };
+            if response.clicked() && index != active {
+                select = Some(index);
+            }
+            if tabs.len() > 1 && icons::button(ui, Icon::Close, "Close Tab").clicked() {
+                close = Some(index);
+            }
+        }
+        if icons::button(ui, Icon::Plus, "New Logcat Tab").clicked() {
+            add = true;
+        }
+    });
+    if add {
+        app.dispatch("android.logcat.tab.new", Value::Null);
+        app.logcat.query = app.state.android.logcat.query.clone();
+    } else if let Some(index) = close {
+        app.dispatch("android.logcat.tab.close", json!({"index": index}));
+        app.logcat.query = app.state.android.logcat.query.clone();
+    } else if let Some(index) = select {
+        app.dispatch("android.logcat.tab.select", json!({"index": index}));
+        app.logcat.query = app.state.android.logcat.query.clone();
+    }
+}
+
 pub fn level_colors(level: LogLevel) -> (Color32, Color32) {
     // (badge background, message text)
     match level {
@@ -84,6 +254,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         app.toggle_tool_window(ToolWindow::Logcat);
         return;
     }
+    tab_strip(app, ui);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
         let current = app
@@ -116,16 +287,17 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         let has_error = app.state.android.logcat.filter_error.is_some();
         let field_width = (ui.available_width() - 70.0).max(120.0);
+        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+            let mut job = filter_job(text.as_str(), has_error);
+            job.wrap.max_width = wrap;
+            ui.fonts_mut(|f| f.layout_job(job))
+        };
         let response = ui.add(
             egui::TextEdit::singleline(&mut app.logcat.query)
                 .id(egui::Id::new("logcat_filter"))
+                .layouter(&mut layouter)
                 .hint_text("Filter, e.g. package:mine level:warn tag:MyTag")
                 .font(egui::FontId::monospace(theme::EDITOR_FONT_SIZE))
-                .text_color(if has_error {
-                    *theme::ERROR
-                } else {
-                    *theme::TEXT_BRIGHT
-                })
                 .desired_width(field_width),
         );
         let response = match &app.state.android.logcat.filter_error {
@@ -144,6 +316,18 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                 json!({"query": query}),
             );
         }
+        if response.lost_focus() && !app.logcat.query.trim().is_empty() {
+            let query = app.logcat.query.clone();
+            let _ = app.commands.execute(
+                "android.logcat.filter",
+                &mut app.state,
+                json!({"query": query, "remember": true}),
+            );
+        }
+        if app.logcat.query_dirty_clear(ui, &response) {
+            app.dispatch("android.logcat.filter", json!({"query": ""}));
+        }
+        filter_menus(app, ui);
         let match_case = app.state.android.logcat.match_case;
         if ui
             .add(
@@ -338,6 +522,18 @@ fn pad(text: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filter_keys_are_highlighted() {
+        let job = filter_job("package:mine foo level:warn", false);
+        let keys: Vec<_> = job
+            .sections
+            .iter()
+            .filter(|s| s.format.background != Color32::TRANSPARENT)
+            .map(|s| &job.text[s.byte_range.clone()])
+            .collect();
+        assert_eq!(keys, ["package:", "level:"]);
+    }
 
     #[test]
     fn padding_and_colours() {

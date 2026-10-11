@@ -13,7 +13,26 @@ pub const LOGCAT_CAPACITY: usize = 100_000;
 /// Default query, like the reference IDE: only the project's app.
 pub const DEFAULT_QUERY: &str = "package:mine";
 
+/// Entries kept in the filter history.
+pub const HISTORY_CAPACITY: usize = 20;
+
+/// One Logcat tab: a device plus a filter. All tabs share the single live
+/// stream; selecting a tab restarts it for the tab's device and filter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogcatTab {
+    pub id: u32,
+    pub serial: Option<String>,
+    pub query: String,
+}
+
 pub struct LogcatState {
+    pub tabs: Vec<LogcatTab>,
+    pub active_tab: usize,
+    next_tab_id: u32,
+    /// Saved filter queries (the star menu).
+    pub favourites: Vec<String>,
+    /// Recently committed filter queries, newest first.
+    pub history: Vec<String>,
     session: Option<LogcatSession>,
     /// Device the Logcat window shows.
     pub serial: Option<String>,
@@ -39,6 +58,15 @@ pub struct LogcatState {
 impl Default for LogcatState {
     fn default() -> Self {
         Self {
+            tabs: vec![LogcatTab {
+                id: 1,
+                serial: None,
+                query: DEFAULT_QUERY.into(),
+            }],
+            active_tab: 0,
+            next_tab_id: 2,
+            favourites: Vec::new(),
+            history: Vec::new(),
             session: None,
             serial: None,
             entries: VecDeque::new(),
@@ -147,6 +175,81 @@ impl LogcatState {
             }
             Err(error) => self.filter_error = Some(error),
         }
+    }
+
+    /// Remembers a committed query at the front of the history.
+    pub fn remember_query(&mut self, query: &str) {
+        let query = query.trim();
+        if query.is_empty() {
+            return;
+        }
+        self.history.retain(|q| q != query);
+        self.history.insert(0, query.to_owned());
+        self.history.truncate(HISTORY_CAPACITY);
+    }
+
+    /// Adds `query` to the favourites, or removes it when present.
+    pub fn toggle_favourite(&mut self, query: &str) -> bool {
+        let query = query.trim();
+        if let Some(index) = self.favourites.iter().position(|q| q == query) {
+            self.favourites.remove(index);
+            false
+        } else if query.is_empty() {
+            false
+        } else {
+            self.favourites.push(query.to_owned());
+            true
+        }
+    }
+
+    /// Saves the live device and filter into the active tab.
+    fn sync_active_tab(&mut self) {
+        let (serial, query) = (self.serial.clone(), self.query.clone());
+        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+            tab.serial = serial;
+            tab.query = query;
+        }
+    }
+
+    /// Opens a new tab copying the live device, with the default filter.
+    pub fn new_tab(&mut self) {
+        self.sync_active_tab();
+        let id = self.next_tab_id;
+        self.next_tab_id += 1;
+        self.tabs.push(LogcatTab {
+            id,
+            serial: self.serial.clone(),
+            query: DEFAULT_QUERY.into(),
+        });
+        self.active_tab = self.tabs.len() - 1;
+        let match_case = self.match_case;
+        self.set_query(DEFAULT_QUERY, match_case);
+    }
+
+    /// Closes tab `index`; the last tab stays. Returns the tab to show.
+    pub fn close_tab(&mut self, index: usize) -> Option<LogcatTab> {
+        if self.tabs.len() <= 1 || index >= self.tabs.len() {
+            return None;
+        }
+        self.sync_active_tab();
+        self.tabs.remove(index);
+        if self.active_tab > index || self.active_tab >= self.tabs.len() {
+            self.active_tab = self.active_tab.saturating_sub(1);
+        }
+        self.tabs.get(self.active_tab).cloned()
+    }
+
+    /// Activates tab `index`, returning it so the caller can restart the stream.
+    pub fn select_tab(&mut self, index: usize) -> Option<LogcatTab> {
+        if index >= self.tabs.len() {
+            return None;
+        }
+        self.sync_active_tab();
+        self.active_tab = index;
+        let tab = self.tabs[index].clone();
+        let match_case = self.match_case;
+        self.set_query(&tab.query, match_case);
+        Some(tab)
     }
 
     pub fn clear(&mut self) {
@@ -264,7 +367,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 "Filter Logcat",
                 "Android",
                 None,
-                r#"{"query":"string","matchCase":false}"#,
+                r#"{"query":"string","matchCase":false,"remember":false}"#,
             ),
             |_| true,
             |state: &mut IdeState, params| {
@@ -278,7 +381,80 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 if let Some(error) = &logcat.filter_error {
                     return Err(CommandError::InvalidParams(error.clone()));
                 }
+                if params.get("remember").and_then(Value::as_bool) == Some(true) {
+                    logcat.remember_query(&query);
+                }
+                logcat.sync_active_tab();
                 Ok(json!({"visible": logcat.visible_len(), "total": logcat.len()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "android.logcat.tab.new",
+                "New Logcat Tab",
+                "Android",
+                None,
+                "{}",
+            ),
+            |_| true,
+            |state: &mut IdeState, _| {
+                state.android.logcat.new_tab();
+                Ok(json!({"tabs": state.android.logcat.tabs.len()}))
+            },
+        ))
+        .expect("unique built-in id");
+    for (id, label) in [
+        ("android.logcat.tab.select", "Select Logcat Tab"),
+        ("android.logcat.tab.close", "Close Logcat Tab"),
+    ] {
+        registry
+            .register(Command::new(
+                spec(id, label, "Android", None, r#"{"index":0}"#),
+                |_| true,
+                move |state: &mut IdeState, params| {
+                    let index =
+                        params.get("index").and_then(Value::as_u64).ok_or_else(|| {
+                            CommandError::InvalidParams("index is required".into())
+                        })? as usize;
+                    let logcat = &mut state.android.logcat;
+                    let tab = if id == "android.logcat.tab.select" {
+                        logcat.select_tab(index)
+                    } else {
+                        logcat.close_tab(index)
+                    };
+                    let Some(tab) = tab else {
+                        return Err(CommandError::InvalidParams(format!(
+                            "no Logcat tab {index} (or it is the last one)"
+                        )));
+                    };
+                    if tab.serial != state.android.logcat.serial {
+                        if let Some(serial) = tab.serial.clone() {
+                            state
+                                .start_logcat(Some(serial))
+                                .map_err(CommandError::Failed)?;
+                        }
+                    }
+                    Ok(json!({"active": state.android.logcat.active_tab}))
+                },
+            ))
+            .expect("unique built-in id");
+    }
+    registry
+        .register(Command::new(
+            spec(
+                "android.logcat.favourite",
+                "Toggle Logcat Filter Favourite",
+                "Android",
+                None,
+                r#"{"query":"string"}"#,
+            ),
+            |_| true,
+            |state: &mut IdeState, params| {
+                let query = string_param(&params, "query")?;
+                let added = state.android.logcat.toggle_favourite(&query);
+                Ok(json!({"favourite": added}))
             },
         ))
         .expect("unique built-in id");
@@ -304,6 +480,33 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 },
             ))
             .expect("unique built-in id");
+    }
+}
+
+#[cfg(test)]
+mod tab_tests {
+    use super::*;
+
+    #[test]
+    fn tabs_history_and_favourites() {
+        let mut logcat = LogcatState::default();
+        logcat.new_tab();
+        assert_eq!(logcat.tabs.len(), 2);
+        logcat.set_query("level:warn", false);
+        logcat.sync_active_tab();
+        let first = logcat.select_tab(0).unwrap();
+        assert_eq!(first.query, DEFAULT_QUERY);
+        assert_eq!(logcat.query, DEFAULT_QUERY);
+        assert_eq!(logcat.select_tab(1).unwrap().query, "level:warn");
+        assert!(logcat.close_tab(1).is_some());
+        assert!(logcat.close_tab(0).is_none(), "the last tab stays");
+        logcat.remember_query("tag:A");
+        logcat.remember_query("tag:B");
+        logcat.remember_query("tag:A");
+        assert_eq!(logcat.history, ["tag:A", "tag:B"]);
+        assert!(logcat.toggle_favourite("tag:A"));
+        assert!(!logcat.toggle_favourite("tag:A"));
+        assert!(logcat.favourites.is_empty());
     }
 }
 
