@@ -89,6 +89,14 @@ impl IdeState {
         }
         self.vcs_stale = true;
         self.request_git_refresh();
+        if self.is_gradle_project()
+            && changes
+                .paths
+                .iter()
+                .any(|path| jetthing_gradle::is_build_input(path))
+        {
+            self.gradle_changes_pending = true;
+        }
         if changes.structure_changed
             && let Some(project) = &self.project
         {
