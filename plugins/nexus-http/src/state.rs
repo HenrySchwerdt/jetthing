@@ -117,6 +117,21 @@ impl SchemaState {
     }
 }
 
+/// The methods of a gRPC request's schema (loaded from a `.proto` file or by
+/// reflection).
+#[derive(Default)]
+pub struct GrpcSchemaState {
+    pub methods: Vec<nexus_http_core::grpc::MethodInfo>,
+    pub error: Option<String>,
+    rx: Option<Receiver<Result<Vec<nexus_http_core::grpc::MethodInfo>, String>>>,
+}
+
+impl GrpcSchemaState {
+    pub fn loading(&self) -> bool {
+        self.rx.is_some()
+    }
+}
+
 /// Events kept per stream before the oldest are dropped.
 const MAX_STREAM_EVENTS: usize = 5_000;
 
@@ -147,6 +162,7 @@ pub struct NexusState {
     inflight: Option<InFlight>,
     pub streams: std::collections::HashMap<Id, StreamState>,
     pub schemas: std::collections::HashMap<Id, SchemaState>,
+    pub grpc_schemas: std::collections::HashMap<Id, GrpcSchemaState>,
     dirty_since: Option<Instant>,
     history_dirty: bool,
 }
@@ -202,6 +218,7 @@ impl NexusState {
             inflight: None,
             streams: Default::default(),
             schemas: Default::default(),
+            grpc_schemas: Default::default(),
             dirty_since: None,
             history_dirty: false,
         }
@@ -471,6 +488,20 @@ impl NexusState {
             }
         };
         let session = match protocol {
+            Protocol::Grpc => {
+                let (_, request) = self.workspace.find_request(id).expect("checked above");
+                let (proto, method) =
+                    (request.grpc.proto_file.clone(), request.grpc.method.clone());
+                let body = self.rendered_message(id).unwrap_or_default();
+                nexus_http_core::grpc::start(nexus_http_core::grpc::call_for(
+                    &prepared,
+                    &self.workspace.settings,
+                    &proto,
+                    &self.base_dir,
+                    &method,
+                    &body,
+                ))
+            }
             Protocol::WebSocket => {
                 // The body is the message composer, not part of the handshake.
                 prepared.body.clear();
@@ -523,6 +554,63 @@ impl NexusState {
             .is_some_and(|s| s.send_text(rendered))
     }
 
+    /// The request's message body with templates rendered.
+    fn rendered_message(&mut self, id: &Id) -> Option<String> {
+        use nexus_http_core::model::Body;
+        let (folders, request) = self.workspace.find_request(id)?;
+        let text = match &request.body {
+            Body::Json { text } | Body::Xml { text } | Body::Text { text, .. } => text.clone(),
+            _ => String::new(),
+        };
+        let ctx = nexus_http_core::template::Context::for_request(&self.workspace, &folders)
+            .with_responses(&self.history);
+        match ctx.render(&text) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                self.notify(format!("Message: {e}"));
+                None
+            }
+        }
+    }
+
+    /// Loads the gRPC schema of request `id` (proto file or reflection) in the
+    /// background.
+    pub fn load_grpc_schema(&mut self, id: &Id) {
+        use nexus_http_core::exec::{PrepareOptions, prepare};
+        let prepared = match prepare(
+            &self.workspace,
+            id,
+            &PrepareOptions {
+                base_dir: &self.base_dir,
+                responses: &self.history,
+            },
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                let entry = self.grpc_schemas.entry(id.clone()).or_default();
+                entry.error = Some(e.to_string());
+                return;
+            }
+        };
+        let proto = self
+            .workspace
+            .find_request(id)
+            .map(|(_, r)| r.grpc.proto_file.clone())
+            .unwrap_or_default();
+        let target =
+            nexus_http_core::grpc::Target::from_prepared(&prepared, &self.workspace.settings);
+        let schema = nexus_http_core::grpc::schema_for(&proto, &self.base_dir);
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(
+                nexus_http_core::grpc::load_methods(&schema, &target).map_err(|e| e.to_string()),
+            );
+        });
+        let entry = self.grpc_schemas.entry(id.clone()).or_default();
+        entry.rx = Some(rx);
+        entry.error = None;
+    }
+
     /// Fetches the GraphQL schema of request `id` by introspection.
     pub fn fetch_schema(&mut self, id: &Id) {
         let workspace = self.workspace.clone();
@@ -545,6 +633,14 @@ impl NexusState {
         let entry = self.schemas.entry(id.clone()).or_default();
         entry.rx = Some(rx);
         entry.error = None;
+    }
+
+    /// Whether the open stream takes more messages (gRPC client streaming).
+    pub fn stream_can_send(&self, id: &Id) -> bool {
+        self.streams
+            .get(id)
+            .and_then(|s| s.session.as_ref())
+            .is_some_and(|s| s.can_send())
     }
 
     pub fn stream_connected(&self, id: &Id) -> bool {
@@ -600,6 +696,23 @@ impl NexusState {
                 match rx.try_recv() {
                     Ok(Ok(s)) => {
                         schema.schema = Some(Arc::new(s));
+                        schema.error = None;
+                        schema.rx = None;
+                    }
+                    Ok(Err(e)) => {
+                        schema.error = Some(e);
+                        schema.rx = None;
+                    }
+                    Err(TryRecvError::Empty) => streaming = true,
+                    Err(TryRecvError::Disconnected) => schema.rx = None,
+                }
+            }
+        }
+        for schema in self.grpc_schemas.values_mut() {
+            if let Some(rx) = &schema.rx {
+                match rx.try_recv() {
+                    Ok(Ok(methods)) => {
+                        schema.methods = methods;
                         schema.error = None;
                         schema.rx = None;
                     }
@@ -866,5 +979,79 @@ mod tests {
             Some("Persisted")
         );
         assert_eq!(s.selected.as_ref(), Some(&id));
+    }
+
+    #[test]
+    fn grpc_requests_load_methods_and_report_connection_errors() {
+        use nexus_http_core::model::{Body, Method, Protocol};
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("echo.proto"),
+            "syntax = \"proto3\";\npackage t;\nservice E { rpc Say(M) returns (M); }\nmessage M { string name = 1; }\n",
+        )
+        .unwrap();
+        let mut s = NexusState::in_memory(Workspace::new("W"));
+        s.base_dir = dir.path().to_path_buf();
+        let id = s.new_request(None);
+        {
+            let r = s.request_mut(&id).unwrap();
+            r.protocol = Protocol::Grpc;
+            r.method = Method::Post;
+            r.url = "grpc://127.0.0.1:9".into();
+            r.grpc.proto_file = "echo.proto".into();
+            r.grpc.method = "t.E/Say".into();
+            r.body = Body::Json {
+                text: "{\"name\": \"x\"}".into(),
+            };
+        }
+        s.load_grpc_schema(&id);
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while s.grpc_schemas[&id].loading() && Instant::now() < deadline {
+            s.poll();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let methods = &s.grpc_schemas[&id].methods;
+        assert_eq!(methods.len(), 1, "{:?}", s.grpc_schemas[&id].error);
+        assert_eq!(methods[0].name, "t.E/Say");
+        assert_eq!(methods[0].kind(), "unary");
+        assert!(methods[0].template.contains("\"name\""));
+
+        s.connect_stream(&id);
+        while Instant::now() < deadline && !s.streams[&id].events.iter().any(|e| e.label == "error")
+        {
+            s.poll();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let events = &s.streams[&id].events;
+        assert!(
+            events
+                .iter()
+                .any(|e| e.data.contains("cannot connect to http://127.0.0.1:9")),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn grpc_schema_errors_are_reported() {
+        use nexus_http_core::model::Protocol;
+        let mut s = NexusState::in_memory(Workspace::new("W"));
+        let id = s.new_request(None);
+        {
+            let r = s.request_mut(&id).unwrap();
+            r.protocol = Protocol::Grpc;
+            r.url = "grpc://127.0.0.1:9".into();
+            r.grpc.proto_file = "missing.proto".into();
+        }
+        s.load_grpc_schema(&id);
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while s.grpc_schemas[&id].loading() && Instant::now() < deadline {
+            s.poll();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let error = s.grpc_schemas[&id].error.clone().unwrap();
+        assert!(
+            error.starts_with("cannot read the .proto schema"),
+            "{error}"
+        );
     }
 }

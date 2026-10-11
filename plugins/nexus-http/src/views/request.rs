@@ -27,6 +27,7 @@ pub struct RequestActions {
     pub cancel: bool,
     pub generate_code: bool,
     pub fetch_token: bool,
+    pub load_grpc_schema: bool,
 }
 
 pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestActions) {
@@ -43,6 +44,10 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
         },
         None => GqlContext::default(),
     };
+    let grpc_schema = state
+        .grpc_schemas
+        .get(id)
+        .map(|s| (s.methods.clone(), s.loading(), s.error.clone()));
     let tab = &mut state.request_tab;
     let mut current_tab = *tab;
     let Some(request) = state.request_mut(id) else {
@@ -72,6 +77,7 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
                     Protocol::Http => "Enter a URL, paste a curl command, or use {{ base_url }}",
                     Protocol::WebSocket => "ws://host/socket or wss://…",
                     Protocol::Sse => "https://host/events",
+                    Protocol::Grpc => "grpc://host:50051 or grpcs://host:443",
                 };
                 let resp = template_field(
                     ui,
@@ -115,6 +121,9 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
             });
         });
     });
+    if request.protocol == Protocol::Grpc {
+        changed |= grpc_bar(ui, request, &vars, grpc_schema.as_ref(), actions);
+    }
     ui.add_space(4.0);
 
     // ---------------------------------------------------------------- tabs
@@ -126,7 +135,11 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
             &mut current_tab,
             &RequestTab::ALL,
             |t| match t {
-                RequestTab::Body if request.protocol == Protocol::WebSocket => "Message".to_owned(),
+                RequestTab::Body
+                    if matches!(request.protocol, Protocol::WebSocket | Protocol::Grpc) =>
+                {
+                    "Message".to_owned()
+                }
                 RequestTab::Body => match &request.body {
                     Body::None => "Body".to_owned(),
                     other => other.label().to_owned(),
@@ -177,7 +190,9 @@ pub fn show(ui: &mut Ui, state: &mut NexusState, id: &Id, actions: &mut RequestA
                             }
                         });
                 }
-                RequestTab::Body if request.protocol == Protocol::WebSocket => {
+                RequestTab::Body
+                    if matches!(request.protocol, Protocol::WebSocket | Protocol::Grpc) =>
+                {
                     changed |= message_tab(ui, &mut request.body, &vars, connected, actions);
                 }
                 RequestTab::Body => changed |= body_tab(ui, &mut request.body, &vars, &mut gql),
@@ -242,6 +257,82 @@ impl TabCounts {
     }
 }
 
+type GrpcSchemaView = (Vec<nexus_http_core::grpc::MethodInfo>, bool, Option<String>);
+
+/// The gRPC row under the URL bar: schema source (`.proto` file or reflection)
+/// and the method to call.
+fn grpc_bar(
+    ui: &mut Ui,
+    request: &mut Request,
+    vars: &Map<String, Value>,
+    schema: Option<&GrpcSchemaView>,
+    actions: &mut RequestActions,
+) -> bool {
+    let pal = Palette::of(ui);
+    let mut changed = false;
+    let loading = schema.is_some_and(|s| s.1);
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        let half = (ui.available_width() - 150.0) / 2.0;
+        changed |= template_field(
+            ui,
+            &mut request.grpc.proto_file,
+            ".proto file (empty: server reflection)",
+            vars,
+            half,
+            egui::Id::new("nexus.grpc.proto"),
+        )
+        .changed();
+        changed |= template_field(
+            ui,
+            &mut request.grpc.method,
+            "package.Service/Method",
+            vars,
+            half,
+            egui::Id::new("nexus.grpc.method"),
+        )
+        .changed();
+        let methods = schema.map(|s| s.0.as_slice()).unwrap_or(&[]);
+        let label = if loading { "Loading…" } else { "Methods" };
+        let button = widgets::secondary_button(ui, label);
+        if button.clicked() && !loading {
+            actions.load_grpc_schema = true;
+        }
+        if !methods.is_empty() {
+            egui::Popup::menu(&button)
+                .id(egui::Id::new("nexus.grpc.methods"))
+                .width(320.0)
+                .show(|ui| {
+                    for m in methods {
+                        let text = format!("{}  ·  {}", m.name, m.kind());
+                        if ui
+                            .selectable_label(request.grpc.method == m.name, text)
+                            .clicked()
+                        {
+                            request.grpc.method = m.name.clone();
+                            if matches!(&request.body, Body::None)
+                                || matches!(&request.body, Body::Json { text } if text.trim().is_empty())
+                            {
+                                request.body = Body::Json {
+                                    text: m.template.clone(),
+                                };
+                            }
+                            changed = true;
+                        }
+                    }
+                });
+        }
+    });
+    if let Some((_, _, Some(error))) = schema {
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.label(RichText::new(error).size(12.0).color(pal.error));
+        });
+    }
+    changed
+}
+
 fn method_picker(ui: &mut Ui, method: &mut Method, protocol: &mut Protocol) -> bool {
     let pal = Palette::of(ui);
     let font = semibold(ui, 13.0);
@@ -249,6 +340,7 @@ fn method_picker(ui: &mut Ui, method: &mut Method, protocol: &mut Protocol) -> b
         Protocol::Http => (method.as_str().to_owned(), pal.method(method)),
         Protocol::WebSocket => ("WS".to_owned(), pal.syntax_number),
         Protocol::Sse => ("SSE".to_owned(), pal.info),
+        Protocol::Grpc => ("gRPC".to_owned(), pal.success),
     };
     let galley = ui.painter().layout_no_wrap(text, font.clone(), color);
     let (rect, resp) =
@@ -286,6 +378,7 @@ fn method_picker(ui: &mut Ui, method: &mut Method, protocol: &mut Protocol) -> b
         for (p, label, color) in [
             (Protocol::WebSocket, "WebSocket", pal.syntax_number),
             (Protocol::Sse, "Server-Sent Events", pal.info),
+            (Protocol::Grpc, "gRPC", pal.success),
         ] {
             let text = RichText::new(label).font(semibold(ui, 12.5)).color(color);
             if ui.selectable_label(*protocol == p, text).clicked() {
