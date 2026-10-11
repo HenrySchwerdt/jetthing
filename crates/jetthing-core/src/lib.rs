@@ -72,6 +72,7 @@ mod search_scopes;
 mod settings_commands;
 mod signature_help;
 mod snippet_session;
+pub mod splits;
 pub mod tabs;
 mod terminal_commands;
 mod terminal_tabs;
@@ -238,6 +239,11 @@ pub struct IdeState {
     pub plugin_host: PluginHostState,
     /// Pinned tabs, closed-tab history and the tab limit.
     pub tabs: tabs::EditorTabs,
+    /// Editor split tree: which tabs live in which group (PLATFORM-UI-004).
+    pub splits: jetthing_split::SplitTree<PathBuf>,
+    /// The active tab as of the last `sync_splits`; a different one means
+    /// something outside the split model activated a tab.
+    splits_synced: Option<PathBuf>,
     pub terminal: Option<TerminalSession>,
     /// Sessions of the Terminal tool window; the active one lives in `terminal`.
     pub terminal_tabs: terminal_tabs::TerminalTabs,
@@ -393,6 +399,8 @@ impl IdeState {
         self.prepare_project_switch()?;
         self.documents.clear();
         self.active_document = None;
+        self.splits = Default::default();
+        self.splits_synced = None;
         self.tabs = tabs::EditorTabs {
             limit: self.tabs.limit,
             ..Default::default()
@@ -431,6 +439,8 @@ impl IdeState {
         self.files = project.entries(20_000);
         self.documents.clear();
         self.active_document = None;
+        self.splits = Default::default();
+        self.splits_synced = None;
         self.tabs = tabs::EditorTabs {
             limit: self.tabs.limit,
             ..Default::default()
@@ -486,6 +496,10 @@ impl IdeState {
             self.active_document = Some(index);
             self.diff_active = false;
             self.plugin_host.active_tab = None;
+            // Opening a preview tab for real (double-click, Enter) keeps it.
+            if self.tabs.preview.as_deref() == Some(path) {
+                self.tabs.preview = None;
+            }
             self.touch_recent(path);
             self.reveal_in_tree(path);
             return Ok(());
@@ -548,6 +562,10 @@ impl IdeState {
             Some(active) if active == index => Some(index.min(self.documents.len() - 1)),
             other => other,
         };
+        if self.tabs.preview.as_ref() == Some(&document.path) {
+            self.tabs.preview = None;
+        }
+        self.close_tab_in_splits(&document.path);
         self.close_completion();
         if let Some(project) = &self.project {
             let _ = self
@@ -1389,6 +1407,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
             },
         ))
         .expect("unique built-in id");
+    splits::register(&mut registry);
     registry
         .register(Command::new(
             spec(

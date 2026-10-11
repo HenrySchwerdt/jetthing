@@ -2983,6 +2983,7 @@ dependencies = [
  "jetthing-runner",
  "jetthing-search",
  "jetthing-settings",
+ "jetthing-split",
  "jetthing-templates",
  "jetthing-terminal",
  "jetthing-text",
@@ -3197,6 +3198,13 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "toml",
+]
+
+[[package]]
+name = "jetthing-split"
+version = "0.0.7"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

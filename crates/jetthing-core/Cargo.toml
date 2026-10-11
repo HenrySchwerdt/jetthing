@@ -22,6 +22,7 @@ jetthing-runnables = { path = "../jetthing-runnables" }
 jetthing-runner = { path = "../jetthing-runner" }
 jetthing-settings = { path = "../jetthing-settings" }
 jetthing-search = { path = "../jetthing-search" }
+jetthing-split = { path = "../jetthing-split" }
 jetthing-terminal = { path = "../jetthing-terminal" }
 jetthing-templates = { path = "../jetthing-templates" }
 jetthing-text = { path = "../jetthing-text" }
