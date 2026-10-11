@@ -253,6 +253,9 @@ pub fn icon_label(
 
 /// What [`tree_row`] draws. Every tree and list in a tool window goes through it
 /// so rows share one inset, indent step, chevron column and icon alignment.
+/// Paints a custom icon (badge) into the 16px icon slot of a [`TreeRow`].
+pub type IconPainter<'a> = &'a dyn Fn(&egui::Painter, Rect);
+
 pub struct TreeRow<'a> {
     pub depth: usize,
     /// `Some(expanded)` draws a chevron; `None` leaves the column empty.
@@ -266,7 +269,7 @@ pub struct TreeRow<'a> {
     pub reserve_icon: bool,
     pub icon: Option<(Icon, Color32)>,
     /// Custom icon painter (badges) in place of `icon`; gets the 16px icon rect.
-    pub paint_icon: Option<&'a dyn Fn(&egui::Painter, Rect)>,
+    pub paint_icon: Option<IconPainter<'a>>,
     pub text: &'a str,
     pub font: egui::FontId,
     pub color: Color32,

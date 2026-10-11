@@ -334,7 +334,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     ui,
                     widgets::TreeRow {
                         selected: view.selected == Some(0),
-                        icon: icon,
+                        icon,
                         reserve_icon: icon.is_none(),
                         font: theme::semibold(theme::UI_FONT_SIZE),
                         color: *theme::TEXT_BRIGHT,
