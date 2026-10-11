@@ -58,6 +58,7 @@ code or artwork was consulted.
 | UX-024 | Empty states | Empty Project / Rust / Android generator pages show three fields and 300 pt of nothing; the welcome Customize/Plugins/Learn pages are a heading and one button. | Pages fill the space with the relevant options or a description. | polish | [05](evidence/05-new-project-empty-generator.png) [23](evidence/23-welcome-info-pages.png) | `new_project.rs`, `welcome.rs::info_page` | C5 | open |
 | UX-025 | Context menus | Right-click on the status bar, the toolbar, the Project header or a recent-project row shows nothing; the tree "New" submenu offers Java/Kotlin classes in a Rust project. | Every surface has a context menu or none is expected; entries depend on context. | polish | [12](evidence/12-context-menus-tabbar-status-toolbar.png) | `chrome.rs`, `welcome.rs`, `context_menus.rs` | C4 | open |
 | UX-026 | Performance | With `rust-analyzer` failing to start, the idle workbench used 34 % of a core (`top`, nothing moving); the Java project idled at 2 %. | An idle window repaints only on events. | major | measurement below | `lib.rs::frame` `request_repaint_after` while `lsp.is_busy()` | C6 | open |
+| UX-028 | Project tree (main after #217) | Double-click a file: it opens (the first click already showed it as a preview) but nothing has keyboard focus; typing goes nowhere until the editor is clicked. Found by `ux-smoke` after merging main. | Opening a file by double-click or Enter focuses its editor. | blocker | smoke log | `toolwindows.rs` open handler; egui surrenders focus requested in the frame of a click elsewhere | C3 | **fixed** (`focus_editor_next_frame`, requested one frame later) |
 | UX-027 | Diff viewer | The "Collapse unchanged" checkbox label wraps onto two lines in the toolbar. | Toolbar labels never wrap. | polish | [29](evidence/29-diff-viewer.png) | `diff_ui.rs` | C5 | open |
 
 What worked well and should be kept: Search Everywhere, Find Action, Find in Files, Settings,
@@ -169,6 +170,7 @@ logs frames per second so `ux-smoke` can assert an idle budget.
 - UX-016 one Escape closes the find bar.
 - UX-017 the completion popup closes when a click takes focus elsewhere.
 - UX-022 (part) welcome tiles no longer repeat their label as a tooltip.
+- UX-028 double-click open in the tree focuses the editor again (regression on main after #217, caught by `ux-smoke`).
 
 Everything else is tracked as one GitHub issue per cluster (label `ux`): C1 #220, C2 #221, C3 #222,
 C4 #223, C5 #224, C6 #225.
@@ -184,6 +186,15 @@ Search Everywhere from the toolbar, tab close button, tool window hide/show, ☰
 Settings and Escape, Run from the toolbar. Outcomes are checked against the read-only `state`
 snapshot; failures save `<scene>-failed.png`. Coordinates live in `ux_smoke::layout` and
 follow the layout promises in `interaction-spec.md`.
+
+## Main moved during the audit
+
+`origin/main` advanced to 0.0.9 while this walkthrough ran (#213 tree/overlay caching, #215 pointer
+cursor on buttons and gutter-popup hover, #216 generate/hierarchy popups, #217 editor splits and
+preview tabs, #218 debugger watches/conditional breakpoints). The findings and screenshots describe
+0.0.8 (`b4836d0`); the fixes and the smoke harness were re-verified after merging main. #215 may
+already soften UX-021 (pressed/hover states on buttons) and should be re-checked with `ux-smoke`
+screenshots before closing #223.
 
 ## Decisions taken without asking
 
