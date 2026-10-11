@@ -412,7 +412,10 @@ impl IdeState {
         match &item.commit_characters {
             Some(chars) => chars.contains(&typed),
             None => {
-                let Some(root) = self.project.as_ref().map(|project| project.root().to_owned())
+                let Some(root) = self
+                    .project
+                    .as_ref()
+                    .map(|project| project.root().to_owned())
                 else {
                     return false;
                 };

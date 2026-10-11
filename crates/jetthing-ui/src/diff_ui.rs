@@ -167,6 +167,33 @@ fn toolbar(ui: &mut egui::Ui, tab: &DiffTab, actions: &mut Vec<(&'static str, Va
     if let Some(mode) = highlight {
         actions.push(("diff.setHighlight", json!({ "mode": mode })));
     }
+    for (label, hint, on, id) in [
+        (
+            "Collapse unchanged",
+            "Fold long unchanged stretches",
+            tab.collapse_unchanged,
+            "diff.toggleCollapseUnchanged",
+        ),
+        (
+            "Sync scroll",
+            "Scroll both sides together",
+            tab.sync_scroll,
+            "diff.toggleSyncScroll",
+        ),
+    ] {
+        let width = 24.0 + label.len() as f32 * 6.5;
+        let rect = Rect::from_min_size(pos2(x, bar.center().y - 11.0), vec2(width, 22.0));
+        x += width + 6.0;
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+        let mut value = on;
+        if child
+            .checkbox(&mut value, label)
+            .on_hover_text(hint)
+            .clicked()
+        {
+            actions.push((id, Value::Null));
+        }
+    }
     if tab.new_revision.is_none() && !tab.selected.is_empty() {
         let rect = Rect::from_min_size(pos2(x, bar.center().y - 11.0), vec2(150.0, 22.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
@@ -530,22 +557,48 @@ fn side_by_side(
     );
 
     let total = new.lines.len().max(old.lines.len());
+    let fold_list = if tab.collapse_unchanged {
+        folds(&diff.hunks, old.lines.len(), new.lines.len())
+    } else {
+        Vec::new()
+    };
+    let new_map = FoldMap {
+        folds: &fold_list,
+        is_new: true,
+    };
+    let old_map = FoldMap {
+        folds: &fold_list,
+        is_new: false,
+    };
     let reveal_row = reveal
         .and_then(|index| diff.hunks.get(index))
-        .map(|h| h.new.start);
-    let top_new = scroll_position(
-        ui,
-        left_pane.union(right_pane),
-        scroll_id,
-        total,
-        reveal_row,
-    );
+        .map(|h| new_map.display(h.new.start as f32).max(0.0) as usize);
+    let rows_total = (new_map.display(new.lines.len() as f32))
+        .max(old_map.display(old.lines.len() as f32))
+        .ceil() as usize;
     let visible = left_pane.height() / ROW_HEIGHT;
-    // Both panes keep the same content at their vertical centre.
-    let centre_old = diff.new_to_old(top_new + visible / 2.0);
-    let top_old = (centre_old - visible / 2.0).max(0.0);
-    let y_new = |line: f32| left_pane.top() + (line - top_new) * ROW_HEIGHT;
-    let y_old = |line: f32| left_pane.top() + (line - top_old) * ROW_HEIGHT;
+    let (top_new, top_old) = if tab.sync_scroll {
+        let top_new = scroll_position(
+            ui,
+            left_pane.union(right_pane),
+            scroll_id,
+            rows_total,
+            reveal_row,
+        );
+        // Both panes keep the same content at their vertical centre.
+        let centre = diff.new_to_old(new_map.line(top_new + visible / 2.0));
+        (top_new, (old_map.display(centre) - visible / 2.0).max(0.0))
+    } else {
+        let top_new = scroll_position(ui, right_pane, scroll_id, rows_total, reveal_row);
+        let old_id = scroll_id.with("old");
+        let reveal_old = reveal
+            .and_then(|index| diff.hunks.get(index))
+            .map(|h| old_map.display(h.old.start as f32).max(0.0) as usize);
+        let top_old = scroll_position(ui, left_pane, old_id, rows_total, reveal_old);
+        (top_new, top_old)
+    };
+    let y_new = |line: f32| left_pane.top() + (new_map.display(line) - top_new) * ROW_HEIGHT;
+    let y_old = |line: f32| left_pane.top() + (old_map.display(line) - top_old) * ROW_HEIGHT;
 
     let body = Rect::from_min_max(pos2(area.left(), left_pane.top()), area.max);
     let body_painter = ui.painter_at(body);
@@ -636,7 +689,7 @@ fn side_by_side(
     }
     // Text and line numbers.
     let current_hunk = tab.current.and_then(|index| diff.hunks.get(index));
-    for (side, top, pane, numbers_right, words, is_new) in [
+    for (side, top, pane, numbers_right, words, is_new, map) in [
         (
             &old,
             top_old,
@@ -644,6 +697,7 @@ fn side_by_side(
             connector_left - 6.0,
             Side::old_words as fn(&Hunk) -> &[LineRange],
             false,
+            &old_map,
         ),
         (
             &new,
@@ -652,13 +706,27 @@ fn side_by_side(
             right_pane.left() - 8.0,
             Side::new_words as fn(&Hunk) -> &[LineRange],
             true,
+            &new_map,
         ),
     ] {
-        let first = top.floor().max(0.0) as usize;
-        let last = ((top + visible).ceil() as usize + 1).min(side.lines.len());
+        let mut first = map.line(top).floor().max(0.0) as usize;
+        if let Some(fold) = map.fold_at(first) {
+            first = map.range(fold).start;
+        }
+        let last = (map.line(top + visible).ceil() as usize + 1).min(side.lines.len());
         let text_painter = ui.painter_at(pane);
         for line in first..last {
-            let y = pane.top() + (line as f32 - top) * ROW_HEIGHT;
+            let y = pane.top() + (map.display(line as f32) - top) * ROW_HEIGHT;
+            if let Some(fold) = map.fold_at(line) {
+                if line == map.range(fold).start {
+                    fold_placeholder(
+                        &text_painter,
+                        Rect::from_min_size(pos2(pane.left(), y), vec2(pane.width(), ROW_HEIGHT)),
+                        fold.new.len(),
+                    );
+                }
+                continue;
+            }
             let hunk = diff.hunks.iter().find(|hunk| {
                 let range = if is_new { &hunk.new } else { &hunk.old };
                 range.contains(&line)
@@ -736,6 +804,131 @@ pub(crate) struct UnifiedRow {
     pub old: Option<usize>,
     pub new: Option<usize>,
     pub hunk: Option<usize>,
+    /// Number of unchanged lines this row stands for when collapsed (else 0).
+    pub folded: usize,
+}
+
+/// Unchanged lines kept around each change when unchanged stretches collapse.
+const CONTEXT: usize = 3;
+
+/// A stretch of unchanged lines hidden behind one placeholder row; the same
+/// length on both sides.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Fold {
+    old: std::ops::Range<usize>,
+    new: std::ops::Range<usize>,
+}
+
+/// The unchanged stretches longer than `2 * CONTEXT + 1` lines, minus the
+/// context lines kept next to a change. Files without changes stay open.
+fn folds(hunks: &[Hunk], old_len: usize, new_len: usize) -> Vec<Fold> {
+    if hunks.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut gap =
+        |old: std::ops::Range<usize>, new: std::ops::Range<usize>, top: bool, end: bool| {
+            let lead = if top { 0 } else { CONTEXT };
+            let trail = if end { 0 } else { CONTEXT };
+            let len = new.len().min(old.len());
+            if len > lead + trail + 1 {
+                out.push(Fold {
+                    old: old.start + lead..old.start + len - trail,
+                    new: new.start + lead..new.start + len - trail,
+                });
+            }
+        };
+    let first = &hunks[0];
+    gap(0..first.old.start, 0..first.new.start, true, false);
+    for pair in hunks.windows(2) {
+        gap(
+            pair[0].old.end..pair[1].old.start,
+            pair[0].new.end..pair[1].new.start,
+            false,
+            false,
+        );
+    }
+    let last = &hunks[hunks.len() - 1];
+    gap(last.old.end..old_len, last.new.end..new_len, false, true);
+    out
+}
+
+/// Display-row mapping of one side with `folds` collapsed to one row each.
+struct FoldMap<'a> {
+    folds: &'a [Fold],
+    is_new: bool,
+}
+
+impl FoldMap<'_> {
+    fn range<'f>(&self, fold: &'f Fold) -> &'f std::ops::Range<usize> {
+        if self.is_new { &fold.new } else { &fold.old }
+    }
+
+    /// Fold containing `line`.
+    fn fold_at(&self, line: usize) -> Option<&Fold> {
+        self.folds
+            .iter()
+            .find(|fold| self.range(fold).contains(&line))
+    }
+
+    /// Display row of a (fractional) line.
+    fn display(&self, line: f32) -> f32 {
+        let mut hidden = 0.0;
+        for fold in self.folds {
+            let range = self.range(fold);
+            if line >= range.end as f32 {
+                hidden += (range.len() - 1) as f32;
+            } else {
+                if line >= range.start as f32 {
+                    return range.start as f32 - hidden;
+                }
+                break;
+            }
+        }
+        line - hidden
+    }
+
+    /// Line shown at a display row (a fold's placeholder maps to its start).
+    fn line(&self, display: f32) -> f32 {
+        let mut hidden = 0.0;
+        for fold in self.folds {
+            let range = self.range(fold);
+            let row = range.start as f32 - hidden;
+            if display < row {
+                break;
+            }
+            if display < row + 1.0 {
+                return range.start as f32;
+            }
+            hidden += (range.len() - 1) as f32;
+        }
+        display + hidden
+    }
+}
+
+/// Replaces unchanged stretches of the unified rows that `folds` hide with one
+/// placeholder row each.
+fn fold_rows(rows: Vec<UnifiedRow>, folds: &[Fold]) -> Vec<UnifiedRow> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        match row
+            .new
+            .and_then(|line| folds.iter().find(|f| f.new.contains(&line)))
+        {
+            Some(fold) if row.hunk.is_none() => {
+                if row.new == Some(fold.new.start) {
+                    out.push(UnifiedRow {
+                        old: None,
+                        new: None,
+                        hunk: None,
+                        folded: fold.new.len(),
+                    });
+                }
+            }
+            _ => out.push(row),
+        }
+    }
+    out
 }
 
 /// Interleaves unchanged lines with each hunk's removed then added lines.
@@ -748,6 +941,7 @@ pub(crate) fn unified_rows(hunks: &[Hunk], old_len: usize, new_len: usize) -> Ve
                 old: Some(old),
                 new: Some(new),
                 hunk: None,
+                folded: 0,
             });
             old += 1;
             new += 1;
@@ -757,6 +951,7 @@ pub(crate) fn unified_rows(hunks: &[Hunk], old_len: usize, new_len: usize) -> Ve
                 old: Some(line),
                 new: None,
                 hunk: Some(index),
+                folded: 0,
             });
         }
         for line in hunk.new.clone() {
@@ -764,6 +959,7 @@ pub(crate) fn unified_rows(hunks: &[Hunk], old_len: usize, new_len: usize) -> Ve
                 old: None,
                 new: Some(line),
                 hunk: Some(index),
+                folded: 0,
             });
         }
         old = hunk.old.end;
@@ -774,6 +970,7 @@ pub(crate) fn unified_rows(hunks: &[Hunk], old_len: usize, new_len: usize) -> Ve
             old: Some(old),
             new: Some(new),
             hunk: None,
+            folded: 0,
         });
         old += 1;
         new += 1;
@@ -781,11 +978,31 @@ pub(crate) fn unified_rows(hunks: &[Hunk], old_len: usize, new_len: usize) -> Ve
     rows
 }
 
+/// The `N unchanged lines` row a collapsed stretch is drawn as.
+fn fold_placeholder(painter: &egui::Painter, rect: Rect, lines: usize) {
+    painter.rect_filled(rect, 0.0, theme::HOVER);
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        format!(
+            "⋯  {lines} unchanged line{}",
+            if lines == 1 { "" } else { "s" }
+        ),
+        egui::FontId::proportional(theme::UI_FONT_SIZE),
+        *theme::TEXT_SECONDARY,
+    );
+}
+
 fn unified(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: Option<usize>) {
     let diff = &tab.diff;
     let old = Side::new(&diff.old_text, &tab.old_analysis);
     let new = Side::new(&diff.new_text, &tab.new_analysis);
     let rows = unified_rows(&diff.hunks, old.lines.len(), new.lines.len());
+    let rows = if tab.collapse_unchanged {
+        fold_rows(rows, &folds(&diff.hunks, old.lines.len(), new.lines.len()))
+    } else {
+        rows
+    };
     let area = ui.available_rect_before_wrap();
     ui.allocate_rect(area, Sense::hover());
     let pane = Rect::from_min_max(
@@ -823,6 +1040,14 @@ fn unified(ui: &mut egui::Ui, tab: &DiffTab, scroll_id: egui::Id, reveal: Option
     let last = ((top + visible).ceil() as usize + 1).min(rows.len());
     for (row_index, row) in rows.iter().enumerate().take(last).skip(first) {
         let y = pane.top() + (row_index as f32 - top) * ROW_HEIGHT;
+        if row.folded > 0 {
+            fold_placeholder(
+                &body_painter,
+                Rect::from_min_max(pos2(area.left(), y), pos2(pane.right(), y + ROW_HEIGHT)),
+                row.folded,
+            );
+            continue;
+        }
         let hunk = row.hunk.map(|index| &diff.hunks[index]);
         let current = row.hunk.is_some() && row.hunk == tab.current;
         if let Some(hunk) = hunk {
@@ -948,6 +1173,56 @@ mod tests {
         );
         assert_eq!(rows[1].hunk, Some(0));
         assert_eq!(rows[4].hunk, Some(1));
+    }
+
+    fn numbered(lines: &[usize]) -> String {
+        lines.iter().map(|n| format!("{n}\n")).collect()
+    }
+
+    #[test]
+    fn long_unchanged_stretches_fold_but_keep_context() {
+        let old: Vec<usize> = (0..30).collect();
+        let mut new = old.clone();
+        new[15] = 99;
+        let diff = FileDiff::compute(PathBuf::from("a"), None, numbered(&old), numbered(&new));
+        let folds = folds(&diff.hunks, 30, 30);
+        // Lines 0..12 and 19..30 are far from the change at 15.
+        assert_eq!(
+            folds,
+            vec![
+                Fold {
+                    old: 0..12,
+                    new: 0..12
+                },
+                Fold {
+                    old: 19..30,
+                    new: 19..30
+                },
+            ]
+        );
+        let map = FoldMap {
+            folds: &folds,
+            is_new: true,
+        };
+        assert_eq!(map.display(12.0), 1.0);
+        assert_eq!(map.display(15.0), 4.0);
+        assert_eq!(map.display(30.0), 1.0 + 7.0 + 1.0);
+        for line in [0.0, 12.0, 15.0, 18.0, 19.0] {
+            assert_eq!(map.line(map.display(line)), line);
+        }
+        let rows = fold_rows(unified_rows(&diff.hunks, 30, 30), &folds);
+        assert_eq!(rows.iter().filter(|r| r.folded > 0).count(), 2);
+        assert_eq!(rows.len(), 1 + 3 + 2 + 3 + 1);
+    }
+
+    #[test]
+    fn short_gaps_and_unchanged_files_do_not_fold() {
+        let old: Vec<usize> = (0..8).collect();
+        let mut new = old.clone();
+        new[4] = 99;
+        let diff = FileDiff::compute(PathBuf::from("a"), None, numbered(&old), numbered(&new));
+        assert!(folds(&diff.hunks, 8, 8).is_empty());
+        assert!(folds(&[], 10, 10).is_empty());
     }
 
     #[test]

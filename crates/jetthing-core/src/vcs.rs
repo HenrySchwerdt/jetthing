@@ -95,6 +95,10 @@ pub struct DiffTab {
     pub new_revision: Option<String>,
     pub whitespace: WhitespaceMode,
     pub highlight: DiffHighlight,
+    /// Folds long unchanged stretches into `N unchanged lines` rows.
+    pub collapse_unchanged: bool,
+    /// Scrolls both sides together (off: each side scrolls on its own).
+    pub sync_scroll: bool,
     /// Chunks ticked for partial staging.
     pub selected: BTreeSet<usize>,
 }
@@ -115,6 +119,8 @@ impl DiffTab {
             new_revision: None,
             whitespace: WhitespaceMode::default(),
             highlight: DiffHighlight::default(),
+            collapse_unchanged: false,
+            sync_scroll: true,
             selected: BTreeSet::new(),
         }
     }
@@ -508,6 +514,43 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     registry
         .register(Command::new(
             spec(
+                "diff.toggleCollapseUnchanged",
+                "Collapse Unchanged Fragments",
+                "Diff",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.diff.is_some(),
+            |state: &mut IdeState, _params| {
+                if let Some(tab) = state.diff.as_mut() {
+                    tab.collapse_unchanged = !tab.collapse_unchanged;
+                    tab.reveal = tab.current;
+                }
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "diff.toggleSyncScroll",
+                "Synchronize Scrolling",
+                "Diff",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.diff.is_some(),
+            |state: &mut IdeState, _params| {
+                if let Some(tab) = state.diff.as_mut() {
+                    tab.sync_scroll = !tab.sync_scroll;
+                }
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
                 "diff.toggleChunk",
                 "Select Chunk for Staging",
                 "Diff",
@@ -684,6 +727,37 @@ mod tests {
                 .execute("git.showDiff", &mut state, json!({"path": "missing.txt"}))
                 .is_err()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn collapse_unchanged_and_sync_scroll_toggle() {
+        let root = repo("toggles");
+        fs::write(root.join("App.java"), "A\nb\nc\nd\nE\n").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        assert!(
+            commands
+                .execute("diff.toggleSyncScroll", &mut state, json!({}))
+                .is_err(),
+            "needs an open diff"
+        );
+        commands
+            .execute("git.showDiff", &mut state, json!({"path": "App.java"}))
+            .unwrap();
+        let tab = state.diff.as_ref().unwrap();
+        assert!(tab.sync_scroll && !tab.collapse_unchanged);
+        commands
+            .execute("diff.toggleSyncScroll", &mut state, json!({}))
+            .unwrap();
+        commands
+            .execute("diff.toggleCollapseUnchanged", &mut state, json!({}))
+            .unwrap();
+        let tab = state.diff.as_ref().unwrap();
+        assert!(!tab.sync_scroll && tab.collapse_unchanged);
         fs::remove_dir_all(root).unwrap();
     }
 
