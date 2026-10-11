@@ -78,6 +78,9 @@ pub struct GitLogState {
     pub branch: Option<String>,
     /// Only commits touching this repository-relative path (file history).
     pub path: Option<PathBuf>,
+    /// Sibling `History: <file>` tabs next to the `Log` tab. A tab is active
+    /// while `path` equals its file; the tabs share the other filters.
+    pub history_tabs: Vec<PathBuf>,
     /// Text or hash filter.
     pub filter: String,
     /// Treat `filter` as a regular expression (`.*` toggle).
@@ -97,6 +100,13 @@ pub struct GitLogState {
 }
 
 impl GitLogState {
+    /// The history tab currently shown, if any.
+    pub fn active_history_tab(&self) -> Option<&PathBuf> {
+        self.path
+            .as_ref()
+            .filter(|path| self.history_tabs.contains(path))
+    }
+
     /// Indices into `commits` that pass the text, user and date filters.
     pub fn visible(&self) -> Vec<usize> {
         let now = std::time::SystemTime::now()
@@ -375,6 +385,69 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                     .filter(|path| !path.is_empty())
                     .map(PathBuf::from);
                 state.refresh_git_log().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "git.log.selectTab",
+                "Select Log Tab",
+                "Git",
+                None,
+                r#"{"path":"string?"}"#,
+            ),
+            has_git,
+            |state: &mut IdeState, params| {
+                let path = params
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .map(PathBuf::from);
+                if let Some(path) = &path
+                    && !state.git_log.history_tabs.contains(path)
+                {
+                    return Err(CommandError::InvalidParams(format!(
+                        "no history tab for `{}`",
+                        path.display()
+                    )));
+                }
+                state.git_log.path = path;
+                state.refresh_git_log().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "git.log.closeTab",
+                "Close History Tab",
+                "Git",
+                None,
+                r#"{"path":"string"}"#,
+            ),
+            has_git,
+            |state: &mut IdeState, params| {
+                let path = PathBuf::from(
+                    params
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| CommandError::InvalidParams("missing `path`".into()))?,
+                );
+                let log = &mut state.git_log;
+                let before = log.history_tabs.len();
+                log.history_tabs.retain(|tab| *tab != path);
+                if log.history_tabs.len() == before {
+                    return Err(CommandError::InvalidParams(format!(
+                        "no history tab for `{}`",
+                        path.display()
+                    )));
+                }
+                if log.path.as_ref() == Some(&path) {
+                    log.path = None;
+                    state.refresh_git_log().map_err(CommandError::Failed)?;
+                }
                 Ok(Value::Null)
             },
         ))
