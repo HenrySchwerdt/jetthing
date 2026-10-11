@@ -1202,6 +1202,11 @@ fn editor_surface(
                     .any(|mark| mark.line == line)
                     .then_some((line, position))
             });
+        // Hovering a line number previews the breakpoint a click would set.
+        let hovered_number_line = response
+            .hover_pos()
+            .filter(|position| layout.in_number_column(position.x - rect.left()))
+            .map(|position| folds.row_to_line(row_at(position)));
         // Clicking a line number toggles a breakpoint, as in the reference.
         let number_hit = response
             .interact_pointer_pos()
@@ -1462,6 +1467,8 @@ fn editor_surface(
             let dot = egui::pos2(rect.left() + layout.breakpoint_center, y + row_height / 2.0);
             if breakpoints.contains(&line) {
                 painter.circle_filled(dot, 6.0, *theme::ERROR);
+            } else if hovered_number_line == Some(line) {
+                painter.circle_filled(dot, 6.0, theme::ERROR.gamma_multiply(0.35));
             }
             if execution_line == Some(line) {
                 crate::debug_window::paint_execution_arrow(&painter, dot);

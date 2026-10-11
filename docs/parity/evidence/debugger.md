@@ -77,3 +77,25 @@ program with `square(int)` called from a loop; shell run configuration `./app`):
 JUnit: the gutter Debug entry of a Gradle test runs `test --tests … --debug-jvm` and attaches
 java-debug to the test JVM. Verified at the unit level only (banner parsing, `attach` request); no
 live jdtls run in this session.
+
+### Real mouse and keyboard pass (Xvfb 1280x800, `xdotool` only)
+
+Same sample, no control socket and no command dispatch: double-click `main.c`, hover and click the
+line number, right-click for the breakpoint properties, type the condition, click Done, click the
+Debug toolbar button, type watches into the add field, double-click a watch to edit it inline,
+Alt+F8 for Evaluate. Everything stays inside the 1280x800 window.
+
+| File | What it shows |
+|---|---|
+| `debugger/19-mouse-01-gutter-hover.png` | hovering a line number previews the breakpoint dot |
+| `debugger/19-mouse-02-breakpoint-popup.png` | right-click on the breakpoint: properties popup, condition typed, filled default `Done` button (Escape closes it) |
+| `debugger/19-mouse-03-watches-hover.png` | stopped at the conditional breakpoint (`i = 3`), watch row hover highlight with Edit / × |
+| `debugger/19-mouse-04-watch-inline-edit.png` | double-click on a watch row edits it inline (Enter commits, Escape cancels) |
+| `debugger/19-mouse-05-evaluate-dialog.png` | Alt+F8: the dialog takes keyboard focus, `Evaluate` is the filled default button |
+| `debugger/19-mouse-06-evaluate-result.png` | Enter evaluates (`total + i = 8`) and the edited watch shows `total * 2 = 10` |
+| `debugger/19-mouse-07-after-escape.png` | Escape closed the dialog |
+
+Found and fixed by this pass: Enter did not commit an inline watch edit (focus was re-requested every
+frame), the add-watch field lost focus after the first Enter (unstable widget id), the Evaluate dialog
+did not take focus when another field held it, and Escape did not close either popup (the workbench
+consumed it first).

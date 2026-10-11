@@ -334,10 +334,14 @@ fn watches_panel(
         {
             let response = ui.add(
                 egui::TextEdit::singleline(text)
+                    .id(egui::Id::new("debug_watch_edit"))
                     .desired_width(f32::INFINITY)
                     .font(egui::FontId::monospace(theme::UI_FONT_SIZE - 0.5)),
             );
-            response.request_focus();
+            // Keep the field focused while editing, but let Enter/Escape end the edit.
+            if !response.lost_focus() {
+                response.request_focus();
+            }
             let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
             if response.lost_focus() && !escape {
                 actions.push((
@@ -350,7 +354,9 @@ fn watches_panel(
             }
             continue;
         }
-        ui.horizontal(|ui| {
+        // Hover highlight is painted behind the row once its size is known.
+        let background = ui.painter().add(egui::Shape::Noop);
+        let row = ui.horizontal(|ui| {
             let (text, color) = match &watch.result {
                 Some(Ok(value)) => (
                     format!("{} = {value}", watch.expression),
@@ -366,16 +372,32 @@ fn watches_panel(
                 }
                 if ui
                     .small_button("Edit")
-                    .on_hover_text("Edit Watch")
+                    .on_hover_text("Edit Watch (or double-click the row)")
                     .clicked()
                 {
                     view.editing_watch = Some((index, watch.expression.clone()));
                 }
             });
         });
+        let rect = row.response.rect;
+        let area = ui.interact(
+            rect,
+            ui.id().with(("watch_row", index)),
+            egui::Sense::click(),
+        );
+        if area.hovered() {
+            ui.painter().set(
+                background,
+                egui::Shape::rect_filled(rect.shrink2(vec2(0.0, -1.0)), 3.0, *theme::HOVER),
+            );
+        }
+        if area.double_clicked() {
+            view.editing_watch = Some((index, watch.expression.clone()));
+        }
     }
     let response = ui.add(
         egui::TextEdit::singleline(&mut view.watch_input)
+            .id(egui::Id::new("debug_watch_input"))
             .hint_text(RichText::new("Add watch (Enter)").color(*theme::TEXT_DISABLED))
             .desired_width(f32::INFINITY)
             .font(egui::FontId::monospace(theme::UI_FONT_SIZE - 0.5)),

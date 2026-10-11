@@ -12,6 +12,8 @@ use serde_json::json;
 struct BreakpointForm {
     /// `(path, line)` the buffers were loaded for.
     key: Option<(std::path::PathBuf, usize)>,
+    /// The condition field still has to take keyboard focus (first frame).
+    focus_pending: bool,
     condition: String,
     log_message: String,
     hit_condition: String,
@@ -48,6 +50,8 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
 
 fn breakpoint_properties(app: &mut IdeApp, ctx: &egui::Context) {
     let Some((path, line)) = app.state.debugger.editing_breakpoint.clone() else {
+        // Closed (maybe by Escape in the workbench): the next open starts fresh.
+        ctx.data_mut(|data| data.remove::<BreakpointForm>(form_id()));
         return;
     };
     let mut form: BreakpointForm = ctx
@@ -59,6 +63,7 @@ fn breakpoint_properties(app: &mut IdeApp, ctx: &egui::Context) {
         let options = options.unwrap_or_default();
         form = BreakpointForm {
             key,
+            focus_pending: true,
             condition: options.condition.unwrap_or_default(),
             log_message: options.log_message.unwrap_or_default(),
             hit_condition: options.hit_condition.unwrap_or_default(),
@@ -88,7 +93,7 @@ fn breakpoint_properties(app: &mut IdeApp, ctx: &egui::Context) {
                         .hint_text("e.g. i == 3")
                         .desired_width(320.0),
                 );
-                if ui.memory(|memory| memory.focused().is_none()) {
+                if std::mem::take(&mut form.focus_pending) {
                     response.request_focus();
                 }
                 ui.end_row();
@@ -111,7 +116,9 @@ fn breakpoint_properties(app: &mut IdeApp, ctx: &egui::Context) {
             });
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("Done").clicked() {
+            let done_button =
+                egui::Button::new(RichText::new("Done").color(Color32::WHITE)).fill(theme::ACCENT);
+            if ui.add(done_button).clicked() {
                 done = true;
             }
             if ui.button("Remove Breakpoint").clicked() {
@@ -154,6 +161,7 @@ fn breakpoint_properties(app: &mut IdeApp, ctx: &egui::Context) {
 
 fn evaluate_dialog(app: &mut IdeApp, ctx: &egui::Context) {
     let Some(mut expression) = app.state.debugger.evaluate_dialog.clone() else {
+        ctx.data_mut(|data| data.remove::<bool>(egui::Id::new("evaluate_dialog_opened")));
         return;
     };
     let (result, stopped) = match app.state.debugger.client.as_ref() {
@@ -176,15 +184,19 @@ fn evaluate_dialog(app: &mut IdeApp, ctx: &egui::Context) {
                 .desired_width(f32::INFINITY)
                 .font(egui::FontId::monospace(theme::UI_FONT_SIZE - 0.5)),
         );
-        if ui.memory(|memory| memory.focused().is_none()) {
+        // Take keyboard focus when the dialog opens (an editor or watch field may hold it).
+        let opened_id = egui::Id::new("evaluate_dialog_opened");
+        if !ui.data(|data| data.get_temp::<bool>(opened_id).unwrap_or(false)) {
             response.request_focus();
+            ui.data_mut(|data| data.insert_temp(opened_id, true));
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(stopped, egui::Button::new("Evaluate"))
-                .clicked()
-            {
+            // The default button (Enter) is filled with the accent color.
+            let evaluate_button =
+                egui::Button::new(RichText::new("Evaluate").color(Color32::WHITE))
+                    .fill(theme::ACCENT);
+            if ui.add_enabled(stopped, evaluate_button).clicked() {
                 evaluate = true;
             }
             if ui
@@ -249,6 +261,7 @@ fn evaluate_dialog(app: &mut IdeApp, ctx: &egui::Context) {
         app.dispatch("debug.addWatch", json!({"expression": expression.trim()}));
     }
     if close {
+        ctx.data_mut(|data| data.remove::<bool>(egui::Id::new("evaluate_dialog_opened")));
         app.dispatch("debug.closeEvaluateDialog", serde_json::Value::Null);
     } else {
         app.state.debugger.evaluate_dialog = Some(expression);

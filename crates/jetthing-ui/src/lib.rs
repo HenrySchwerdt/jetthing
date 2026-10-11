@@ -665,6 +665,10 @@ impl IdeApp {
                 egui::Popup::close_all(ctx);
             } else if gutter_popup::is_open(ctx) {
                 gutter_popup::close(ctx);
+            } else if self.state.debugger.evaluate_dialog.is_some() {
+                self.dispatch("debug.closeEvaluateDialog", Value::Null);
+            } else if self.state.debugger.editing_breakpoint.is_some() {
+                self.dispatch("debug.closeBreakpointEditor", Value::Null);
             } else if self.menu_bar_open {
                 self.menu_bar_open = false;
             } else if self.state.about_open {
