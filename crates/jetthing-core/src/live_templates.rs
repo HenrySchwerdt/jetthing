@@ -606,7 +606,7 @@ pub fn context_labels(template: &Template) -> String {
 mod tests {
     use super::*;
     use crate::built_in_commands;
-    use jetthing_lsp::CompletionTrigger;
+    use jetthing_lsp::{CompletionResult, CompletionTrigger};
     use std::path::PathBuf;
 
     /// A project with `Main.java` containing `text`, caret at the end.
@@ -655,6 +655,8 @@ mod tests {
         state
             .start_completion(CompletionTrigger::Invoked, false)
             .unwrap();
+        // With a language server installed the popup waits for its answer.
+        state.receive_completion(CompletionResult::default());
         let session = state.completion.as_ref().unwrap();
         let item = session.selected_item().unwrap();
         assert_eq!(item.label, "sout");
@@ -742,6 +744,8 @@ mod tests {
         state
             .start_completion(CompletionTrigger::Character(".".into()), false)
             .unwrap();
+        // With a language server installed the popup waits for its answer.
+        state.receive_completion(CompletionResult::default());
         let session = state.completion.as_ref().unwrap();
         let labels: Vec<_> = session
             .ranked
