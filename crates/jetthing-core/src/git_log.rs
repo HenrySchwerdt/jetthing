@@ -12,6 +12,62 @@ use std::path::PathBuf;
 /// Commits loaded into the log at once.
 const LOG_LIMIT: usize = 2_000;
 
+/// Date filter of the log (the reference "Date" combo).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DateRange {
+    #[default]
+    Any,
+    Today,
+    Last7Days,
+    Last30Days,
+    LastYear,
+}
+
+impl DateRange {
+    pub const ALL: [DateRange; 5] = [
+        DateRange::Any,
+        DateRange::Today,
+        DateRange::Last7Days,
+        DateRange::Last30Days,
+        DateRange::LastYear,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DateRange::Any => "Date",
+            DateRange::Today => "Today",
+            DateRange::Last7Days => "Last 7 days",
+            DateRange::Last30Days => "Last 30 days",
+            DateRange::LastYear => "Last year",
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            DateRange::Any => "any",
+            DateRange::Today => "today",
+            DateRange::Last7Days => "7d",
+            DateRange::Last30Days => "30d",
+            DateRange::LastYear => "1y",
+        }
+    }
+
+    pub fn parse(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|range| range.id() == id)
+    }
+
+    /// Age in seconds a commit may have, `None` for no limit.
+    fn max_age(self) -> Option<i64> {
+        match self {
+            DateRange::Any => None,
+            DateRange::Today => Some(86_400),
+            DateRange::Last7Days => Some(7 * 86_400),
+            DateRange::Last30Days => Some(30 * 86_400),
+            DateRange::LastYear => Some(365 * 86_400),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GitLogState {
     pub commits: Vec<CommitInfo>,
@@ -24,6 +80,15 @@ pub struct GitLogState {
     pub path: Option<PathBuf>,
     /// Text or hash filter.
     pub filter: String,
+    /// Treat `filter` as a regular expression (`.*` toggle).
+    pub regex: bool,
+    /// Match case of `filter` (`Cc` toggle).
+    pub match_case: bool,
+    /// Only commits by this author.
+    pub user: Option<String>,
+    pub date: DateRange,
+    /// Hide the changed files / details pane.
+    pub hide_details: bool,
     pub selected: Option<String>,
     pub details: Option<CommitDetails>,
     pub error: Option<String>,
@@ -32,14 +97,63 @@ pub struct GitLogState {
 }
 
 impl GitLogState {
-    /// Indices into `commits` that pass the text filter.
+    /// Indices into `commits` that pass the text, user and date filters.
     pub fn visible(&self) -> Vec<usize> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs() as i64);
+        self.visible_at(now)
+    }
+
+    pub fn visible_at(&self, now: i64) -> Vec<usize> {
+        let text = self.filter.trim();
+        let pattern = (self.regex && !text.is_empty())
+            .then(|| {
+                regex::RegexBuilder::new(text)
+                    .case_insensitive(!self.match_case)
+                    .build()
+                    .ok()
+            })
+            .flatten();
+        let max_age = self.date.max_age();
         self.commits
             .iter()
             .enumerate()
-            .filter(|(_, commit)| commit.matches(&self.filter))
+            .filter(|(_, commit)| {
+                let text_ok = match &pattern {
+                    Some(pattern) => {
+                        pattern.is_match(&commit.subject)
+                            || pattern.is_match(&commit.author)
+                            || pattern.is_match(&commit.hash)
+                    }
+                    None if self.match_case && !text.is_empty() => {
+                        commit.hash.starts_with(text)
+                            || commit.subject.contains(text)
+                            || commit.author.contains(text)
+                    }
+                    None => commit.matches(text),
+                };
+                text_ok
+                    && self.user.as_ref().is_none_or(|user| &commit.author == user)
+                    && max_age.is_none_or(|age| now - commit.time <= age)
+            })
             .map(|(index, _)| index)
             .collect()
+    }
+
+    /// Distinct commit authors, for the User combo.
+    pub fn users(&self) -> Vec<String> {
+        let mut users: Vec<String> = self.commits.iter().map(|c| c.author.clone()).collect();
+        users.sort();
+        users.dedup();
+        users
+    }
+
+    /// Whether the text filter is a regex that does not compile.
+    pub fn regex_error(&self) -> bool {
+        self.regex
+            && !self.filter.trim().is_empty()
+            && regex::Regex::new(self.filter.trim()).is_err()
     }
 }
 
@@ -190,12 +304,88 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 "Filter Log by Text or Hash",
                 "Git",
                 None,
-                r#"{"text":"string"}"#,
+                r#"{"text":"string","regex":"bool?","matchCase":"bool?"}"#,
             ),
             has_git,
             |state: &mut IdeState, params| {
                 state.git_log.filter = string_param(&params, "text")?;
+                if let Some(regex) = params.get("regex").and_then(Value::as_bool) {
+                    state.git_log.regex = regex;
+                }
+                if let Some(case) = params.get("matchCase").and_then(Value::as_bool) {
+                    state.git_log.match_case = case;
+                }
                 Ok(json!({"visible": state.git_log.visible().len()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "git.log.filterUser",
+                "Filter Log by User",
+                "Git",
+                None,
+                r#"{"user":"string?"}"#,
+            ),
+            has_git,
+            |state: &mut IdeState, params| {
+                state.git_log.user = params
+                    .get("user")
+                    .and_then(Value::as_str)
+                    .filter(|user| !user.is_empty())
+                    .map(Into::into);
+                Ok(json!({"visible": state.git_log.visible().len()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "git.log.filterDate",
+                "Filter Log by Date",
+                "Git",
+                None,
+                r#"{"range":"any|today|7d|30d|1y"}"#,
+            ),
+            has_git,
+            |state: &mut IdeState, params| {
+                let id = string_param(&params, "range")?;
+                state.git_log.date = DateRange::parse(&id)
+                    .ok_or_else(|| CommandError::Failed(format!("unknown date range '{id}'")))?;
+                Ok(json!({"visible": state.git_log.visible().len()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "git.log.filterPath",
+                "Filter Log by Path",
+                "Git",
+                None,
+                r#"{"path":"string?"}"#,
+            ),
+            has_git,
+            |state: &mut IdeState, params| {
+                state.git_log.path = params
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty())
+                    .map(PathBuf::from);
+                state.refresh_git_log().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("git.log.toggleDetails", "Show Details", "Git", None, "{}"),
+            has_git,
+            |state: &mut IdeState, _| {
+                state.git_log.hide_details = !state.git_log.hide_details;
+                Ok(json!({"visible": !state.git_log.hide_details}))
             },
         ))
         .expect("unique built-in id");
@@ -289,6 +479,56 @@ mod tests {
             .execute("git.log.filterBranch", &mut state, json!({}))
             .unwrap();
         assert_eq!(state.git_log.commits.len(), 2);
+
+        let result = commands
+            .execute("git.log.filterUser", &mut state, json!({"user": "Nobody"}))
+            .unwrap();
+        assert_eq!(result["visible"], 0);
+        commands
+            .execute("git.log.filterUser", &mut state, json!({}))
+            .unwrap();
+        let result = commands
+            .execute(
+                "git.log.filterText",
+                &mut state,
+                json!({"text": "^Sec.*topic$", "regex": true}),
+            )
+            .unwrap();
+        assert_eq!(result["visible"], 1);
+        let result = commands
+            .execute(
+                "git.log.filterText",
+                &mut state,
+                json!({"text": "second", "regex": false, "matchCase": true}),
+            )
+            .unwrap();
+        assert_eq!(result["visible"], 0);
+        commands
+            .execute("git.log.filterText", &mut state, json!({"text": ""}))
+            .unwrap();
+        commands
+            .execute("git.log.filterDate", &mut state, json!({"range": "today"}))
+            .unwrap();
+        assert_eq!(state.git_log.visible().len(), 2);
+        commands
+            .execute("git.log.filterDate", &mut state, json!({"range": "any"}))
+            .unwrap();
+        assert!(
+            commands
+                .execute("git.log.filterDate", &mut state, json!({"range": "x"}))
+                .is_err()
+        );
+        commands
+            .execute("git.log.filterPath", &mut state, json!({"path": "a.txt"}))
+            .unwrap();
+        assert_eq!(state.git_log.commits.len(), 2);
+        commands
+            .execute("git.log.filterPath", &mut state, json!({"path": "missing"}))
+            .unwrap();
+        assert!(state.git_log.commits.is_empty());
+        commands
+            .execute("git.log.filterPath", &mut state, json!({}))
+            .unwrap();
 
         commands
             .execute(

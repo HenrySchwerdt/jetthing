@@ -53,6 +53,16 @@ pub fn format_duration(duration: Duration) -> String {
     format!("{} h, {} min", minutes / 60, minutes % 60)
 }
 
+/// Header subject of a run/test task: `<project> [<task>]`. Plans that already
+/// carry the project prefix (Gradle) are not wrapped a second time.
+pub(crate) fn run_subject(project: &str, plan_name: &str) -> String {
+    if plan_name.starts_with(&format!("{project} [")) {
+        plan_name.to_owned()
+    } else {
+        format!("{project} [{plan_name}]")
+    }
+}
+
 pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     let plan = app.state.runner.plan().cloned();
     let kind = plan.as_ref().map_or(TaskKind::Build, |plan| plan.kind);
@@ -208,7 +218,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                 };
                 let subject = match kind {
                     TaskKind::Build | TaskKind::Sync => project_name.clone(),
-                    _ => format!("{project_name} [{}]", plan.name),
+                    _ => run_subject(&project_name, &plan.name),
                 };
                 let (rect, response) = list_row(ui, view.selected == Some(0));
                 let mut x = rect.left() + 10.0;
@@ -677,5 +687,19 @@ mod tests {
             project_relative(root, root, Path::new("/usr/lib/x.h")),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod run_subject_tests {
+    use super::run_subject;
+
+    #[test]
+    fn header_is_not_nested_twice() {
+        assert_eq!(
+            run_subject("java-gradle", "java-gradle [run]"),
+            "java-gradle [run]"
+        );
+        assert_eq!(run_subject("demo", "cargo run"), "demo [cargo run]");
     }
 }

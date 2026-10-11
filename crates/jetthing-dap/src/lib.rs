@@ -42,6 +42,9 @@ pub enum Adapter {
     LldbDap { program: String },
     /// GDB 14+ built-in DAP interpreter (`gdb -i dap`).
     Gdb { program: String },
+    /// microsoft/java-debug running inside jdtls; `port` is the DAP server that the
+    /// `vscode.java.startDebugSession` workspace command opened on localhost.
+    Java { port: u16 },
 }
 
 impl Adapter {
@@ -69,11 +72,13 @@ impl Adapter {
         match self {
             Adapter::LldbDap { .. } => "lldb-dap",
             Adapter::Gdb { .. } => "gdb",
+            Adapter::Java { .. } => "java-debug",
         }
     }
 
     fn command(&self) -> (String, Vec<String>) {
         match self {
+            Adapter::Java { .. } => (String::new(), Vec::new()),
             Adapter::LldbDap { program } => (program.clone(), Vec::new()),
             Adapter::Gdb { program } => (program.clone(), vec!["-i".into(), "dap".into()]),
         }
@@ -95,6 +100,7 @@ impl Adapter {
                 "env": env.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>(),
                 "stopOnEntry": false,
             }),
+            Adapter::Java { .. } => json!({"cwd": cwd, "args": args}),
             Adapter::Gdb { .. } => {
                 let mut arguments = json!({
                     "program": program,
@@ -119,6 +125,44 @@ impl Adapter {
     }
 }
 
+/// `launch` arguments for a Java main class (java-debug's `launch` request).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JavaLaunch {
+    pub main_class: String,
+    pub project_name: Option<String>,
+    pub class_paths: Vec<String>,
+    pub module_paths: Vec<String>,
+    pub args: Vec<String>,
+    pub vm_args: Vec<String>,
+    pub cwd: PathBuf,
+    pub env: Vec<(String, String)>,
+}
+
+impl JavaLaunch {
+    pub fn request(&self) -> LaunchRequest {
+        let mut arguments = json!({
+            "mainClass": self.main_class,
+            "classPaths": self.class_paths,
+            "modulePaths": self.module_paths,
+            "args": self.args.join(" "),
+            "vmArgs": self.vm_args.join(" "),
+            "cwd": self.cwd,
+            "env": self.env.iter().cloned().collect::<BTreeMap<_, _>>(),
+            "console": "internalConsole",
+            "stopOnEntry": false,
+            "noDebug": false,
+            "shortenCommandLine": "auto",
+        });
+        if let Some(project) = &self.project_name {
+            arguments["projectName"] = json!(project);
+        }
+        LaunchRequest {
+            adapter_id: "java-debug".into(),
+            arguments,
+        }
+    }
+}
+
 /// A [`Session`] connected to an adapter process.
 pub struct DebugClient {
     process: AdapterProcess,
@@ -133,8 +177,13 @@ impl DebugClient {
         breakpoints: BTreeMap<PathBuf, BTreeSet<usize>>,
         cwd: &Path,
     ) -> Result<Self, DapError> {
-        let (program, args) = adapter.command();
-        let process = AdapterProcess::spawn(&program, &args, cwd)?;
+        let process = match &adapter {
+            Adapter::Java { port } => AdapterProcess::connect(*port)?,
+            _ => {
+                let (program, args) = adapter.command();
+                AdapterProcess::spawn(&program, &args, cwd)?
+            }
+        };
         let mut client = Self {
             process,
             session: Session::new(launch, breakpoints),
@@ -211,5 +260,25 @@ mod tests {
         assert_eq!(gdb.command().1, ["-i", "dap"]);
         let launch = gdb.launch_request(Path::new("/w/app"), &[], Path::new("/w"), &env);
         assert_eq!(launch.arguments["env"]["RUST_BACKTRACE"], "1");
+    }
+
+    #[test]
+    fn java_launch_carries_class_and_paths() {
+        let request = JavaLaunch {
+            main_class: "com.example.App".into(),
+            project_name: Some("app".into()),
+            class_paths: vec!["/w/build/classes/java/main".into()],
+            module_paths: Vec::new(),
+            args: vec!["a".into(), "b".into()],
+            vm_args: Vec::new(),
+            cwd: "/w".into(),
+            env: vec![("K".into(), "V".into())],
+        }
+        .request();
+        assert_eq!(request.adapter_id, "java-debug");
+        assert_eq!(request.arguments["mainClass"], "com.example.App");
+        assert_eq!(request.arguments["projectName"], "app");
+        assert_eq!(request.arguments["args"], "a b");
+        assert_eq!(request.arguments["env"]["K"], "V");
     }
 }

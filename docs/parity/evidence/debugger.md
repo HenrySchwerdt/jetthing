@@ -25,3 +25,17 @@ always failed with "cannot tell which binary to debug". Fixed, with a test.
 - No Breakpoints dialog, conditional breakpoints, logpoints, watches, inline values or run to cursor.
 - The tool window has no separate Threads and Variables panes, only one combined view.
 - Locals only list the adapter's `Locals` scope; Rust-aware pretty printing is lldb's.
+
+## Java (jdtls + java-debug)
+
+`debug.start` on a Gradle configuration (or the gutter `Debug 'App.main()'` entry, Shift+F9) runs
+`vscode.java.buildWorkspace`, `vscode.java.resolveMainClass`, `vscode.java.resolveClasspath` and
+`vscode.java.startDebugSession` through jdtls, then connects `jetthing-dap` to the returned
+localhost port and launches the main class. The `java-debug` toolchain component (Maven Central,
+`com.microsoft.java.debug.plugin`) is installed with jdtls and passed in `initializationOptions.bundles`.
+
+Reproducible evidence: `cargo test -p jetthing-core --test java_debug_flow` (scripted jdtls and DAP
+server: start, breakpoint stop, execution point) and `cargo test -p jetthing-dap --test java_tcp`.
+
+Not verified: a live run against real jdtls + java-debug and Xvfb screenshots. The sandbox that built
+this change could not download the plugin (Maven Central rate limit), so no `*-fixed-*.png` was captured.

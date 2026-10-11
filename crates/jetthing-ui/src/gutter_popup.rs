@@ -1,7 +1,7 @@
 //! Gutter run icons and their popup (Run / Debug / Modify Run Configuration…).
 
 use crate::icons::{self, Icon};
-use crate::{IdeApp, theme};
+use crate::{IdeApp, keys, theme};
 use eframe::egui::{self, vec2};
 use jetthing_core::RunnableKind;
 use serde_json::json;
@@ -54,6 +54,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     };
     let target = mark.label.trim_start_matches("Run ").to_owned();
     let mut action = None;
+    let mut debug_action = false;
     let area = egui::Area::new(egui::Id::new("gutter_run_popup_area"))
         .order(egui::Order::Foreground)
         .fixed_pos(open.position + vec2(8.0, 4.0))
@@ -71,13 +72,16 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 if run.clicked() {
                     action = Some(false);
                 }
-                ui.add_enabled(
-                    false,
+                let debug = ui.add_enabled(
+                    !app.state.is_debugging() && !running,
                     egui::Button::new(format!("     Debug {target}"))
                         .frame(false)
+                        .shortcut_text(keys::display("⌃D"))
                         .min_size(vec2(270.0, 24.0)),
-                )
-                .on_disabled_hover_text("The debugger is not available yet");
+                );
+                if debug.clicked() {
+                    debug_action = true;
+                }
                 ui.add_enabled(
                     false,
                     egui::Button::new(format!("     Run {target} with Coverage"))
@@ -105,7 +109,13 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 .unwrap_or_default(),
         )
         && action.is_none();
-    if let Some(edit) = action {
+    if debug_action {
+        close(ctx);
+        app.dispatch(
+            "run.gutter",
+            json!({"line": open.line, "edit": false, "debug": true}),
+        );
+    } else if let Some(edit) = action {
         close(ctx);
         app.dispatch("run.gutter", json!({"line": open.line, "edit": edit}));
     } else if escape || clicked_elsewhere {

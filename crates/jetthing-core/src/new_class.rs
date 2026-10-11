@@ -289,6 +289,34 @@ fn with_body(header: String, package: &str, keyword_package_semicolon: bool) -> 
     Rendered { text, caret }
 }
 
+/// A built-in file template as Settings | Editor | File and Code Templates lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileTemplate {
+    pub group: &'static str,
+    pub name: &'static str,
+    pub extension: &'static str,
+    /// The template body with `${PACKAGE_NAME}` / `${NAME}` placeholders.
+    pub text: String,
+}
+
+/// The templates behind New | Java Class and New | Kotlin Class/File.
+pub fn file_templates() -> Vec<FileTemplate> {
+    let (package, name) = ("${PACKAGE_NAME}", "${NAME}");
+    let java = JavaKind::ALL.into_iter().map(|kind| FileTemplate {
+        group: "Java",
+        name: kind.label(),
+        extension: "java",
+        text: render_java(kind, package, name).text,
+    });
+    let kotlin = KotlinKind::ALL.into_iter().map(|kind| FileTemplate {
+        group: "Kotlin",
+        name: kind.label(),
+        extension: "kt",
+        text: render_kotlin(kind, package, name).text,
+    });
+    java.chain(kotlin).collect()
+}
+
 pub fn render_java(kind: JavaKind, package: &str, name: &str) -> Rendered {
     with_body(kind.declaration(name), package, true)
 }

@@ -14,6 +14,7 @@ pub mod project;
 mod properties;
 pub mod resources;
 pub mod sdk;
+pub mod sdk_repo;
 pub mod variants;
 pub mod view;
 

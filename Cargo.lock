@@ -2929,6 +2929,7 @@ dependencies = [
  "jetthing-text",
  "jetthing-toolchains",
  "jetthing-update",
+ "regex",
  "serde",
  "serde_json",
  "tar",
