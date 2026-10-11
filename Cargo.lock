@@ -2983,6 +2983,7 @@ dependencies = [
  "jetthing-runner",
  "jetthing-search",
  "jetthing-settings",
+ "jetthing-split",
  "jetthing-templates",
  "jetthing-terminal",
  "jetthing-text",
@@ -3200,6 +3201,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "jetthing-split"
+version = "0.0.8"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "jetthing-templates"
 version = "0.0.9"
 dependencies = [
@@ -3271,6 +3279,7 @@ dependencies = [
  "jetthing-plugins",
  "jetthing-runner",
  "jetthing-settings",
+ "jetthing-split",
  "jetthing-templates",
  "jetthing-terminal",
  "jetthing-text",
