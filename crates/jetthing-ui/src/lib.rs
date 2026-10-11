@@ -43,6 +43,7 @@ mod folding;
 mod git_log_ui;
 mod gradle_window;
 mod gutter_popup;
+mod hierarchy_ui;
 mod icons;
 mod intentions_ui;
 mod keybindings;
