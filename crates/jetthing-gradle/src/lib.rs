@@ -359,6 +359,7 @@ impl BuildSystem for Gradle {
     ) -> Result<TaskPlan, RunnerError> {
         if let RunTarget::Application {
             module,
+            jdk,
             main_class,
             program_arguments,
         } = &config.target
@@ -381,7 +382,11 @@ impl BuildSystem for Gradle {
             if !program_arguments.is_empty() {
                 args.push(format!("--args={}", program_arguments.join(" ")));
             }
-            return build.task_plan(TaskKind::Run, &config.name, &args);
+            let mut plan = build.task_plan(TaskKind::Run, &config.name, &args)?;
+            if !jdk.trim().is_empty() {
+                plan = plan.with_env("JAVA_HOME", jdk.trim());
+            }
+            return Ok(plan);
         }
         let RunTarget::Gradle {
             tasks,
