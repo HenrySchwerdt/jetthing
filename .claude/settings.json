@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude-code-remote__send_message",
+      "mcp__claude-code-remote__get_session",
+      "mcp__claude-code-remote__list_sessions",
+      "mcp__claude-code-remote__list_events",
+      "mcp__github__create_pull_request",
+      "mcp__github__update_pull_request",
+      "mcp__github__pull_request_read",
+      "mcp__github__merge_pull_request",
+      "mcp__github__add_issue_comment",
+      "mcp__github__issue_read",
+      "mcp__github__list_pull_requests",
+      "mcp__github__list_issues",
+      "mcp__claude-code-remote__subscribe_pr_activity"
+    ]
+  }
+}
