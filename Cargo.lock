@@ -3140,6 +3140,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jetthing-templates"
+version = "0.0.5"
+dependencies = [
+ "jetthing-text",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "jetthing-terminal"
 version = "0.0.5"
 dependencies = [

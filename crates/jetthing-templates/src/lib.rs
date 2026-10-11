@@ -1,21 +1,21 @@
-//! Live templates and postfix templates (PLATFORM-EDIT-125/126/128).
+//! Live templates and postfix templates (IJ-ED-130/131/086).
 //!
 //! Templates are data: bundled JSON sets per language (`templates/*.json`) with
 //! `$NAME$` variables, `$END$` (final caret) and `$SELECTION$` (surround
-//! templates). Expanding a template starts a [`TemplateSession`] that edits its
-//! variables in place: occurrences of a variable mirror each other, Tab and
-//! Shift+Tab move between variables, Enter/Esc finish.
+//! templates). An expanded [`Instance`] converts to LSP snippet syntax, so the
+//! editor's snippet session handles Tab stops and mirrored variables.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::OnceLock;
 
-mod session;
+mod context;
 
-pub use session::{SessionState, TemplateSession};
+pub use context::{Context, Language, Scan, contexts_at, scan};
 
 /// A variable's definition inside a template.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct VariableDef {
     pub name: String,
@@ -28,7 +28,7 @@ pub struct VariableDef {
     pub skip_if_defined: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Template {
     pub abbreviation: String,
@@ -37,16 +37,22 @@ pub struct Template {
     /// Nested lines are written with 4-space indentation steps.
     pub text: String,
     pub variables: Vec<VariableDef>,
+    /// Contexts where the template applies; empty means every context of its set.
+    pub contexts: Vec<Context>,
 }
 
 impl Template {
+    pub fn applies_in(&self, contexts: &[Context]) -> bool {
+        self.contexts.is_empty() || self.contexts.iter().any(|c| contexts.contains(c))
+    }
+
     /// Surround templates wrap the selection (`$SELECTION$`).
     pub fn is_surround(&self) -> bool {
         self.text.contains("$SELECTION$")
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TemplateSet {
     /// Group name shown in settings, e.g. `Java`.
@@ -79,11 +85,49 @@ const BUNDLED: [(&str, &str); 4] = [
     ("other.json", include_str!("../templates/other.json")),
 ];
 
+/// A template the user created or edited, stored as one JSON line in settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserTemplate {
+    /// Group name; joins the bundled set of that name (and its file types) or
+    /// creates a set that applies to every file.
+    pub group: String,
+    #[serde(default)]
+    pub postfix: bool,
+    pub template: Template,
+}
+
+impl UserTemplate {
+    pub fn to_line(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+
+    pub fn from_line(line: &str) -> Result<Self, String> {
+        let user: Self = serde_json::from_str(line).map_err(|error| error.to_string())?;
+        if user.template.abbreviation.trim().is_empty() {
+            return Err("a live template needs an abbreviation".into());
+        }
+        Ok(user)
+    }
+}
+
+/// Settings key of a template, used for the enable toggles. Postfix
+/// templates are keyed `group/.abbreviation`, surround ones `group/abbreviation`.
+pub fn template_key(group: &str, template: &Template, postfix: bool) -> String {
+    format!(
+        "{group}/{}{}",
+        if postfix { "." } else { "" },
+        template.abbreviation
+    )
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TemplateRegistry {
     pub sets: Vec<TemplateSet>,
     /// Bundled or user sets that failed to parse, with the reason.
     pub errors: Vec<String>,
+    /// Keys ([`template_key`]) or group names switched off in settings.
+    pub disabled: HashSet<String>,
 }
 
 impl TemplateRegistry {
@@ -105,17 +149,97 @@ impl TemplateRegistry {
         REGISTRY.get_or_init(|| Self::from_sources(BUNDLED))
     }
 
-    /// Templates applicable to `path`, language sets first.
-    pub fn templates_for<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = &'a Template> + 'a {
+    /// This registry plus the user's templates (which win over bundled ones of
+    /// the same abbreviation) and the switched-off keys. Unparseable user
+    /// lines are reported in `errors`.
+    pub fn with_user(
+        &self,
+        lines: impl IntoIterator<Item = impl AsRef<str>>,
+        disabled: impl IntoIterator<Item = String>,
+    ) -> Self {
+        let mut registry = self.clone();
+        registry.disabled = disabled.into_iter().collect();
+        for line in lines {
+            let user = match UserTemplate::from_line(line.as_ref()) {
+                Ok(user) => user,
+                Err(error) => {
+                    registry.errors.push(format!("user template: {error}"));
+                    continue;
+                }
+            };
+            let set = match registry
+                .sets
+                .iter_mut()
+                .find(|set| set.group.eq_ignore_ascii_case(&user.group))
+            {
+                Some(set) => set,
+                None => {
+                    registry.sets.push(TemplateSet {
+                        group: user.group.clone(),
+                        ..Default::default()
+                    });
+                    registry.sets.last_mut().expect("just pushed")
+                }
+            };
+            let list = if user.postfix {
+                &mut set.postfix
+            } else {
+                &mut set.templates
+            };
+            list.retain(|t| {
+                !(t.abbreviation == user.template.abbreviation
+                    && t.is_surround() == user.template.is_surround())
+            });
+            list.insert(0, user.template);
+        }
+        registry
+    }
+
+    pub fn is_enabled(&self, set: &TemplateSet, template: &Template, postfix: bool) -> bool {
+        !self.disabled.contains(&set.group)
+            && !self
+                .disabled
+                .contains(&template_key(&set.group, template, postfix))
+    }
+
+    fn ordered_sets(&self, path: &Path) -> Vec<&TemplateSet> {
         let (specific, general): (Vec<&TemplateSet>, Vec<&TemplateSet>) = self
             .sets
             .iter()
             .filter(|set| set.applies_to(path))
             .partition(|set| !set.extensions.is_empty());
-        specific
-            .into_iter()
-            .chain(general)
-            .flat_map(|set| set.templates.iter())
+        specific.into_iter().chain(general).collect()
+    }
+
+    /// Enabled expandable (non-surround) templates applicable to `path`, language sets first.
+    pub fn templates_for<'a>(&'a self, path: &Path) -> impl Iterator<Item = &'a Template> + 'a {
+        self.ordered_sets(path).into_iter().flat_map(move |set| {
+            set.templates
+                .iter()
+                .filter(move |t| !t.is_surround() && self.is_enabled(set, t, false))
+        })
+    }
+
+    /// Expandable templates whose context holds.
+    pub fn templates_in<'a>(
+        &'a self,
+        path: &Path,
+        contexts: &'a [Context],
+    ) -> impl Iterator<Item = &'a Template> + 'a {
+        self.templates_for(path).filter(|t| t.applies_in(contexts))
+    }
+
+    /// Enabled surround templates (`$SELECTION$`) whose context holds.
+    pub fn surround_templates<'a>(
+        &'a self,
+        path: &Path,
+        contexts: &'a [Context],
+    ) -> impl Iterator<Item = &'a Template> + 'a {
+        self.ordered_sets(path).into_iter().flat_map(move |set| {
+            set.templates.iter().filter(move |t| {
+                t.is_surround() && self.is_enabled(set, t, false) && t.applies_in(contexts)
+            })
+        })
     }
 
     pub fn find(&self, path: &Path, abbreviation: &str) -> Option<&Template> {
@@ -123,11 +247,23 @@ impl TemplateRegistry {
             .find(|template| template.abbreviation == abbreviation)
     }
 
+    /// The template `abbreviation` expands to at the caret, honoring contexts.
+    pub fn find_in(&self, path: &Path, contexts: &[Context], abbreviation: &str) -> Option<&Template> {
+        self.templates_for(path)
+            .find(|t| t.abbreviation == abbreviation && t.applies_in(contexts))
+    }
+
+    /// Enabled postfix templates for `path`.
+    pub fn postfix_for<'a>(&'a self, path: &Path) -> impl Iterator<Item = &'a Template> + 'a {
+        self.ordered_sets(path).into_iter().flat_map(move |set| {
+            set.postfix
+                .iter()
+                .filter(move |t| self.is_enabled(set, t, true))
+        })
+    }
+
     pub fn find_postfix(&self, path: &Path, key: &str) -> Option<&Template> {
-        self.sets
-            .iter()
-            .filter(|set| set.applies_to(path))
-            .flat_map(|set| set.postfix.iter())
+        self.postfix_for(path)
             .find(|template| template.abbreviation == key)
     }
 }
@@ -147,6 +283,10 @@ pub struct ExpansionContext {
     pub expression: Option<String>,
     /// Nearby text, used to pick unused names (`suggestIndexName()`).
     pub surrounding: String,
+    /// Enclosing type and method (`className()`, `methodName()`, `methodParameters()`).
+    pub class_name: Option<String>,
+    pub method_name: Option<String>,
+    pub method_parameters: Vec<String>,
 }
 
 fn is_word(c: char) -> bool {
@@ -169,9 +309,28 @@ pub fn evaluate(expression: &str, context: &ExpansionContext) -> Option<String> 
             .map(str::to_owned)
     };
     match expression {
-        "className()" | "fileNameWithoutExtension()" => stem(),
+        "className()" => context.class_name.clone().or_else(stem),
+        "fileNameWithoutExtension()" => stem(),
         "fileName()" => Some(context.file_name.clone()),
+        "methodName()" => context.method_name.clone(),
+        "methodParameters()" => {
+            let params: Vec<String> = context
+                .method_parameters
+                .iter()
+                .map(|p| format!("\"{p} = \" + {p}"))
+                .collect();
+            (!params.is_empty()).then(|| params.join(" + \", \" + "))
+        }
         "expression()" => context.expression.clone(),
+        "suggestVariableName()" => context.expression.as_deref().map(suggest_variable_name),
+        "expressionType()" => context.expression.as_deref().and_then(expression_type),
+        "typeOrVar()" => Some(
+            context
+                .expression
+                .as_deref()
+                .and_then(expression_type)
+                .unwrap_or_else(|| "var".into()),
+        ),
         "suggestIndexName()" => {
             let used = |name: &str| {
                 context
@@ -186,6 +345,104 @@ pub fn evaluate(expression: &str, context: &ExpansionContext) -> Option<String> 
         }
         _ => None,
     }
+}
+
+/// A variable name for the value of `expression`: `getUserName()` -> `userName`,
+/// `new Foo()` -> `foo`, `items.size()` -> `size`, literals -> `value`.
+pub fn suggest_variable_name(expression: &str) -> String {
+    let expression = expression.trim();
+    let source = expression.strip_prefix("new ").unwrap_or(expression);
+    // Last identifier outside of any trailing call/index brackets.
+    let mut head = source;
+    loop {
+        let trimmed = head.trim_end();
+        let Some(last) = trimmed.chars().last() else {
+            break;
+        };
+        if !matches!(last, ')' | ']') {
+            head = trimmed;
+            break;
+        }
+        let (open, close) = if last == ')' { ('(', ')') } else { ('[', ']') };
+        let mut depth = 0usize;
+        let mut cut = None;
+        for (index, c) in trimmed.char_indices().rev() {
+            if c == close {
+                depth += 1;
+            } else if c == open {
+                depth -= 1;
+                if depth == 0 {
+                    cut = Some(index);
+                    break;
+                }
+            }
+        }
+        match cut {
+            Some(index) => head = &trimmed[..index],
+            None => break,
+        }
+    }
+    let head = match (head.trim_end().ends_with('>'), head.find('<')) {
+        (true, Some(open)) => &head[..open],
+        _ => head,
+    };
+    let name: String = head
+        .chars()
+        .rev()
+        .take_while(|c| is_word(*c))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let stripped = ["get", "to", "as", "is", "has"]
+        .into_iter()
+        .find_map(|prefix| {
+            name.strip_prefix(prefix)
+                .filter(|rest| rest.chars().next().is_some_and(char::is_uppercase))
+        })
+        .unwrap_or(&name);
+    let mut chars = stripped.chars();
+    match chars.next() {
+        Some(first) if first.is_alphabetic() => {
+            let rest: String = chars.collect();
+            // Keep acronyms (`URL`) intact.
+            if rest.chars().next().is_some_and(char::is_uppercase) {
+                stripped.to_owned()
+            } else {
+                format!("{}{rest}", first.to_lowercase())
+            }
+        }
+        _ => "value".to_owned(),
+    }
+}
+
+/// Best-effort type of a literal or constructor expression.
+pub fn expression_type(expression: &str) -> Option<String> {
+    let expression = expression.trim();
+    if expression.starts_with('"') {
+        return Some("String".into());
+    }
+    if expression == "true" || expression == "false" {
+        return Some("boolean".into());
+    }
+    if expression.starts_with('\'') {
+        return Some("char".into());
+    }
+    if expression.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        let float = expression.contains('.') || expression.ends_with(['f', 'F', 'd', 'D']);
+        return Some(
+            match (float, expression.ends_with(['l', 'L'])) {
+                (true, _) => "double",
+                (false, true) => "long",
+                _ => "int",
+            }
+            .into(),
+        );
+    }
+    let class = expression.strip_prefix("new ")?;
+    let end = class.find(['(', '[', '{']).unwrap_or(class.len());
+    let class = class[..end].trim();
+    (!class.is_empty()).then(|| class.replace("<>", ""))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,6 +476,38 @@ impl Instance {
 
     pub fn variable_names(&self) -> &[String] {
         &self.names
+    }
+
+    /// The expansion in LSP snippet syntax: variables that stop the caret
+    /// become numbered placeholders (mirrors share the number), `$END$`
+    /// becomes `$0`, everything else is escaped text.
+    pub fn to_snippet(&self) -> String {
+        fn escape(text: &str, in_placeholder: bool, out: &mut String) {
+            for c in text.chars() {
+                if matches!(c, '\\' | '$') || (in_placeholder && c == '}') {
+                    out.push('\\');
+                }
+                out.push(c);
+            }
+        }
+        let mut out = String::new();
+        let mut seen = HashSet::new();
+        for segment in &self.segments {
+            match segment {
+                Segment::Text(text) => escape(text, false, &mut out),
+                Segment::End => out.push_str("$0"),
+                Segment::Var(index) => match self.stops.iter().position(|s| s == index) {
+                    None => escape(&self.values[*index], false, &mut out),
+                    Some(stop) if seen.insert(*index) => {
+                        out.push_str(&format!("${{{}:", stop + 1));
+                        escape(&self.values[*index], true, &mut out);
+                        out.push('}');
+                    }
+                    Some(stop) => out.push_str(&format!("${{{}}}", stop + 1)),
+                },
+            }
+        }
+        out
     }
 }
 
@@ -455,7 +744,7 @@ mod tests {
             assert!(registry.find(java, abbreviation).is_some(), "{abbreviation}");
         }
         assert!(registry.find(Path::new("a.kt"), "fun0").is_some());
-        assert!(registry.find(Path::new("a.rs"), "tfn").is_some());
+        assert!(registry.find(Path::new("a.rs"), "test").is_some());
         assert!(registry.find(java, "todo").is_some(), "general set applies everywhere");
         assert!(registry.find(Path::new("a.rs"), "psvm").is_none());
         assert!(registry.find_postfix(java, "if").is_some());
@@ -557,5 +846,105 @@ mod tests {
         assert_eq!(doc.char_at(dot), Some('.'));
         assert_eq!(doc.slice(expression_before(&doc, dot).unwrap(), dot).unwrap(), "\"s\"");
         assert_eq!(expression_before(&TextDocument::new(" .x"), 1), None);
+    }
+
+    #[test]
+    fn snippet_conversion_numbers_stops_and_mirrors() {
+        let registry = TemplateRegistry::bundled();
+        let fori = registry.find(Path::new("A.java"), "fori").unwrap();
+        let instance = instantiate(
+            fori,
+            &ExpansionContext {
+                indent_unit: "    ".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            instance.to_snippet(),
+            "for (int ${1:i} = 0; ${1} < ${2:}; ${1}++) {\n    $0\n}"
+        );
+        let mut ctx = ExpansionContext::default();
+        ctx.surrounding = "int i;".into();
+        let sout = instantiate(registry.find(Path::new("A.java"), "soutv").unwrap(), &ctx);
+        assert_eq!(sout.to_snippet(), "System.out.println(\"${1:} = \" + ${1});");
+        let literal = Template { text: "a${b}\\$$".into(), ..Default::default() };
+        assert_eq!(instantiate(&literal, &ExpansionContext::default()).to_snippet(), "a\\${b}\\\\\\$");
+    }
+
+    #[test]
+    fn postfix_templates_rewrite_the_expression() {
+        let registry = TemplateRegistry::bundled();
+        let java = Path::new("A.java");
+        let ctx = |expression: &str| ExpansionContext {
+            expression: Some(expression.into()),
+            indent_unit: "    ".into(),
+            ..Default::default()
+        };
+        let text = |key: &str, expr: &str| {
+            instantiate(registry.find_postfix(java, key).unwrap(), &ctx(expr)).text()
+        };
+        assert_eq!(text("var", "new Foo()"), "Foo foo = new Foo();");
+        assert_eq!(text("var", "getUserName()"), "var userName = getUserName();");
+        assert_eq!(text("not", "ready"), "!ready");
+        assert_eq!(text("sout", "x + 1"), "System.out.println(x + 1);");
+        assert_eq!(text("par", "a"), "(a)");
+        assert_eq!(text("nn", "p"), "if (p != null) {\n    \n}");
+        assert_eq!(
+            instantiate(registry.find_postfix(Path::new("a.kt"), "val").unwrap(), &ctx("items.size()")).text(),
+            "val size = items.size()"
+        );
+        assert!(registry.find_postfix(Path::new("a.rs"), "if").is_none());
+    }
+
+    #[test]
+    fn suggests_names_and_types() {
+        assert_eq!(suggest_variable_name("getURL()"), "URL");
+        assert_eq!(suggest_variable_name("a.b.isReady()"), "ready");
+        assert_eq!(suggest_variable_name("new ArrayList<>()"), "arrayList");
+        assert_eq!(suggest_variable_name("list.get(0)"), "get");
+        assert_eq!(suggest_variable_name("\"text\""), "value");
+        assert_eq!(expression_type("1L").as_deref(), Some("long"));
+        assert_eq!(expression_type("new ArrayList<>()").as_deref(), Some("ArrayList"));
+        assert_eq!(expression_type("foo()"), None);
+    }
+
+    #[test]
+    fn context_matching_filters_templates() {
+        let registry = TemplateRegistry::bundled();
+        let java = Path::new("A.java");
+        let at = |text: &str| contexts_at(java, text, text.chars().count());
+        let body = at("class A {\n  void f() {\n    ");
+        let members = at("class A {\n  ");
+        assert!(registry.find_in(java, &body, "sout").is_some());
+        assert!(registry.find_in(java, &members, "sout").is_none());
+        assert!(registry.find_in(java, &members, "psvm").is_some());
+        assert!(registry.find_in(java, &body, "psvm").is_none());
+        assert!(registry.find_in(java, &body, "St").is_some());
+        assert!(registry.find_in(java, &at("class A {\n  void f() {\n    // "), "todo").is_some());
+        assert!(registry.surround_templates(java, &body).any(|t| t.abbreviation == "T"));
+        assert!(registry.templates_for(java).all(|t| !t.is_surround()));
+    }
+
+    #[test]
+    fn user_templates_override_and_disabled_keys_hide() {
+        let user = UserTemplate {
+            group: "java".into(),
+            postfix: false,
+            template: Template {
+                abbreviation: "sout".into(),
+                description: "mine".into(),
+                text: "log($END$);".into(),
+                ..Default::default()
+            },
+        };
+        let lines = [user.to_line(), "not json".to_owned()];
+        let java = Path::new("A.java");
+        let registry = TemplateRegistry::bundled().with_user(&lines, ["Kotlin".to_owned(), "Java/inn".to_owned()]);
+        assert_eq!(registry.find(java, "sout").unwrap().description, "mine");
+        assert_eq!(registry.errors.len(), 1);
+        assert!(registry.find(java, "inn").is_none(), "toggled off");
+        assert!(registry.find(Path::new("a.kt"), "main").is_none(), "group toggled off");
+        assert!(registry.find(java, "ifn").is_some());
+        assert!(UserTemplate::from_line("{\"group\":\"x\",\"template\":{}}").is_err());
     }
 }
