@@ -230,10 +230,10 @@ fn group(ui: &mut egui::Ui, title: &str) {
 fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str, Value)>) {
     let log = &app.state.git_log;
     ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         ui.add_space(8.0);
         let mut filter = log.filter.clone();
-        let response = widgets::search_field(ui, filter_id(), &mut filter, "Text or hash", 160.0);
+        let response = widgets::search_field(ui, filter_id(), &mut filter, "Text or hash", 120.0);
         let (mut regex, mut case) = (log.regex, log.match_case);
         let regex_changed = toggle(ui, &mut regex, ".*", "Regular expression");
         let case_changed = toggle(ui, &mut case, "Cc", "Match case");
@@ -253,7 +253,7 @@ fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
         };
         egui::ComboBox::from_id_salt("git_log_branch_filter")
             .selected_text(label)
-            .width(120.0)
+            .width(90.0)
             .show_ui(ui, |ui| {
                 if ui.selectable_label(log.branch.is_none(), "All").clicked() {
                     actions.push(("git.log.filterBranch", json!({})));
@@ -278,7 +278,7 @@ fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
                 Some(user) => format!("User: {user}"),
                 None => "User".to_owned(),
             })
-            .width(100.0)
+            .width(80.0)
             .show_ui(ui, |ui| {
                 if ui.selectable_label(log.user.is_none(), "All").clicked() {
                     actions.push(("git.log.filterUser", json!({})));
@@ -294,7 +294,7 @@ fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
             });
         egui::ComboBox::from_id_salt("git_log_date_filter")
             .selected_text(log.date.label())
-            .width(100.0)
+            .width(80.0)
             .show_ui(ui, |ui| {
                 for range in DateRange::ALL {
                     let label = if range == DateRange::Any {
@@ -307,6 +307,10 @@ fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
                     }
                 }
             });
+    });
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
         // Paths: a repository-relative file or directory.
         let path_id = egui::Id::new("git_log_path_filter");
         let mut path: String = ui.data_mut(|data| {
@@ -321,7 +325,7 @@ fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
             egui::TextEdit::singleline(&mut path)
                 .id(path_id.with("edit"))
                 .hint_text("Paths")
-                .desired_width(90.0),
+                .desired_width(140.0),
         );
         ui.data_mut(|data| data.insert_temp(path_id, path.clone()));
         if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
@@ -580,10 +584,13 @@ fn details_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
                 root.insert(&file.path, file);
             }
             let total = details.files.len();
-            ui.label(
-                RichText::new(widgets::pluralize(total, "file", "files"))
-                    .color(theme::TEXT_SECONDARY),
-            );
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.label(
+                    RichText::new(widgets::pluralize(total, "file", "files"))
+                        .color(theme::TEXT_SECONDARY),
+                );
+            });
             tree_rows(ui, &root, 0, "", &details.hash, actions);
         });
     ui.painter().hline(
