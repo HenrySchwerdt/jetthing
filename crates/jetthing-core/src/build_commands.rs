@@ -148,6 +148,11 @@ impl IdeState {
     }
 
     pub fn poll_runner(&mut self) {
+        self.poll_runner_task();
+        self.update_build_window();
+    }
+
+    fn poll_runner_task(&mut self) {
         let was_running = self.runner.is_running();
         if let Err(error) = self.runner.poll() {
             self.status = error.to_string();

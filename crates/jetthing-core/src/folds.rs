@@ -87,10 +87,11 @@ impl Document {
         self.analysis.folds_in(start..end)
     }
 
-    /// Collapses imports, as IntelliJ does when a file opens.
+    /// Collapses imports and one-line method bodies, as IntelliJ does when a
+    /// file opens.
     pub fn collapse_default_regions(&mut self) {
         for fold in self.analysis.folds_in(0..self.analysis.source.len()) {
-            if fold.kind == FoldKind::Imports {
+            if matches!(fold.kind, FoldKind::Imports | FoldKind::OneLineBody) {
                 self.folds.collapse(&fold);
             }
         }
@@ -290,14 +291,19 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
 mod tests {
     use super::*;
 
-    const SOURCE: &str = "import java.util.List;\nimport java.util.Map;\n\nclass A {\n    void f() {\n        g();\n    }\n}\n";
+    const SOURCE: &str = "import java.util.List;\nimport java.util.Map;\n\nclass A {\n    void f() {\n        g();\n        h();\n    }\n    String s(String n) {\n        return n + \"!\";\n    }\n}\n";
 
     #[test]
     fn imports_collapse_by_default_and_commands_fold_at_caret() {
         let mut document = Document::new("A.java".into(), SOURCE);
         document.collapse_default_regions();
-        assert_eq!(document.folds.collapsed().len(), 1);
+        assert_eq!(document.folds.collapsed().len(), 2);
         assert_eq!(document.folds.collapsed()[0].placeholder, "...");
+        assert_eq!(
+            document.folds.collapsed()[1].placeholder,
+            "{ return n + \"!\"; }",
+            "one-line method bodies fold with their statement"
+        );
 
         let caret = SOURCE.find("g();").unwrap();
         document.selections.set_single(Selection::caret(caret));
@@ -306,7 +312,7 @@ mod tests {
         let head = document.selections.primary().head;
         assert_eq!(&SOURCE[head..head + 1], "{");
         assert!(document.collapse_at_caret(), "outer class body next");
-        assert_eq!(document.folds.collapsed().len(), 3);
+        assert_eq!(document.folds.collapsed().len(), 4);
         assert!(document.expand_all());
         assert!(document.folds.collapsed().is_empty());
 

@@ -24,6 +24,7 @@ mod change_popup;
 mod chrome;
 mod clone_dialog;
 mod completion_ui;
+mod console_links;
 mod context_menus;
 mod control;
 mod crash_notice;
@@ -927,6 +928,7 @@ impl IdeApp {
         if self.state.search.is_running() || self.state.runner.is_running() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
+        self.state.poll_background_terminals();
         if let Some(terminal) = self.state.terminal.as_mut() {
             terminal.poll();
             ctx.request_repaint_after(Duration::from_millis(100));

@@ -12,6 +12,7 @@ Jetthing ships two kinds of downloads for every release:
 | macOS Apple silicon | `jetthing-<version>-macos-aarch64.dmg` | `jetthing-<version>-macos-aarch64.tar.gz` |
 | macOS Intel | `jetthing-<version>-macos-x86_64.dmg` | `jetthing-<version>-macos-x86_64.tar.gz` |
 | Linux x86_64 | `jetthing_<version>_amd64.deb` | `jetthing-<version>-linux-x86_64.tar.gz` |
+| Linux x86_64 (any distribution) | `jetthing-<version>-linux-x86_64.AppImage` | (single file) |
 
 Every file has a `<file>.sha256` next to it in `sha256sum` format. Check a download with
 `sha256sum -c <file>.sha256` (Linux), `shasum -a 256 -c <file>.sha256` (macOS) or
@@ -83,6 +84,49 @@ glibc version comes from the binary's symbol versions. Release builds run on Ubu
 
 To uninstall, run `sudo apt remove jetthing` (or `sudo dpkg -r jetthing`).
 
+### Linux (AppImage)
+
+The AppImage is one self-contained file and needs no installation or root:
+
+```bash
+chmod +x jetthing-<version>-linux-x86_64.AppImage
+./jetthing-<version>-linux-x86_64.AppImage .
+```
+
+It needs FUSE 2 (`libfuse2` on Debian/Ubuntu). Without FUSE, run it with
+`APPIMAGE_EXTRACT_AND_RUN=1`, or unpack it once with `--appimage-extract`. To add a
+menu entry, use an integration tool such as AppImageLauncher or Gear Lever. To
+uninstall, delete the file.
+
+### Package managers
+
+Each release workflow run also renders package-manager manifests from the built
+files' checksums (workflow artifact `package-manifests-<version>`, or
+`cargo xtask manifests --dir <artifacts>` locally):
+
+| Manager | File | Installs |
+|---|---|---|
+| Homebrew | `homebrew/jetthing.rb` (cask) | the DMG for the Mac's architecture; links `jetthing` and `jetthing-cli` |
+| winget | `winget/manifests/h/HenrySchwerdt/Jetthing/<version>/` (schema 1.6.0) | the MSI, machine scope |
+| Scoop | `scoop/jetthing.json` | the portable zip, with shims and a Start Menu shortcut; `checkver`/`autoupdate` included |
+
+Nothing is published automatically. To ship them:
+
+- **Homebrew:** open a pull request against a tap, for example
+  `HenrySchwerdt/homebrew-tap`, so users can run
+  `brew install --cask henryschwerdt/tap/jetthing`. Unsigned builds do not qualify
+  for `homebrew/cask`.
+- **winget:** run `wingetcreate submit <dir>`, or open a pull request against
+  `microsoft/winget-pkgs` with the version directory.
+- **Scoop:** commit `jetthing.json` to a bucket repository, so users can run
+  `scoop bucket add jetthing <url>` and then `scoop install jetthing`.
+
+Copies installed by Homebrew, winget or Scoop should be updated with that package
+manager (`brew upgrade`, `winget upgrade`, `scoop update`). The IDE's own updater
+treats the Homebrew copy like the DMG and the winget copy like the MSI. It treats a
+Scoop copy like an archive and replaces it in place; `scoop update` then reinstalls
+the newer version cleanly.
+
 ### Archives (all platforms)
 
 Extract the archive anywhere you can write and run `jetthing` (`jetthing.exe` on
@@ -104,6 +148,7 @@ Restart** then works according to how Jetthing was installed.
 | MSI | `jetthing.install` containing `msi` next to the exe | Downloads and verifies the new `.msi`. **Quit and Install** saves the session, starts `msiexec /i <msi>` and quits. The MSI upgrades the installed version. |
 | DMG | executable inside `*.app/Contents/MacOS/` | Downloads and verifies the new `.dmg`. **Quit and Install** opens it and quits; drag Jetthing into Applications and replace the old copy. |
 | .deb | `jetthing.install` containing `deb` | Downloads and verifies the new `.deb`. **Quit and Install** opens it with `xdg-open` (your software installer) and quits. |
+| AppImage | `$APPIMAGE` (set by the AppImage runtime) | Downloads and verifies the new `.AppImage` and replaces the file in place (the old one is kept as `<name>.old`). **Restart** relaunches. The file name keeps the old version number. |
 | `cargo run` | executable not named `jetthing` | Links to the release page only. |
 
 Installer downloads go to `<temp>/jetthing-update/`. A release without a `.sha256` for
@@ -131,6 +176,7 @@ The output goes to `dist/`. Each artifact path is printed on its own line.
 | `.msi` | [WiX Toolset v5](https://wixtoolset.org) (`dotnet tool install --global wix --version 5.0.2`); the `WIX_EXE` variable overrides the `wix` path. Definition: `packaging/windows/jetthing.wxs`. |
 | `.dmg` | Xcode command line tools (`codesign`, `hdiutil`). Signing uses `JETTHING_MACOS_SIGN_IDENTITY` when it is set, and ad hoc (`-`) otherwise. |
 | `.deb` | `dpkg-deb` (and `objdump` for the glibc requirement). |
+| `.AppImage` | [appimagetool](https://github.com/AppImage/appimagetool) 1.9.0 (`APPIMAGETOOL` overrides the path) and `desktop-file-validate` (`desktop-file-utils`). Built together with the `.deb`. |
 
 The app icon is original artwork. `assets/icon/jetthing.svg` is the source, and
 `python3 assets/icon/render.py` (cairosvg and Pillow) regenerates the committed `.png`,
@@ -144,11 +190,17 @@ The app icon is original artwork. `assets/icon/jetthing.svg` is the source, and
 smoke-tested:
 
 - The `.deb` is installed and removed again.
+- The AppImage runs `--version` without FUSE, and its extracted contents (`AppRun`,
+  desktop entry, icon, binaries) are checked; the desktop entry is validated.
 - The MSI is installed, reinstalled to check the upgrade code, and uninstalled. The
   workflow checks the Start Menu entry, the install marker and that no files are left
   behind.
 - The DMG is mounted, and the workflow checks the Info.plist, the code signature and
   the CLI.
+
+A `manifests` job then renders the Homebrew, winget and Scoop manifests from all
+checksums and uploads them as a workflow artifact. Nothing is published to package
+managers.
 
 To test packaging changes on a branch, start the workflow manually from the Actions
 tab (**Run workflow** with that branch). On branches other than `main` it builds and

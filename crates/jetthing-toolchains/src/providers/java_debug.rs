@@ -2,7 +2,8 @@
 //!
 //! The plugin is one jar that jdtls loads as an OSGi bundle (`initializationOptions.bundles`);
 //! it adds the `vscode.java.*` workspace commands that start a DAP server inside jdtls.
-//! `maven-metadata.xml` lists versions, and every artifact has a `.sha256` next to it.
+//! `maven-metadata.xml` lists versions. Central publishes only `.sha1`/`.md5` for these jars,
+//! so known releases carry a pinned SHA-256 and newer ones need a `.sha256` sidecar.
 
 use crate::download::HttpClient;
 use crate::{
@@ -13,6 +14,12 @@ use crate::{
 pub const MAVEN_CENTRAL: &str = "https://repo1.maven.org/maven2";
 const GROUP_PATH: &str = "com/microsoft/java";
 const ARTIFACT: &str = "com.microsoft.java.debug.plugin";
+/// SHA-256 of releases whose Maven Central directory publishes only SHA-1/MD5 sidecars.
+/// Each was computed from a download whose SHA-1 matched Central's `.sha1`.
+const PINNED_SHA256: &[(&str, &str)] = &[(
+    "0.53.1",
+    "4f4778d452a6a0665536f43ce4e32403a24be6593336b80dc85a322912859e24",
+)];
 /// Stored name of the installed jar (the component's "executable").
 pub const JAR_NAME: &str = "java-debug-plugin.jar";
 
@@ -87,11 +94,15 @@ impl ComponentProvider for JavaDebugPlugin {
             })?
             .clone();
         let url = format!("{directory}/{version}/{ARTIFACT}-{version}.jar");
+        let checksum = match PINNED_SHA256.iter().find(|(v, _)| *v == version.as_str()) {
+            Some((_, hex)) => Checksum::Sha256((*hex).to_owned()),
+            None => Checksum::Sha256Url(format!("{url}.sha256")),
+        };
         Ok(Release {
             component: self.spec.id.clone(),
             version,
             artifact: Artifact {
-                checksum: Checksum::Sha256Url(format!("{url}.sha256")),
+                checksum,
                 url,
                 archive: ArchiveKind::Raw {
                     file_name: JAR_NAME.into(),
@@ -106,6 +117,14 @@ impl ComponentProvider for JavaDebugPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pinned_checksums_are_hex_sha256() {
+        for (version, hex) in PINNED_SHA256 {
+            assert!(version.contains('.'));
+            assert!(hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()));
+        }
+    }
 
     #[test]
     fn parses_maven_metadata() {

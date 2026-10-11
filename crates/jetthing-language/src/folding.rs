@@ -15,6 +15,9 @@ pub enum FoldKind {
     Block,
     Comment,
     Imports,
+    /// A method or function body holding a single one-line statement,
+    /// shown as `{ statement }`; collapsed by default.
+    OneLineBody,
 }
 
 /// A foldable region. When collapsed, the editor shows the text before
@@ -78,6 +81,16 @@ fn delimited(node: Node<'_>, source: &str) -> Option<FoldRange> {
     if first.is_named() || last.is_named() || !OPENERS.contains(&text(source, first)) {
         return None;
     }
+    if let Some(placeholder) = one_line_body(node, source) {
+        return Some(FoldRange {
+            start_byte: first.start_byte(),
+            end_byte: last.end_byte(),
+            start_line: first.start_position().row,
+            end_line: last.end_position().row,
+            placeholder,
+            kind: FoldKind::OneLineBody,
+        });
+    }
     Some(FoldRange {
         start_byte: first.start_byte(),
         end_byte: last.end_byte(),
@@ -86,6 +99,27 @@ fn delimited(node: Node<'_>, source: &str) -> Option<FoldRange> {
         placeholder: format!("{}...{}", text(source, first), text(source, last)),
         kind: FoldKind::Block,
     })
+}
+
+/// `{ statement }` for a method/function body block holding exactly one
+/// statement that fits on one line (and is short enough to read inline).
+fn one_line_body(block: Node<'_>, source: &str) -> Option<String> {
+    let parent = block.parent()?;
+    let parent_kind = parent.kind();
+    if !(parent_kind.contains("method") || parent_kind.contains("function")) {
+        return None;
+    }
+    let mut cursor = block.walk();
+    let mut statements = block.named_children(&mut cursor);
+    let statement = statements.next()?;
+    if statements.next().is_some()
+        || statement.kind().contains("comment")
+        || statement.start_position().row != statement.end_position().row
+        || statement.end_byte() - statement.start_byte() > 80
+    {
+        return None;
+    }
+    Some(format!("{{ {} }}", text(source, statement)))
 }
 
 fn comment(node: Node<'_>, source: &str) -> Option<FoldRange> {
@@ -287,7 +321,7 @@ mod tests {
                 (2, 3, FoldKind::Imports, "..."),
                 (5, 7, FoldKind::Comment, "/**...*/"),
                 (8, 12, FoldKind::Block, "{...}"),
-                (9, 11, FoldKind::Block, "{...}"),
+                (9, 11, FoldKind::OneLineBody, "{ g(); }"),
             ]
         );
         assert_eq!(

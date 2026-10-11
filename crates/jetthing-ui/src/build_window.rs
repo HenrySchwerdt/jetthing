@@ -1,13 +1,18 @@
 //! Build / Run tool window: execution tree with timings on the left, console on the right.
 
+use crate::console_links::{self, LinkTarget};
 use crate::icons::{self, Icon};
 use crate::widgets::{list_row, row_text, tool_window_header};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, RichText, vec2};
-use jetthing_core::ToolWindow;
-use jetthing_runner::{MessageKind, OutputStream, StepOutcome, TaskKind, TaskState};
+use jetthing_core::{BuildSnapshot, BuildTab, ToolWindow};
+use jetthing_runner::{
+    BuildEvents, ConsoleBuffer, MessageKind, OutputStream, StepOutcome, TaskKind, TaskPlan,
+    TaskState,
+};
 use serde_json::{Value, json};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 const TREE_INDENT: f32 = 18.0;
@@ -63,20 +68,82 @@ pub(crate) fn run_subject(project: &str, plan_name: &str) -> String {
     }
 }
 
+/// What the window shows: the live runner, or the last finished run of a tab.
+struct Data<'a> {
+    plan: &'a TaskPlan,
+    state: &'a TaskState,
+    events: &'a BuildEvents,
+    console: &'a ConsoleBuffer,
+    elapsed: Option<Duration>,
+}
+
+fn data<'a>(
+    state: &'a jetthing_core::IdeState,
+    snapshot: Option<&'a BuildSnapshot>,
+) -> Option<Data<'a>> {
+    match snapshot {
+        Some(snapshot) => Some(Data {
+            plan: &snapshot.plan,
+            state: &snapshot.state,
+            events: &snapshot.events,
+            console: &snapshot.console,
+            elapsed: snapshot.elapsed,
+        }),
+        None => Some(Data {
+            plan: state.runner.plan()?,
+            state: state.runner.state(),
+            events: state.runner.events(),
+            console: state.runner.console(),
+            elapsed: state.runner.elapsed(),
+        }),
+    }
+}
+
 pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
-    let plan = app.state.runner.plan().cloned();
+    // Build and Sync results live in tabs of their own; Run and Test replace
+    // the content like before.
+    let live_tab = app.state.live_build_tab();
+    let tab = app.state.build_window.tab;
+    let tabbed = live_tab.is_some()
+        || (app.state.runner.plan().is_none()
+            && BuildTab::ALL
+                .iter()
+                .any(|tab| app.state.build_window.snapshot(*tab).is_some()));
+    let snapshot: Option<Arc<BuildSnapshot>> =
+        if tabbed && (live_tab != Some(tab) || app.state.runner.plan().is_none()) {
+            app.state.build_window.snapshot(tab)
+        } else {
+            None
+        };
+    let showing_other_tab = tabbed && live_tab != Some(tab);
+    let plan = if showing_other_tab && snapshot.is_none() {
+        None
+    } else {
+        data(&app.state, snapshot.as_deref()).map(|data| data.plan.clone())
+    };
     let kind = plan.as_ref().map_or(TaskKind::Build, |plan| plan.kind);
     let title = match kind {
         TaskKind::Run => "Run",
         TaskKind::Test => "Test",
-        TaskKind::Sync => "Sync",
-        TaskKind::Build | TaskKind::Custom => "Build",
+        TaskKind::Sync | TaskKind::Build | TaskKind::Custom => "Build",
     };
-    let running = app.state.runner.is_running();
+    let running = snapshot.is_none() && !showing_other_tab && app.state.runner.is_running();
     let hide = tool_window_header(ui, title, |ui| {
         // "Fix with AI" next to a failed build/run (AI Assistant).
         crate::ai_actions::build_link(app, ui);
-        if let Some(plan) = &plan {
+        if tabbed {
+            for candidate in BuildTab::ALL {
+                let label = RichText::new(candidate.title()).size(theme::UI_FONT_SIZE);
+                if ui.selectable_label(candidate == tab, label).clicked() {
+                    let name = if candidate == BuildTab::Sync {
+                        "sync"
+                    } else {
+                        "output"
+                    };
+                    app.dispatch("build.showTab", json!({ "tab": name }));
+                }
+            }
+        } else if let Some(plan) = &plan {
             ui.label(
                 RichText::new(&plan.name)
                     .color(*theme::TEXT_SECONDARY)
@@ -90,7 +157,12 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     let Some(plan) = plan else {
         ui.add_space(16.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("Nothing has run yet").color(*theme::TEXT_SECONDARY));
+            let empty = if tabbed {
+                format!("No {} result yet", tab.title())
+            } else {
+                "Nothing has run yet".to_owned()
+            };
+            ui.label(RichText::new(empty).color(*theme::TEXT_SECONDARY));
             let hint = match &app.state.detected_build {
                 Some(build) => format!(
                     "{} project · Build Project or Run from the toolbar",
@@ -156,7 +228,9 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         app.dispatch("run.cancel", Value::Null);
     }
 
-    let test_mode = kind == TaskKind::Test && (running || !app.state.runner.tests().is_empty());
+    let test_mode = snapshot.is_none()
+        && kind == TaskKind::Test
+        && (running || !app.state.runner.tests().is_empty());
     if test_mode {
         let failed = app.commands.is_enabled("test.rerunFailed", &app.state);
         if toolbar
@@ -168,6 +242,35 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         {
             app.dispatch("test.rerunFailed", Value::Null);
         }
+    }
+
+    toolbar.add_space(4.0);
+    let (wrap, scroll_end, clear) = (
+        app.state.build_window.soft_wrap,
+        "build.console.scrollToEnd",
+        "build.console.clear",
+    );
+    if icons::button_colored(
+        &mut toolbar,
+        Icon::SoftWrap,
+        *theme::ICON,
+        "Soft-Wrap",
+        wrap,
+    )
+    .clicked()
+    {
+        app.dispatch("build.console.softWrap", Value::Null);
+    }
+    if icons::button(&mut toolbar, Icon::ScrollEnd, "Scroll to the End").clicked() {
+        app.dispatch(scroll_end, Value::Null);
+    }
+    let can_clear = app.commands.is_enabled(clear, &app.state);
+    if toolbar
+        .add_enabled_ui(can_clear, |ui| icons::button(ui, Icon::Close, "Clear All"))
+        .inner
+        .clicked()
+    {
+        app.dispatch(clear, Value::Null);
     }
 
     let project_name = app.project_name();
@@ -189,8 +292,11 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
             .auto_shrink([false, false])
             .show(&mut tree, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                let state = app.state.runner.state().clone();
-                let events = app.state.runner.events();
+                let Some(shown) = data(&app.state, snapshot.as_deref()) else {
+                    return;
+                };
+                let state = shown.state.clone();
+                let events = shown.events;
                 let (icon, verb) = match &state {
                     TaskState::Running | TaskState::Idle => (None, "running…".to_owned()),
                     TaskState::Exited(0) => (
@@ -262,7 +368,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     egui::FontId::proportional(theme::UI_FONT_SIZE),
                     *theme::TEXT,
                 );
-                if let Some(elapsed) = app.state.runner.elapsed() {
+                if let Some(elapsed) = shown.elapsed {
                     row_text(
                         ui,
                         rect,
@@ -403,10 +509,32 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     });
                 }
             }
-            None => console_view(app, &mut console, &command_line, view.reveal.take()),
+            None => {
+                let options = console_options(app);
+                if let Some(shown) = data(&app.state, snapshot.as_deref()) {
+                    action = console_view(
+                        &mut console,
+                        &shown,
+                        &command_line,
+                        view.reveal.take(),
+                        options,
+                    )
+                    .or(action);
+                }
+            }
         }
     } else {
-        console_view(app, &mut console, &command_line, view.reveal.take());
+        let options = console_options(app);
+        if let Some(shown) = data(&app.state, snapshot.as_deref()) {
+            action = console_view(
+                &mut console,
+                &shown,
+                &command_line,
+                view.reveal.take(),
+                options,
+            )
+            .or(action);
+        }
     }
 
     match action {
@@ -421,6 +549,11 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
             column,
         }) => {
             view.selected = Some(node);
+            // Console links are relative to the task's working directory.
+            let path = project_root
+                .as_deref()
+                .and_then(|root| project_relative(root, &plan.cwd, Path::new(&path)))
+                .unwrap_or(path);
             app.dispatch("editor.openFile", json!({"path": path}));
             app.dispatch("editor.gotoLine", json!({"line": line, "column": column}));
         }
@@ -536,73 +669,187 @@ pub fn whole_rows_height(available: f32, row_height: f32) -> f32 {
     (available / row_height).floor().max(1.0) * row_height
 }
 
-fn console_view(app: &IdeApp, ui: &mut egui::Ui, command_line: &str, reveal: Option<usize>) {
-    let console = app.state.runner.console();
-    let lines = console.lines();
+/// Console toolbar state taken from the IDE state before painting.
+#[derive(Clone, Copy)]
+struct ConsoleOptions {
+    soft_wrap: bool,
+    scroll_to_end: bool,
+    /// Console lines hidden by Clear.
+    cleared: usize,
+}
+
+fn console_options(app: &mut IdeApp) -> ConsoleOptions {
+    let window = &mut app.state.build_window;
+    ConsoleOptions {
+        soft_wrap: window.soft_wrap,
+        scroll_to_end: window.take_scroll_to_end(),
+        cleared: window.cleared(window.tab),
+    }
+}
+
+/// Soft-wrapped consoles lay out at most this many trailing lines.
+const WRAPPED_LINES: usize = 2000;
+
+fn console_view(
+    ui: &mut egui::Ui,
+    shown: &Data<'_>,
+    command_line: &str,
+    reveal: Option<usize>,
+    options: ConsoleOptions,
+) -> Option<Action> {
+    let console = shown.console;
+    let all = console.lines();
     let dropped = console.dropped();
+    // Clear hides the lines present when it was pressed.
+    let hidden = options.cleared.saturating_sub(dropped).min(all.len());
+    let lines = &all[hidden..];
     let partial = [OutputStream::Stdout, OutputStream::Stderr]
         .into_iter()
         .map(|stream| (stream, console.partial(stream)))
         .filter(|(_, text)| !text.is_empty())
         .collect::<Vec<_>>();
-    // Line 0 echoes the command, like a terminal prompt.
-    let total = 1 + lines.len() + partial.len();
+    let font = egui::FontId::monospace(theme::UI_FONT_SIZE - 0.5);
+    if let TaskState::Failed(reason) = shown.state {
+        // Nothing ran; show the complete, wrapped reason instead of an empty console.
+        ui.label(RichText::new(reason).font(font).color(*theme::ERROR));
+        return None;
+    }
+    // Line 0 echoes the command, like a terminal prompt (until cleared).
+    let prompt = usize::from(options.cleared == 0 && !command_line.is_empty());
+    let rows: Vec<(String, Color32)> = {
+        let mut rows = Vec::with_capacity(lines.len() + partial.len() + 1);
+        if prompt == 1 {
+            rows.push((format!("$ {command_line}"), *theme::TEXT_INFO));
+        }
+        let skip = if options.soft_wrap {
+            lines.len().saturating_sub(WRAPPED_LINES)
+        } else {
+            0
+        };
+        for line in &lines[skip..] {
+            let color = match line.stream {
+                OutputStream::Stdout => stdout_color(&line.text),
+                OutputStream::Stderr => stderr_color(&line.text),
+            };
+            rows.push((line.text.clone(), color));
+        }
+        for (stream, text) in &partial {
+            let color = match stream {
+                OutputStream::Stdout => *theme::editor::TEXT,
+                OutputStream::Stderr => stderr_color(text),
+            };
+            rows.push((text.to_string(), color));
+        }
+        rows
+    };
     let mut area = egui::ScrollArea::both()
         .id_salt("build_console")
         .auto_shrink([false, false])
         .max_height(whole_rows_height(ui.available_height(), CONSOLE_ROW));
-    if let Some(line) = reveal {
-        let row = line.saturating_sub(dropped) + 1;
+    if options.soft_wrap {
+        area = egui::ScrollArea::vertical()
+            .id_salt("build_console_wrapped")
+            .auto_shrink([false, false]);
+    }
+    if options.scroll_to_end {
+        area = area.vertical_scroll_offset(f32::MAX);
+    } else if let Some(line) = reveal {
+        let row = line.saturating_sub(dropped + hidden) + prompt;
         area = area.vertical_scroll_offset((row as f32 * CONSOLE_ROW - 40.0).max(0.0));
     } else {
         area = area.stick_to_bottom(true);
     }
-    let font = egui::FontId::monospace(theme::UI_FONT_SIZE - 0.5);
-    if let TaskState::Failed(reason) = app.state.runner.state() {
-        // Nothing ran; show the complete, wrapped reason instead of an empty console.
-        ui.label(RichText::new(reason).font(font).color(*theme::ERROR));
-        return;
-    }
-    area.show_rows(ui, CONSOLE_ROW, total, |ui, range| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        for row in range {
-            let (text, color) = if row == 0 {
-                if command_line.is_empty() {
-                    continue;
-                }
-                (format!("$ {command_line}"), *theme::TEXT_INFO)
-            } else if let Some(line) = lines.get(row - 1) {
-                let color = match line.stream {
-                    OutputStream::Stdout => stdout_color(&line.text),
-                    OutputStream::Stderr => stderr_color(&line.text),
-                };
-                (line.text.clone(), color)
-            } else if let Some((stream, text)) = partial.get(row - 1 - lines.len()) {
-                let color = match stream {
-                    OutputStream::Stdout => *theme::editor::TEXT,
-                    OutputStream::Stderr => stderr_color(text),
-                };
-                (text.to_string(), color)
-            } else {
-                continue;
-            };
-            let (rect, _) = ui.allocate_exact_size(
-                vec2(ui.available_width().max(200.0), CONSOLE_ROW),
-                egui::Sense::hover(),
-            );
-            let galley = ui.painter().layout_no_wrap(text, font.clone(), color);
-            let width = galley.size().x;
-            ui.painter().galley(
-                egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
-                galley,
-                color,
-            );
-            if width > rect.width() {
-                // Extend the content so horizontal scrolling reaches long lines.
-                ui.allocate_exact_size(vec2(width - rect.width(), 0.0), egui::Sense::hover());
-            }
+    let mut clicked = None;
+    let mut paint_row = |ui: &mut egui::Ui, text: &str, color: Color32| {
+        if let Some(target) = console_row(ui, text, color, &font, options.soft_wrap) {
+            clicked = Some(target);
         }
+    };
+    if options.soft_wrap {
+        area.show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (text, color) in &rows {
+                paint_row(ui, text, *color);
+            }
+        });
+    } else {
+        area.show_rows(ui, CONSOLE_ROW, rows.len(), |ui, range| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for row in range {
+                if let Some((text, color)) = rows.get(row) {
+                    paint_row(ui, text, *color);
+                }
+            }
+        });
+    }
+    clicked.map(|target| match target {
+        LinkTarget::Url(url) => {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+            None
+        }
+        LinkTarget::File { path, line, column } => Some(Action::Open {
+            node: 0,
+            path,
+            line,
+            column,
+        }),
+    })?
+}
+
+/// Paints one console line; links are underlined and clickable. Returns the
+/// clicked link.
+fn console_row(
+    ui: &mut egui::Ui,
+    text: &str,
+    color: Color32,
+    font: &egui::FontId,
+    wrap: bool,
+) -> Option<LinkTarget> {
+    let links = console_links::find(text);
+    let width = ui.available_width().max(200.0);
+    let mut job = egui::text::LayoutJob::default();
+    let plain = egui::TextFormat::simple(font.clone(), color);
+    let mut cursor = 0;
+    for link in &links {
+        job.append(&text[cursor..link.range.start], 0.0, plain.clone());
+        let mut format = egui::TextFormat::simple(font.clone(), crate::navigation_ui::LINK);
+        format.underline = egui::Stroke::new(1.0_f32, crate::navigation_ui::LINK);
+        job.append(&text[link.range.clone()], 0.0, format);
+        cursor = link.range.end;
+    }
+    job.append(&text[cursor..], 0.0, plain);
+    if wrap {
+        job.wrap.max_width = width;
+    }
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    let height = galley.size().y.max(CONSOLE_ROW);
+    let sense = if links.is_empty() {
+        egui::Sense::hover()
+    } else {
+        egui::Sense::click()
+    };
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), sense);
+    let width_of_text = galley.size().x;
+    let origin = egui::pos2(rect.left(), rect.center().y - galley.size().y / 2.0);
+    let hovered = response.hover_pos().and_then(|pointer| {
+        let index = galley.cursor_from_pos(pointer - origin).index;
+        let byte = text
+            .char_indices()
+            .nth(index)
+            .map_or(text.len(), |(b, _)| b);
+        links.iter().find(|link| link.range.contains(&byte))
     });
+    ui.painter().galley(origin, galley, color);
+    if !wrap && width_of_text > rect.width() {
+        // Extend the content so horizontal scrolling reaches long lines.
+        ui.allocate_exact_size(
+            vec2(width_of_text - rect.width(), 0.0),
+            egui::Sense::hover(),
+        );
+    }
+    let link = hovered?;
+    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    response.clicked().then(|| link.target.clone())
 }
 
 fn stdout_color(text: &str) -> Color32 {

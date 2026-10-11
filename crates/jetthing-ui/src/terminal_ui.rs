@@ -21,7 +21,33 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     let ai_available = app.commands.is_enabled("ai.terminal.suggest", &app.state);
     let ai_open = app.ai_ui.terminal_open;
     let mut ai_toggle = false;
+    let tabs = app.state.terminal_tab_titles();
+    let mut tab_action: Option<(&'static str, Value)> = None;
     let hide = tool_window_header(ui, "Terminal", |ui| {
+        // `Local ×` tabs with `+` and a session list.
+        for (index, (title, active)) in tabs.iter().enumerate() {
+            let label = egui::RichText::new(title).size(theme::UI_FONT_SIZE);
+            if ui.selectable_label(*active, label).clicked() && !active {
+                tab_action = Some(("terminal.selectTab", json!({ "index": index })));
+            }
+            if tabs.len() > 1 && icons::button(ui, Icon::Close, "Close Session").clicked() {
+                tab_action = Some(("terminal.closeTab", json!({ "index": index })));
+            }
+        }
+        if icons::button(ui, Icon::Plus, "New Session").clicked() {
+            tab_action = Some(("terminal.newTab", Value::Null));
+        }
+        if tabs.len() > 1 {
+            ui.menu_button("▾", |ui| {
+                for (index, (title, active)) in tabs.iter().enumerate() {
+                    if ui.selectable_label(*active, title).clicked() {
+                        tab_action = Some(("terminal.selectTab", json!({ "index": index })));
+                        ui.close();
+                    }
+                }
+            });
+        }
+        ui.separator();
         if exited {
             ui.label(egui::RichText::new("process exited").color(theme::TEXT_INFO));
         }
@@ -35,6 +61,10 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     if hide {
         app.toggle_tool_window(jetthing_core::ToolWindow::Terminal);
         return;
+    }
+    if let Some((id, params)) = tab_action {
+        app.dispatch(id, params);
+        app.terminal_selection = None;
     }
     if restart {
         app.dispatch("terminal.restart", Value::Null);

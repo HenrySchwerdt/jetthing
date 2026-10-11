@@ -11,6 +11,7 @@ pub fn component_for_server(server: &str) -> Option<&'static str> {
     match server {
         "rust-analyzer" => Some("rust-analyzer"),
         "jdtls" => Some("jdtls"),
+        "kotlin" => Some("kotlin-lsp"),
         "taplo" => Some("taplo"),
         _ => None,
     }
@@ -143,16 +144,29 @@ impl ProgramResolver for ToolchainServerResolver {
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or_default();
+        // JetBrains' server speaks LSP on stdio only when asked; fwcd's is stdio-only and
+        // needs a JDK (the JetBrains archive bundles its own runtime).
+        let jetbrains = name == "intellij-server";
+        let fwcd = name == "kotlin-language-server";
+        let args = if jetbrains {
+            vec!["--stdio".to_owned()]
+        } else {
+            Vec::new()
+        };
         let args = spec
             .candidates
             .iter()
             .find(|candidate| candidate.program == name)
             .map(|candidate| candidate.args.iter().map(|arg| (*arg).to_owned()).collect())
-            .unwrap_or_default();
+            .unwrap_or(args);
+        let mut components = vec![component];
+        if fwcd {
+            components.push("jdk");
+        }
         Some(ResolvedProgram {
             program: located.executable,
             args,
-            env: self.environment(&[component]),
+            env: self.environment(&components),
         })
     }
 
@@ -253,6 +267,40 @@ mod tests {
         assert_eq!(resolver.setup_component(taplo).as_deref(), Some("taplo"));
         let kotlin = registry.get("kotlin").unwrap().spec();
         assert_eq!(resolver.setup_component(kotlin), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn kotlin_lsp_runs_the_managed_launcher_on_stdio() {
+        let dir = std::env::temp_dir().join(format!("jetthing-tc-kt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let home = dir.join("kotlin-lsp");
+        std::fs::create_dir_all(home.join("bin")).unwrap();
+        std::fs::write(home.join("bin/intellij-server"), "").unwrap();
+        let mut catalog = Catalog::new();
+        catalog.register(provider(jetthing_toolchains::providers::kotlin_lsp::spec()));
+        let mut toolchains = Toolchains::new(catalog, ToolchainStore::new(dir.join("store")))
+            .with_platform(Platform::parse("linux", "x86_64").unwrap())
+            .with_environment(Default::default(), BTreeMap::new());
+        let settings = ToolchainSettings::parse(
+            &format!(
+                "[components.kotlin-lsp]\npath = {:?}\n",
+                home.display().to_string()
+            ),
+            Path::new("toolchains.toml"),
+        )
+        .unwrap();
+        toolchains.apply_project(None, settings);
+        let resolver = ToolchainServerResolver::new(toolchains);
+        let registry = ServerRegistry::default();
+        let spec = registry.get("kotlin").unwrap().spec();
+        let resolved = resolver.resolve(spec).expect("managed kotlin-lsp resolves");
+        assert!(resolved.program.ends_with("bin/intellij-server"));
+        assert_eq!(resolved.args, ["--stdio"]);
+        assert_eq!(
+            resolver.setup_component(spec).as_deref(),
+            Some("kotlin-lsp")
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

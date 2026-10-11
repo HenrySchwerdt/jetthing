@@ -32,7 +32,9 @@ mod bazel_commands;
 mod branch_commands;
 mod build_commands;
 pub mod build_info;
+mod build_window;
 mod code_actions;
+mod code_vision;
 mod completion;
 mod completion_stats;
 mod debug_commands;
@@ -71,6 +73,7 @@ mod signature_help;
 mod snippet_session;
 pub mod tabs;
 mod terminal_commands;
+mod terminal_tabs;
 mod toolchain_commands;
 mod toolchain_lsp;
 mod toolwindow;
@@ -139,7 +142,9 @@ pub use ai_agent::{
 pub use ai_commands::{AiState, ApplyPreview, CHAT_FILE as AI_CHAT_FILE, MOCK_ENV as AI_MOCK_ENV};
 pub use ai_inline::InlineSuggestion;
 pub use ai_terminal::{ShellSuggestion, ShellSuggestionState};
+pub use build_window::{BuildSnapshot, BuildTab, BuildWindowState};
 pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
+pub use code_vision::{CodeLens, InlayLabel};
 pub use completion_stats::CompletionStats;
 pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
 pub use live_templates::context_labels;
@@ -229,6 +234,8 @@ pub struct IdeState {
     /// Pinned tabs, closed-tab history and the tab limit.
     pub tabs: tabs::EditorTabs,
     pub terminal: Option<TerminalSession>,
+    /// Sessions of the Terminal tool window; the active one lives in `terminal`.
+    pub terminal_tabs: terminal_tabs::TerminalTabs,
     pub search: SearchService,
     pub search_results: Vec<TextMatch>,
     pub search_query: String,
@@ -260,6 +267,8 @@ pub struct IdeState {
     pub remote_error: Option<String>,
     /// Blame annotations of documents that have them switched on.
     annotations: std::collections::HashMap<PathBuf, annotations::Annotation>,
+    /// Code vision and inlay hints per document.
+    code_vision: code_vision::CodeVisionState,
     /// Git tool window Log tab.
     pub git_log: GitLogState,
     /// The diff viewer tab, if open.
@@ -271,6 +280,8 @@ pub struct IdeState {
     /// Per-document changed lines against HEAD (gutter markers).
     line_changes: std::collections::HashMap<PathBuf, line_changes::LineChanges>,
     pub runner: TaskService,
+    /// Tabs and console toolbar of the Build tool window.
+    pub build_window: build_window::BuildWindowState,
     /// Language servers of the open project, started lazily per language.
     pub lsp: LspManager,
     /// Project-wide problems, refreshed by [`IdeState::refresh_problems`].
@@ -422,6 +433,7 @@ impl IdeState {
         self.search_files_scanned = 0;
         self.search_truncated = false;
         self.terminal = None;
+        self.terminal_tabs = Default::default();
         self.runner = TaskService::default();
         self.git = RepositoryStatus::load(project.root()).ok();
         self.lsp.set_project(Some(project.root()));
@@ -689,21 +701,7 @@ impl IdeState {
             .as_ref()
             .is_none_or(|terminal| terminal.is_exited())
         {
-            let cwd = dir
-                .or_else(|| self.project.as_ref().map(Project::root))
-                .unwrap_or_else(|| Path::new("."));
-            let shell = self
-                .settings
-                .text(jetthing_settings::ids::TERMINAL_SHELL)
-                .unwrap_or_default();
-            let session = if shell.trim().is_empty() {
-                TerminalSession::spawn_shell(cwd).map_err(|e| e.to_string())
-            } else {
-                TerminalSession::spawn(shell.trim(), &[], cwd).map_err(|e| {
-                    format!("{e}. Check the shell path in Settings | Tools | Terminal.")
-                })
-            };
-            self.terminal = Some(session?);
+            self.terminal = Some(self.spawn_terminal_session(dir)?);
         }
         self.tool_windows.show(ToolWindow::Terminal);
         self.status = "Terminal ready".into();
@@ -794,6 +792,27 @@ impl IdeState {
             if let SearchEvent::Match(found) = event {
                 self.quick_nav.text_results.push(found);
             }
+        }
+    }
+
+    /// Starts a shell in `dir` (default: the project root) as the Terminal
+    /// settings describe it.
+    pub(crate) fn spawn_terminal_session(
+        &self,
+        dir: Option<&Path>,
+    ) -> Result<TerminalSession, String> {
+        let cwd = dir
+            .or_else(|| self.project.as_ref().map(Project::root))
+            .unwrap_or_else(|| Path::new("."));
+        let shell = self
+            .settings
+            .text(jetthing_settings::ids::TERMINAL_SHELL)
+            .unwrap_or_default();
+        if shell.trim().is_empty() {
+            TerminalSession::spawn_shell(cwd).map_err(|e| e.to_string())
+        } else {
+            TerminalSession::spawn(shell.trim(), &[], cwd)
+                .map_err(|e| format!("{e}. Check the shell path in Settings | Tools | Terminal."))
         }
     }
 
@@ -906,6 +925,7 @@ impl IdeState {
         self.poll_refactor();
         self.poll_docs();
         self.poll_signature();
+        self.poll_code_vision();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };
@@ -1100,6 +1120,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     update_commands::register(&mut registry);
     diagnostic_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
+    terminal_tabs::register(&mut registry);
     settings_commands::register(&mut registry);
     quick_nav::register(&mut registry);
     keymap_commands::register(&mut registry);
@@ -1116,6 +1137,8 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     remote_commands::register(&mut registry);
     welcome_commands::register(&mut registry);
     annotations::register(&mut registry);
+    code_vision::register(&mut registry);
+    build_window::register(&mut registry);
     worktree_commands::register(&mut registry);
     search_replace::register(&mut registry);
     navigation::register(&mut registry);

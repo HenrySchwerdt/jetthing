@@ -34,7 +34,7 @@ impl IdeState {
             .map_err(|_| format!("{} is outside the Git repository", project_path.display()))
     }
 
-    fn blame_document(&self, index: usize) -> Result<Vec<BlameLine>, String> {
+    pub(crate) fn blame_document(&self, index: usize) -> Result<Vec<BlameLine>, String> {
         let document = self.documents.get(index).ok_or("document does not exist")?;
         let git = self
             .git

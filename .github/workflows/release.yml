@@ -67,7 +67,8 @@ jobs:
               "jetthing-$version-windows-x86_64.msi" \
               "jetthing-$version-macos-aarch64.dmg" \
               "jetthing-$version-macos-x86_64.dmg" \
-              "jetthing_${deb_version}_amd64.deb"; do
+              "jetthing_${deb_version}_amd64.deb" \
+              "jetthing-$version-linux-x86_64.AppImage"; do
               expected="$expected $asset $asset.sha256"
             done
             published=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
@@ -135,6 +136,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+
+      - name: Install AppImage tooling
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get install -y -q desktop-file-utils
+          curl -sSLf -o "$RUNNER_TEMP/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage
+          echo "46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1  $RUNNER_TEMP/appimagetool" | sha256sum -c
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
 
       - name: Install WiX Toolset
         if: runner.os == 'Windows'
@@ -211,6 +223,19 @@ jobs:
           sudo dpkg -r jetthing
           test ! -e /usr/bin/jetthing && test ! -e /usr/lib/jetthing
 
+      - name: Smoke-test AppImage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          appimage=$(ls dist/jetthing-*.AppImage)
+          # No FUSE on runners: the runtime extracts itself instead of mounting.
+          APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$appimage" --appimage-extract > /dev/null)
+          for file in AppRun jetthing.desktop jetthing.png usr/bin/jetthing usr/bin/jetthing-cli; do
+            test -e "$RUNNER_TEMP/squashfs-root/$file"
+          done
+          desktop-file-validate "$RUNNER_TEMP/squashfs-root/jetthing.desktop"
+
       - name: Smoke-test MSI install, upgrade code and uninstall
         if: runner.os == 'Windows'
         shell: pwsh
@@ -267,7 +292,34 @@ jobs:
             dist/*.msi
             dist/*.dmg
             dist/*.deb
+            dist/*.AppImage
             dist/*.sha256
+
+  manifests:
+    # Homebrew cask, winget and Scoop manifests from the built artifacts'
+    # checksums. Uploaded as a workflow artifact only; see docs/release.md for
+    # submitting them.
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Render manifests
+        run: |
+          cargo run -q -p xtask -- manifests --dir artifacts \
+            --version ${{ needs.version.outputs.version }} --out manifests
+          find manifests -type f | sort
+          cat manifests/homebrew/jetthing.rb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-manifests-${{ needs.version.outputs.version }}
+          path: manifests
+          if-no-files-found: error
 
   release:
     needs: [version, checks, build]

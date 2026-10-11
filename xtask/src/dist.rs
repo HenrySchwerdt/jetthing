@@ -9,6 +9,7 @@
 //! | Windows | `jetthing-<version>-windows-<arch>.msi` | WiX Toolset v5 (`wix`) |
 //! | macOS | `jetthing-<version>-macos-<arch>.dmg` with `Jetthing.app` | `codesign`, `hdiutil` |
 //! | Linux | `jetthing_<version>_<debarch>.deb` | `dpkg-deb` |
+//! | Linux | `jetthing-<version>-linux-<arch>.AppImage` | `appimagetool` (`APPIMAGETOOL`) |
 //!
 //! Each artifact gets a `<artifact>.sha256` in `sha256sum` format. Paths of all
 //! artifacts are printed one per line (forward slashes) for CI scripts.
@@ -133,6 +134,9 @@ pub fn dist(options: Options) -> Result<()> {
             "linux" => deb(&stage, &platform, dist)?,
             other => bail!("no installer for {other}"),
         });
+        if platform.os == "linux" {
+            artifacts.push(appimage(&stage, &platform, dist)?);
+        }
     }
     for artifact in &artifacts {
         write_checksum(artifact)?;
@@ -561,6 +565,76 @@ fn deb(stage: &Path, platform: &Platform, dist: &Path) -> Result<PathBuf> {
     )?;
     Ok(out)
 }
+
+/// Portable single-file build: an AppDir (`usr/bin`, desktop entry, icons,
+/// `AppRun`) packed by `appimagetool` (path in `APPIMAGETOOL`, else on PATH).
+/// The self-updater replaces the `.AppImage` file in place (`$APPIMAGE`).
+fn appimage(stage: &Path, platform: &Platform, dist: &Path) -> Result<PathBuf> {
+    let app_dir = dist.join(format!("AppDir-{}", platform.arch));
+    if app_dir.exists() {
+        fs::remove_dir_all(&app_dir)?;
+    }
+    let bin = app_dir.join("usr/bin");
+    fs::create_dir_all(&bin)?;
+    for binary in ["jetthing", "jetthing-cli"] {
+        copy(&stage.join(binary), &bin.join(binary))?;
+    }
+    let share = app_dir.join("usr/share/jetthing");
+    fs::create_dir_all(share.join("licenses"))?;
+    for file in ["README.md", "NOTICE-intellij-data.md"] {
+        copy(&stage.join(file), &share.join(file))?;
+    }
+    for license in ["Inter-OFL.txt", "JetBrainsMono-OFL.txt"] {
+        copy(
+            &stage.join("licenses").join(license),
+            &share.join("licenses").join(license),
+        )?;
+    }
+    let applications = app_dir.join("usr/share/applications");
+    fs::create_dir_all(&applications)?;
+    let desktop = desktop_entry("jetthing");
+    fs::write(applications.join("jetthing.desktop"), &desktop)?;
+    fs::write(app_dir.join("jetthing.desktop"), &desktop)?;
+    for (size, icon) in [("256x256", "jetthing-256.png"), ("512x512", "jetthing.png")] {
+        let dir = app_dir.join(format!("usr/share/icons/hicolor/{size}/apps"));
+        fs::create_dir_all(&dir)?;
+        copy(&Path::new(ICONS).join(icon), &dir.join("jetthing.png"))?;
+    }
+    copy(
+        &Path::new(ICONS).join("jetthing.png"),
+        &app_dir.join("jetthing.png"),
+    )?;
+    fs::write(app_dir.join("AppRun"), APP_RUN)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        fs::set_permissions(app_dir.join("AppRun"), fs::Permissions::from_mode(0o755))?;
+        symlink("jetthing.png", app_dir.join(".DirIcon"))?;
+    }
+    let out = dist.join(format!(
+        "jetthing-{VERSION}-linux-{}.AppImage",
+        platform.arch
+    ));
+    let _ = fs::remove_file(&out);
+    let tool = std::env::var("APPIMAGETOOL").unwrap_or_else(|_| "appimagetool".into());
+    run(
+        Command::new(tool)
+            // Runs without FUSE (containers, CI).
+            .env("APPIMAGE_EXTRACT_AND_RUN", "1")
+            .env("ARCH", platform.arch.as_str())
+            .arg("--no-appstream")
+            .arg(&app_dir)
+            .arg(&out),
+        "appimagetool",
+    )?;
+    Ok(out)
+}
+
+/// Starts the bundled IDE; `APPDIR` is set by the AppImage runtime.
+const APP_RUN: &str = r#"#!/bin/sh
+HERE="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
+exec "$HERE/usr/bin/jetthing" "$@"
+"#;
 
 #[cfg(test)]
 mod tests {
