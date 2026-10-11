@@ -441,13 +441,10 @@ fn run_row(
             match icon {
                 Some(icon) => icons::paint(ui.painter(), slot.shrink(3.0), icon, tint),
                 None => {
-                    ui.painter().text(
-                        slot.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "⋮",
-                        egui::FontId::proportional(theme::UI_FONT_SIZE),
-                        tint,
-                    );
+                    for step in [-4.0, 0.0, 4.0] {
+                        ui.painter()
+                            .circle_filled(slot.center() + vec2(0.0, step), 1.2, tint);
+                    }
                 }
             }
             if hit.on_hover_text(tip).clicked() {

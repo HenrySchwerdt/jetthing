@@ -605,7 +605,7 @@ fn form(ui: &mut egui::Ui, state: &mut State) {
             ui.end_row();
             ui.label("");
             ui.menu_button(
-                RichText::new("Modify options ▾").color(theme::ACCENT),
+                RichText::new("Modify options").color(theme::ACCENT),
                 |ui| {
                     ui.checkbox(&mut draft.show_working_directory, "Working directory");
                     ui.checkbox(&mut draft.show_env, "Environment variables");
@@ -676,7 +676,7 @@ fn form(ui: &mut egui::Ui, state: &mut State) {
     ui.add_enabled_ui(false, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Code Coverage").font(theme::semibold(theme::UI_FONT_SIZE)));
-            let _ = ui.button("Modify ▾");
+            let _ = ui.button("Modify");
         });
         ui.label(RichText::new("Coverage runners are not available yet.").color(theme::TEXT_INFO));
     });
