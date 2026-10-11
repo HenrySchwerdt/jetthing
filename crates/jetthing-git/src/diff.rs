@@ -11,6 +11,49 @@ use std::path::PathBuf;
 /// Hunks whose combined text exceeds this many bytes get no word highlights.
 const INLINE_DIFF_LIMIT: usize = 64 * 1024;
 
+/// How whitespace differences count when comparing lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WhitespaceMode {
+    #[default]
+    DoNotIgnore,
+    /// Ignore leading and trailing whitespace.
+    Trim,
+    /// Ignore all whitespace.
+    IgnoreAll,
+}
+
+impl WhitespaceMode {
+    pub const ALL: [WhitespaceMode; 3] = [Self::DoNotIgnore, Self::Trim, Self::IgnoreAll];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::DoNotIgnore => "none",
+            Self::Trim => "trim",
+            Self::IgnoreAll => "all",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DoNotIgnore => "Do not ignore",
+            Self::Trim => "Trim whitespaces",
+            Self::IgnoreAll => "Ignore whitespaces",
+        }
+    }
+
+    pub fn parse(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|mode| mode.id() == id)
+    }
+
+    fn normalize(self, line: &str) -> String {
+        match self {
+            Self::DoNotIgnore => line.to_owned(),
+            Self::Trim => line.trim().to_owned(),
+            Self::IgnoreAll => line.chars().filter(|c| !c.is_whitespace()).collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HunkKind {
     /// Lines only present on the new side.
@@ -68,7 +111,7 @@ impl FileDiff {
         old_text: String,
         new_text: String,
     ) -> Self {
-        let hunks = compute_hunks(&old_text, &new_text);
+        let hunks = compute_hunks(&old_text, &new_text, WhitespaceMode::DoNotIgnore);
         Self {
             path,
             base_revision,
@@ -76,6 +119,56 @@ impl FileDiff {
             new_text,
             hunks,
         }
+    }
+
+    /// The same texts compared under `mode`.
+    pub fn with_whitespace(mut self, mode: WhitespaceMode) -> Self {
+        self.hunks = compute_hunks(&self.old_text, &self.new_text, mode);
+        self
+    }
+
+    /// The old text with the hunks at `indices` replaced by their new lines
+    /// (what the index holds after staging those chunks).
+    pub fn old_with_hunks(&self, indices: &[usize]) -> String {
+        let old: Vec<&str> = self.old_text.split_inclusive('\n').collect();
+        let new: Vec<&str> = self.new_text.split_inclusive('\n').collect();
+        let mut out = String::new();
+        let mut at = 0;
+        for (index, hunk) in self.hunks.iter().enumerate() {
+            if !indices.contains(&index) {
+                continue;
+            }
+            out.extend(
+                old[at.min(old.len())..hunk.old.start.min(old.len())]
+                    .iter()
+                    .copied(),
+            );
+            out.extend(
+                new[hunk.new.start.min(new.len())..hunk.new.end.min(new.len())]
+                    .iter()
+                    .copied(),
+            );
+            at = hunk.old.end;
+        }
+        out.extend(old[at.min(old.len())..].iter().copied());
+        out
+    }
+
+    /// The new text with the hunk at `index` replaced by its old lines (copies
+    /// the chunk from the left side into the right side).
+    pub fn new_with_hunk_reverted(&self, index: usize) -> Option<String> {
+        let hunk = self.hunks.get(index)?;
+        let old: Vec<&str> = self.old_text.split_inclusive('\n').collect();
+        let new: Vec<&str> = self.new_text.split_inclusive('\n').collect();
+        let mut out = String::new();
+        out.extend(new[..hunk.new.start.min(new.len())].iter().copied());
+        out.extend(
+            old[hunk.old.start.min(old.len())..hunk.old.end.min(old.len())]
+                .iter()
+                .copied(),
+        );
+        out.extend(new[hunk.new.end.min(new.len())..].iter().copied());
+        Some(out)
     }
 
     /// Lines of the old side without their terminators.
@@ -138,12 +231,16 @@ pub fn split_lines(text: &str) -> Vec<&str> {
         .collect()
 }
 
-fn compute_hunks(old_text: &str, new_text: &str) -> Vec<Hunk> {
+fn compute_hunks(old_text: &str, new_text: &str, whitespace: WhitespaceMode) -> Vec<Hunk> {
     let old_lines = split_lines(old_text);
     let new_lines = split_lines(new_text);
+    let old_keys: Vec<String> = old_lines.iter().map(|l| whitespace.normalize(l)).collect();
+    let new_keys: Vec<String> = new_lines.iter().map(|l| whitespace.normalize(l)).collect();
+    let old_keys: Vec<&str> = old_keys.iter().map(String::as_str).collect();
+    let new_keys: Vec<&str> = new_keys.iter().map(String::as_str).collect();
     let diff = TextDiff::configure()
         .algorithm(Algorithm::Patience)
-        .diff_slices(&old_lines, &new_lines);
+        .diff_slices(&old_keys, &new_keys);
     let mut hunks: Vec<Hunk> = Vec::new();
     for op in diff.ops() {
         let (old, new) = match *op {
@@ -272,6 +369,24 @@ fn to_line_ranges(text: &str, first_line: usize, ranges: &[Range<usize>]) -> Vec
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn whitespace_modes_and_hunk_texts() {
+        use super::*;
+        let diff = FileDiff::compute(
+            "a".into(),
+            None,
+            "a\n  b\nx\nc\n".into(),
+            "a\nb\nx\nC\n".into(),
+        );
+        assert_eq!(diff.hunks.len(), 2);
+        let trimmed = diff.clone().with_whitespace(WhitespaceMode::Trim);
+        assert_eq!(trimmed.hunks.len(), 1);
+        assert_eq!(diff.old_with_hunks(&[1]), "a\n  b\nx\nC\n");
+        assert_eq!(diff.old_with_hunks(&[0, 1]), "a\nb\nx\nC\n");
+        assert_eq!(diff.new_with_hunk_reverted(0).unwrap(), "a\n  b\nx\nC\n");
+        assert!(diff.new_with_hunk_reverted(9).is_none());
+    }
+
     use super::*;
 
     fn diff(old: &str, new: &str) -> FileDiff {

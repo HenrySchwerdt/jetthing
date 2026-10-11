@@ -160,6 +160,18 @@ pub fn merge(root: &Path, branch: &str) -> Result<String, GitError> {
     finish(root, output, format!("Merge of {branch} succeeded"))
 }
 
+/// Applies the changes of `commit` onto the current branch.
+pub fn cherry_pick(root: &Path, commit: &str) -> Result<String, GitError> {
+    validate_revision(commit)?;
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .env("GIT_EDITOR", "true")
+        .args(["cherry-pick", commit])
+        .output()?;
+    finish(root, output, format!("Cherry-picked {commit}"))
+}
+
 /// Rebases the current branch onto `onto`.
 pub fn rebase(root: &Path, onto: &str) -> Result<String, GitError> {
     validate_revision(onto)?;

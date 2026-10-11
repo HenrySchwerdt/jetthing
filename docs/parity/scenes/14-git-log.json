@@ -1,0 +1,60 @@
+{
+  "id": "14",
+  "title": "Git log with filters, toolbar and changed-files tree",
+  "reference": "reference/intellij-community/java-gradle/14-git-log.png",
+  "fixture": "java-gradle",
+  "open": [
+    "src/main/java/com/example/App.java"
+  ],
+  "steps": [
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "click",
+      "x": 673,
+      "y": 411
+    },
+    {
+      "op": "click",
+      "x": 1396,
+      "y": 716
+    },
+    {
+      "op": "click",
+      "x": 1357,
+      "y": 107
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "execute",
+      "command": "git.log.show"
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "click",
+      "x": 630,
+      "y": 795
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "assert",
+      "pointer": "/toolWindows/bottom",
+      "contains": "git"
+    },
+    {
+      "op": "screenshot",
+      "name": "14-git-log.png"
+    }
+  ]
+}

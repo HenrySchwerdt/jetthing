@@ -26,6 +26,7 @@ jetthing-terminal = { path = "../jetthing-terminal" }
 jetthing-text = { path = "../jetthing-text" }
 jetthing-toolchains = { path = "../jetthing-toolchains" }
 jetthing-update = { path = "../jetthing-update" }
+regex = "1"
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
