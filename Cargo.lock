@@ -2938,7 +2938,7 @@ dependencies = [
 
 [[package]]
 name = "jetthing-dap"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "jetthing-runner",
  "serde_json",
@@ -3094,6 +3094,7 @@ version = "0.0.5"
 dependencies = [
  "notify",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "walkdir",
 ]
