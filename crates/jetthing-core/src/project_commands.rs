@@ -34,7 +34,7 @@ pub const WORKSPACE_FILE: &str = ".jetthing/workspace.json";
 impl IdeState {
     pub(crate) fn refresh_files(&mut self) {
         if let Some(project) = &self.project {
-            self.files = project.entries(20_000);
+            self.set_files(project.entries(20_000));
         }
         let _ = self.refresh_git();
     }

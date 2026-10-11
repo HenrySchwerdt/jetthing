@@ -485,7 +485,7 @@ impl IdeState {
                 project
                     .write_text(&relative, content)
                     .map_err(|e| e.to_string())?;
-                self.files = project.entries(20_000);
+                self.set_files(project.entries(20_000));
                 self.open_file(&relative)?;
                 Ok(format!("Created {path}"))
             }

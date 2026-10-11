@@ -27,12 +27,16 @@ impl IdeState {
     /// Loads the model cached by the last sync (no Gradle process is started).
     pub fn load_gradle_model(&mut self) {
         self.gradle_model = None;
+        self.model_generation += 1;
         self.gradle_error = None;
         let Some(project) = &self.project else {
             return;
         };
         match GradleModel::load_cached(project.root()) {
-            Some(Ok(model)) => self.gradle_model = Some(model),
+            Some(Ok(model)) => {
+                self.gradle_model = Some(model);
+                self.model_generation += 1;
+            }
             Some(Err(error)) => self.gradle_error = Some(error),
             None => {}
         }

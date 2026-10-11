@@ -119,6 +119,8 @@ pub struct IdeApp {
     tree_selection: Option<PathBuf>,
     /// Active editor file last revealed in the Project tree.
     tree_revealed: Option<PathBuf>,
+    /// Editor context menu, rebuilt only while the popup is open or opening.
+    editor_menu: Option<context_menus::Model>,
     window_title: String,
     caret_screen_pos: Option<egui::Pos2>,
     last_shift_release: Option<Instant>,
@@ -291,6 +293,7 @@ impl IdeApp {
             find_synced: Default::default(),
             tree_selection: None,
             tree_revealed: None,
+            editor_menu: None,
             window_title: String::new(),
             caret_screen_pos: None,
             last_shift_release: None,

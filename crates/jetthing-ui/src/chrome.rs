@@ -958,7 +958,7 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                         }
                     }
                     if app.state.runner.is_running() || app.state.search.is_running() {
-                        ui.add(egui::Spinner::new().size(12.0).color(theme::ACCENT));
+                        widgets::busy_spinner(ui, 12.0, *theme::ACCENT);
                         ui.add_space(6.0);
                     }
                     if !app.state.status.is_empty() {
