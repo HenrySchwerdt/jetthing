@@ -8,6 +8,7 @@
     {"op": "wait", "until": "idle"},
     {"op": "key", "chord": "Primary+F12"},
     {"op": "wait", "until": "popup"},
+    {"op": "assert", "pointer": "/popups/dialog", "equals": "fileStructure"},
     {"op": "screenshot", "name": "22-structure-fixed-popup.png"}
   ]
 }

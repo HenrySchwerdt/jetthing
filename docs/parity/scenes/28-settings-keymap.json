@@ -8,6 +8,7 @@
     {"op": "wait", "until": "idle"},
     {"op": "execute", "command": "settings.open", "args": {"page": "preferences.keymap"}},
     {"op": "wait", "until": "idle"},
+    {"op": "assert", "pointer": "/activeTab", "equals": "src/main/java/com/example/App.java"},
     {"op": "screenshot", "name": "08b-settings-keymap-fixed-tree.png"}
   ]
 }
