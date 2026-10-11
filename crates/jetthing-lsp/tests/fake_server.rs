@@ -175,7 +175,11 @@ fn manager_restarts_crashed_servers_and_resyncs_documents() {
         )
     }));
     let message = manager.servers()[0].message.clone().unwrap_or_default();
-    assert!(message.contains("crashing on purpose"), "{message}");
+    // The manager may hit the closed pipe before it reads the server's stderr.
+    assert!(
+        message.contains("crashing on purpose") || message.contains("Broken pipe"),
+        "{message}"
+    );
     let mut resync = Vec::new();
     assert!(wait_until(|| {
         resync.extend(manager.poll());
