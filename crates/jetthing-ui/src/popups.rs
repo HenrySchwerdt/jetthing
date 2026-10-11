@@ -10,13 +10,9 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 
 pub enum Dialog {
-    NewProject {
-        name: String,
-        parent: String,
-        kind: String,
-        group: String,
-        error: Option<String>,
-    },
+    NewProject(Box<crate::new_project::Form>),
+    /// Get from Version Control.
+    Clone(Box<crate::clone_dialog::Form>),
     OpenProject {
         path: String,
         error: Option<String>,
@@ -63,7 +59,8 @@ impl Dialog {
     /// Stable name reported by the automation `state` request.
     pub fn kind(&self) -> &'static str {
         match self {
-            Dialog::NewProject { .. } => "newProject",
+            Dialog::NewProject(_) => "newProject",
+            Dialog::Clone(_) => "cloneRepository",
             Dialog::OpenProject { .. } => "openProject",
             Dialog::NewEntry { .. } => "newEntry",
             Dialog::NewClass { .. } => "newClass",
@@ -92,7 +89,7 @@ pub fn parse_line_column(input: &str) -> Option<(usize, Option<usize>)> {
     Some((line, column))
 }
 
-fn popup_frame(
+pub(crate) fn popup_frame(
     ctx: &egui::Context,
     id: &str,
     width: f32,
@@ -117,7 +114,7 @@ fn popup_frame(
         .response
 }
 
-fn title(ui: &mut egui::Ui, text: &str) {
+pub(crate) fn title(ui: &mut egui::Ui, text: &str) {
     ui.label(
         RichText::new(text)
             .font(theme::semibold(theme::UI_FONT_SIZE))
@@ -151,123 +148,11 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     let mut error = None;
     let mut browse = None;
     match &mut dialog {
-        Dialog::NewProject {
-            name,
-            parent,
-            kind,
-            group,
-            error: create_error,
-        } => {
-            let fields = [
-                "new_project_name",
-                "new_project_parent",
-                "new_project_group",
-            ];
-            let mut create = ctx
-                .memory(|memory| fields.iter().any(|id| memory.has_focus(egui::Id::new(id))))
-                && !egui::Popup::is_any_open(ctx)
-                && ctx.input(|input| input.key_pressed(egui::Key::Enter));
-            popup_frame(ctx, "dialog_new_project", 560.0, |ui| {
-                title(ui, "New Project");
-                egui::Grid::new("new_project_fields")
-                    .spacing([16.0, 10.0])
-                    .show(ui, |ui| {
-                        ui.label("Name");
-                        let response = ui.add(
-                            egui::TextEdit::singleline(name)
-                                .id(egui::Id::new("new_project_name"))
-                                .desired_width(360.0),
-                        );
-                        if focus {
-                            response.request_focus();
-                        }
-                        ui.end_row();
-                        ui.label("Location");
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(parent)
-                                    .id(egui::Id::new("new_project_parent"))
-                                    .desired_width(300.0),
-                            );
-                            if ui.button("Browse…").clicked() {
-                                browse = Some(Purpose::NewProjectLocation);
-                            }
-                        });
-                        ui.end_row();
-                        ui.label("Template");
-                        let choices = [
-                            ("java-gradle-kotlin", "Java / Gradle / Kotlin DSL"),
-                            ("java-gradle-groovy", "Java / Gradle / Groovy DSL"),
-                            ("rust-binary", "Rust application"),
-                            ("rust-library", "Rust library"),
-                            ("empty", "Empty project"),
-                        ];
-                        egui::ComboBox::from_id_salt("project_template")
-                            .selected_text(
-                                choices
-                                    .iter()
-                                    .find(|(id, _)| *id == kind.as_str())
-                                    .map(|(_, label)| *label)
-                                    .unwrap_or("Empty project"),
-                            )
-                            .show_ui(ui, |ui| {
-                                for (id, label) in choices {
-                                    ui.selectable_value(kind, id.into(), label);
-                                }
-                            });
-                        ui.end_row();
-                        if kind.starts_with("java-") {
-                            ui.label("Group / package");
-                            ui.add(
-                                egui::TextEdit::singleline(group)
-                                    .id(egui::Id::new("new_project_group"))
-                                    .desired_width(360.0),
-                            );
-                            ui.end_row();
-                        }
-                    });
-                ui.add_space(12.0);
-                ui.label(
-                    RichText::new(format!(
-                        "Project folder: {}/{}",
-                        parent.trim_end_matches(['/', '\\']),
-                        name
-                    ))
-                    .color(theme::TEXT_INFO),
-                );
-                if kind.starts_with("java-") {
-                    ui.label(
-                        RichText::new(
-                            "Requires JDK 21 and Gradle on PATH. Includes a sample application.",
-                        )
-                        .color(theme::TEXT_SECONDARY),
-                    );
-                }
-                if let Some(message) = create_error.as_ref() {
-                    ui.label(RichText::new(message).color(theme::ERROR));
-                }
-                ui.add_space(14.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(
-                            !name.trim().is_empty() && !parent.trim().is_empty(),
-                            egui::Button::new("Create"),
-                        )
-                        .clicked()
-                    {
-                        create = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        keep = false;
-                    }
-                });
-            });
-            if create && keep && !name.trim().is_empty() && !parent.trim().is_empty() {
-                match app.commands.execute("project.create", &mut app.state, json!({"parent": parent.trim(), "name": name.trim(), "kind": kind, "group": group.trim()})) {
-                    Ok(_) => { app.project_opened(ctx); keep = false; }
-                    Err(error) => *create_error = Some(error.to_string()),
-                }
-            }
+        Dialog::NewProject(form) => {
+            keep = crate::new_project::show(app, ctx, form, focus, &mut browse);
+        }
+        Dialog::Clone(form) => {
+            keep = crate::clone_dialog::show(app, ctx, form, focus, &mut browse);
         }
         Dialog::OpenProject {
             path,

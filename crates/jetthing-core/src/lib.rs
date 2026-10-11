@@ -57,6 +57,8 @@ mod project_commands;
 mod quick_doc;
 mod refactor;
 mod remote_commands;
+mod welcome_commands;
+pub use welcome_commands::{CloneJob, JdkChoice, jdk_major, repository_name};
 mod run_config_commands;
 mod settings_commands;
 mod signature_help;
@@ -195,6 +197,12 @@ pub struct IdeState {
     pub remote_job: Option<jetthing_git::RemoteJob>,
     /// Latest progress line of the running remote operation.
     pub remote_progress: Option<String>,
+    /// Recently opened projects (welcome screen).
+    pub recent_projects: jetthing_project::recent::RecentProjects,
+    /// Running Get from VCS clone.
+    pub clone_job: Option<CloneJob>,
+    pub clone_progress: Option<String>,
+    pub clone_error: Option<String>,
     /// Message of the last failed remote operation.
     pub remote_error: Option<String>,
     /// Blame annotations of documents that have them switched on.
@@ -347,6 +355,7 @@ impl IdeState {
         self.quick_nav = quick_nav::QuickNavState::default();
         self.tool_windows = ToolWindowLayout::default();
         self.tool_windows.show(ToolWindow::Project);
+        self.recent_projects.record(project.root());
         self.status = format!("Opened {}", project.root().display());
         self.load_project_settings(project.root());
         self.android.project_opened(project.root());
@@ -910,6 +919,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     git_log::register(&mut registry);
     branch_commands::register(&mut registry);
     remote_commands::register(&mut registry);
+    welcome_commands::register(&mut registry);
     annotations::register(&mut registry);
     worktree_commands::register(&mut registry);
     navigation::register(&mut registry);
