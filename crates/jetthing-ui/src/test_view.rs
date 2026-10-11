@@ -2,14 +2,12 @@
 
 use crate::build_window::format_duration;
 use crate::icons::{self, Icon};
-use crate::widgets::{list_row, row_text};
+use crate::widgets;
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, RichText, vec2};
 use jetthing_runner::{TestCase, TestOutcome, TestResults};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-
-const INDENT: f32 = 18.0;
 
 #[derive(Clone, Default)]
 struct View {
@@ -70,8 +68,8 @@ fn duration_text(duration: Option<Duration>) -> String {
 pub fn tree(app: &IdeApp, ui: &mut egui::Ui, running: bool) {
     let mut view: View = ui.data(|data| data.get_temp(view_id())).unwrap_or_default();
     let results = app.state.runner.tests();
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
+    widgets::toolbar_row(ui, |ui| {
+        ui.add_space(theme::layout::TOOLBAR_LEAD);
         ui.spacing_mut().item_spacing.x = 2.0;
         let mut show_passed = !view.hide_passed;
         if toggle(
@@ -100,29 +98,24 @@ pub fn tree(app: &IdeApp, ui: &mut egui::Ui, running: bool) {
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             let counts = results.counts();
-            let (rect, response) = list_row(ui, view.selected.is_none());
-            let x = rect.left() + 10.0;
-            if running {
-                let spinner = egui::Rect::from_min_size(
-                    egui::pos2(x, rect.center().y - 6.0),
-                    vec2(12.0, 12.0),
-                );
-                ui.put(
-                    spinner,
-                    egui::Spinner::new().size(12.0).color(*theme::ACCENT),
-                );
-            } else {
-                let (icon, color) = outcome_icon(counts.failed > 0, counts.total() == 0);
-                paint_icon(ui, x, rect, icon, color);
-            }
-            row_text(
+            let (icon, color) = outcome_icon(counts.failed > 0, counts.total() == 0);
+            let out = widgets::tree_row(
                 ui,
-                rect,
-                x + 20.0,
-                "Test Results",
-                egui::FontId::proportional(theme::UI_FONT_SIZE),
-                *theme::TEXT_BRIGHT,
+                widgets::TreeRow {
+                    selected: view.selected.is_none(),
+                    icon: (!running).then_some((icon, color)),
+                    reserve_icon: running,
+                    color: *theme::TEXT_BRIGHT,
+                    ..widgets::TreeRow::new("Test Results")
+                },
             );
+            if running {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(
+                    egui::Rect::from_center_size(out.icon.center(), vec2(12.0, 12.0)),
+                ));
+                widgets::busy_spinner(&mut child, 12.0, *theme::ACCENT);
+            }
+            let (rect, response) = (out.rect, out.response);
             right_text(ui, rect, &duration_text(results.duration()));
             if response.clicked() {
                 view.selected = None;
@@ -139,22 +132,21 @@ pub fn tree(app: &IdeApp, ui: &mut egui::Ui, running: bool) {
                     .selected
                     .as_ref()
                     .is_some_and(|(s, c)| s == &suite.name && c.is_empty());
-                let (rect, response) = list_row(ui, selected);
-                let x = rect.left() + 10.0 + INDENT;
                 let skipped = suite
                     .cases
                     .iter()
                     .all(|case| case.outcome == TestOutcome::Skipped);
                 let (icon, color) = outcome_icon(suite.failed(), skipped);
-                paint_icon(ui, x, rect, icon, color);
-                row_text(
+                let out = widgets::tree_row(
                     ui,
-                    rect,
-                    x + 20.0,
-                    short_suite(&suite.name),
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    *theme::TEXT,
+                    widgets::TreeRow {
+                        depth: 1,
+                        selected,
+                        icon: Some((icon, color)),
+                        ..widgets::TreeRow::new(short_suite(&suite.name))
+                    },
                 );
+                let (rect, response) = (out.rect, out.response);
                 right_text(ui, rect, &duration_text(suite.duration()));
                 let response = response.on_hover_text(&suite.name);
                 if response.clicked() {
@@ -171,19 +163,18 @@ pub fn tree(app: &IdeApp, ui: &mut egui::Ui, running: bool) {
                         .selected
                         .as_ref()
                         .is_some_and(|(s, c)| s == &suite.name && c == &case.name);
-                    let (rect, response) = list_row(ui, selected);
-                    let x = rect.left() + 10.0 + INDENT * 2.0;
                     let (icon, color) =
                         outcome_icon(case.failed(), case.outcome == TestOutcome::Skipped);
-                    paint_icon(ui, x, rect, icon, color);
-                    row_text(
+                    let out = widgets::tree_row(
                         ui,
-                        rect,
-                        x + 20.0,
-                        &case.name,
-                        egui::FontId::proportional(theme::UI_FONT_SIZE),
-                        *theme::TEXT,
+                        widgets::TreeRow {
+                            depth: 2,
+                            selected,
+                            icon: Some((icon, color)),
+                            ..widgets::TreeRow::new(&case.name)
+                        },
                     );
+                    let (rect, response) = (out.rect, out.response);
                     right_text(ui, rect, &duration_text(case.duration));
                     if response.clicked() {
                         view.selected = Some((suite.name.clone(), case.name.clone()));
@@ -212,15 +203,6 @@ fn toggle(ui: &mut egui::Ui, icon: Icon, color: Color32, tip: &str, on: &mut boo
         *on = !*on;
     }
     clicked
-}
-
-fn paint_icon(ui: &egui::Ui, x: f32, rect: egui::Rect, icon: Icon, color: Color32) {
-    icons::paint(
-        ui.painter(),
-        egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 7.0), vec2(14.0, 14.0)),
-        icon,
-        color,
-    );
 }
 
 fn right_text(ui: &egui::Ui, rect: egui::Rect, text: &str) {

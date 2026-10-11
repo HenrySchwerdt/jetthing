@@ -55,6 +55,48 @@ pub mod editor {
     pub const WARNING_STRIPE: Token = t::EDITOR_WARNING_STRIPE;
 }
 
+pub mod layout {
+    //! Layout tokens shared by every tool window, so panels line up with each other.
+    //!
+    //! Values come from the Islands Dark spec (`docs/spec/data/themes.json`) where it has
+    //! one; the rest are measured from the reference UI and noted below.
+
+    /// Left/right inset of tool-window content (`Tree.border` = `4,12,4,12`).
+    pub const CONTENT_INSET: f32 = 12.0;
+    /// Horizontal inset of the selection/hover pill inside a row (`List.border` = `4,0,4,0`).
+    pub const ROW_PILL_INSET: f32 = 4.0;
+    /// Corner radius of the selection/hover pill.
+    pub const ROW_PILL_RADIUS: f32 = 4.0;
+    /// `Tree.rowHeight` / `List.rowHeight`.
+    pub const ROW_HEIGHT: f32 = 24.0;
+    /// `Tree.leftChildIndent` (7) + `Tree.rightChildIndent` (11).
+    pub const TREE_INDENT: f32 = 18.0;
+    /// Width of the expander column; leaf rows reserve it too, so icons align.
+    pub const CHEVRON_COLUMN: f32 = 16.0;
+    /// Icon edge length (12 px glyph in a 16 px box).
+    pub const ICON_SIZE: f32 = 16.0;
+    /// Gap between an icon and its text.
+    pub const ICON_TEXT_GAP: f32 = 6.0;
+    /// Gap between a primary and its secondary text in a row.
+    pub const SECONDARY_GAP: f32 = 8.0;
+    /// Tool-window title bar height.
+    pub const TOOLBAR_HEIGHT: f32 = 31.0;
+    /// Square icon-button size in toolbars and headers.
+    pub const ICON_BUTTON: f32 = 26.0;
+    /// Space before the first toolbar button so its glyph lines up with the content inset.
+    pub const TOOLBAR_LEAD: f32 = CONTENT_INSET - (ICON_BUTTON - ICON_SIZE) / 2.0;
+    /// Gap between toolbar items (`ToolBar.horizontalToolbarInsets.compact` = `2,4,2,4`).
+    pub const TOOLBAR_GAP: f32 = 4.0;
+    /// Vertical gap between stacked sections inside a tool window.
+    pub const SECTION_SPACING: f32 = 8.0;
+    /// Padding inside dialog frames.
+    pub const DIALOG_PADDING: f32 = 14.0;
+    /// Distance from a row's left edge to the first column at `depth`.
+    pub fn indent(depth: usize) -> f32 {
+        CONTENT_INSET + depth as f32 * TREE_INDENT
+    }
+}
+
 /// Avatar gradient start colors (`RecentProject.ColorN.Avatar.Start`).
 const AVATAR_COLORS: [Color32; 9] = [
     hex(0xE08855),

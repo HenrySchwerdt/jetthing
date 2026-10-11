@@ -1,7 +1,7 @@
 //! Bazel tool window: packages → targets, with Build / Run / Test per target.
 
 use crate::icons::{self, Icon};
-use crate::widgets::{island_frame, list_row, row_text, search_field, tool_window_header};
+use crate::widgets::{self, island_frame, search_field, tool_window_header};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, RichText, vec2};
 use jetthing_bazel::{BazelTargets, TargetRole};
@@ -9,8 +9,6 @@ use jetthing_core::ToolWindow;
 use jetthing_runner::TaskKind;
 use serde_json::{Value, json};
 use std::collections::HashSet;
-
-const INDENT: f32 = 18.0;
 
 #[derive(Clone, Default)]
 struct View {
@@ -85,8 +83,8 @@ fn content(app: &mut IdeApp, ui: &mut egui::Ui) {
         .selected
         .as_ref()
         .and_then(|label| app.state.bazel_targets.as_ref()?.get(label).cloned());
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
+    widgets::toolbar_row(ui, |ui| {
+        ui.add_space(theme::layout::TOOLBAR_LEAD);
         ui.spacing_mut().item_spacing.x = 2.0;
         if syncing {
             ui.add_sized(
@@ -171,8 +169,8 @@ fn content(app: &mut IdeApp, ui: &mut egui::Ui) {
         ui.data_mut(|data| data.insert_temp(view_id(), view));
         return;
     };
-    ui.horizontal(|ui| {
-        ui.add_space(10.0);
+    widgets::toolbar_row(ui, |ui| {
+        ui.add_space(theme::layout::CONTENT_INSET);
         search_field(
             ui,
             egui::Id::new("bazel_filter"),
@@ -190,42 +188,19 @@ fn content(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.y = 0.0;
             for (package, label) in rows(&targets, &view.collapsed, &view.filter) {
                 let selected = label.is_some() && view.selected == label;
-                let (rect, response) = list_row(ui, selected);
                 match label {
                     None => {
                         let open =
                             !view.filter.trim().is_empty() || !view.collapsed.contains(&package);
-                        let x = rect.left() + 10.0;
-                        icons::paint(
-                            ui.painter(),
-                            egui::Rect::from_min_size(
-                                egui::pos2(x, rect.center().y - 7.0),
-                                vec2(14.0, 14.0),
-                            ),
-                            if open {
-                                Icon::ChevronDown
-                            } else {
-                                Icon::ChevronRight
-                            },
-                            theme::TEXT_SECONDARY,
-                        );
-                        icons::paint(
-                            ui.painter(),
-                            egui::Rect::from_min_size(
-                                egui::pos2(x + 16.0, rect.center().y - 8.0),
-                                vec2(16.0, 16.0),
-                            ),
-                            Icon::Folder,
-                            icons::ICON,
-                        );
-                        row_text(
+                        let response = widgets::tree_row(
                             ui,
-                            rect,
-                            x + 38.0,
-                            &package,
-                            egui::FontId::proportional(theme::UI_FONT_SIZE),
-                            theme::TEXT,
-                        );
+                            widgets::TreeRow {
+                                expanded: Some(open),
+                                icon: Some((Icon::Folder, *icons::ICON)),
+                                ..widgets::TreeRow::new(&package)
+                            },
+                        )
+                        .response;
                         if response.clicked() && !view.collapsed.remove(&package) {
                             view.collapsed.insert(package.clone());
                         }
@@ -234,37 +209,22 @@ fn content(app: &mut IdeApp, ui: &mut egui::Ui) {
                         let Some(target) = targets.get(&label) else {
                             continue;
                         };
-                        let x = rect.left() + 10.0 + INDENT + 16.0;
                         let (icon, color) = match target.role() {
-                            TargetRole::Binary => (Icon::Run, theme::RUN_GREEN),
-                            TargetRole::Test => (Icon::Rerun, theme::RUN_GREEN),
-                            TargetRole::Library | TargetRole::Other => (Icon::Model, icons::ICON),
+                            TargetRole::Binary => (Icon::Run, *theme::RUN_GREEN),
+                            TargetRole::Test => (Icon::Rerun, *theme::RUN_GREEN),
+                            TargetRole::Library | TargetRole::Other => (Icon::Model, *icons::ICON),
                         };
-                        icons::paint(
-                            ui.painter(),
-                            egui::Rect::from_min_size(
-                                egui::pos2(x, rect.center().y - 8.0),
-                                vec2(16.0, 16.0),
-                            ),
-                            icon,
-                            color,
-                        );
-                        let end = row_text(
+                        let response = widgets::tree_row(
                             ui,
-                            rect,
-                            x + 22.0,
-                            target.name(),
-                            egui::FontId::proportional(theme::UI_FONT_SIZE),
-                            theme::TEXT,
-                        );
-                        row_text(
-                            ui,
-                            rect,
-                            end + 8.0,
-                            &target.kind,
-                            egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                            theme::TEXT_INFO,
-                        );
+                            widgets::TreeRow {
+                                depth: 1,
+                                selected,
+                                icon: Some((icon, color)),
+                                secondary: Some((&target.kind, *theme::TEXT_INFO)),
+                                ..widgets::TreeRow::new(target.name())
+                            },
+                        )
+                        .response;
                         let response = response.on_hover_text(format!(
                             "{}\nDouble-click to {}",
                             target.label,

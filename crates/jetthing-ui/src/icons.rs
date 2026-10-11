@@ -1094,7 +1094,7 @@ pub fn button_colored(
     selected: bool,
 ) -> egui::Response {
     let color = color.into();
-    let size = vec2(26.0, 26.0);
+    let size = vec2(theme::layout::ICON_BUTTON, theme::layout::ICON_BUTTON);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let fill = if selected {
         *theme::ACCENT
