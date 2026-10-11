@@ -1023,8 +1023,7 @@ mod tests {
         state.plugin_host.registry.set_contributions(
             "test.counter",
             Contributions::new().editor(
-                jetthing_plugins::EditorContribution::new("main", "Counter")
-                    .file_extension("http"),
+                jetthing_plugins::EditorContribution::new("main", "Counter").file_extension("http"),
             ),
         );
         assert!(state.open_in_plugin_editor(Path::new("dir/a.HTTP")));
