@@ -30,6 +30,7 @@ mod bazel_commands;
 mod branch_commands;
 mod build_commands;
 pub mod build_info;
+mod build_window;
 mod code_actions;
 mod code_vision;
 mod completion;
@@ -95,6 +96,7 @@ pub use ai_agent::{
 pub use ai_commands::{AiState, ApplyPreview, CHAT_FILE as AI_CHAT_FILE, MOCK_ENV as AI_MOCK_ENV};
 pub use ai_inline::InlineSuggestion;
 pub use ai_terminal::{ShellSuggestion, ShellSuggestionState};
+pub use build_window::{BuildSnapshot, BuildTab, BuildWindowState};
 pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
 pub use code_vision::{CodeLens, InlayLabel};
 pub use completion_stats::CompletionStats;
@@ -224,6 +226,8 @@ pub struct IdeState {
     /// Per-document changed lines against HEAD (gutter markers).
     line_changes: std::collections::HashMap<PathBuf, line_changes::LineChanges>,
     pub runner: TaskService,
+    /// Tabs and console toolbar of the Build tool window.
+    pub build_window: build_window::BuildWindowState,
     /// Language servers of the open project, started lazily per language.
     pub lsp: LspManager,
     /// Project-wide problems, refreshed by [`IdeState::refresh_problems`].
@@ -950,6 +954,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     welcome_commands::register(&mut registry);
     annotations::register(&mut registry);
     code_vision::register(&mut registry);
+    build_window::register(&mut registry);
     worktree_commands::register(&mut registry);
     navigation::register(&mut registry);
     code_actions::register(&mut registry);

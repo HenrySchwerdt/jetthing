@@ -24,6 +24,7 @@ mod change_popup;
 mod chrome;
 mod clone_dialog;
 mod completion_ui;
+mod console_links;
 mod context_menus;
 mod control;
 mod crash_notice;

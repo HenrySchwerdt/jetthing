@@ -157,6 +157,8 @@ pub struct TaskService {
     started: Option<Instant>,
     started_at: Option<std::time::SystemTime>,
     elapsed: Option<Duration>,
+    /// Number of tasks started so far; identifies the current run.
+    runs: u64,
     tests: TestResults,
     test_parser: ConsoleTestParser,
     /// JUnit reports that could not be read after the last test task.
@@ -175,6 +177,7 @@ impl Default for TaskService {
             started: None,
             started_at: None,
             elapsed: None,
+            runs: 0,
             tests: TestResults::default(),
             test_parser: ConsoleTestParser::default(),
             test_report_errors: Vec::new(),
@@ -224,6 +227,7 @@ impl TaskService {
     }
 
     fn reset(&mut self, plan: TaskPlan) {
+        self.runs += 1;
         self.output.clear();
         self.console.clear();
         self.events = BuildEvents::default();
@@ -386,6 +390,10 @@ impl TaskService {
     /// Steps and messages recognised in the output.
     pub fn events(&self) -> &BuildEvents {
         &self.events
+    }
+    /// Identifies the current run; changes whenever a task is started.
+    pub fn run_id(&self) -> u64 {
+        self.runs
     }
     pub fn plan(&self) -> Option<&TaskPlan> {
         self.plan.as_ref()
