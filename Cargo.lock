@@ -2918,6 +2918,7 @@ dependencies = [
  "jetthing-plugin-wasm",
  "jetthing-ui",
  "mongo-raabit",
+ "nexus-http",
 ]
 
 [[package]]
@@ -4047,6 +4048,8 @@ version = "0.0.7"
 dependencies = [
  "eframe",
  "egui",
+ "jetthing-plugin-api",
+ "jetthing-plugin-ui",
  "nexus-http-core",
  "serde_json",
  "tempfile",

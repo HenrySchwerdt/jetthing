@@ -5,6 +5,7 @@
 //! panics, skips what it cannot map and reports it in [`Imported::warnings`].
 
 pub mod curl;
+pub mod http_file;
 pub mod insomnia;
 pub mod openapi;
 pub mod postman;
@@ -38,6 +39,7 @@ impl ImportError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     Curl,
+    HttpFile,
     InsomniaV4,
     InsomniaV5,
     PostmanV21,
@@ -49,6 +51,7 @@ impl Format {
     pub fn label(self) -> &'static str {
         match self {
             Format::Curl => "curl",
+            Format::HttpFile => ".http file",
             Format::InsomniaV4 => "Insomnia v4",
             Format::InsomniaV5 => "Insomnia v5",
             Format::PostmanV21 => "Postman v2.1",

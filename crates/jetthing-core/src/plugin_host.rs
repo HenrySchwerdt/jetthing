@@ -482,6 +482,43 @@ impl IdeState {
             .collect()
     }
 
+    /// The active plugin editor view contributed for `path`'s extension, if any.
+    pub fn plugin_editor_for(&self, path: &Path) -> Option<(String, String)> {
+        let extension = path.extension()?.to_str()?;
+        self.plugin_host
+            .registry
+            .entries()
+            .iter()
+            .filter(|entry| entry.is_active())
+            .find_map(|entry| {
+                let editor = entry.contributions.editors.iter().find(|editor| {
+                    editor
+                        .file_extensions
+                        .iter()
+                        .any(|e| e.trim_start_matches('.').eq_ignore_ascii_case(extension))
+                })?;
+                Some((entry.id().to_owned(), editor.view.clone()))
+            })
+    }
+
+    /// Opens `path` in the plugin editor that handles its extension. Returns
+    /// whether one did.
+    pub fn open_in_plugin_editor(&mut self, path: &Path) -> bool {
+        let Some((plugin, view)) = self.plugin_editor_for(path) else {
+            return false;
+        };
+        let title = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let request = EditorTabRequest::new(view, title)
+            .key(path.to_string_lossy())
+            .path(path);
+        self.open_plugin_tab(&plugin, request);
+        self.touch_recent(path);
+        true
+    }
+
     fn plugin_status_widget(&self, plugin: &str, id: &str) -> Option<StatusWidgetState> {
         self.plugin_host
             .registry
@@ -976,6 +1013,25 @@ mod tests {
             .execute("counter.increment", &mut state, Value::Null)
             .unwrap();
         assert_eq!(state.plugin_status_widgets()[0].state.text, "6");
+    }
+
+    #[test]
+    fn files_open_in_the_plugin_editor_for_their_extension() {
+        let (mut state, _, _) = setup(false);
+        assert!(!state.open_in_plugin_editor(Path::new("a.http")));
+        assert!(state.plugin_host.tabs.is_empty());
+        state.plugin_host.registry.set_contributions(
+            "test.counter",
+            Contributions::new().editor(
+                jetthing_plugins::EditorContribution::new("main", "Counter")
+                    .file_extension("http"),
+            ),
+        );
+        assert!(state.open_in_plugin_editor(Path::new("dir/a.HTTP")));
+        let tab = state.active_plugin_tab().unwrap();
+        assert_eq!((tab.view.as_str(), tab.title.as_str()), ("main", "a.HTTP"));
+        assert_eq!(tab.path.as_deref(), Some(Path::new("dir/a.HTTP")));
+        assert!(!state.open_in_plugin_editor(Path::new("a.rs")));
     }
 
     #[test]
