@@ -54,6 +54,7 @@ pub mod quick_nav;
 pub use new_class::{JavaKind, KotlinKind};
 mod project_commands;
 mod quick_doc;
+mod refactor;
 mod remote_commands;
 mod welcome_commands;
 pub use welcome_commands::{CloneJob, JdkChoice, jdk_major, repository_name};
@@ -96,6 +97,7 @@ pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
 pub use quick_doc::{DocsState, QuickDoc};
+pub use refactor::{RefactorState, Refactoring, RenameSession};
 pub use signature_help::{ParameterInfo, SignatureLine, SignatureState};
 pub use snippet_session::SnippetSession;
 pub use toolchain_commands::ToolchainState;
@@ -236,6 +238,8 @@ pub struct IdeState {
     pub quick_nav: quick_nav::QuickNavState,
     /// Quick fixes and intentions at the caret (Alt+Enter).
     pub code_actions: CodeActionState,
+    /// Rename and the other server-backed refactorings.
+    pub refactor: RefactorState,
     /// Quick documentation popup and completion documentation panel.
     pub docs: DocsState,
     /// Parameter info popup.
@@ -344,6 +348,7 @@ impl IdeState {
         self.refresh_toolchain_resolver();
         self.navigation = NavigationState::default();
         self.code_actions = CodeActionState::default();
+        self.refactor = RefactorState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.quick_nav = quick_nav::QuickNavState::default();
@@ -706,6 +711,7 @@ impl IdeState {
         self.refresh_problems();
         self.poll_navigation();
         self.poll_code_actions();
+        self.poll_refactor();
         self.poll_docs();
         self.poll_signature();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
@@ -917,6 +923,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     worktree_commands::register(&mut registry);
     navigation::register(&mut registry);
     code_actions::register(&mut registry);
+    refactor::register(&mut registry);
     ai_commands::register(&mut registry);
     registry
         .register(Command::new(

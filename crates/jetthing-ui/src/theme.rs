@@ -42,6 +42,7 @@ pub mod editor {
     pub const SELECTION: Token = t::EDITOR_SELECTION;
     pub const BACKGROUND_PANEL: Token = t::EDITOR_BACKGROUND_PANEL;
     pub const SEARCH_RESULT: Token = t::EDITOR_SEARCH_RESULT;
+    pub const RENAME_OCCURRENCE: Token = t::EDITOR_RENAME_OCCURRENCE;
     pub const MATCHED_BRACE: Token = t::EDITOR_MATCHED_BRACE;
     pub const INDENT_GUIDE: Token = t::EDITOR_INDENT_GUIDE;
     pub const ERROR_EFFECT: Token = t::EDITOR_ERROR_EFFECT;

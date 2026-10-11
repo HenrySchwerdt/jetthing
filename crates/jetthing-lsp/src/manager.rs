@@ -77,6 +77,10 @@ pub enum Feature {
     CodeAction,
     CodeActionResolve,
     ExecuteCommand,
+    PrepareRename,
+    Rename,
+    Formatting,
+    RangeFormatting,
 }
 
 impl Feature {
@@ -89,6 +93,10 @@ impl Feature {
             Feature::CodeAction => "textDocument/codeAction",
             Feature::CodeActionResolve => "codeAction/resolve",
             Feature::ExecuteCommand => "workspace/executeCommand",
+            Feature::PrepareRename => "textDocument/prepareRename",
+            Feature::Rename => "textDocument/rename",
+            Feature::Formatting => "textDocument/formatting",
+            Feature::RangeFormatting => "textDocument/rangeFormatting",
         }
     }
 
@@ -100,6 +108,8 @@ impl Feature {
             Feature::References => "Find Usages",
             Feature::CodeAction | Feature::CodeActionResolve => "code actions",
             Feature::ExecuteCommand => "commands",
+            Feature::PrepareRename | Feature::Rename => "Rename",
+            Feature::Formatting | Feature::RangeFormatting => "Reformat Code",
         }
     }
 
@@ -135,6 +145,22 @@ impl Feature {
                     if options.resolve_provider == Some(true)
             ),
             Feature::ExecuteCommand => capabilities.execute_command_provider.is_some(),
+            Feature::PrepareRename => matches!(
+                &capabilities.rename_provider,
+                Some(OneOf::Right(options)) if options.prepare_provider == Some(true)
+            ),
+            Feature::Rename => !matches!(
+                capabilities.rename_provider,
+                None | Some(OneOf::Left(false))
+            ),
+            Feature::Formatting => !matches!(
+                capabilities.document_formatting_provider,
+                None | Some(OneOf::Left(false))
+            ),
+            Feature::RangeFormatting => !matches!(
+                capabilities.document_range_formatting_provider,
+                None | Some(OneOf::Left(false))
+            ),
         }
     }
 }
