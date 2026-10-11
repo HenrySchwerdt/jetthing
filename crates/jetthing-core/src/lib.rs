@@ -68,6 +68,7 @@ mod welcome_commands;
 pub use welcome_commands::{CloneJob, JdkChoice, jdk_major, repository_name};
 mod live_templates;
 mod run_config_commands;
+mod search_scopes;
 mod settings_commands;
 mod signature_help;
 mod snippet_session;
@@ -104,6 +105,8 @@ pub enum SearchScopeKind {
     OpenFiles,
     ProductionFiles,
     TestFiles,
+    /// A user-defined scope: `IdeState::search_custom_scope`.
+    Custom,
 }
 
 impl SearchScopeKind {
@@ -115,6 +118,7 @@ impl SearchScopeKind {
             SearchScopeKind::OpenFiles => "openFiles",
             SearchScopeKind::ProductionFiles => "production",
             SearchScopeKind::TestFiles => "tests",
+            SearchScopeKind::Custom => "custom",
         }
     }
 
@@ -126,6 +130,7 @@ impl SearchScopeKind {
             SearchScopeKind::OpenFiles,
             SearchScopeKind::ProductionFiles,
             SearchScopeKind::TestFiles,
+            SearchScopeKind::Custom,
         ]
         .into_iter()
         .find(|kind| kind.id() == id)
@@ -240,6 +245,9 @@ pub struct IdeState {
     pub search_results: Vec<TextMatch>,
     pub search_query: String,
     pub search_scope_kind: SearchScopeKind,
+    /// User-defined Find in Files scopes of the project and the selected one.
+    pub custom_scopes: Vec<search_scopes::CustomScope>,
+    pub search_custom_scope: Option<String>,
     /// Set while the Find in Files popup drives the search: no tool window opens.
     pub search_background: bool,
     /// Find Action: list disabled actions too (persisted in the workspace file).
@@ -464,6 +472,7 @@ impl IdeState {
         self.load_gradle_model();
         self.load_bazel_targets();
         self.load_run_configurations();
+        self.load_search_scopes();
         self.load_breakpoints();
         self.restore_workspace();
         self.load_ai_project();
@@ -755,7 +764,11 @@ impl IdeState {
             .map(Path::to_owned)
     }
 
-    fn in_search_scope(&self, path: &Path) -> bool {
+    fn in_search_scope(
+        &self,
+        path: &Path,
+        custom: Option<&jetthing_search::FileMaskFilter>,
+    ) -> bool {
         let under_mark = |tests: bool| {
             self.directory_marks().iter().any(|(dir, mark)| {
                 path.starts_with(dir)
@@ -784,6 +797,7 @@ impl IdeState {
             }),
             SearchScopeKind::TestFiles => under_mark(true),
             SearchScopeKind::ProductionFiles => !under_mark(true),
+            SearchScopeKind::Custom => custom.is_some_and(|filter| filter.accepts(path)),
         }
     }
 
@@ -823,10 +837,11 @@ impl IdeState {
     /// Find in Files with match-case, whole-word, regex and file-mask options.
     /// Project files in the current Find in Files scope.
     pub(crate) fn search_files(&self) -> Vec<PathBuf> {
+        let custom = self.custom_scope_filter();
         self.files
             .iter()
             .filter(|entry| !entry.is_dir)
-            .filter(|entry| self.in_search_scope(&entry.relative_path))
+            .filter(|entry| self.in_search_scope(&entry.relative_path, custom.as_ref()))
             .map(|entry| entry.relative_path.clone())
             .collect()
     }
@@ -1113,6 +1128,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     gradle_commands::register(&mut registry);
     gutter_commands::register(&mut registry);
     run_config_commands::register(&mut registry);
+    search_scopes::register(&mut registry);
     folds::register(&mut registry);
     project_commands::register(&mut registry);
     project_view::register(&mut registry);
@@ -1264,7 +1280,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Find in Files",
                 "Search",
                 Some("⇧⌘F"),
-                r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?","fileMask":"string?","scope":"string?","scopeKind":"string?","background":"bool?"}"#,
+                r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?","fileMask":"string?","scope":"string?","scopeKind":"string?","scopeName":"string?","background":"bool?"}"#,
             ),
             |state: &IdeState| state.project.is_some(),
             |state: &mut IdeState, params| {
@@ -1295,6 +1311,10 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     } else {
                         SearchScopeKind::Project
                     });
+                state.search_custom_scope = params
+                    .get("scopeName")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
                 state.search_background = flag("background");
                 let job = state.start_search_with(query, options);
                 state.search_background = false;

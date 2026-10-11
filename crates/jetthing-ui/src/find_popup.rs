@@ -38,6 +38,8 @@ pub struct FindPopup {
     dirty_since: Option<Instant>,
     /// Text of the previewed file, loaded once per selected path.
     preview: Option<(PathBuf, Vec<String>)>,
+    /// Name and mask being edited in the custom scope row.
+    scope_edit: Option<(String, String)>,
 }
 
 impl FindPopup {
@@ -89,6 +91,7 @@ fn run_search(app: &mut IdeApp) {
         "fileMask": options.file_mask,
         "scope": scope.map(|s| s.display().to_string()).unwrap_or_default(),
         "scopeKind": kind.id(),
+        "scopeName": app.state.search_custom_scope,
         "background": true,
     });
     app.dispatch("search.project", params);
@@ -288,7 +291,13 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                         let custom = CUSTOM_SCOPES
                             .iter()
                             .find(|(_, kind)| *kind == app.state.search_scope_kind);
-                        let current = custom.map_or("Scope", |(label, _)| *label);
+                        let current = custom.map_or_else(
+                            || match (&app.state.search_custom_scope, app.state.search_scope_kind) {
+                                (Some(name), SearchScopeKind::Custom) => name.clone(),
+                                _ => "Scope".to_owned(),
+                            },
+                            |(label, _)| (*label).to_owned(),
+                        );
                         let menu = egui::ComboBox::from_id_salt("find_popup_scope")
                             .selected_text(current)
                             .show_ui(ui, |ui| {
@@ -304,9 +313,36 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                         changed = true;
                                     }
                                 }
+                                if !app.state.custom_scopes.is_empty() {
+                                    ui.separator();
+                                }
+                                for scope in app.state.custom_scopes.clone() {
+                                    let selected = app.state.search_scope_kind
+                                        == SearchScopeKind::Custom
+                                        && app.state.search_custom_scope.as_ref()
+                                            == Some(&scope.name);
+                                    if ui
+                                        .selectable_label(selected, &scope.name)
+                                        .on_hover_text(&scope.mask)
+                                        .clicked()
+                                    {
+                                        app.state.search_scope_kind = SearchScopeKind::Custom;
+                                        app.state.search_custom_scope = Some(scope.name.clone());
+                                        app.find_popup.scope_edit = Some((scope.name, scope.mask));
+                                        changed = true;
+                                    }
+                                }
+                                ui.separator();
+                                if ui.selectable_label(false, "New scope…").clicked() {
+                                    app.find_popup.scope_edit =
+                                        Some((String::new(), String::new()));
+                                }
                             });
                         let _ = menu;
                     });
+                    if app.find_popup.scope_edit.is_some() {
+                        scope_editor(app, ui, width, &mut changed);
+                    }
                     if app.state.search_scope_kind == SearchScopeKind::Directory {
                         ui.horizontal(|ui| {
                             ui.label(
@@ -436,6 +472,66 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
         );
         ctx.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
     }
+}
+
+/// Row to define, change or delete a custom scope: a name and a file mask such
+/// as `*.java, src/api/**, !**/generated/**`.
+fn scope_editor(app: &mut IdeApp, ui: &mut egui::Ui, width: f32, changed: &mut bool) {
+    let Some((mut name, mut mask)) = app.find_popup.scope_edit.clone() else {
+        return;
+    };
+    let mut save = false;
+    let mut delete = false;
+    let mut close = false;
+    ui.horizontal(|ui| {
+        widgets::search_field(
+            ui,
+            egui::Id::new("find_popup_scope_name"),
+            &mut name,
+            "Scope name",
+            110.0,
+        );
+        widgets::search_field(
+            ui,
+            egui::Id::new("find_popup_scope_mask"),
+            &mut mask,
+            "*.java, src/**, !**/generated/**",
+            (width - 330.0).max(120.0),
+        );
+        save = ui.button("Save").clicked();
+        delete = ui
+            .add_enabled(
+                app.state
+                    .custom_scopes
+                    .iter()
+                    .any(|scope| scope.name == name),
+                egui::Button::new("Delete"),
+            )
+            .clicked();
+        close = ui.button("×").on_hover_text("Close").clicked();
+    });
+    if save {
+        app.dispatch(
+            "search.saveScope",
+            json!({"name": name.trim(), "mask": mask}),
+        );
+        if app
+            .state
+            .custom_scopes
+            .iter()
+            .any(|s| s.name == name.trim())
+        {
+            app.state.search_scope_kind = SearchScopeKind::Custom;
+            app.state.search_custom_scope = Some(name.trim().to_owned());
+            *changed = true;
+        }
+    }
+    if delete {
+        app.dispatch("search.deleteScope", json!({"name": name}));
+        *changed = true;
+        close = true;
+    }
+    app.find_popup.scope_edit = (!close).then_some((name, mask));
 }
 
 fn scope_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> bool {
