@@ -21,6 +21,11 @@ pub struct Draft {
     pub env: String,
     pub temporary: bool,
     pub dirty: bool,
+    /// Show the Run tool window when the configuration starts.
+    pub open_tool_window: bool,
+    /// Optional rows enabled through "Modify options".
+    pub show_working_directory: bool,
+    pub show_env: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -105,6 +110,17 @@ const GO_FIELDS: &[Field] = &[
     field("package", "Package", ". or ./cmd/server", false, false),
     PROGRAM_ARGS,
 ];
+const APPLICATION_FIELDS: &[Field] = &[
+    field(
+        "module",
+        "Module classpath (-cp)",
+        ":app (empty: the root project)",
+        false,
+        true,
+    ),
+    field("main_class", "Main class", "com.example.App", false, false),
+    PROGRAM_ARGS,
+];
 const SHELL_FIELDS: &[Field] = &[
     field(
         "program",
@@ -124,6 +140,7 @@ const SHELL_FIELDS: &[Field] = &[
 
 fn fields(type_id: &str) -> &'static [Field] {
     match type_id {
+        "application" => APPLICATION_FIELDS,
         "gradle" => GRADLE_FIELDS,
         "cargo" => CARGO_FIELDS,
         "bazel" => BAZEL_FIELDS,
@@ -171,6 +188,9 @@ impl Draft {
                 .join("; "),
             temporary: config.temporary,
             dirty: false,
+            open_tool_window: config.open_tool_window,
+            show_working_directory: true,
+            show_env: true,
         }
     }
 
@@ -219,6 +239,8 @@ impl Draft {
         object.insert("env".into(), Value::Object(env));
         let config: RunConfiguration =
             serde_json::from_value(Value::Object(object)).map_err(|error| error.to_string())?;
+        let mut config = config;
+        config.open_tool_window = self.open_tool_window;
         config.validate()?;
         Ok(config)
     }
@@ -238,6 +260,7 @@ struct State {
     selected: usize,
     error: Option<String>,
     add_menu: bool,
+    help: bool,
     /// Saved configurations removed in the dialog; deleted on Apply/OK.
     removed: Vec<String>,
 }
@@ -284,6 +307,7 @@ pub fn open(app: &IdeApp, ctx: &egui::Context, focus: Option<&str>) {
                 selected,
                 error,
                 add_menu: false,
+                help: false,
                 removed: Vec::new(),
             },
         )
@@ -328,8 +352,20 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
         if let Some(error) = &state.error {
             ui.label(RichText::new(error).color(theme::ERROR));
         }
+        if state.help {
+            ui.label(
+                RichText::new(
+                    "Configurations are stored as files in .jetthing/runConfigurations. \
+                     Use Modify options to show optional fields.",
+                )
+                .color(theme::TEXT_INFO),
+            );
+        }
         ui.separator();
         ui.horizontal(|ui| {
+            if ui.button("?").on_hover_text("Help").clicked() {
+                state.help = !state.help;
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let dirty =
                     state.drafts.iter().any(|draft| draft.dirty) || !state.removed.is_empty();
@@ -434,10 +470,16 @@ fn list(ui: &mut egui::Ui, state: &mut State) {
         });
     }
     ui.add_space(4.0);
+    ui.add_enabled(
+        false,
+        egui::Label::new(RichText::new("Edit configuration templates…").color(theme::TEXT_INFO)),
+    )
+    .on_disabled_hover_text("Configuration templates are not supported yet");
+    ui.add_space(4.0);
     egui::ScrollArea::vertical()
         .id_salt("run_config_list")
         .auto_shrink([false, false])
-        .max_height(440.0)
+        .max_height(410.0)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             let mut group = "";
@@ -554,6 +596,31 @@ fn form(ui: &mut egui::Ui, state: &mut State) {
                 .unwrap_or("Shell Command");
             ui.label(RichText::new(type_name).color(theme::TEXT_SECONDARY));
             ui.end_row();
+            ui.label("");
+            ui.add_enabled(
+                false,
+                egui::Checkbox::new(&mut true, "Store as project file"),
+            )
+            .on_disabled_hover_text("Configurations are always stored in .jetthing/runConfigurations");
+            ui.end_row();
+            ui.label("");
+            ui.menu_button(
+                RichText::new("Modify options ▾").color(theme::ACCENT),
+                |ui| {
+                    ui.checkbox(&mut draft.show_working_directory, "Working directory");
+                    ui.checkbox(&mut draft.show_env, "Environment variables");
+                    if ui
+                        .checkbox(
+                            &mut draft.open_tool_window,
+                            "Open run/debug tool window when started",
+                        )
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                },
+            );
+            ui.end_row();
             if draft.temporary {
                 ui.label("");
                 ui.label(
@@ -567,20 +634,52 @@ fn form(ui: &mut egui::Ui, state: &mut State) {
                 changed |= text(ui, value, field.hint, 420.0);
                 ui.end_row();
             }
-            ui.label("Working directory:");
-            changed |= text(ui, &mut draft.working_directory, "Project root (relative path)", 420.0);
-            ui.end_row();
-            ui.label("Environment variables:");
-            changed |= text(ui, &mut draft.env, "KEY=value; KEY2=value2", 420.0);
-            ui.end_row();
-            ui.label("");
-            ui.label(
-                RichText::new("Separate variables with semicolon: VAR=value; VAR1=value1")
-                    .color(theme::TEXT_INFO)
-                    .size(theme::UI_FONT_SIZE - 1.0),
-            );
-            ui.end_row();
+            if draft.show_working_directory {
+                ui.label("Working directory:");
+                changed |= text(ui, &mut draft.working_directory, "Project root (relative path)", 420.0);
+                ui.end_row();
+            }
+            if draft.show_env {
+                ui.label("Environment variables:");
+                changed |= text(ui, &mut draft.env, "KEY=value; KEY2=value2", 420.0);
+                ui.end_row();
+                ui.label("");
+                ui.label(
+                    RichText::new("Separate variables with semicolon: VAR=value; VAR1=value1")
+                        .color(theme::TEXT_INFO)
+                        .size(theme::UI_FONT_SIZE - 1.0),
+                );
+                ui.end_row();
+            }
         });
+    if draft.open_tool_window {
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            egui::Frame::new()
+                .fill(*theme::SELECTION)
+                .corner_radius(10.0)
+                .inner_margin(egui::Margin::symmetric(8, 2))
+                .show(ui, |ui| {
+                    ui.label("Open run/debug tool window when started");
+                    if ui
+                        .small_button("×")
+                        .on_hover_text("Remove option")
+                        .clicked()
+                    {
+                        draft.open_tool_window = false;
+                        changed = true;
+                    }
+                });
+        });
+    }
+    ui.add_space(10.0);
+    ui.add_enabled_ui(false, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Code Coverage").font(theme::semibold(theme::UI_FONT_SIZE)));
+            let _ = ui.button("Modify ▾");
+        });
+        ui.label(RichText::new("Coverage runners are not available yet.").color(theme::TEXT_INFO));
+    });
     if changed {
         draft.dirty = true;
         state.error = draft.to_config().err();
@@ -658,8 +757,10 @@ mod tests {
     fn draft_round_trips_every_type() {
         for type_id in RunTarget::TYPE_IDS {
             let mut target = RunTarget::template(type_id).unwrap();
-            if let RunTarget::Shell { program, .. } = &mut target {
-                *program = "ls".into();
+            match &mut target {
+                RunTarget::Shell { program, .. } => *program = "ls".into(),
+                RunTarget::Application { main_class, .. } => *main_class = "com.example.App".into(),
+                _ => {}
             }
             let mut config = RunConfiguration::new("X", target);
             config.env.insert("A".into(), "1".into());
@@ -697,6 +798,28 @@ mod tests {
         draft.env.clear();
         draft.working_directory = "../outside".into();
         assert!(draft.to_config().is_err());
+    }
+
+    #[test]
+    fn application_drafts_need_a_main_class_and_keep_the_tool_window_option() {
+        let mut draft = Draft::new("application", "App".into()).unwrap();
+        assert!(draft.to_config().unwrap_err().contains("main class"));
+        draft.fields = vec![
+            ("module", ":app".into()),
+            ("main_class", "com.example.App".into()),
+            ("program_arguments", "-v".into()),
+        ];
+        draft.open_tool_window = false;
+        let config = draft.to_config().unwrap();
+        assert!(!config.open_tool_window);
+        assert_eq!(
+            config.target,
+            RunTarget::Application {
+                module: ":app".into(),
+                main_class: "com.example.App".into(),
+                program_arguments: vec!["-v".into()],
+            }
+        );
     }
 
     #[test]

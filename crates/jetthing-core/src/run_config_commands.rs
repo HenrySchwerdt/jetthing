@@ -5,6 +5,9 @@ use jetthing_command::{Command, CommandError, CommandRegistry};
 use jetthing_runner::{RunConfiguration, RunManager, RunTarget};
 use serde_json::{Value, json};
 
+/// Run widget label while no configuration is selected.
+pub const CURRENT_FILE_LABEL: &str = "Current File";
+
 impl IdeState {
     pub(crate) fn load_run_configurations(&mut self) {
         self.run_configurations = match &self.project {
@@ -34,7 +37,12 @@ impl IdeState {
             .build_systems
             .registry()
             .plan_configuration(&root, &config);
-        self.start_task(plan, &config.name, config.target.task_kind())
+        let layout = (!config.open_tool_window).then(|| self.tool_windows.clone());
+        let started = self.start_task(plan, &config.name, config.target.task_kind());
+        if let Some(layout) = layout {
+            self.tool_windows = layout;
+        }
+        started
     }
 
     /// Creates (or refreshes) a temporary configuration and runs it, like running a
@@ -51,7 +59,7 @@ impl IdeState {
         self.run_configuration(Some(&name))
     }
 
-    /// Label of the run widget: the selected configuration or the detected default.
+    /// Label of the run widget: the selected configuration, else `Current File`.
     pub fn run_widget_label(&self) -> Option<String> {
         self.run_configurations
             .selected()
@@ -59,7 +67,7 @@ impl IdeState {
             .or_else(|| {
                 self.detected_build
                     .as_ref()
-                    .map(|build| build.run_label.clone())
+                    .map(|_| CURRENT_FILE_LABEL.to_owned())
             })
     }
 }
@@ -128,6 +136,22 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                     .run_configurations
                     .select(&name)
                     .map_err(CommandError::InvalidParams)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "runConfig.selectCurrentFile",
+                "Select Current File",
+                "Run",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.project.is_some(),
+            |state: &mut IdeState, _| {
+                state.run_configurations.clear_selection();
                 Ok(Value::Null)
             },
         ))
@@ -218,6 +242,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
 
 #[cfg(all(test, unix))]
 mod tests {
+    use super::CURRENT_FILE_LABEL;
     use crate::{IdeState, built_in_commands};
     use jetthing_runner::TaskState;
     use serde_json::{Value, json};
@@ -243,7 +268,7 @@ mod tests {
         commands
             .execute("project.open", &mut state, json!({"path": root}))
             .unwrap();
-        let detected = state.detected_build.as_ref().unwrap().run_label.clone();
+        let detected = CURRENT_FILE_LABEL.to_owned();
         assert_eq!(state.run_widget_label(), Some(detected.clone()));
         commands
             .execute(

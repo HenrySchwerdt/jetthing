@@ -64,6 +64,16 @@ pub enum RunTarget {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         program_arguments: Vec<String>,
     },
+    /// A JVM main class run on a module's classpath (planned through the Gradle
+    /// integration, like the gutter's `Run 'App.main()'`).
+    Application {
+        /// Gradle project path of the module (`:app`); the root project when empty.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        module: String,
+        main_class: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        program_arguments: Vec<String>,
+    },
     /// Any executable.
     Shell {
         program: String,
@@ -76,7 +86,9 @@ impl RunTarget {
     /// Provider that plans this target; `None` for shell commands.
     pub fn build_system(&self) -> Option<BuildSystemKind> {
         match self {
-            RunTarget::Gradle { .. } => Some(BuildSystemKind::Gradle),
+            RunTarget::Gradle { .. } | RunTarget::Application { .. } => {
+                Some(BuildSystemKind::Gradle)
+            }
             RunTarget::Cargo { .. } => Some(BuildSystemKind::Cargo),
             RunTarget::Bazel { .. } => Some(BuildSystemKind::Bazel),
             RunTarget::Maven { .. } => Some(BuildSystemKind::Maven),
@@ -89,6 +101,7 @@ impl RunTarget {
     pub fn type_id(&self) -> &'static str {
         match self {
             RunTarget::Gradle { .. } => "gradle",
+            RunTarget::Application { .. } => "application",
             RunTarget::Cargo { .. } => "cargo",
             RunTarget::Bazel { .. } => "bazel",
             RunTarget::Maven { .. } => "maven",
@@ -102,6 +115,7 @@ impl RunTarget {
     pub fn type_name(&self) -> &'static str {
         match self {
             RunTarget::Shell { .. } => "Shell Command",
+            RunTarget::Application { .. } => "Application",
             other => other
                 .build_system()
                 .map(BuildSystemKind::display_name)
@@ -143,6 +157,11 @@ impl RunTarget {
                 package: ".".into(),
                 program_arguments: Vec::new(),
             },
+            "application" => RunTarget::Application {
+                module: String::new(),
+                main_class: String::new(),
+                program_arguments: Vec::new(),
+            },
             "shell" => RunTarget::Shell {
                 program: String::new(),
                 arguments: Vec::new(),
@@ -151,8 +170,16 @@ impl RunTarget {
         })
     }
 
-    pub const TYPE_IDS: [&'static str; 7] =
-        ["gradle", "cargo", "bazel", "maven", "npm", "go", "shell"];
+    pub const TYPE_IDS: [&'static str; 8] = [
+        "application",
+        "gradle",
+        "cargo",
+        "bazel",
+        "maven",
+        "npm",
+        "go",
+        "shell",
+    ];
 
     /// Kind of task this target runs (decides Run vs Test vs Build window title).
     pub fn task_kind(&self) -> TaskKind {
@@ -166,7 +193,7 @@ impl RunTarget {
             | RunTarget::Go { command, .. } => command.clone(),
             RunTarget::Maven { goals, .. } => goals.last().cloned().unwrap_or_default(),
             RunTarget::Npm { script, .. } => script.clone(),
-            RunTarget::Shell { .. } => "run".into(),
+            RunTarget::Application { .. } | RunTarget::Shell { .. } => "run".into(),
         };
         match verb.as_str() {
             "test" | "check" | "verify" => TaskKind::Test,
@@ -191,6 +218,17 @@ pub struct RunConfiguration {
     /// are listed but not written to disk until saved.
     #[serde(skip)]
     pub temporary: bool,
+    /// Show the Run tool window when the configuration starts (default).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub open_tool_window: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 impl RunConfiguration {
@@ -201,6 +239,7 @@ impl RunConfiguration {
             working_directory: None,
             env: BTreeMap::new(),
             temporary: false,
+            open_tool_window: true,
         }
     }
 
@@ -245,6 +284,9 @@ impl RunConfiguration {
             }
             RunTarget::Npm { script, .. } if script.trim().is_empty() => {
                 Err("Enter the npm script to run".into())
+            }
+            RunTarget::Application { main_class, .. } if main_class.trim().is_empty() => {
+                Err("Enter the main class to run".into())
             }
             RunTarget::Shell { program, .. } if program.trim().is_empty() => {
                 Err("Enter the program to run".into())
@@ -372,6 +414,11 @@ impl RunManager {
         }
         self.selected = Some(name.to_owned());
         Ok(())
+    }
+
+    /// Deselects the configuration (the run widget falls back to `Current File`).
+    pub fn clear_selection(&mut self) {
+        self.selected = None;
     }
 
     /// Adds or replaces a temporary configuration and selects it (reference behaviour

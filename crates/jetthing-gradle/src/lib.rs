@@ -329,6 +329,32 @@ impl BuildSystem for Gradle {
         root: &Path,
         config: &RunConfiguration,
     ) -> Result<TaskPlan, RunnerError> {
+        if let RunTarget::Application {
+            module,
+            main_class,
+            program_arguments,
+        } = &config.target
+        {
+            let build = detected(root)?;
+            let module = match module.trim() {
+                "" => build.modules.first(),
+                path => build.modules.iter().find(|m| m.path == path),
+            }
+            .ok_or_else(|| {
+                RunnerError::NotRunnable(format!("no Gradle module `{}`", module.trim()))
+            })?;
+            let script = build.init_script()?;
+            let mut args = vec![
+                module.task(model::RUN_MAIN_TASK),
+                "--init-script".to_owned(),
+                script.display().to_string(),
+                format!("-Pjetthing.mainClass={}", main_class.trim()),
+            ];
+            if !program_arguments.is_empty() {
+                args.push(format!("--args={}", program_arguments.join(" ")));
+            }
+            return build.task_plan(TaskKind::Run, &config.name, &args);
+        }
         let RunTarget::Gradle {
             tasks,
             options,

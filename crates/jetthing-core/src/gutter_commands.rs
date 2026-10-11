@@ -390,7 +390,7 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
 
 impl IdeState {
     /// The closest runnable at or above the caret line (context run action).
-    fn caret_runnable_line(&mut self) -> Option<usize> {
+    pub(crate) fn caret_runnable_line(&mut self) -> Option<usize> {
         let caret = self.active_caret()?;
         let document = self.documents.get(self.active_document?)?;
         let line = document.text.char_to_line(caret);
@@ -498,6 +498,26 @@ mod tests {
             root.join(".jetthing/gradle/jetthing-model.init.gradle")
                 .is_file()
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn class_with_main_gets_its_own_icon_and_the_widget_reads_current_file() {
+        let root = project(
+            "class-icon",
+            &[
+                ("settings.gradle.kts", "include(\":app\")\n"),
+                ("app/build.gradle.kts", "plugins { application }\n"),
+                (
+                    "app/src/main/java/App.java",
+                    "public class App {\n  public static void main(String[] a) {}\n}\n",
+                ),
+            ],
+        );
+        let (mut state, _commands) = open(&root, "app/src/main/java/App.java");
+        let lines: Vec<usize> = state.gutter_marks().iter().map(|mark| mark.line).collect();
+        assert_eq!(lines, [0, 1]);
+        assert_eq!(state.run_widget_label().as_deref(), Some("Current File"));
         std::fs::remove_dir_all(root).unwrap();
     }
 
