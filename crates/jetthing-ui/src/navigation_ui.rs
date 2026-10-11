@@ -1,6 +1,6 @@
 //! Navigation UI: keyboard shortcuts, the chooser / Show Usages popup, and
 //! the usages view of the Find tool window. Requests and history live in
-//! `jetthing_core::navigation`.
+//! `jetthing_core::quick_nav`.
 
 use crate::icons::{self, Icon};
 use crate::widgets::{self, list_row, row_text};

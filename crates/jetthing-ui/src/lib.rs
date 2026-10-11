@@ -60,6 +60,7 @@ mod run_config_dialog;
 mod settings_dialog;
 mod settings_keymap;
 mod structure_view;
+mod switcher;
 mod syntax;
 mod terminal_ui;
 mod test_view;
@@ -88,6 +89,8 @@ pub struct IdeApp {
     state: IdeState,
     commands: CommandRegistry<IdeState>,
     palette: palette::Palette,
+    /// Whether Ctrl was down when the Switcher opened (`None` while it is closed).
+    switcher_ctrl: Option<bool>,
     terminal_selection: Option<(terminal_ui::GridPoint, terminal_ui::GridPoint)>,
     search_input: String,
     /// Find in Files option toggles and file mask.
@@ -253,6 +256,7 @@ impl IdeApp {
             state,
             commands,
             palette: palette::Palette::default(),
+            switcher_ctrl: None,
             terminal_selection: None,
             search_input: String::new(),
             find_options: jetthing_core::SearchOptions::default(),
@@ -321,7 +325,7 @@ impl IdeApp {
         }
     }
 
-    fn open_dialog(&mut self, dialog: popups::Dialog) {
+    pub(crate) fn open_dialog(&mut self, dialog: popups::Dialog) {
         self.dialog = Some(dialog);
         self.dialog_focus = true;
     }
@@ -590,6 +594,8 @@ impl IdeApp {
                 self.push_dialog = None;
             } else if self.change_popup.is_some() {
                 self.change_popup = None;
+            } else if self.state.quick_nav.switcher.is_some() {
+                self.dispatch("navigate.switcherCancel", Value::Null);
             } else if self.state.ai.pending_apply.is_some() {
                 self.dispatch("ai.chat.applyCancel", Value::Null);
             } else if self.palette.open {
@@ -814,7 +820,9 @@ impl IdeApp {
             plugin_ui::handle_keybindings(self, ctx);
             chrome::window_resize_handles(ctx);
             plugin_ui::app_window(self, ctx, &plugin);
+            switcher::frame(self, ctx);
             palette::show(self, ctx);
+            switcher::show(self, ctx);
             plugin_ui::notifications(self, ctx);
             self.control_after_frame(ctx);
             return;
@@ -883,7 +891,9 @@ impl IdeApp {
         doc_ui::show_parameter_info(self, ctx);
         navigation_ui::choices_popup(self, ctx);
         intentions_ui::popup(self, ctx);
+        switcher::frame(self, ctx);
         palette::show(self, ctx);
+        switcher::show(self, ctx);
         popups::show(self, ctx);
         settings_dialog::show(self, ctx);
         android_sdk::show(self, ctx);

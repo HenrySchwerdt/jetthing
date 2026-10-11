@@ -385,6 +385,10 @@ impl IdeApp {
             "terminal": self.terminal_text(),
             "popups": {
                 "searchEverywhere": self.palette.open.then(|| self.palette.tab_name()),
+                "switcher": self.state.quick_nav.switcher.as_ref().map(|switcher| match switcher.selected_entry() {
+                    jetthing_core::quick_nav::SwitcherEntry::File(path) => relative(path),
+                    jetthing_core::quick_nav::SwitcherEntry::ToolWindow(window) => window.title().to_owned(),
+                }),
                 "dialog": self.dialog.as_ref().map(|dialog| dialog.kind()),
                 "findBar": self.find.open,
                 "completion": self.completion_visible(),
@@ -571,7 +575,14 @@ mod tests {
             };
             let _ = ctx.run(input, |ctx| app.detect_double_shift(ctx));
         }
-        assert!(app.palette.open);
+        assert_eq!(
+            app.state.quick_nav.request,
+            Some(
+                jetthing_core::quick_nav::NavigationRequest::SearchEverywhere(
+                    jetthing_core::quick_nav::SearchTab::All
+                )
+            )
+        );
     }
 
     #[test]
@@ -591,7 +602,8 @@ mod tests {
         std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
         let mut app =
             IdeApp::with_update_check(Some(dir.clone()), vec![PathBuf::from("src/main.rs")], false);
-        app.palette.show();
+        app.palette
+            .show_tab(jetthing_core::quick_nav::SearchTab::All);
         let ctx = egui::Context::default();
         let response = app.control_execute(
             &ctx,

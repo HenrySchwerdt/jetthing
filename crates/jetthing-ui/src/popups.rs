@@ -49,6 +49,9 @@ pub enum Dialog {
         query: String,
         selected: usize,
     },
+    RecentLocations {
+        selected: usize,
+    },
     /// File Structure popup; `selected` starts at the declaration under the caret.
     FileStructure {
         query: String,
@@ -68,6 +71,7 @@ impl Dialog {
             Dialog::Delete { .. } => "delete",
             Dialog::GotoLine { .. } => "gotoLine",
             Dialog::Recent { .. } => "recentFiles",
+            Dialog::RecentLocations { .. } => "recentLocations",
             Dialog::FileStructure { .. } => "fileStructure",
         }
     }
@@ -536,17 +540,17 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
             }
         }
         Dialog::Recent { query, selected } => {
-            let entries: Vec<PathBuf> = app
-                .state
-                .recent_files
-                .iter()
-                .filter(|path| {
-                    query.is_empty()
-                        || crate::palette::fuzzy_score(&IdeApp::file_name(path), query).is_some()
-                })
-                .take(30)
-                .cloned()
-                .collect();
+            let entries: Vec<PathBuf> = jetthing_core::quick_nav::rank(
+                query,
+                app.state
+                    .recent_files
+                    .iter()
+                    .map(|path| (path.clone(), IdeApp::file_name(path))),
+                30,
+            )
+            .into_iter()
+            .map(|ranked| ranked.item)
+            .collect();
             if !entries.is_empty() {
                 if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)) {
                     *selected = (*selected + 1) % entries.len();
@@ -626,6 +630,81 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 keep = false;
             }
         }
+        Dialog::RecentLocations { selected } => {
+            let locations = app.state.quick_nav.locations.clone();
+            if !locations.is_empty() {
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)) {
+                    *selected = (*selected + 1) % locations.len();
+                }
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)) {
+                    *selected = (*selected + locations.len() - 1) % locations.len();
+                }
+            }
+            *selected = (*selected).min(locations.len().saturating_sub(1));
+            let mut open = ctx
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+                .then_some(*selected);
+            popup_frame(ctx, "dialog_recent_locations", 640.0, |ui| {
+                title(ui, "Recent Locations");
+                if locations.is_empty() {
+                    ui.label(RichText::new("No recent locations").color(theme::TEXT_SECONDARY));
+                }
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (index, location) in locations.iter().take(30).enumerate() {
+                    let (rect, response) =
+                        ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
+                    if index == *selected {
+                        ui.painter().rect_filled(rect, 4.0, theme::SELECTION);
+                    } else if response.hovered() {
+                        ui.painter().rect_filled(rect, 4.0, theme::HOVER);
+                    }
+                    icons::paint(
+                        ui.painter(),
+                        Rect::from_min_size(rect.left_center() + vec2(8.0, -8.0), vec2(16.0, 16.0)),
+                        app.file_icon(&location.path),
+                        *icons::ICON,
+                    );
+                    let trailing = format!(
+                        "{}:{}",
+                        IdeApp::file_name(&location.path),
+                        location.line + 1
+                    );
+                    ui.painter().text(
+                        rect.right_center() - vec2(10.0, 0.0),
+                        egui::Align2::RIGHT_CENTER,
+                        &trailing,
+                        egui::FontId::proportional(theme::UI_FONT_SIZE),
+                        *theme::TEXT_SECONDARY,
+                    );
+                    let preview = if location.preview.is_empty() {
+                        "(blank line)"
+                    } else {
+                        &location.preview
+                    };
+                    row_text(
+                        ui,
+                        Rect::from_min_max(rect.min, egui::pos2(rect.right() - 150.0, rect.max.y)),
+                        rect.left() + 32.0,
+                        preview,
+                        egui::FontId::monospace(theme::EDITOR_FONT_SIZE),
+                        *theme::TEXT_BRIGHT,
+                    );
+                    if response.clicked() {
+                        open = Some(index);
+                    }
+                }
+            });
+            if let Some(index) = open
+                && let Some(location) = locations.get(index)
+            {
+                app.dispatch(
+                    "editor.openFile",
+                    json!({"path": location.path, "line": location.line + 1}),
+                );
+                ctx.memory_mut(|m| m.request_focus(crate::editor::editor_id()));
+                keep = false;
+            }
+        }
         Dialog::FileStructure { query, selected } => {
             keep = file_structure(app, ctx, query, selected);
         }
@@ -661,9 +740,7 @@ fn file_structure(
     crate::structure_view::flatten(&items, 0, &mut rows);
     let rows: Vec<_> = rows
         .into_iter()
-        .filter(|(_, item)| {
-            query.is_empty() || crate::palette::fuzzy_score(&item.name, query).is_some()
-        })
+        .filter(|(_, item)| jetthing_core::quick_nav::matches(query, &item.name))
         .collect();
     if selected.is_none() {
         let current = crate::structure_view::item_at_caret(document, &items)

@@ -48,6 +48,7 @@ mod navigation;
 mod new_class;
 mod plugin_host;
 mod problems;
+pub mod quick_nav;
 pub use new_class::{JavaKind, KotlinKind};
 mod project_commands;
 mod quick_doc;
@@ -218,6 +219,8 @@ pub struct IdeState {
     pub detected_build: Option<DetectedBuild>,
     /// Navigation history and pending/finished navigation requests.
     pub navigation: NavigationState,
+    /// Search Everywhere / Recent Locations / Switcher state.
+    pub quick_nav: quick_nav::QuickNavState,
     /// Quick fixes and intentions at the caret (Alt+Enter).
     pub code_actions: CodeActionState,
     /// Quick documentation popup and completion documentation panel.
@@ -328,6 +331,7 @@ impl IdeState {
         self.code_actions = CodeActionState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
+        self.quick_nav = quick_nav::QuickNavState::default();
         self.tool_windows = ToolWindowLayout::default();
         self.tool_windows.show(ToolWindow::Project);
         self.status = format!("Opened {}", project.root().display());
@@ -877,6 +881,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     diagnostic_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     settings_commands::register(&mut registry);
+    quick_nav::register(&mut registry);
     keymap_commands::register(&mut registry);
     first_run::register(&mut registry);
     lsp_commands::register(&mut registry);
