@@ -296,16 +296,29 @@ fn path_param(params: &Value) -> Result<PathBuf, CommandError> {
 pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     registry.register(Command::new(
         spec("project.create", "Create Project", "Project", None,
-            r#"{"parent":"string","name":"string","kind":"empty|rust-binary|rust-library|java-gradle-kotlin|java-gradle-groovy","group":"string?"}"#),
+            r#"{"parent":"string","name":"string","kind":"empty|rust-binary|rust-library|java-gradle-kotlin|java-gradle-groovy|jvm","group":"string?","git":"bool?","language":"java|kotlin?","build":"intellij|maven|gradle?","dsl":"kotlin|groovy?","sample":"bool?","jdk":"number?"}"#),
         |_| true,
         |state: &mut IdeState, params| {
             let parent = string_param(&params, "parent")?;
             let name = string_param(&params, "name")?;
-            let kind = jetthing_project::generator::ProjectKind::parse(&string_param(&params, "kind")?)
-                .ok_or_else(|| CommandError::InvalidParams("unknown project template".into()))?;
+            let kind_name = string_param(&params, "kind")?;
+            let text = |key: &str, default: &str| params.get(key).and_then(Value::as_str).unwrap_or(default).to_owned();
+            let kind = if kind_name == "jvm" {
+                let jdk = params.get("jdk").and_then(Value::as_u64).unwrap_or(21);
+                let sample = params.get("sample").and_then(Value::as_bool).unwrap_or(true);
+                jetthing_project::generator::JvmSpec::parse(
+                    &text("language", "java"), &text("build", "gradle"), &text("dsl", "kotlin"),
+                    sample, u32::try_from(jdk).unwrap_or(0))
+                    .map(jetthing_project::generator::ProjectKind::Jvm)
+                    .ok_or_else(|| CommandError::InvalidParams("invalid language, build system, Gradle DSL or JDK version".into()))?
+            } else {
+                jetthing_project::generator::ProjectKind::parse(&kind_name)
+                    .ok_or_else(|| CommandError::InvalidParams("unknown project template".into()))?
+            };
+            let git = params.get("git").and_then(Value::as_bool).unwrap_or(false);
             let group = params.get("group").and_then(Value::as_str).unwrap_or("org.example");
             state.prepare_project_switch().map_err(CommandError::Failed)?;
-            let project = jetthing_project::generator::create_project(Path::new(&parent), &name, kind, group)
+            let project = jetthing_project::generator::create_project_with(Path::new(&parent), &name, kind, group, git)
                 .map_err(|error| CommandError::Failed(error.to_string()))?;
             let root = project.root().to_owned();
             state.install_project(project).map_err(CommandError::Failed)?;
@@ -600,5 +613,36 @@ mod tests {
         );
         assert!(state.git.as_ref().unwrap().changes.is_empty());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn create_jvm_project_from_wizard_options() {
+        let parent = std::env::temp_dir().join(format!("jetthing-wizard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&parent);
+        std::fs::create_dir_all(&parent).unwrap();
+        let commands = crate::built_in_commands();
+        let mut state = IdeState::default();
+        let params = |extra: Value| {
+            let mut base =
+                json!({"parent": parent, "name": "wiz", "kind": "jvm", "group": "org.example"});
+            base.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            base
+        };
+        let bad = params(json!({"build": "ant"}));
+        assert!(commands.execute("project.create", &mut state, bad).is_err());
+        assert!(!parent.join("wiz").exists());
+        let good = params(
+            json!({"language": "kotlin", "build": "gradle", "dsl": "kotlin", "jdk": 17, "git": true, "sample": true}),
+        );
+        commands
+            .execute("project.create", &mut state, good)
+            .unwrap();
+        let root = parent.join("wiz");
+        assert!(root.join(".git").is_dir());
+        assert!(root.join("src/main/kotlin/org/example/Main.kt").is_file());
+        assert_eq!(state.recent_projects.entries()[0].name, "wiz");
+        let _ = std::fs::remove_dir_all(parent);
     }
 }

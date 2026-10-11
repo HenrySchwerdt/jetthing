@@ -87,6 +87,7 @@ impl FileDialogs for InjectedDialog {
 pub enum Purpose {
     OpenProject,
     NewProjectLocation,
+    CloneLocation,
 }
 
 /// A dialog running on a background thread.
