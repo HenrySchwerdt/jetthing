@@ -260,7 +260,7 @@ fn jvm_files(files: &mut Vec<(PathBuf, String)>, name: &str, group: &str, spec: 
         BuildSystem::Maven => {
             let (plugin, deps) = if kotlin {
                 (
-                    format!("    <sourceDirectory>src/main/kotlin</sourceDirectory>\n    <plugins>\n      <plugin>\n        <groupId>org.jetbrains.kotlin</groupId>\n        <artifactId>kotlin-maven-plugin</artifactId>\n        <version>2.0.21</version>\n        <executions>\n          <execution>\n            <id>compile</id>\n            <phase>compile</phase>\n            <goals><goal>compile</goal></goals>\n          </execution>\n        </executions>\n      </plugin>\n    </plugins>\n"),
+                    "    <sourceDirectory>src/main/kotlin</sourceDirectory>\n    <plugins>\n      <plugin>\n        <groupId>org.jetbrains.kotlin</groupId>\n        <artifactId>kotlin-maven-plugin</artifactId>\n        <version>2.0.21</version>\n        <executions>\n          <execution>\n            <id>compile</id>\n            <phase>compile</phase>\n            <goals><goal>compile</goal></goals>\n          </execution>\n        </executions>\n      </plugin>\n    </plugins>\n".to_owned(),
                     "  <dependencies>\n    <dependency>\n      <groupId>org.jetbrains.kotlin</groupId>\n      <artifactId>kotlin-stdlib</artifactId>\n      <version>2.0.21</version>\n    </dependency>\n  </dependencies>\n",
                 )
             } else {
@@ -286,7 +286,9 @@ fn jvm_files(files: &mut Vec<(PathBuf, String)>, name: &str, group: &str, spec: 
         } else {
             (
                 "Main.java",
-                format!("package {group};\n\npublic class Main {{\n    public static void main(String[] args) {{\n        System.out.println(\"Hello, world!\");\n    }}\n}}\n"),
+                format!(
+                    "package {group};\n\npublic class Main {{\n    public static void main(String[] args) {{\n        System.out.println(\"Hello, world!\");\n    }}\n}}\n"
+                ),
             )
         };
         files.push((format!("{source_root}/{package_dir}/{file}").into(), text));

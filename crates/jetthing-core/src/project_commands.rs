@@ -623,15 +623,22 @@ mod tests {
         let commands = crate::built_in_commands();
         let mut state = IdeState::default();
         let params = |extra: Value| {
-            let mut base = json!({"parent": parent, "name": "wiz", "kind": "jvm", "group": "org.example"});
-            base.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            let mut base =
+                json!({"parent": parent, "name": "wiz", "kind": "jvm", "group": "org.example"});
+            base.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
             base
         };
         let bad = params(json!({"build": "ant"}));
         assert!(commands.execute("project.create", &mut state, bad).is_err());
         assert!(!parent.join("wiz").exists());
-        let good = params(json!({"language": "kotlin", "build": "gradle", "dsl": "kotlin", "jdk": 17, "git": true, "sample": true}));
-        commands.execute("project.create", &mut state, good).unwrap();
+        let good = params(
+            json!({"language": "kotlin", "build": "gradle", "dsl": "kotlin", "jdk": 17, "git": true, "sample": true}),
+        );
+        commands
+            .execute("project.create", &mut state, good)
+            .unwrap();
         let root = parent.join("wiz");
         assert!(root.join(".git").is_dir());
         assert!(root.join("src/main/kotlin/org/example/Main.kt").is_file());

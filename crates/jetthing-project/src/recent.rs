@@ -33,9 +33,10 @@ impl RecentProjects {
 
     /// Moves `path` to the front.
     pub fn record(&mut self, path: &Path) {
-        let name = path
-            .file_name()
-            .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into());
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into(),
+        );
         self.entries.retain(|entry| entry.path != path);
         self.entries.insert(
             0,

@@ -43,7 +43,9 @@ pub fn jdk_major(version: &str) -> Option<u32> {
 
 fn release_major(home: &Path) -> Option<u32> {
     let release = std::fs::read_to_string(home.join("release")).ok()?;
-    let line = release.lines().find(|line| line.starts_with("JAVA_VERSION="))?;
+    let line = release
+        .lines()
+        .find(|line| line.starts_with("JAVA_VERSION="))?;
     jdk_major(line.trim_start_matches("JAVA_VERSION=").trim_matches('"'))
 }
 
@@ -65,11 +67,17 @@ impl IdeState {
                 .as_ref()
                 .and_then(|version| jdk_major(version.as_str()))
                 .or_else(|| release_major(&located.home));
-            add(major, format!("{} ({})", major.unwrap_or(0), located.home.display()));
+            add(
+                major,
+                format!("{} ({})", major.unwrap_or(0), located.home.display()),
+            );
         }
         for installed in toolchains.store().installed("jdk") {
             let major = jdk_major(installed.version.as_str());
-            add(major, format!("{} (downloaded)", installed.version.as_str()));
+            add(
+                major,
+                format!("{} (downloaded)", installed.version.as_str()),
+            );
         }
         choices
     }
