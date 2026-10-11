@@ -24,6 +24,16 @@
 //! `source.organizeImports` (sorts the `import` lines), `refactor.extract.*`
 //! and `refactor.inline` edits instead of the diagnostic fixes above.
 //!
+//! Generate: `codeAction` requests with `context.only` containing `source`
+//! also return the jdtls-style `source.generate.*` / `source.overrideMethods`
+//! actions (each inserts a `// generated ...` comment at the top).
+//!
+//! Hierarchies (ASCII text): `class A extends B implements C` and `interface`
+//! lines declare types (the range runs to the next declaration);
+//! `void name(` lines declare methods. `prepareTypeHierarchy`,
+//! `typeHierarchy/supertypes|subtypes`, `prepareCallHierarchy` and
+//! `callHierarchy/incomingCalls|outgoingCalls` answer from the open documents.
+//!
 //! Completion returns a fixed Java-like member list. `textDocument/didOpen`
 //! and `didChange` publish one diagnostic per `@error`, `@warning`, `@weak`,
 //! `@hint` and `@unused` marker in the text, or one warning at 0:0 when the
@@ -120,6 +130,7 @@ fn main() {
                     "referencesProvider": true,
                     "inlayHintProvider": true,
                     "codeActionProvider": {"resolveProvider": true},
+                    "callHierarchyProvider": true,
                     "executeCommandProvider": {"commands": ["fake.apply"]}
                 },"serverInfo":{"name":"fake"}}}));
             }
@@ -290,6 +301,91 @@ fn main() {
                     .unwrap_or_default();
                 send(json!({"jsonrpc":"2.0","id":id,"result":edits}));
             }
+            ("textDocument/prepareTypeHierarchy", Some(id)) => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
+                let character = params["position"]["character"].as_u64().unwrap_or(0) as usize;
+                let word = documents
+                    .get(uri)
+                    .and_then(|text| word_at(text, line, character))
+                    .unwrap_or_default();
+                let types = type_decls(&documents);
+                let found = types.iter().find(|t| t.name == word).or_else(|| {
+                    types
+                        .iter()
+                        .find(|t| t.uri == uri && t.line <= line && line <= t.end)
+                });
+                let result = found.map_or(Value::Null, |t| json!([t.item()]));
+                send(json!({"jsonrpc":"2.0","id":id,"result":result}));
+            }
+            ("typeHierarchy/supertypes", Some(id)) => {
+                let name = params["item"]["name"].as_str().unwrap_or_default();
+                let types = type_decls(&documents);
+                let supers: Vec<Value> = types
+                    .iter()
+                    .find(|t| t.name == name)
+                    .map(|t| {
+                        t.supers
+                            .iter()
+                            .filter_map(|s| types.iter().find(|u| &u.name == s))
+                            .map(TypeDecl::item)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                send(json!({"jsonrpc":"2.0","id":id,"result":supers}));
+            }
+            ("typeHierarchy/subtypes", Some(id)) => {
+                let name = params["item"]["name"].as_str().unwrap_or_default();
+                let subs: Vec<Value> = type_decls(&documents)
+                    .iter()
+                    .filter(|t| t.supers.iter().any(|s| s == name))
+                    .map(TypeDecl::item)
+                    .collect();
+                send(json!({"jsonrpc":"2.0","id":id,"result":subs}));
+            }
+            ("textDocument/prepareCallHierarchy", Some(id)) => {
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
+                let character = params["position"]["character"].as_u64().unwrap_or(0) as usize;
+                let word = documents
+                    .get(uri)
+                    .and_then(|text| word_at(text, line, character))
+                    .unwrap_or_default();
+                let methods = method_decls(&documents);
+                let result = methods
+                    .iter()
+                    .find(|m| m.name == word && m.uri == uri && m.line == line)
+                    .or_else(|| methods.iter().find(|m| m.name == word))
+                    .map_or(Value::Null, |m| json!([m.item()]));
+                send(json!({"jsonrpc":"2.0","id":id,"result":result}));
+            }
+            ("callHierarchy/incomingCalls", Some(id)) => {
+                let name = params["item"]["name"].as_str().unwrap_or_default();
+                let methods = method_decls(&documents);
+                let mut calls: Vec<Value> = Vec::new();
+                for caller in &methods {
+                    let ranges: Vec<Value> = call_sites(&documents, caller, name);
+                    if !ranges.is_empty() {
+                        calls.push(json!({"from": caller.item(), "fromRanges": ranges}));
+                    }
+                }
+                send(json!({"jsonrpc":"2.0","id":id,"result":calls}));
+            }
+            ("callHierarchy/outgoingCalls", Some(id)) => {
+                let name = params["item"]["name"].as_str().unwrap_or_default();
+                let methods = method_decls(&documents);
+                let mut calls: Vec<Value> = Vec::new();
+                let uri = params["item"]["uri"].as_str().unwrap_or_default();
+                if let Some(caller) = methods.iter().find(|m| m.name == name && m.uri == uri) {
+                    for callee in &methods {
+                        let ranges = call_sites(&documents, caller, &callee.name);
+                        if !ranges.is_empty() {
+                            calls.push(json!({"to": callee.item(), "fromRanges": ranges}));
+                        }
+                    }
+                }
+                send(json!({"jsonrpc":"2.0","id":id,"result":calls}));
+            }
             ("textDocument/codeAction", Some(id)) if params["context"]["only"].is_array() => {
                 let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
                 let only: Vec<&str> = params["context"]["only"]
@@ -355,6 +451,28 @@ fn main() {
                             {"range": {"start": start, "end": end}, "newText": "EXTRACTED"},
                             {"range": {"start": at(0, 0), "end": at(0, 0)},
                                 "newText": format!("const EXTRACTED = {selected};\n")}]}}),
+                    );
+                }
+                for (title, kind) in [
+                    ("Generate Constructors...", "source.generate.constructors"),
+                    (
+                        "Generate Getters and Setters...",
+                        "source.generate.accessors",
+                    ),
+                    ("Generate Getters", "source.generate.accessors"),
+                    ("Generate Setters", "source.generate.accessors"),
+                    (
+                        "Generate hashCode() and equals()...",
+                        "source.generate.hashCodeEquals",
+                    ),
+                    ("Generate toString()...", "source.generate.toString"),
+                    ("Override/Implement Methods...", "source.overrideMethods"),
+                ] {
+                    offer(
+                        title,
+                        kind,
+                        json!({"changes": {uri: [{"range": {"start": at(0, 0), "end": at(0, 0)},
+                            "newText": format!("// generated {title}\n")}]}}),
                     );
                 }
                 offer(
@@ -603,4 +721,134 @@ fn selection_text(text: &str, range: &Value) -> Option<String> {
         .get(start..end)
         .filter(|s| !s.is_empty())
         .map(String::from)
+}
+
+/// A `class`/`interface` declaration of an open document.
+struct TypeDecl {
+    name: String,
+    uri: String,
+    line: usize,
+    column: usize,
+    end: usize,
+    supers: Vec<String>,
+}
+
+impl TypeDecl {
+    fn item(&self) -> Value {
+        json!({"name": self.name, "kind": 5, "detail": "fake", "uri": self.uri,
+            "range": {"start": {"line": self.line, "character": 0},
+                "end": {"line": self.end, "character": 200}},
+            "selectionRange": {"start": {"line": self.line, "character": self.column},
+                "end": {"line": self.line, "character": self.column + self.name.len()}}})
+    }
+}
+
+fn type_decls(documents: &std::collections::BTreeMap<String, String>) -> Vec<TypeDecl> {
+    let mut decls = Vec::new();
+    for (uri, text) in documents {
+        let first = decls.len();
+        let lines = text.lines().count();
+        for (line, content) in text.lines().enumerate() {
+            let tokens: Vec<&str> = content
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .filter(|t| !t.is_empty())
+                .collect();
+            let Some(at) = tokens
+                .iter()
+                .position(|t| *t == "class" || *t == "interface")
+            else {
+                continue;
+            };
+            let Some(name) = tokens.get(at + 1).map(|n| n.trim_end_matches('{')) else {
+                continue;
+            };
+            let supers = tokens[at + 2..]
+                .iter()
+                .take_while(|t| **t != "{")
+                .filter(|t| **t != "extends" && **t != "implements")
+                .map(|t| t.trim_end_matches('{').to_owned())
+                .filter(|t| !t.is_empty())
+                .collect();
+            decls.push(TypeDecl {
+                name: name.to_owned(),
+                uri: uri.clone(),
+                line,
+                column: content.find(name).unwrap_or(0),
+                end: lines.saturating_sub(1),
+                supers,
+            });
+        }
+        for i in first..decls.len().saturating_sub(1) {
+            decls[i].end = decls[i + 1].line.saturating_sub(1);
+        }
+    }
+    decls
+}
+
+/// A `void name(` declaration of an open document.
+struct MethodDecl {
+    name: String,
+    uri: String,
+    line: usize,
+    column: usize,
+    end: usize,
+}
+
+impl MethodDecl {
+    fn item(&self) -> Value {
+        json!({"name": self.name, "kind": 6, "detail": "fake", "uri": self.uri,
+            "range": {"start": {"line": self.line, "character": 0},
+                "end": {"line": self.end, "character": 200}},
+            "selectionRange": {"start": {"line": self.line, "character": self.column},
+                "end": {"line": self.line, "character": self.column + self.name.len()}}})
+    }
+}
+
+fn method_decls(documents: &std::collections::BTreeMap<String, String>) -> Vec<MethodDecl> {
+    let mut decls = Vec::new();
+    for (uri, text) in documents {
+        let first = decls.len();
+        let lines = text.lines().count();
+        for (line, content) in text.lines().enumerate() {
+            let Some(at) = content.find("void ") else {
+                continue;
+            };
+            let rest = &content[at + 5..];
+            let Some(open) = rest.find('(') else { continue };
+            let name = rest[..open].trim();
+            decls.push(MethodDecl {
+                name: name.to_owned(),
+                uri: uri.clone(),
+                line,
+                column: at + 5 + rest[..open].find(name).unwrap_or(0),
+                end: lines.saturating_sub(1),
+            });
+        }
+        for i in first..decls.len().saturating_sub(1) {
+            decls[i].end = decls[i + 1].line.saturating_sub(1);
+        }
+    }
+    decls
+}
+
+/// Call sites (`name(` outside a `void` declaration) inside `caller`'s body.
+fn call_sites(
+    documents: &std::collections::BTreeMap<String, String>,
+    caller: &MethodDecl,
+    name: &str,
+) -> Vec<Value> {
+    let Some(text) = documents.get(&caller.uri) else {
+        return Vec::new();
+    };
+    text.lines()
+        .enumerate()
+        .skip(caller.line + 1)
+        .take(caller.end.saturating_sub(caller.line))
+        .filter(|(_, content)| !content.contains("void "))
+        .filter_map(|(line, content)| {
+            let column = content.find(&format!("{name}("))?;
+            Some(json!({"start": {"line": line, "character": column},
+                "end": {"line": line, "character": column + name.len()}}))
+        })
+        .collect()
 }
