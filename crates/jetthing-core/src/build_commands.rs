@@ -128,10 +128,15 @@ impl IdeState {
         self.start_task(plan, "Build", TaskKind::Build)
     }
 
-    /// Runs the selected run configuration, or the detected default target.
+    /// Runs the selected run configuration, else the runnable at the caret ("Current File"),
+    /// else the detected default target.
     pub fn start_run(&mut self) -> Result<(), String> {
         if self.run_configurations.selected().is_some() {
             return self.run_configuration(None);
+        }
+        // "Current File": the entry point or test at the caret, resolved like the gutter.
+        if let Some(line) = self.caret_runnable_line() {
+            return self.run_gutter(line, false, false);
         }
         let plan = self.plan(TaskKind::Run);
         self.start_task(plan, "Run", TaskKind::Run)

@@ -128,6 +128,7 @@ fn java_class<'a>(
         return;
     };
     let mut tests = 0;
+    let mut has_main = false;
     for member in children(body) {
         if member.kind() == "method_declaration"
             && let Some(method) = member.child_by_field_name("name").map(text)
@@ -162,6 +163,7 @@ fn java_class<'a>(
                     label: format!("{name}.{method}()"),
                 });
             } else if method == "main" && modifier_text.split_whitespace().any(|m| m == "static") {
+                has_main = true;
                 found.push(Runnable {
                     line,
                     kind: RunnableKind::Main,
@@ -173,6 +175,16 @@ fn java_class<'a>(
         } else {
             java_class(member, package, &simple, text, found);
         }
+    }
+    // A class declaration with an entry point gets the run icon too (like the reference).
+    if has_main && tests == 0 {
+        found.push(Runnable {
+            line: node.start_position().row,
+            kind: RunnableKind::Main,
+            language: "java",
+            symbol: qualified.clone(),
+            label: format!("{name}.main()"),
+        });
     }
     if tests > 0 {
         found.push(Runnable {
@@ -517,7 +529,9 @@ public class App {
                 (4, RunnableKind::TestContainer, "com.example.AppTest"),
                 (6, RunnableKind::Test, "com.example.AppTest.greets"),
                 (9, RunnableKind::Test, "com.example.AppTest.many"),
+                (13, RunnableKind::Main, "com.example.AppTest$Nested"),
                 (14, RunnableKind::Main, "com.example.AppTest$Nested"),
+                (18, RunnableKind::Main, "com.example.App"),
                 (19, RunnableKind::Main, "com.example.App"),
             ]
         );
