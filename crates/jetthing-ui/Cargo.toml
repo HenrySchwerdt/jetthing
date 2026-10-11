@@ -27,6 +27,7 @@ jetthing-markdown = { path = "../jetthing-markdown" }
 jetthing-plugins = { path = "../jetthing-plugins" }
 jetthing-runner = { path = "../jetthing-runner" }
 jetthing-settings = { path = "../jetthing-settings" }
+jetthing-split = { path = "../jetthing-split" }
 jetthing-templates = { path = "../jetthing-templates" }
 jetthing-text = { path = "../jetthing-text" }
 jetthing-terminal = { path = "../jetthing-terminal" }

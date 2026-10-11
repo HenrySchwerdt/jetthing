@@ -55,6 +55,16 @@ pub fn editor_id() -> egui::Id {
     egui::Id::new("jetthing_editor_surface")
 }
 
+/// Interaction id of the surface being drawn: the focused editor group owns
+/// `editor_id()` (keyboard focus, `request_focus` calls); the others get their
+/// own so two surfaces never share an id.
+fn surface_id(ctx: &egui::Context) -> egui::Id {
+    match ctx.data(|data| data.get_temp::<Option<u32>>(egui::Id::new("jt_surface_group"))) {
+        Some(Some(group)) => editor_id().with(group),
+        _ => editor_id(),
+    }
+}
+
 pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
     let mut changed_document = None;
     let mut requests = Vec::new();
@@ -64,249 +74,264 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
     egui::CentralPanel::default()
         .frame(island_frame())
         .show(ctx, |ui| {
-            tabs(app, ui);
-            if app.state.diff_active && app.state.diff.is_some() {
-                crate::diff_ui::show(app, ui);
-                app.caret_screen_pos = None;
-                return;
-            }
-            if app.state.plugin_host.active_tab.is_some() {
-                crate::plugin_ui::active_tab_body(app, ui);
-                app.caret_screen_pos = None;
-                return;
-            }
-            if app.state.active_document.is_none() {
-                // Offer toolchain setup as soon as the project opens.
-                crate::toolchain_banner::show(app, ui);
-                empty_state(ui);
-                app.caret_screen_pos = None;
-                return;
-            }
-            crate::disk_banner::show(app, ui);
-            crate::toolchain_banner::show(app, ui);
-            if crate::merged_manifest_ui::applies(app) {
-                crate::merged_manifest_ui::tab_bar(app, ui);
-                if app.state.android.merged_manifest.open {
-                    crate::merged_manifest_ui::body(app, ui);
+            let mut body = |app: &mut IdeApp, ui: &mut egui::Ui, strip: Option<&TabStrip>| {
+                let primary = strip.is_none_or(|strip| strip.primary);
+                tabs(app, ui, strip);
+                if app.state.diff_active && app.state.diff.is_some() {
+                    crate::diff_ui::show(app, ui);
                     app.caret_screen_pos = None;
                     return;
                 }
-            }
-            if crate::layout_editor_ui::applies(app) {
-                crate::layout_editor_ui::mode_bar(app, ui);
-                match app.state.android.layout.mode {
-                    jetthing_core::LayoutMode::Design => {
-                        crate::layout_editor_ui::design_body(app, ui);
+                if app.state.plugin_host.active_tab.is_some() {
+                    crate::plugin_ui::active_tab_body(app, ui);
+                    app.caret_screen_pos = None;
+                    return;
+                }
+                if app.state.active_document.is_none() {
+                    // Offer toolchain setup as soon as the project opens.
+                    if primary {
+                        crate::toolchain_banner::show(app, ui);
+                    }
+                    empty_state(ui);
+                    app.caret_screen_pos = None;
+                    return;
+                }
+                if primary {
+                    crate::disk_banner::show(app, ui);
+                    crate::toolchain_banner::show(app, ui);
+                }
+                if crate::merged_manifest_ui::applies(app) {
+                    crate::merged_manifest_ui::tab_bar(app, ui);
+                    if app.state.android.merged_manifest.open {
+                        crate::merged_manifest_ui::body(app, ui);
                         app.caret_screen_pos = None;
                         return;
                     }
-                    jetthing_core::LayoutMode::Split => {
-                        crate::layout_editor_ui::split_panel(app, ui)
+                }
+                if crate::layout_editor_ui::applies(app) {
+                    crate::layout_editor_ui::mode_bar(app, ui);
+                    match app.state.android.layout.mode {
+                        jetthing_core::LayoutMode::Design => {
+                            crate::layout_editor_ui::design_body(app, ui);
+                            app.caret_screen_pos = None;
+                            return;
+                        }
+                        jetthing_core::LayoutMode::Split => {
+                            crate::layout_editor_ui::split_panel(app, ui)
+                        }
+                        jetthing_core::LayoutMode::Code => {}
                     }
-                    jetthing_core::LayoutMode::Code => {}
                 }
-            }
-            let md_layout = app.state.markdown_layout();
-            let full = ui.available_rect_before_wrap();
-            // The toggle lives in the editor's top-right toolbar: the tab strip row.
-            let toolbar_right = egui::pos2(
-                full.right(),
-                ui.max_rect().top() + TAB_BAR_HEIGHT / 2.0 - 12.0,
-            );
-            if let Some(layout) = md_layout
-                && let Some(picked) = markdown_ui::layout_island(ui.ctx(), toolbar_right, layout)
-            {
-                requests.push(EditorRequest::Command(
-                    "markdown.layout",
-                    json!({"mode": picked.id()}),
-                ));
-            }
-            if md_layout == Some(jetthing_markdown::Layout::PreviewOnly) {
-                markdown_preview_only(app, ui, full);
-                app.caret_screen_pos = None;
-                return;
-            }
-            if app.find.open {
-                crate::findbar::show(app, ui);
-            }
-            let Some(index) = app.state.active_document else {
-                return;
-            };
-            let problems = app.state.active_problems();
-            let mut highlights = if app.find.open {
-                app.find.matches(&app.state.documents[index])
-            } else {
-                Vec::new()
-            };
-            // Snippet tab stops are boxed like search results while active.
-            if let Some(snippet) = &app.state.snippet {
-                highlights.extend(snippet.ranges().filter(|(start, end)| start < end));
-                // The painter only visits the matches of visible lines: keep them sorted.
-                highlights.sort_unstable();
-            }
-            let full = ui.available_rect_before_wrap();
-            let (available, preview_rect) = if md_layout == Some(jetthing_markdown::Layout::Split) {
-                let mid = (full.left() + full.width() / 2.0).round();
-                (
-                    full.with_max_x(mid),
-                    Some(full.with_min_x(mid + theme::ISLAND_GAP)),
-                )
-            } else {
-                (full, None)
-            };
-            let stripe_rect = Rect::from_min_max(
-                egui::pos2(
-                    available.right() - problems_ui::STRIPE_WIDTH,
-                    available.top(),
-                ),
-                available.max,
-            );
-            let text_rect = available.with_max_x(stripe_rect.left());
-            ui.allocate_rect(available, Sense::hover());
-            let line_count = app.state.documents[index].text.len_lines();
-            let row_height =
-                theme::editor_row_height(ui.ctx(), &theme::editor_font(ui.style()), ROW_HEIGHT);
-            if let Some((line, column)) =
-                problems_ui::error_stripe(ui, stripe_rect, &problems, line_count, row_height)
-            {
-                move_caret_to(app, line, column);
-                ui.memory_mut(|memory| memory.request_focus(editor_id()));
-            }
-            let navigable = app.state.active_has_language_server();
-            let mut text_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
-            let path = app.state.documents[index].path.clone();
-            let breakpoints = app.state.breakpoint_lines(&path);
-            let execution_line = app
-                .state
-                .execution_point()
-                .filter(|point| point.path == path)
-                .map(|point| point.line);
-            let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
-            let changes = app.state.document_changes(index).to_vec();
-            let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
-            let (lenses, inlays) = app.state.code_vision(index);
-            let gutter = run_icons(app, ui.ctx());
-            let doc_path = app.state.absolute_path(&app.state.documents[index].path);
-            if md_layout.is_some() {
-                app.markdown_ui.reset_for(&doc_path);
-            }
-            let editor_scroll = app.markdown_ui.take_editor_scroll();
-            let doc = &mut app.state.documents[index];
-            let rename = app
-                .state
-                .refactor
-                .rename
-                .as_ref()
-                .filter(|session| session.path == doc.path && !session.dialog)
-                .map(|session| (session.occurrences.as_slice(), session.name.as_str()));
-            let surface = editor_surface(
-                &mut text_ui,
-                doc,
-                &problems,
-                &highlights,
-                rename,
-                &context_model,
-                GutterData {
-                    changes: &changes,
-                    blame: blame.as_deref(),
-                    run: &gutter,
-                    breakpoints: &breakpoints,
-                    execution_line,
-                    lenses: &lenses,
-                    inlays: &inlays,
-                },
-                navigable,
-                editor_scroll,
-            );
-            let counts = jetthing_core::ProblemCounts::of(&problems);
-            let widget_anchor = if md_layout == Some(jetthing_markdown::Layout::EditorOnly) {
-                text_rect.right_top() - vec2(MARKDOWN_ISLAND_WIDTH, 0.0)
-            } else {
-                text_rect.right_top()
-            };
-            match problems_ui::inspection_widget(ui, widget_anchor, counts) {
-                Some(problems_ui::WidgetAction::Next) => {
-                    requests.push(EditorRequest::Command("editor.nextProblem", Value::Null));
-                }
-                Some(problems_ui::WidgetAction::Previous) => {
+                let md_layout = app.state.markdown_layout();
+                let full = ui.available_rect_before_wrap();
+                // The toggle lives in the editor's top-right toolbar: the tab strip row.
+                let toolbar_right = egui::pos2(
+                    full.right(),
+                    ui.max_rect().top() + TAB_BAR_HEIGHT / 2.0 - 12.0,
+                );
+                if let Some(layout) = md_layout
+                    && primary
+                    && let Some(picked) =
+                        markdown_ui::layout_island(ui.ctx(), toolbar_right, layout)
+                {
                     requests.push(EditorRequest::Command(
-                        "editor.previousProblem",
-                        Value::Null,
+                        "markdown.layout",
+                        json!({"mode": picked.id()}),
                     ));
                 }
-                Some(problems_ui::WidgetAction::ShowProblems) => requests.push(
-                    EditorRequest::Command("toolwindow.activate.problems", Value::Null),
-                ),
-                None => {}
-            }
-            let mut bulb = None;
-            let mut editor_scroll_y = None;
-            let doc = &mut app.state.documents[index];
-            match surface {
-                Ok(EditorOutput {
-                    changed,
-                    caret_pos,
-                    bulb_anchor,
-                    requests: editor_requests,
-                    typed: typed_text,
-                    hover: hovered,
-                    scroll_y,
-                }) => {
-                    editor_scroll_y = Some(scroll_y);
-                    hover = hovered;
-                    app.caret_screen_pos = caret_pos;
-                    bulb = bulb_anchor;
-                    requests.extend(editor_requests);
-                    typed = typed_text;
-                    if changed {
-                        let snapshot = doc.text.text();
-                        doc.refresh_analysis(&snapshot);
-                        changed_document = Some((
-                            doc.path.clone(),
-                            snapshot,
-                            doc.text.revision().min(i32::MAX as u64) as i32,
+                if md_layout == Some(jetthing_markdown::Layout::PreviewOnly) {
+                    markdown_preview_only(app, ui, full);
+                    app.caret_screen_pos = None;
+                    return;
+                }
+                if app.find.open {
+                    crate::findbar::show(app, ui);
+                }
+                let Some(index) = app.state.active_document else {
+                    return;
+                };
+                let problems = app.state.active_problems();
+                let mut highlights = if app.find.open {
+                    app.find.matches(&app.state.documents[index])
+                } else {
+                    Vec::new()
+                };
+                // Snippet tab stops are boxed like search results while active.
+                if let Some(snippet) = &app.state.snippet {
+                    highlights.extend(snippet.ranges().filter(|(start, end)| start < end));
+                    // The painter only visits the matches of visible lines: keep them sorted.
+                    highlights.sort_unstable();
+                }
+                let full = ui.available_rect_before_wrap();
+                let (available, preview_rect) =
+                    if md_layout == Some(jetthing_markdown::Layout::Split) {
+                        let mid = (full.left() + full.width() / 2.0).round();
+                        (
+                            full.with_max_x(mid),
+                            Some(full.with_min_x(mid + theme::ISLAND_GAP)),
+                        )
+                    } else {
+                        (full, None)
+                    };
+                let stripe_rect = Rect::from_min_max(
+                    egui::pos2(
+                        available.right() - problems_ui::STRIPE_WIDTH,
+                        available.top(),
+                    ),
+                    available.max,
+                );
+                let text_rect = available.with_max_x(stripe_rect.left());
+                ui.allocate_rect(available, Sense::hover());
+                let line_count = app.state.documents[index].text.len_lines();
+                let row_height =
+                    theme::editor_row_height(ui.ctx(), &theme::editor_font(ui.style()), ROW_HEIGHT);
+                if let Some((line, column)) =
+                    problems_ui::error_stripe(ui, stripe_rect, &problems, line_count, row_height)
+                {
+                    move_caret_to(app, line, column);
+                    ui.memory_mut(|memory| memory.request_focus(editor_id()));
+                }
+                let navigable = app.state.active_has_language_server();
+                let mut text_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
+                let path = app.state.documents[index].path.clone();
+                let breakpoints = app.state.breakpoint_lines(&path);
+                let execution_line = app
+                    .state
+                    .execution_point()
+                    .filter(|point| point.path == path)
+                    .map(|point| point.line);
+                let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
+                let changes = app.state.document_changes(index).to_vec();
+                let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
+                let (lenses, inlays) = app.state.code_vision(index);
+                let gutter = run_icons(app, ui.ctx());
+                let doc_path = app.state.absolute_path(&app.state.documents[index].path);
+                if md_layout.is_some() {
+                    app.markdown_ui.reset_for(&doc_path);
+                }
+                let editor_scroll = app.markdown_ui.take_editor_scroll();
+                let doc = &mut app.state.documents[index];
+                let rename = app
+                    .state
+                    .refactor
+                    .rename
+                    .as_ref()
+                    .filter(|session| session.path == doc.path && !session.dialog)
+                    .map(|session| (session.occurrences.as_slice(), session.name.as_str()));
+                let surface = editor_surface(
+                    &mut text_ui,
+                    doc,
+                    &problems,
+                    &highlights,
+                    rename,
+                    &context_model,
+                    GutterData {
+                        changes: &changes,
+                        blame: blame.as_deref(),
+                        run: &gutter,
+                        breakpoints: &breakpoints,
+                        execution_line,
+                        lenses: &lenses,
+                        inlays: &inlays,
+                    },
+                    navigable,
+                    editor_scroll,
+                );
+                let counts = jetthing_core::ProblemCounts::of(&problems);
+                let widget_anchor = if md_layout == Some(jetthing_markdown::Layout::EditorOnly) {
+                    text_rect.right_top() - vec2(MARKDOWN_ISLAND_WIDTH, 0.0)
+                } else {
+                    text_rect.right_top()
+                };
+                match problems_ui::inspection_widget(ui, widget_anchor, counts) {
+                    Some(problems_ui::WidgetAction::Next) => {
+                        requests.push(EditorRequest::Command("editor.nextProblem", Value::Null));
+                    }
+                    Some(problems_ui::WidgetAction::Previous) => {
+                        requests.push(EditorRequest::Command(
+                            "editor.previousProblem",
+                            Value::Null,
                         ));
                     }
+                    Some(problems_ui::WidgetAction::ShowProblems) => requests.push(
+                        EditorRequest::Command("toolwindow.activate.problems", Value::Null),
+                    ),
+                    None => {}
                 }
-                Err(error) => app.state.status = error,
-            }
-            if let Some(preview_rect) = preview_rect {
-                let doc = &app.state.documents[index];
-                let (revision, lines) = (doc.text.revision(), doc.text.len_lines());
-                let absolute = app.state.absolute_path(&doc.path);
-                let pending = app.markdown_ui.take_preview_scroll();
-                let output = markdown_ui::preview(
-                    ui,
-                    &mut app.markdown_ui,
-                    preview_rect,
-                    &absolute,
-                    revision,
-                    || doc.text.text(),
-                    lines,
-                    pending,
-                );
-                if let Some(editor_y) = editor_scroll_y
-                    && app.markdown_ui.sync(
-                        editor_y,
-                        row_height,
-                        output.scroll_y,
-                        editor_scroll.is_some(),
-                        pending.is_some(),
-                    )
+                let mut bulb = None;
+                let mut editor_scroll_y = None;
+                let doc = &mut app.state.documents[index];
+                match surface {
+                    Ok(EditorOutput {
+                        changed,
+                        caret_pos,
+                        bulb_anchor,
+                        requests: editor_requests,
+                        typed: typed_text,
+                        hover: hovered,
+                        scroll_y,
+                    }) => {
+                        editor_scroll_y = Some(scroll_y);
+                        hover = hovered;
+                        app.caret_screen_pos = caret_pos;
+                        bulb = bulb_anchor;
+                        requests.extend(editor_requests);
+                        typed = typed_text;
+                        if changed {
+                            let snapshot = doc.text.text();
+                            doc.refresh_analysis(&snapshot);
+                            changed_document = Some((
+                                doc.path.clone(),
+                                snapshot,
+                                doc.text.revision().min(i32::MAX as u64) as i32,
+                            ));
+                        }
+                    }
+                    Err(error) => app.state.status = error,
+                }
+                if let Some(preview_rect) = preview_rect {
+                    let doc = &app.state.documents[index];
+                    let (revision, lines) = (doc.text.revision(), doc.text.len_lines());
+                    let absolute = app.state.absolute_path(&doc.path);
+                    let pending = app.markdown_ui.take_preview_scroll();
+                    let output = markdown_ui::preview(
+                        ui,
+                        &mut app.markdown_ui,
+                        preview_rect,
+                        &absolute,
+                        revision,
+                        || doc.text.text(),
+                        lines,
+                        pending,
+                    );
+                    if let Some(editor_y) = editor_scroll_y
+                        && app.markdown_ui.sync(
+                            editor_y,
+                            row_height,
+                            output.scroll_y,
+                            editor_scroll.is_some(),
+                            pending.is_some(),
+                        )
+                    {
+                        ui.ctx().request_repaint();
+                    }
+                }
+                let selection = app.state.documents[index].selections.primary();
+                if md_layout.is_some()
+                    && primary
+                    && !selection.is_caret()
+                    && let Some(pos) = app.caret_screen_pos
+                    && let Some((command, params)) =
+                        markdown_ui::floating_bar(ui.ctx(), pos, text_rect)
                 {
-                    ui.ctx().request_repaint();
+                    requests.push(EditorRequest::Command(command, params));
                 }
-            }
-            let selection = app.state.documents[index].selections.primary();
-            if md_layout.is_some()
-                && !selection.is_caret()
-                && let Some(pos) = app.caret_screen_pos
-                && let Some((command, params)) = markdown_ui::floating_bar(ui.ctx(), pos, text_rect)
-            {
-                requests.push(EditorRequest::Command(command, params));
-            }
-            crate::intentions_ui::lightbulb(app, ui, bulb);
-            crate::ai_inline::paint(app, ui);
+                if primary {
+                    crate::intentions_ui::lightbulb(app, ui, bulb);
+                    crate::ai_inline::paint(app, ui);
+                }
+            };
+            show_groups(app, ui, &mut body);
         });
     if let Some((path, text, version)) = changed_document {
         app.state.sync_document_lsp(&path, &text, version);
@@ -425,7 +450,16 @@ fn empty_state(ui: &mut egui::Ui) {
     }
 }
 
-fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
+/// The tabs one editor group shows (all documents when the editor is not split).
+struct TabStrip {
+    indices: Vec<usize>,
+    /// The focused group also carries the diff and plugin tabs.
+    primary: bool,
+}
+
+const TAB_DRAG: &str = "jt_tab_drag";
+
+fn tabs(app: &mut IdeApp, ui: &mut egui::Ui, strip: Option<&TabStrip>) {
     let (bar, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), TAB_BAR_HEIGHT), Sense::hover());
     let mut x = bar.left() + 6.0;
@@ -433,9 +467,15 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     let mut close = None;
     let mut tab_action = None;
     let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
-    for index in 0..app.state.documents.len() {
+    let indices: Vec<usize> = match strip {
+        Some(strip) => strip.indices.clone(),
+        None => (0..app.state.documents.len()).collect(),
+    };
+    let primary = strip.is_none_or(|strip| strip.primary);
+    for index in indices {
         let doc = &app.state.documents[index];
         let name = IdeApp::file_name(&doc.path);
+        let preview = app.state.is_preview(index);
         let active = app.state.active_document == Some(index)
             && !app.state.diff_active
             && app.state.plugin_host.active_tab.is_none();
@@ -444,16 +484,39 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
         } else {
             *theme::TEXT_SECONDARY
         };
-        let galley = ui
-            .painter()
-            .layout_no_wrap(name.clone(), font.clone(), color);
+        let galley = if preview {
+            // Preview tabs are italic until they become permanent.
+            let mut job = egui::text::LayoutJob::default();
+            job.append(
+                &name,
+                0.0,
+                egui::TextFormat {
+                    font_id: font.clone(),
+                    color,
+                    italics: true,
+                    ..Default::default()
+                },
+            );
+            ui.painter().layout_job(job)
+        } else {
+            ui.painter()
+                .layout_no_wrap(name.clone(), font.clone(), color)
+        };
         let width = 10.0 + 16.0 + 6.0 + galley.size().x + 6.0 + 16.0 + 8.0;
         let rect = Rect::from_min_size(egui::pos2(x, bar.top() + 5.0), vec2(width, 28.0));
         x += width + 2.0;
         if rect.left() > bar.right() {
             break;
         }
-        let response = ui.interact(rect, egui::Id::new(("editor_tab", index)), Sense::click());
+        let response = ui.interact(
+            rect,
+            egui::Id::new(("editor_tab", index)),
+            Sense::click_and_drag(),
+        );
+        if response.drag_started() {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(egui::Id::new(TAB_DRAG), index));
+        }
         let fill = if active {
             *theme::TAB_SELECTED
         } else if response.hovered() {
@@ -551,7 +614,9 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             close = Some(index);
         }
     }
-    if let Some(tab) = app.state.diff.as_ref() {
+    if !primary {
+        // Only the focused group shows the diff and plugin tabs.
+    } else if let Some(tab) = app.state.diff.as_ref() {
         let title = crate::diff_ui::tab_title(tab);
         let tooltip = format!("Diff of {} against HEAD", tab.path.display());
         let (clicked, closed, end) = diff_tab(ui, bar, x, &title, &tooltip, app.state.diff_active);
@@ -562,7 +627,9 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
             app.dispatch("diff.activate", Value::Null);
         }
     }
-    crate::plugin_ui::editor_tabs(app, ui, bar, x);
+    if primary {
+        crate::plugin_ui::editor_tabs(app, ui, bar, x);
+    }
     if let Some((action, target)) = tab_action {
         let ctx = ui.ctx().clone();
         app.run_context_action(&action, &target, &ctx);
@@ -571,6 +638,247 @@ fn tabs(app: &mut IdeApp, ui: &mut egui::Ui) {
     } else if let Some(index) = activate {
         app.dispatch("editor.activate", json!({"index": index}));
         ui.memory_mut(|memory| memory.request_focus(editor_id()));
+    }
+}
+
+fn model_rect(rect: Rect) -> jetthing_split::Rect {
+    jetthing_split::Rect::new(rect.left(), rect.top(), rect.width(), rect.height())
+}
+
+fn from_model(rect: jetthing_split::Rect) -> Rect {
+    Rect::from_min_size(egui::pos2(rect.x, rect.y), vec2(rect.w, rect.h))
+}
+
+/// Draws the editor groups of the split tree, each with its own tab strip, and
+/// the dividers between them; `body` draws one group.
+fn show_groups(
+    app: &mut IdeApp,
+    ui: &mut egui::Ui,
+    body: &mut dyn FnMut(&mut IdeApp, &mut egui::Ui, Option<&TabStrip>),
+) {
+    app.state.sync_splits();
+    let area = ui.available_rect_before_wrap();
+    if !app.state.splits.is_split() {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::new("jt_surface_group"), None::<u32>));
+        body(app, ui, None);
+        tab_drag(app, ui.ctx(), &[(app.state.splits.focused_id(), area)]);
+        return;
+    }
+    // A press inside another group focuses it before it is drawn.
+    let pressed = ui
+        .input(|input| input.pointer.primary_pressed())
+        .then(|| ui.input(|input| input.pointer.interact_pos()))
+        .flatten()
+        .filter(|pos| ui.ctx().layer_id_at(*pos) == Some(ui.layer_id()));
+    if let Some(pos) = pressed
+        && let Some((group, _)) = app
+            .state
+            .splits
+            .layout(model_rect(area))
+            .into_iter()
+            .find(|(_, rect)| rect.contains(pos.x, pos.y))
+        && group != app.state.splits.focused_id()
+    {
+        app.dispatch("editor.focusGroup", json!({ "group": group }));
+    }
+    let focused = app.state.splits.focused_id();
+    let layout = app.state.splits.layout(model_rect(area));
+    let mut order = layout.clone();
+    // The focused group is drawn last so the caret and typing state are its own.
+    order.sort_by_key(|(group, _)| *group == focused);
+    for (group, rect) in order {
+        let rect = from_model(rect).shrink(1.0);
+        let Some(info) = app.state.splits.group(group).cloned() else {
+            continue;
+        };
+        let indices: Vec<usize> = app
+            .state
+            .documents
+            .iter()
+            .enumerate()
+            .filter(|(_, doc)| info.tabs.contains(&doc.path))
+            .map(|(index, _)| index)
+            .collect();
+        let active = info
+            .active
+            .as_ref()
+            .and_then(|path| app.state.documents.iter().position(|d| &d.path == path));
+        let primary = group == focused;
+        let saved = (
+            app.state.active_document,
+            app.state.diff_active,
+            app.state.plugin_host.active_tab,
+        );
+        app.state.active_document = active;
+        if !primary {
+            app.state.diff_active = false;
+            app.state.plugin_host.active_tab = None;
+        }
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new("jt_surface_group"),
+                (!primary).then_some(group),
+            )
+        });
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt(("editor_group", group))
+                .max_rect(rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        child.set_clip_rect(rect.intersect(ui.clip_rect()));
+        body(app, &mut child, Some(&TabStrip { indices, primary }));
+        if !primary {
+            (
+                app.state.active_document,
+                app.state.diff_active,
+                app.state.plugin_host.active_tab,
+            ) = saved;
+        }
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::new("jt_surface_group"), None::<u32>));
+    let rects: Vec<_> = layout
+        .into_iter()
+        .map(|(group, rect)| (group, from_model(rect)))
+        .collect();
+    dividers(app, ui, area);
+    tab_drag(app, ui.ctx(), &rects);
+}
+
+/// Draggable dividers between split groups.
+fn dividers(app: &mut IdeApp, ui: &mut egui::Ui, area: Rect) {
+    use jetthing_split::Orientation;
+    for (n, divider) in app
+        .state
+        .splits
+        .dividers(model_rect(area))
+        .into_iter()
+        .enumerate()
+    {
+        let whole = from_model(divider.area);
+        let (line, cursor) = match divider.orientation {
+            Orientation::Columns => {
+                let x = whole.left() + (whole.width() * divider.ratio).round();
+                (
+                    Rect::from_min_max(
+                        egui::pos2(x - 2.0, whole.top()),
+                        egui::pos2(x + 2.0, whole.bottom()),
+                    ),
+                    egui::CursorIcon::ResizeHorizontal,
+                )
+            }
+            Orientation::Rows => {
+                let y = whole.top() + (whole.height() * divider.ratio).round();
+                (
+                    Rect::from_min_max(
+                        egui::pos2(whole.left(), y - 2.0),
+                        egui::pos2(whole.right(), y + 2.0),
+                    ),
+                    egui::CursorIcon::ResizeVertical,
+                )
+            }
+        };
+        let response = ui
+            .interact(line, egui::Id::new(("editor_divider", n)), Sense::drag())
+            .on_hover_cursor(cursor);
+        let stroke = Stroke::new(1.0_f32, theme::TAB_SELECTED_BORDER);
+        match divider.orientation {
+            Orientation::Columns => {
+                ui.painter().vline(line.center().x, line.y_range(), stroke);
+            }
+            Orientation::Rows => {
+                ui.painter().hline(line.x_range(), line.center().y, stroke);
+            }
+        }
+        if response.dragged()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let ratio = match divider.orientation {
+                Orientation::Columns => (pos.x - whole.left()) / whole.width().max(1.0),
+                Orientation::Rows => (pos.y - whole.top()) / whole.height().max(1.0),
+            };
+            app.dispatch(
+                "editor.setSplitRatio",
+                json!({"path": divider.path, "ratio": ratio}),
+            );
+        }
+    }
+}
+
+/// Fraction of a group's width/height that turns a tab drop into a split.
+const DROP_EDGE_FRACTION: f32 = 0.25;
+
+/// A tab dragged over the editor: highlights the drop target (an edge splits,
+/// another group's area moves the tab there) and applies it on release.
+fn tab_drag(app: &mut IdeApp, ctx: &egui::Context, groups: &[(jetthing_split::GroupId, Rect)]) {
+    let id = egui::Id::new(TAB_DRAG);
+    let Some(index) = ctx.data(|data| data.get_temp::<usize>(id)) else {
+        return;
+    };
+    let Some(path) = app.state.documents.get(index).map(|d| d.path.clone()) else {
+        ctx.data_mut(|data| data.remove::<usize>(id));
+        return;
+    };
+    let source = app.state.splits.group_of(&path);
+    let only_tab = source
+        .and_then(|group| app.state.splits.group(group))
+        .is_some_and(|group| group.tabs.len() == 1);
+    let (down, pos) =
+        ctx.input(|input| (input.pointer.primary_down(), input.pointer.interact_pos()));
+    // What a drop at `pos` would do: split at an edge, or move to another group.
+    let target = pos.and_then(|pos| {
+        let (group, rect) = groups.iter().find(|(_, rect)| rect.contains(pos))?;
+        let body = rect.with_min_y(rect.top() + TAB_BAR_HEIGHT);
+        let edge = jetthing_split::drop_edge(model_rect(body), pos.x, pos.y, DROP_EDGE_FRACTION);
+        match edge {
+            Some(_) if only_tab && Some(*group) == source => None,
+            Some(edge) => Some((*group, Some(edge), *rect, body)),
+            None if Some(*group) != source => Some((*group, None, *rect, body)),
+            None => None,
+        }
+    });
+    if down {
+        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        if let Some((_, edge, _, body)) = target {
+            let zone = match edge {
+                Some(jetthing_split::Edge::Left) => body.with_max_x(body.center().x),
+                Some(jetthing_split::Edge::Right) => body.with_min_x(body.center().x),
+                Some(jetthing_split::Edge::Top) => body.with_max_y(body.center().y),
+                Some(jetthing_split::Edge::Bottom) => body.with_min_y(body.center().y),
+                None => body,
+            };
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("jt_tab_drop"),
+            ));
+            painter.rect_filled(zone, 4.0, theme::TAB_SELECTED_BORDER.gamma_multiply(0.35));
+        }
+        ctx.request_repaint();
+        return;
+    }
+    ctx.data_mut(|data| data.remove::<usize>(id));
+    let Some((group, edge, _, _)) = target else {
+        return;
+    };
+    match edge {
+        Some(edge) => {
+            let edge = match edge {
+                jetthing_split::Edge::Left => "left",
+                jetthing_split::Edge::Right => "right",
+                jetthing_split::Edge::Top => "top",
+                jetthing_split::Edge::Bottom => "bottom",
+            };
+            app.dispatch(
+                "editor.splitAt",
+                json!({"index": index, "group": group, "edge": edge}),
+            );
+        }
+        None => app.dispatch(
+            "editor.moveToGroup",
+            json!({"index": index, "group": group}),
+        ),
     }
 }
 
@@ -1111,7 +1419,7 @@ fn editor_surface(
         );
         let (rect, response) = ui.allocate_exact_size(content_size, Sense::click_and_drag());
         let response = ui
-            .interact(rect, editor_id(), Sense::click_and_drag())
+            .interact(rect, surface_id(ui.ctx()), Sense::click_and_drag())
             .union(response);
         if response.clicked() || response.drag_started() {
             response.request_focus();
@@ -1141,7 +1449,7 @@ fn editor_surface(
                 .round()
                 .max(0.0) as usize,
         };
-        let block_drag_id = editor_id().with("block_drag_anchor");
+        let block_drag_id = surface_id(ui.ctx()).with("block_drag_anchor");
         // The character under the pointer (not the nearest boundary),
         // only over text, for hover documentation.
         hover = response.hover_pos().and_then(|position| {
