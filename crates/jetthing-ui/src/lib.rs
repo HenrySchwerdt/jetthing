@@ -43,6 +43,7 @@ mod folding;
 mod git_log_ui;
 mod gradle_window;
 mod gutter_popup;
+mod hierarchy_ui;
 mod icons;
 mod intentions_ui;
 mod keybindings;
@@ -665,6 +666,8 @@ impl IdeApp {
             if egui::Popup::is_any_open(ctx) {
                 // Context menus and main-menu dropdowns close first.
                 egui::Popup::close_all(ctx);
+            } else if gutter_popup::is_open(ctx) {
+                gutter_popup::close(ctx);
             } else if self.menu_bar_open {
                 self.menu_bar_open = false;
             } else if self.state.about_open {
@@ -1033,6 +1036,7 @@ impl IdeApp {
         if self.state.updates.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
+        widgets::apply_pointer_cursor(ctx);
         self.control_after_frame(ctx);
     }
 

@@ -1225,6 +1225,21 @@ impl GutterLayout {
     }
 }
 
+/// Corner rounding of one line's selection rectangle: a multi-line selection
+/// reads as one shape, rounded only at the top of its first line and the bottom
+/// of its last.
+fn selection_corners(first_line: bool, last_line: bool) -> egui::CornerRadius {
+    const RADIUS: u8 = 2;
+    let top = if first_line { RADIUS } else { 0 };
+    let bottom = if last_line { RADIUS } else { 0 };
+    egui::CornerRadius {
+        nw: top,
+        ne: top,
+        sw: bottom,
+        se: bottom,
+    }
+}
+
 /// Run icons are recomputed this long after the latest edit; until then the
 /// previous icons stay (finding runnables walks the whole syntax tree, too slow
 /// for every keystroke in large files).
@@ -1405,8 +1420,7 @@ fn editor_surface(
         let (rect, response) = ui.allocate_exact_size(content_size, Sense::click_and_drag());
         let response = ui
             .interact(rect, surface_id(ui.ctx()), Sense::click_and_drag())
-            .union(response)
-            .on_hover_cursor(egui::CursorIcon::Text);
+            .union(response);
         if response.clicked() || response.drag_started() {
             response.request_focus();
         }
@@ -1692,6 +1706,24 @@ fn editor_surface(
         } else {
             Vec::new()
         };
+        // I-beam over the text only. The gutter keeps the arrow, and its clickable
+        // marks (run icons, fold markers, change bars, blame) show the hand.
+        if let Some(pointer) = response.hover_pos() {
+            let x = pointer.x - rect.left();
+            let line = folds.row_to_line(row_at(pointer));
+            let clickable = layout.in_run_column(x) && gutter.iter().any(|mark| mark.line == line)
+                || layout.in_fold_column(x) && markers.iter().any(|(start, _)| *start == line)
+                || crate::change_popup::in_marker_column(x, layout.width)
+                    && jetthing_core::hunk_at_line(changes, line).is_some()
+                || blame.is_some() && x < blame_width;
+            ui.ctx().set_cursor_icon(if x >= gutter_width {
+                egui::CursorIcon::Text
+            } else if clickable {
+                egui::CursorIcon::PointingHand
+            } else {
+                egui::CursorIcon::Default
+            });
+        }
         let focused = response.has_focus();
         let blink_on = {
             let time = ui.input(|input| input.time);
@@ -1814,7 +1846,10 @@ fn editor_surface(
                     }
                     painter.rect_filled(
                         Rect::from_min_max(egui::pos2(x1, y), egui::pos2(x2, y + row_height)),
-                        2.0,
+                        selection_corners(
+                            selection.start() >= line_start,
+                            selection.end() <= line_end,
+                        ),
                         theme::editor::SELECTION,
                     );
                 }
@@ -2337,6 +2372,18 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn multi_line_selections_round_only_their_outer_corners() {
+        let single = selection_corners(true, true);
+        assert_eq!(single, egui::CornerRadius::same(2));
+        let first = selection_corners(true, false);
+        assert_eq!((first.nw, first.ne, first.sw, first.se), (2, 2, 0, 0));
+        let middle = selection_corners(false, false);
+        assert_eq!(middle, egui::CornerRadius::ZERO);
+        let last = selection_corners(false, true);
+        assert_eq!((last.nw, last.ne, last.sw, last.se), (0, 0, 2, 2));
+    }
 
     #[test]
     fn modified_badge_does_not_cover_the_tab_title() {

@@ -58,12 +58,15 @@ mod plugin_host;
 mod problems;
 pub mod quick_nav;
 pub use new_class::{FileTemplate, JavaKind, KotlinKind, file_templates};
+mod generate;
+mod hierarchy;
 mod project_commands;
 pub mod project_view;
 mod quick_doc;
 mod refactor;
 mod remote_commands;
 mod search_replace;
+mod test_nav;
 mod welcome_commands;
 pub use welcome_commands::{CloneJob, JdkChoice, jdk_major, repository_name};
 mod live_templates;
@@ -153,6 +156,10 @@ pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
 pub use code_vision::{CodeLens, InlayLabel};
 pub use completion_stats::CompletionStats;
 pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
+pub use generate::{GenerateKind, GenerateState};
+pub use hierarchy::{
+    Hierarchy, HierarchyDirection, HierarchyKind, HierarchyNode, HierarchyRow, HierarchyState,
+};
 pub use live_templates::context_labels;
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
@@ -319,6 +326,10 @@ pub struct IdeState {
     pub code_actions: CodeActionState,
     /// Rename and the other server-backed refactorings.
     pub refactor: RefactorState,
+    /// The Generate popup's pending requests.
+    pub generate: GenerateState,
+    /// Type / Call hierarchy tree and Go to Super Method.
+    pub hierarchy: HierarchyState,
     /// Quick documentation popup and completion documentation panel.
     pub docs: DocsState,
     /// Parameter info popup.
@@ -466,6 +477,8 @@ impl IdeState {
         self.navigation = NavigationState::default();
         self.code_actions = CodeActionState::default();
         self.refactor = RefactorState::default();
+        self.generate = GenerateState::default();
+        self.hierarchy = HierarchyState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.quick_nav = quick_nav::QuickNavState::default();
@@ -961,6 +974,8 @@ impl IdeState {
         self.poll_navigation();
         self.poll_code_actions();
         self.poll_refactor();
+        self.poll_generate();
+        self.poll_hierarchy();
         self.poll_docs();
         self.poll_signature();
         self.poll_code_vision();
@@ -1183,6 +1198,9 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     navigation::register(&mut registry);
     code_actions::register(&mut registry);
     refactor::register(&mut registry);
+    generate::register(&mut registry);
+    hierarchy::register(&mut registry);
+    test_nav::register(&mut registry);
     ai_commands::register(&mut registry);
     registry
         .register(Command::new(

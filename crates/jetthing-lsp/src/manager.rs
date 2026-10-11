@@ -81,6 +81,12 @@ pub enum Feature {
     Rename,
     Formatting,
     RangeFormatting,
+    PrepareTypeHierarchy,
+    TypeHierarchySupertypes,
+    TypeHierarchySubtypes,
+    PrepareCallHierarchy,
+    CallHierarchyIncoming,
+    CallHierarchyOutgoing,
 }
 
 impl Feature {
@@ -97,6 +103,12 @@ impl Feature {
             Feature::Rename => "textDocument/rename",
             Feature::Formatting => "textDocument/formatting",
             Feature::RangeFormatting => "textDocument/rangeFormatting",
+            Feature::PrepareTypeHierarchy => "textDocument/prepareTypeHierarchy",
+            Feature::TypeHierarchySupertypes => "typeHierarchy/supertypes",
+            Feature::TypeHierarchySubtypes => "typeHierarchy/subtypes",
+            Feature::PrepareCallHierarchy => "textDocument/prepareCallHierarchy",
+            Feature::CallHierarchyIncoming => "callHierarchy/incomingCalls",
+            Feature::CallHierarchyOutgoing => "callHierarchy/outgoingCalls",
         }
     }
 
@@ -110,6 +122,12 @@ impl Feature {
             Feature::ExecuteCommand => "commands",
             Feature::PrepareRename | Feature::Rename => "Rename",
             Feature::Formatting | Feature::RangeFormatting => "Reformat Code",
+            Feature::PrepareTypeHierarchy
+            | Feature::TypeHierarchySupertypes
+            | Feature::TypeHierarchySubtypes => "Type Hierarchy",
+            Feature::PrepareCallHierarchy
+            | Feature::CallHierarchyIncoming
+            | Feature::CallHierarchyOutgoing => "Call Hierarchy",
         }
     }
 
@@ -160,6 +178,17 @@ impl Feature {
             Feature::RangeFormatting => !matches!(
                 capabilities.document_range_formatting_provider,
                 None | Some(OneOf::Left(false))
+            ),
+            // `lsp-types` has no `typeHierarchyProvider` field: assume a running
+            // server answers (it replies "method not found" otherwise).
+            Feature::PrepareTypeHierarchy
+            | Feature::TypeHierarchySupertypes
+            | Feature::TypeHierarchySubtypes => true,
+            Feature::PrepareCallHierarchy
+            | Feature::CallHierarchyIncoming
+            | Feature::CallHierarchyOutgoing => !matches!(
+                capabilities.call_hierarchy_provider,
+                None | Some(lsp_types::CallHierarchyServerCapability::Simple(false))
             ),
         }
     }
