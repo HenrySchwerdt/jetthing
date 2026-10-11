@@ -7,6 +7,7 @@ use thiserror::Error;
 use walkdir::WalkDir;
 
 pub mod generator;
+pub mod recent;
 mod watcher;
 
 pub use watcher::{FileChanges, ProjectWatcher};
