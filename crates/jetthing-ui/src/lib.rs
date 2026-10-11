@@ -64,6 +64,7 @@ mod refactor_ui;
 mod run_config_dialog;
 mod settings_dialog;
 mod settings_keymap;
+mod settings_pages;
 mod structure_view;
 mod switcher;
 mod syntax;

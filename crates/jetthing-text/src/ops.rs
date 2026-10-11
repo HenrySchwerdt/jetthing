@@ -470,6 +470,40 @@ pub fn type_char(
     selections: &mut SelectionSet,
     typed: char,
 ) -> Result<bool, TextError> {
+    type_char_with(doc, selections, typed, PairOptions::default())
+}
+
+/// Which kinds of characters [`type_char_with`] pairs (Settings | Editor | Code Editing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PairOptions {
+    pub brackets: bool,
+    pub quotes: bool,
+}
+
+impl Default for PairOptions {
+    fn default() -> Self {
+        Self {
+            brackets: true,
+            quotes: true,
+        }
+    }
+}
+
+/// [`type_char`] with pairing switched off per character class.
+pub fn type_char_with(
+    doc: &mut TextDocument,
+    selections: &mut SelectionSet,
+    typed: char,
+    pairing: PairOptions,
+) -> Result<bool, TextError> {
+    let enabled = if matches!(typed, '"' | '\'' | '`') {
+        pairing.quotes
+    } else {
+        pairing.brackets
+    };
+    if !enabled {
+        return Ok(false);
+    }
     let all_carets = selections.selections().iter().all(|s| s.is_caret());
     // Overtype a closing character that was auto-inserted.
     if all_carets
@@ -1009,6 +1043,18 @@ mod tests {
         unindent_lines(&mut doc, &mut selections).unwrap();
         unindent_lines(&mut doc, &mut selections).unwrap();
         assert_eq!(doc.text(), "a\nb\n");
+    }
+
+    #[test]
+    fn pairing_can_be_switched_off_per_class() {
+        let off = PairOptions {
+            brackets: false,
+            quotes: true,
+        };
+        let (mut doc, mut selections) = setup("f ", Selection::caret(2));
+        assert!(!type_char_with(&mut doc, &mut selections, '(', off).unwrap());
+        assert!(type_char_with(&mut doc, &mut selections, '"', off).unwrap());
+        assert_eq!(doc.text(), "f \"\"");
     }
 
     #[test]
