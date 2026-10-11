@@ -796,7 +796,7 @@ mod tests {
                 "/home/user/projects/sample/src/main/java/com/example/app",
                 30
             ),
-            "…/java/com/example/app"
+            "…/main/java/com/example/app"
         );
     }
 

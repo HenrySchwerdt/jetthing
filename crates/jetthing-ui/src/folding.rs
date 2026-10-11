@@ -170,7 +170,7 @@ mod tests {
         let view = FoldView::new(&document);
         assert_eq!(view.row_count(document.text.len_lines()), 4);
         let row = view.collapsed_on(1).expect("collapsed row");
-        assert_eq!(row.placeholder, "{...}");
+        assert_eq!(row.placeholder, "{ g(); }");
         assert_eq!(row.end_line, 3);
         assert_eq!(&source[row.start_char..row.start_char + 1], "{");
     }
