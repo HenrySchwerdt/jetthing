@@ -3,15 +3,50 @@
   "title": "VCS widget opens the Branches popup",
   "reference": "reference/intellij-community/java-gradle/14b-branches.png",
   "fixture": "java-gradle",
-  "open": ["src/main/java/com/example/App.java"],
+  "open": [
+    "src/main/java/com/example/App.java"
+  ],
   "steps": [
-    {"op": "wait", "until": "idle"},
-    {"op": "click", "x": 673, "y": 411},
-    {"op": "click", "x": 1396, "y": 716},
-    {"op": "click", "x": 1357, "y": 107},
-    {"op": "wait", "until": "idle"},
-    {"op": "click", "x": 220, "y": 20},
-    {"op": "wait", "until": "idle"},
-    {"op": "screenshot", "name": "14b-branches.png"}
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "click",
+      "x": 673,
+      "y": 411
+    },
+    {
+      "op": "click",
+      "x": 1396,
+      "y": 716
+    },
+    {
+      "op": "click",
+      "x": 1357,
+      "y": 107
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "click",
+      "x": 220,
+      "y": 20
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "assert",
+      "pointer": "/status",
+      "contains": "Opened"
+    },
+    {
+      "op": "screenshot",
+      "name": "14b-branches.png"
+    }
   ]
 }

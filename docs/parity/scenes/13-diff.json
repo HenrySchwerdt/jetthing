@@ -51,6 +51,11 @@
       "until": "idle"
     },
     {
+      "op": "assert",
+      "pointer": "/status",
+      "contains": "1 difference"
+    },
+    {
       "op": "screenshot",
       "name": "13-diff.png"
     }
