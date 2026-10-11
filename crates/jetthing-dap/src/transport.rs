@@ -4,8 +4,9 @@
 use crate::DapError;
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
@@ -54,10 +55,38 @@ pub fn write_message(writer: &mut impl Write, message: &Value) -> Result<(), Dap
     Ok(())
 }
 
+/// Reads framed messages from `source` on a background thread.
+fn spawn_reader(
+    source: impl Read + Send + 'static,
+) -> Result<Receiver<Result<Value, String>>, DapError> {
+    let (sender, incoming) = mpsc::channel();
+    thread::Builder::new()
+        .name("jetthing-dap-reader".into())
+        .spawn(move || {
+            let mut reader = BufReader::new(source);
+            loop {
+                match read_message(&mut reader) {
+                    Ok(Some(message)) => {
+                        if sender.send(Ok(message)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        let _ = sender.send(Err(error.to_string()));
+                        break;
+                    }
+                }
+            }
+        })?;
+    Ok(incoming)
+}
+
 /// A running adapter process.
 pub struct AdapterProcess {
-    child: Child,
-    stdin: ChildStdin,
+    /// `None` for adapters reached over TCP (java-debug runs inside jdtls).
+    child: Option<Child>,
+    stdin: Box<dyn Write + Send>,
     incoming: Receiver<Result<Value, String>>,
     stderr: Receiver<String>,
 }
@@ -78,26 +107,7 @@ impl AdapterProcess {
         let stdin = child.stdin.take().ok_or(DapError::Closed)?;
         let stdout = child.stdout.take().ok_or(DapError::Closed)?;
         let stderr_pipe = child.stderr.take().ok_or(DapError::Closed)?;
-        let (sender, incoming) = mpsc::channel();
-        thread::Builder::new()
-            .name("jetthing-dap-reader".into())
-            .spawn(move || {
-                let mut reader = BufReader::new(stdout);
-                loop {
-                    match read_message(&mut reader) {
-                        Ok(Some(message)) => {
-                            if sender.send(Ok(message)).is_err() {
-                                break;
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(error) => {
-                            let _ = sender.send(Err(error.to_string()));
-                            break;
-                        }
-                    }
-                }
-            })?;
+        let incoming = spawn_reader(stdout)?;
         let (err_sender, stderr) = mpsc::channel();
         thread::Builder::new()
             .name("jetthing-dap-stderr".into())
@@ -115,10 +125,26 @@ impl AdapterProcess {
                 }
             })?;
         Ok(Self {
-            child,
-            stdin,
+            child: Some(child),
+            stdin: Box::new(stdin),
             incoming,
             stderr,
+        })
+    }
+
+    /// Connects to an adapter that already listens on `127.0.0.1:port`.
+    pub fn connect(port: u16) -> Result<Self, DapError> {
+        let stream = TcpStream::connect(("127.0.0.1", port)).map_err(|error| DapError::Spawn {
+            program: format!("127.0.0.1:{port}"),
+            error: error.to_string(),
+        })?;
+        let _ = stream.set_nodelay(true);
+        let incoming = spawn_reader(stream.try_clone()?)?;
+        Ok(Self {
+            child: None,
+            stdin: Box::new(stream),
+            incoming,
+            stderr: mpsc::channel().1,
         })
     }
 
@@ -135,13 +161,19 @@ impl AdapterProcess {
         self.stderr.try_iter().collect()
     }
 
+    /// Whether the adapter process ended; TCP adapters report end of stream as an
+    /// error message through [`receive`](Self::receive) instead.
     pub fn has_exited(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(Some(_)))
+        self.child
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(Some(_))))
     }
 
     pub fn kill(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 

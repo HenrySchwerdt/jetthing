@@ -42,6 +42,7 @@ mod folds;
 mod git_log;
 mod gradle_commands;
 mod gutter_commands;
+mod java_debug;
 pub mod keymap_commands;
 mod line_changes;
 mod lsp_commands;
