@@ -370,6 +370,26 @@ pub enum Protocol {
     WebSocket,
     /// A Server-Sent Events stream (`text/event-stream`).
     Sse,
+    /// A gRPC call; the URL is the target, `grpc` selects the method, headers are
+    /// metadata and the body is the JSON request message(s).
+    Grpc,
+}
+
+/// gRPC specific request settings.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct GrpcConfig {
+    /// `.proto` file to load the schema from; empty uses server reflection.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub proto_file: String,
+    /// Method as `package.Service/Method`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub method: String,
+}
+
+impl GrpcConfig {
+    pub fn is_default(&self) -> bool {
+        *self == GrpcConfig::default()
+    }
 }
 
 impl Protocol {
@@ -378,6 +398,7 @@ impl Protocol {
             Protocol::Http => "HTTP",
             Protocol::WebSocket => "WebSocket",
             Protocol::Sse => "Server-Sent Events",
+            Protocol::Grpc => "gRPC",
         }
     }
 
@@ -393,6 +414,8 @@ pub struct Request {
     pub name: String,
     #[serde(default, skip_serializing_if = "Protocol::is_http")]
     pub protocol: Protocol,
+    #[serde(default, skip_serializing_if = "GrpcConfig::is_default")]
+    pub grpc: GrpcConfig,
     pub method: Method,
     pub url: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -418,6 +441,7 @@ impl Request {
             id: Id::new("req"),
             name: name.into(),
             protocol: Protocol::Http,
+            grpc: GrpcConfig::default(),
             method,
             url: url.into(),
             params: Vec::new(),

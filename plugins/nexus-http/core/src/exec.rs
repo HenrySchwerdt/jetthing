@@ -334,6 +334,15 @@ fn rendered_pairs(
 /// Parses a URL for `protocol`: WebSocket URLs use `ws`/`wss` (an `http(s)`
 /// URL is converted), everything else `http`/`https`.
 pub fn parse_url_for(raw: &str, protocol: crate::model::Protocol) -> Result<Url, ExecError> {
+    if protocol == crate::model::Protocol::Grpc {
+        // `grpc://` and `grpcs://` are shorthands for plain and TLS HTTP/2.
+        let candidate = match raw.split_once("://") {
+            Some(("grpc", rest)) => format!("http://{rest}"),
+            Some(("grpcs", rest)) => format!("https://{rest}"),
+            _ => raw.to_owned(),
+        };
+        return parse_url(&candidate);
+    }
     if protocol != crate::model::Protocol::WebSocket {
         return parse_url(raw);
     }

@@ -31,7 +31,7 @@ pub struct StreamEvent {
     pub id: Option<String>,
 }
 
-enum Outgoing {
+pub(crate) enum Outgoing {
     Text(String),
     Close,
 }
@@ -41,10 +41,28 @@ pub struct StreamSession {
     rx: Receiver<StreamEvent>,
     tx: Option<Sender<Outgoing>>,
     cancel: Arc<AtomicBool>,
+    /// Cleared when the connection no longer takes messages (gRPC calls that
+    /// are not client-streaming).
+    accepting: Arc<AtomicBool>,
     finished: bool,
 }
 
 impl StreamSession {
+    pub(crate) fn from_parts(
+        rx: Receiver<StreamEvent>,
+        tx: Option<Sender<Outgoing>>,
+        cancel: Arc<AtomicBool>,
+        accepting: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            rx,
+            tx,
+            cancel,
+            accepting,
+            finished: false,
+        }
+    }
+
     /// Events received since the last call.
     pub fn poll(&mut self) -> Vec<StreamEvent> {
         let mut out = Vec::new();
@@ -80,13 +98,21 @@ impl StreamSession {
 
     /// Whether messages can be sent (WebSocket only).
     pub fn can_send(&self) -> bool {
-        self.tx.is_some() && !self.finished
+        self.tx.is_some() && !self.finished && self.accepting.load(Ordering::Relaxed)
     }
 
     pub fn send_text(&self, text: impl Into<String>) -> bool {
         self.tx
             .as_ref()
             .is_some_and(|tx| tx.send(Outgoing::Text(text.into())).is_ok())
+    }
+
+    /// Half-closes the request side of a gRPC client-stream; the call keeps
+    /// running until the server answers.
+    pub fn close_requests(&self) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(Outgoing::Close);
+        }
     }
 
     /// Closes the connection gracefully (WebSocket) or stops reading (SSE).
@@ -104,13 +130,13 @@ impl Drop for StreamSession {
     }
 }
 
-struct Emitter {
-    tx: Sender<StreamEvent>,
-    started: Instant,
+pub(crate) struct Emitter {
+    pub(crate) tx: Sender<StreamEvent>,
+    pub(crate) started: Instant,
 }
 
 impl Emitter {
-    fn emit(
+    pub(crate) fn emit(
         &self,
         direction: Direction,
         label: &str,
@@ -306,6 +332,7 @@ pub fn connect_sse(
         rx,
         tx: None,
         cancel,
+        accepting: Arc::new(AtomicBool::new(true)),
         finished: false,
     }
 }
@@ -473,6 +500,7 @@ pub fn connect_websocket(prepared: PreparedRequest, jar: Option<CookieJar>) -> S
         rx,
         tx: Some(out_tx),
         cancel,
+        accepting: Arc::new(AtomicBool::new(true)),
         finished: false,
     }
 }

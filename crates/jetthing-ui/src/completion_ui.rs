@@ -15,7 +15,7 @@ const ROW_HEIGHT: f32 = 24.0;
 const VISIBLE_ROWS: usize = 11;
 const ICON_COLUMN: f32 = 26.0;
 const FOOTER_HEIGHT: f32 = 26.0;
-const MIN_WIDTH: f32 = 420.0;
+const MIN_WIDTH: f32 = 520.0;
 const MAX_WIDTH: f32 = 720.0;
 /// Matched characters (blue, like the reference lookup's match highlight).
 const MATCHED: Color32 = Color32::from_rgb(0x56, 0xA8, 0xF5);
@@ -78,7 +78,10 @@ fn label_job(label: &str, matched: &[usize], deprecated: bool, selected: bool) -
     };
     let mut buffer = String::new();
     let mut buffer_matched = false;
-    let flush = |job: &mut LayoutJob, text: &mut String, matched: bool| {
+    // Parameter lists (`name(String arg)`) are grey, like the reference lookup.
+    let params_start = label.chars().position(|c| c == '(').unwrap_or(usize::MAX);
+    let grey = *theme::TEXT_INFO;
+    let flush = |job: &mut LayoutJob, text: &mut String, matched: bool, params: bool| {
         if text.is_empty() {
             return;
         }
@@ -88,7 +91,13 @@ fn label_job(label: &str, matched: &[usize], deprecated: bool, selected: bool) -
             } else {
                 FontId::monospace(theme::EDITOR_FONT_SIZE)
             },
-            color: if matched { MATCHED } else { normal },
+            color: if params {
+                grey
+            } else if matched {
+                MATCHED
+            } else {
+                normal
+            },
             strikethrough: strike,
             ..Default::default()
         };
@@ -97,13 +106,18 @@ fn label_job(label: &str, matched: &[usize], deprecated: bool, selected: bool) -
     };
     for (index, c) in label.chars().enumerate() {
         let is_matched = matched.contains(&index);
-        if is_matched != buffer_matched {
-            flush(&mut job, &mut buffer, buffer_matched);
+        if is_matched != buffer_matched || index == params_start {
+            flush(&mut job, &mut buffer, buffer_matched, index > params_start);
             buffer_matched = is_matched;
         }
         buffer.push(c);
     }
-    flush(&mut job, &mut buffer, buffer_matched);
+    flush(
+        &mut job,
+        &mut buffer,
+        buffer_matched,
+        label.chars().count() > params_start,
+    );
     job
 }
 
@@ -349,6 +363,15 @@ mod tests {
             job.sections[0].format.font_id,
             theme::mono_bold(theme::EDITOR_FONT_SIZE)
         );
+    }
+
+    #[test]
+    fn parameter_lists_in_labels_are_grey() {
+        let job = label_job("main(String[] args)", &[0], false, false);
+        assert_eq!(job.text, "main(String[] args)");
+        let last = job.sections.last().unwrap();
+        assert_eq!(last.format.color, *theme::TEXT_INFO);
+        assert_ne!(job.sections[0].format.color, *theme::TEXT_INFO);
     }
 
     #[test]
