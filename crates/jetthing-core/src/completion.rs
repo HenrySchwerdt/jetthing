@@ -124,8 +124,18 @@ impl IdeState {
                 None,
                 Some(detail.unwrap_or_else(|| format!("{server}: starting"))),
             ),
-            Err(error) => return Err(error.to_string()),
+            // No language server for this file: live templates still apply.
+            Err(error) => {
+                if self.template_completion_items(anchor).is_empty() {
+                    return Err(error.to_string());
+                }
+                if explicit {
+                    self.status = error.to_string();
+                }
+                (None, None)
+            }
         };
+        let offline = id.is_none() && indexing.is_none();
         // Keep the visible rows while an `isIncomplete` re-query is running.
         let previous = self
             .completion
@@ -149,9 +159,12 @@ impl IdeState {
             waiting: id.is_some(),
             explicit: explicit || previous.is_some_and(|session| session.explicit),
             resolved: HashSet::new(),
-            requery_when_ready: id.is_none(),
+            requery_when_ready: id.is_none() && !offline,
             indexing,
         });
+        if offline {
+            self.receive_completion(CompletionResult::default());
+        }
         Ok(id.unwrap_or(0))
     }
 
@@ -215,6 +228,19 @@ impl IdeState {
             let root = self.project.as_ref()?.root();
             self.lsp.indexing_status(&root.join(&session.path))
         });
+        // Live templates and postfix completion join the server's items; a
+        // server snippet with the same label (`sout`) yields to ours.
+        let templates = self
+            .completion
+            .as_ref()
+            .map(|session| self.template_completion_items(session.anchor))
+            .unwrap_or_default();
+        let mut result = result;
+        result.items.retain(|item| {
+            item.kind != Some(jetthing_lsp::lsp_types::CompletionItemKind::SNIPPET)
+                || !templates.iter().any(|template| template.label == item.label)
+        });
+        result.items.extend(templates);
         if let Some(session) = self.completion.as_mut() {
             session.items = result.items;
             session.incomplete = result.incomplete;
@@ -508,7 +534,7 @@ impl IdeState {
         let new_text = snippet
             .as_ref()
             .map_or(new_text, |snippet| snippet.text.clone());
-        let end = if replace {
+        let end = if replace && !crate::live_templates::is_template_item(&item) {
             identifier_end(&document.text, caret)
         } else {
             caret

@@ -61,6 +61,7 @@ pub use welcome_commands::{CloneJob, JdkChoice, jdk_major, repository_name};
 mod run_config_commands;
 mod settings_commands;
 mod signature_help;
+mod live_templates;
 mod snippet_session;
 pub mod tabs;
 mod terminal_commands;
@@ -99,6 +100,7 @@ pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity}
 pub use quick_doc::{DocsState, QuickDoc};
 pub use refactor::{RefactorState, Refactoring, RenameSession};
 pub use signature_help::{ParameterInfo, SignatureLine, SignatureState};
+pub use live_templates::context_labels;
 pub use snippet_session::SnippetSession;
 pub use toolchain_commands::ToolchainState;
 mod worktree_commands;
@@ -908,6 +910,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     settings_commands::register(&mut registry);
     quick_nav::register(&mut registry);
     keymap_commands::register(&mut registry);
+    live_templates::register(&mut registry);
     first_run::register(&mut registry);
     lsp_commands::register(&mut registry);
     vcs::register(&mut registry);

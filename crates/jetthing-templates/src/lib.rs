@@ -700,10 +700,37 @@ pub fn expression_before(doc: &jetthing_text::TextDocument, dot: usize) -> Optio
                 }
             }
             _ if depth > 0 => {}
+            // Generic arguments directly after a type name: `new Foo<A, B>()`.
+            '>' => {
+                let mut angle = 0usize;
+                let mut open = None;
+                for back in (index.saturating_sub(200)..index - 1).rev() {
+                    match doc.char_at(back)? {
+                        '>' => angle += 1,
+                        '<' if angle == 0 => {
+                            open = Some(back);
+                            break;
+                        }
+                        '<' => angle -= 1,
+                        c if is_word(c) || matches!(c, ',' | '.' | '?' | ' ' | '[' | ']') => {}
+                        _ => break,
+                    }
+                }
+                match open.filter(|&open| open > 0 && doc.char_at(open - 1).is_some_and(is_word)) {
+                    Some(open) => index = open + 1,
+                    None => break,
+                }
+            }
             c if is_word(c) || c == '.' || c == ':' || c == '!' && index == dot => {}
             _ => break,
         }
         index -= 1;
+    }
+    if index >= 4
+        && doc.slice(index - 4, index).is_ok_and(|text| text == "new ")
+        && (index == 4 || doc.char_at(index - 5).is_some_and(|c| !is_word(c)))
+    {
+        index -= 4;
     }
     (index < dot && depth == 0).then_some(index)
 }
@@ -846,6 +873,12 @@ mod tests {
         assert_eq!(doc.char_at(dot), Some('.'));
         assert_eq!(doc.slice(expression_before(&doc, dot).unwrap(), dot).unwrap(), "\"s\"");
         assert_eq!(expression_before(&TextDocument::new(" .x"), 1), None);
+        let generic = TextDocument::new("x = new Map<String, List<Integer>>().size");
+        let dot = generic.text().rfind('.').unwrap();
+        let start = expression_before(&generic, dot).unwrap();
+        assert_eq!(generic.slice(start, dot).unwrap(), "new Map<String, List<Integer>>()");
+        let compare = TextDocument::new("a > b.if");
+        assert_eq!(compare.slice(expression_before(&compare, 5).unwrap(), 5).unwrap(), "b");
     }
 
     #[test]

@@ -2925,6 +2925,7 @@ dependencies = [
  "jetthing-runner",
  "jetthing-search",
  "jetthing-settings",
+ "jetthing-templates",
  "jetthing-terminal",
  "jetthing-text",
  "jetthing-toolchains",
