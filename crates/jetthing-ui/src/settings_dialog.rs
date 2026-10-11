@@ -33,6 +33,8 @@ pub struct SettingsDialog {
     keymap_page: crate::settings_keymap::KeymapPage,
     /// Settings › Plugins (`preferences.pluginManager`).
     pub(crate) plugins_page: crate::plugin_manager::PluginManager,
+    /// Settings › Editor › Live Templates (`editing.templates`).
+    live_templates_page: crate::settings_live_templates::LiveTemplatesPage,
 }
 
 enum Outcome {
@@ -55,6 +57,7 @@ impl SettingsDialog {
             focus_search: true,
             keymap_page: Default::default(),
             plugins_page: Default::default(),
+            live_templates_page: Default::default(),
         };
         dialog.select(registry, page);
         dialog.back.clear();
@@ -565,6 +568,20 @@ fn page(
     ui.add_space(6.0);
     if page_id == "preferences.keymap" {
         keymap_page(ui, dialog, registry, store, keymap, requests);
+        return;
+    }
+    if page_id == "editing.templates" {
+        egui::ScrollArea::vertical()
+            .id_salt("live_templates_page")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                crate::settings_live_templates::show(
+                    ui,
+                    &mut dialog.live_templates_page,
+                    &state.live_templates(),
+                    requests,
+                );
+            });
         return;
     }
     if page_id == "preferences.pluginManager" {

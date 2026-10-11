@@ -445,14 +445,14 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                     return Ok(json!({"expanded": true}));
                 }
                 // Nothing to expand: Tab inserts one indentation level.
-                let index = state.active_document.ok_or_else(|| {
-                    CommandError::Failed("no active document".into())
-                })?;
-                let document = &mut state.documents[index];
-                document
-                    .selections
-                    .insert(&mut document.text, "    ")
-                    .map_err(|error| CommandError::Failed(error.to_string()))?;
+                state
+                    .edit_active(|document| {
+                        document
+                            .selections
+                            .insert(&mut document.text, "    ")
+                            .map_err(|error| error.to_string())
+                    })
+                    .map_err(CommandError::Failed)?;
                 Ok(json!({"expanded": false}))
             },
         ))

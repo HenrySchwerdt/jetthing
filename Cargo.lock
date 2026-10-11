@@ -3212,6 +3212,7 @@ dependencies = [
  "jetthing-plugins",
  "jetthing-runner",
  "jetthing-settings",
+ "jetthing-templates",
  "jetthing-terminal",
  "jetthing-text",
  "pollster",

@@ -140,6 +140,8 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     editor("$Undo", "editor.undo"),
     editor("$Redo", "editor.redo"),
     editor("CodeCompletion", "language.complete"),
+    editor("InsertLiveTemplate", "template.insert"),
+    editor("SurroundWithLiveTemplate", "template.surround"),
     editor("GotoNextError", "editor.nextProblem"),
     // In Android projects the UI resolves `R.x.y` references at the caret through
     // `android.resources.gotoDeclaration` first; everything else asks the language server.

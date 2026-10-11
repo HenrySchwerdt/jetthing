@@ -1681,10 +1681,8 @@ fn editor_surface(
                 if multi_line {
                     requests.push(command("editor.indent"));
                 } else {
-                    document
-                        .selections
-                        .insert(&mut document.text, "    ")
-                        .map_err(text_error)?;
+                    // Expands a live template abbreviation; otherwise indents.
+                    requests.push(command("template.expand"));
                 }
             }
             egui::Key::Backspace if word && document.selections.primary().is_caret() => {
