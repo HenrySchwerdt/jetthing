@@ -9,9 +9,10 @@
 use crate::{IdeApp, keybindings, popups::Dialog};
 use eframe::egui;
 use jetthing_actions::{Catalog, MenuItem, filter_menu};
+use jetthing_core::project_view::DirMark;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// What a context menu acts on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,9 +64,20 @@ fn applies(action: &str, target: &Target) -> bool {
                 | "Kotlin.NewFile"
                 | "CopyAbsolutePath"
                 | "CopyContentRootPath"
-                | "FindInPath" => true,
-                "RenameElement" | "$Delete" | "CopyFileName" => !root,
+                | "FindInPath"
+                | "RevealIn"
+                | "Terminal.OpenInTerminal"
+                | "SynchronizeCurrentFile" => true,
+                "$Paste" => true,
+                "RenameElement" | "$Delete" | "CopyFileName" | "$Cut" | "$Copy" | "SafeDelete"
+                | "Move" => !root,
+                "RenameFile" => !root && !is_dir,
                 "ProjectViewEditSource" => !is_dir,
+                // Run on a file, the active editor's refactoring commands once
+                // they are registered (they stay hidden until then).
+                "ReformatCode" | "OptimizeImports" => {
+                    !is_dir && keybindings::is_implemented(action)
+                }
                 _ => false,
             }
         }
@@ -102,8 +114,13 @@ impl IdeApp {
     pub(crate) fn context_menu_model(&self, target: &Target) -> Model {
         let menu = Catalog::shared_menu(target.group());
         let mut items = filter_menu(&menu, &|action| applies(action, target));
-        if matches!(target, Target::Tree { .. }) {
+        if let Target::Tree { path, is_dir } = target {
             relabel(&mut items, "$Delete", "Delete…");
+            relabel(&mut items, "SafeDelete", "Safe Delete…");
+            relabel(&mut items, "RenameFile", "Rename File…");
+            relabel(&mut items, "FindInPath", "Find in Files…");
+            relabel(&mut items, "$Paste", "Paste");
+            self.add_tree_entries(&mut items, path, *is_dir);
         }
         if let Target::Tab(index) = target {
             let label = if self.state.is_pinned(*index) {
@@ -131,9 +148,98 @@ impl IdeApp {
         }
     }
 
+    /// Entries that the reference IDE builds from other groups (Run, Git, Mark
+    /// Directory as, Local History); only implemented ones are added.
+    fn add_tree_entries(&self, items: &mut Vec<MenuItem>, path: &Path, is_dir: bool) {
+        let root = path.as_os_str().is_empty();
+        let action = |id: &str, label: &str| MenuItem::Action {
+            id: id.to_owned(),
+            label: label.to_owned(),
+        };
+        // `Paste ▸ Paste` is a one-entry popup; draw the entry itself.
+        flatten_single(items, "PasteGroup");
+        let position = |items: &[MenuItem], id: &str| {
+            items.iter().position(|item| match item {
+                MenuItem::Action { id: found, .. } | MenuItem::Submenu { id: found, .. } => {
+                    found == id
+                }
+                MenuItem::Separator(_) => false,
+            })
+        };
+        let after = |items: &[MenuItem], ids: &[&str]| {
+            ids.iter()
+                .filter_map(|id| position(items, id))
+                .max()
+                .map(|index| index + 1)
+        };
+        // Run 'App' for files that contain an entry point.
+        if !is_dir && is_runnable_file(path) {
+            let name = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let at =
+                after(items, &["OptimizeImports", "$Delete", "RenameFile"]).unwrap_or(items.len());
+            items.splice(
+                at..at,
+                [
+                    MenuItem::Separator(None),
+                    action("jt.runFile", &format!("Run '{name}'")),
+                ],
+            );
+        }
+        // Local History needs a change journal Jetthing does not keep yet.
+        let at = position(items, "RevealGroup").map_or(items.len(), |index| index + 1);
+        items.insert(at, action("LocalHistory", "Local History"));
+        if self.state.git.is_some() && !root {
+            let mut git = vec![action("jt.git.diff", "Show Diff")];
+            if !is_dir {
+                git.push(action("jt.git.stage", "Add"));
+                git.push(action("jt.git.unstage", "Unstage"));
+            }
+            items.insert(
+                at + 1,
+                MenuItem::Submenu {
+                    id: "VcsFileGroupPopup".into(),
+                    label: "Git".into(),
+                    items: git,
+                },
+            );
+        }
+        if is_dir && !root {
+            let mut marks: Vec<MenuItem> = DirMark::ALL
+                .iter()
+                .map(|mark| action(&format!("jt.mark.{}", mark.id()), mark.label()))
+                .collect();
+            if self.state.project_view.marks.contains_key(path) {
+                marks.push(MenuItem::Separator(None));
+                marks.push(action("jt.mark.none", "Unmark"));
+            }
+            let at = position(items, "SynchronizeCurrentFile").unwrap_or(items.len());
+            items.insert(
+                at,
+                MenuItem::Submenu {
+                    id: "MarkRootGroup".into(),
+                    label: "Mark Directory as".into(),
+                    items: marks,
+                },
+            );
+        }
+        if !is_dir && !root && self.state.git.is_some() {
+            let at = items.len();
+            items.insert(at, MenuItem::Separator(None));
+            items.insert(at + 1, action("jt.git.diff", "Compare With HEAD…"));
+        }
+        // Drop separators that ended up leading, trailing or doubled.
+        tidy_separators(items);
+    }
+
     fn context_action_enabled(&self, action: &str, target: &Target) -> bool {
         let documents = self.state.documents.len();
         match (action, target) {
+            ("$Paste", Target::Tree { .. }) => self.state.project_view.clipboard.is_some(),
+            ("LocalHistory", _) => false,
+            (id, Target::Tree { .. }) if id.starts_with("jt.") => true,
             ("$Paste", Target::Editor) => self.state.active_document.is_some(),
             ("CloseAllEditorsButActive", Target::Tab(_)) => documents > 1,
             ("CloseAllToTheLeft", Target::Tab(index)) => *index > 0,
@@ -147,6 +253,13 @@ impl IdeApp {
             ) => true,
             ("ReopenClosedTab", Target::Tab(_)) => !self.state.tabs.closed.is_empty(),
             (_, Target::Tree { .. } | Target::Tab(_)) if TARGET_ACTIONS.contains(&action) => true,
+            ("$Cut" | "$Copy" | "SafeDelete" | "Move" | "RenameFile", Target::Tree { .. }) => true,
+            (
+                "RevealIn" | "Terminal.OpenInTerminal" | "SynchronizeCurrentFile",
+                Target::Tree { .. },
+            ) => true,
+            ("FindInPath", Target::Tree { .. }) => true,
+            ("ReformatCode" | "OptimizeImports", Target::Tree { .. }) => true,
             _ => self.menu_action_enabled(action),
         }
     }
@@ -188,7 +301,87 @@ impl IdeApp {
                     ctx.copy_text(text);
                 }
             }
-            "RenameElement" => {
+            "$Cut" | "$Copy" if matches!(target, Target::Tree { .. }) => {
+                if let Target::Tree { path, .. } = target {
+                    let command = if action == "$Cut" {
+                        "project.cutPaths"
+                    } else {
+                        "project.copyPaths"
+                    };
+                    self.dispatch(command, json!({"paths": [path]}));
+                }
+            }
+            "$Paste" if matches!(target, Target::Tree { .. }) => {
+                if let Target::Tree { path, is_dir } = target {
+                    let dir = if *is_dir {
+                        path.clone()
+                    } else {
+                        path.parent().map(Path::to_path_buf).unwrap_or_default()
+                    };
+                    self.dispatch("project.paste", json!({"dir": dir}));
+                }
+            }
+            "FindInPath" if matches!(target, Target::Tree { .. }) => {
+                if let Target::Tree { path, .. } = target {
+                    // Scoped to the clicked directory (or file); the project root is everything.
+                    self.state.project_view.search_scope =
+                        (!path.as_os_str().is_empty()).then(|| path.clone());
+                    self.run_menu_action(action, ctx);
+                }
+            }
+            "RevealIn"
+            | "Terminal.OpenInTerminal"
+            | "jt.runFile"
+            | "jt.git.diff"
+            | "jt.git.stage"
+            | "jt.git.unstage" => {
+                if let Target::Tree { path, .. } = target {
+                    let command = match action {
+                        "RevealIn" => "project.revealInFiles",
+                        "Terminal.OpenInTerminal" => "project.openInTerminal",
+                        "jt.runFile" => "project.runFile",
+                        "jt.git.diff" => "git.showDiff",
+                        "jt.git.stage" => "git.stage",
+                        _ => "git.unstage",
+                    };
+                    self.dispatch(command, json!({"path": path}));
+                }
+            }
+            "SynchronizeCurrentFile" => self.dispatch("file.synchronize", serde_json::Value::Null),
+            "SafeDelete" => {
+                if let Target::Tree { path, .. } = target {
+                    let usages = self.state.safe_delete_usages(path).unwrap_or_default();
+                    self.open_dialog(Dialog::SafeDelete {
+                        path: path.clone(),
+                        usages,
+                    });
+                }
+            }
+            "Move" => {
+                if let Target::Tree { path, .. } = target {
+                    self.open_dialog(Dialog::Move {
+                        path: path.clone(),
+                        destination: path
+                            .parent()
+                            .map(|parent| parent.display().to_string())
+                            .unwrap_or_default(),
+                    });
+                }
+            }
+            "ReformatCode" | "OptimizeImports" if matches!(target, Target::Tree { .. }) => {
+                // Acts on the editor: open the file first, then run the command.
+                if let Target::Tree { path, .. } = target {
+                    self.dispatch("editor.openFile", json!({"path": path}));
+                    self.run_menu_action(action, ctx);
+                }
+            }
+            id if id.starts_with("jt.mark.") => {
+                if let Target::Tree { path, .. } = target {
+                    let mark = id.trim_start_matches("jt.mark.");
+                    self.dispatch("project.markDirectory", json!({"path": path, "mark": mark}));
+                }
+            }
+            "RenameFile" | "RenameElement" => {
                 if let Target::Tree { path, .. } = target {
                     self.open_dialog(Dialog::Rename {
                         path: path.clone(),
@@ -236,6 +429,45 @@ impl IdeApp {
             _ => self.run_menu_action(action, ctx),
         }
     }
+}
+
+/// Replaces the submenu `id` by its only entry.
+fn flatten_single(items: &mut [MenuItem], id: &str) {
+    for item in items.iter_mut() {
+        if let MenuItem::Submenu {
+            id: found,
+            items: children,
+            ..
+        } = item
+            && found == id
+            && children.len() == 1
+            && let Some(only) = children.pop()
+        {
+            *item = only;
+        }
+    }
+}
+
+/// Removes leading, trailing and repeated separators.
+fn tidy_separators(items: &mut Vec<MenuItem>) {
+    let mut previous_separator = true;
+    items.retain(|item| {
+        let separator = matches!(item, MenuItem::Separator(_));
+        let keep = !(separator && previous_separator);
+        previous_separator = separator;
+        keep
+    });
+    while matches!(items.last(), Some(MenuItem::Separator(_))) {
+        items.pop();
+    }
+}
+
+/// Files whose entry points the gutter run icons can find.
+fn is_runnable_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("java" | "kt" | "rs" | "go" | "py")
+    )
 }
 
 /// Some labels are set at runtime per place (the Project view shows "Delete…").
@@ -375,5 +607,75 @@ mod tests {
             ["Close Tab", "Close Other Tabs", "Close All Tabs"]
         );
         assert!(tab.contains(&"Close Tabs to the Left".to_owned()));
+    }
+
+    #[test]
+    fn project_menu_offers_file_operations_and_hides_unimplemented_entries() {
+        let file = model(Target::Tree {
+            path: "src/App.java".into(),
+            is_dir: false,
+        });
+        for label in ["Cut", "Copy", "Paste ▸", "Find in Files…"] {
+            assert!(file.contains(&label.to_owned()), "{label} in {file:?}");
+        }
+        assert!(file.contains(&"Refactor ▸".to_owned()), "{file:?}");
+        assert!(file.contains(&"Open In ▸".to_owned()), "{file:?}");
+        // Unimplemented entries are hidden, not dead; Reformat/Optimize Imports
+        // follow the keymap's command table (files only).
+        for hidden in ["Find Usages", "Analyze ▸"] {
+            assert!(!file.contains(&hidden.to_owned()), "{hidden} hidden");
+        }
+        for shown in ["Reformat Code", "Optimize Imports"] {
+            assert_eq!(
+                file.contains(&shown.to_owned()),
+                keybindings::is_implemented(if shown == "Reformat Code" {
+                    "ReformatCode"
+                } else {
+                    "OptimizeImports"
+                }),
+                "{shown}"
+            );
+        }
+        let dir = model(Target::Tree {
+            path: "src".into(),
+            is_dir: true,
+        });
+        assert!(!dir.contains(&"Rename File…".to_owned()));
+        let root = model(Target::Tree {
+            path: PathBuf::new(),
+            is_dir: true,
+        });
+        assert!(!root.contains(&"Cut".to_owned()));
+        assert!(root.contains(&"Paste ▸".to_owned()));
+    }
+
+    #[test]
+    fn extra_entries_are_runtime_built() {
+        let (app, _ctx) = crate::tests::headless_app("tree-menu", "App.java", "class App {}\n");
+        let menu = |path: &str, is_dir: bool| {
+            let target = Target::Tree {
+                path: path.into(),
+                is_dir,
+            };
+            let model = app.context_menu_model(&target);
+            (labels(&model.items), model)
+        };
+        let (dir, model) = menu("src", true);
+        assert!(dir.contains(&"Mark Directory as ▸".to_owned()), "{dir:?}");
+        assert!(dir.contains(&"Local History".to_owned()));
+        assert!(
+            !model.enabled.contains("LocalHistory"),
+            "disabled, not hidden"
+        );
+        assert!(!model.enabled.contains("$Paste"), "nothing copied yet");
+        let (file, _) = menu("App.java", false);
+        assert!(file.contains(&"Run 'App'".to_owned()), "{file:?}");
+        assert!(!file.contains(&"Mark Directory as ▸".to_owned()));
+        // No separators at the edges or doubled.
+        for items in [&dir, &file] {
+            assert_ne!(items.first().map(String::as_str), Some("---"));
+            assert_ne!(items.last().map(String::as_str), Some("---"));
+            assert!(!items.windows(2).any(|w| w[0] == "---" && w[1] == "---"));
+        }
     }
 }

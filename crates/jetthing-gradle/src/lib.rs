@@ -9,7 +9,7 @@ mod options;
 
 pub use options::{Distribution, GradleOptions, options, set_options};
 
-pub use model::{GradleModel, ProjectModel, TaskModel};
+pub use model::{GradleModel, JdkModel, LibraryModel, ProjectModel, TaskModel};
 
 use jetthing_runner::{
     BuildSystem, BuildSystemKind, RunConfiguration, RunTarget, RunnerError, TaskKind, TaskPlan,
