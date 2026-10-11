@@ -318,6 +318,37 @@ impl IdeState {
         self.install_project(project)
     }
 
+    /// Saves and closes the open project, returning to the welcome screen.
+    pub fn close_project(&mut self) -> Result<(), String> {
+        if self.project.is_none() {
+            return Err("no project is open".into());
+        }
+        self.prepare_project_switch()?;
+        self.documents.clear();
+        self.active_document = None;
+        self.tabs = tabs::EditorTabs {
+            limit: self.tabs.limit,
+            ..Default::default()
+        };
+        self.search.cancel();
+        self.search_results.clear();
+        self.search_query.clear();
+        self.terminal = None;
+        self.runner = TaskService::default();
+        self.git = None;
+        self.git_watcher = None;
+        self.watcher = None;
+        self.lsp.set_project(None);
+        self.close_diff();
+        self.files.clear();
+        self.expanded_dirs.clear();
+        self.recent_files.clear();
+        self.tool_windows = ToolWindowLayout::default();
+        self.project = None;
+        self.status = "Closed project".into();
+        Ok(())
+    }
+
     pub(crate) fn prepare_project_switch(&mut self) -> Result<(), String> {
         if self.project.is_some() {
             if self.runner.is_running() {
@@ -973,6 +1004,16 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .open_project(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"root": state.project.as_ref().unwrap().root()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("project.close", "Close Project", "Project", None, "{}"),
+            |state: &IdeState| state.project.is_some(),
+            |state: &mut IdeState, _| {
+                state.close_project().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
             },
         ))
         .expect("unique built-in id");

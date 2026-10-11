@@ -321,7 +321,7 @@ fn path_param(params: &Value) -> Result<PathBuf, CommandError> {
 pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     registry.register(Command::new(
         spec("project.create", "Create Project", "Project", None,
-            r#"{"parent":"string","name":"string","kind":"empty|rust-binary|rust-library|java-gradle-kotlin|java-gradle-groovy|jvm","group":"string?","git":"bool?","language":"java|kotlin?","build":"intellij|maven|gradle?","dsl":"kotlin|groovy?","sample":"bool?","jdk":"number?"}"#),
+            r#"{"parent":"string","name":"string","kind":"empty|rust-binary|rust-library|java-gradle-kotlin|java-gradle-groovy|android-compose|android-views|android-no-activity|jvm","group":"string?","git":"bool?","language":"java|kotlin?","build":"intellij|maven|gradle?","dsl":"kotlin|groovy?","sample":"bool?","jdk":"number?"}"#),
         |_| true,
         |state: &mut IdeState, params| {
             let parent = string_param(&params, "parent")?;
@@ -463,6 +463,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn close_project_returns_to_the_welcome_state() {
+        let root = temp_root("close-project");
+        std::fs::write(root.join("a.txt"), "a").unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        assert!(!commands.is_enabled("project.close", &state));
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        commands
+            .execute(
+                "project.openFile",
+                &mut state,
+                json!({"path": root.join("a.txt")}),
+            )
+            .ok();
+        assert!(commands.is_enabled("project.close", &state));
+        commands
+            .execute("project.close", &mut state, Value::Null)
+            .unwrap();
+        assert!(state.project.is_none() && state.documents.is_empty());
+        assert!(!commands.is_enabled("project.close", &state));
+        assert!(
+            state
+                .recent_projects
+                .entries()
+                .iter()
+                .any(|e| e.path.ends_with(root.file_name().unwrap()))
+        );
     }
 
     #[test]

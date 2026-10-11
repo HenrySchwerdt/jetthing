@@ -6,6 +6,7 @@ use std::{
 use thiserror::Error;
 use walkdir::WalkDir;
 
+pub mod android_template;
 pub mod generator;
 pub mod recent;
 mod watcher;
