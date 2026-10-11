@@ -128,6 +128,8 @@ pub struct IdeApp {
     last_right: Option<ToolWindow>,
     /// Active editor file seen last frame; opening another one focuses the editor.
     last_active_file: Option<PathBuf>,
+    /// A single click in the Project tree opened a preview: keep the keyboard in the tree.
+    pub(crate) keep_tree_focus: bool,
     find: findbar::FindBar,
     /// Text of the last whole-line copy, so pasting it inserts a line.
     clipboard_line: Option<String>,
@@ -296,6 +298,7 @@ impl IdeApp {
             last_bottom: None,
             last_right: None,
             last_active_file: None,
+            keep_tree_focus: false,
             find: findbar::FindBar::default(),
             clipboard_line: None,
             dialog: None,
@@ -743,11 +746,13 @@ impl IdeApp {
                 && self.dialog.is_none()
                 && !self.palette.open
                 && !self.find_popup.open
+                && !self.keep_tree_focus
             {
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
             }
             self.last_active_file = active;
         }
+        self.keep_tree_focus = false;
         // Hiding a right-anchored tool window also hands focus back to the editor.
         let right = self.state.tool_windows.visible(Anchor::Right);
         if right != self.last_right {

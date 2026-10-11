@@ -190,10 +190,14 @@ fn open_location(
     ctx: &egui::Context,
     path: &std::path::Path,
     line: Option<usize>,
+    right_split: bool,
 ) {
     let mut params = json!({"path": path});
     if let Some(line) = line {
         params["line"] = json!(line);
+    }
+    if right_split {
+        app.dispatch("editor.openInRightSplit", json!({"path": path}));
     }
     app.dispatch("editor.openFile", params);
     ctx.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
@@ -311,7 +315,10 @@ fn footer(app: &IdeApp, ui: &mut egui::Ui, width: f32, selected: Option<&Ranked<
         Some(Hit::Symbol(symbol)) => symbol.path.display().to_string(),
         Some(Hit::Text(found)) => found.path.display().to_string(),
         Some(Hit::Action(action)) => action.id.clone(),
-        None => "↑↓ to navigate · Enter to open · Esc to close".to_owned(),
+        None => {
+            "↑↓ to navigate · Enter to open · Shift+Enter to open in right split · Esc to close"
+                .to_owned()
+        }
     };
     let right = if app.palette.tab == SearchTab::Actions {
         "Assign Shortcut  Alt+Enter"
@@ -370,7 +377,11 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
         }
     }
     app.palette.selected = app.palette.selected.min(found.len().saturating_sub(1));
-    let enter = ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    // Shift+Enter opens the hit in the right split.
+    let right_split =
+        ctx.input_mut(|input| input.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter));
+    let enter = ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+        || right_split;
     let screen = ctx.content_rect();
     let width = 700.0_f32.min(screen.width() - 40.0);
     // Alt+Enter on an action: Assign Shortcut (opens the keymap page).
@@ -520,14 +531,17 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
             }
             Hit::File { path, line } => {
                 app.palette.open = false;
-                open_location(app, ctx, path, *line);
+                open_location(app, ctx, path, *line, right_split);
             }
             Hit::Symbol(symbol) => {
                 app.palette.open = false;
-                open_location(app, ctx, &symbol.path, Some(symbol.line + 1));
+                open_location(app, ctx, &symbol.path, Some(symbol.line + 1), right_split);
             }
             Hit::Text(found) => {
                 app.palette.open = false;
+                if right_split {
+                    app.dispatch("editor.openInRightSplit", json!({"path": found.path}));
+                }
                 app.dispatch(
                     "editor.openFile",
                     json!({

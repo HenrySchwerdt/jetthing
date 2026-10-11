@@ -19,6 +19,15 @@ struct BreakpointForm {
     hit_condition: String,
 }
 
+fn anchor_id() -> egui::Id {
+    egui::Id::new("breakpoint_properties_anchor")
+}
+
+/// Remembers where the breakpoint popup should open (the right-click position).
+pub fn anchor_breakpoint_popup(ctx: &egui::Context, position: egui::Pos2) {
+    ctx.data_mut(|data| data.insert_temp(anchor_id(), position));
+}
+
 fn form_id() -> egui::Id {
     egui::Id::new("breakpoint_properties_form")
 }
@@ -48,10 +57,47 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     evaluate_dialog(app, ctx);
 }
 
+/// The properties popup, next to where it was requested (like the run popup), kept inside
+/// the window; centered when opened from the keyboard.
+fn breakpoint_frame(ctx: &egui::Context, width: f32, add: impl FnOnce(&mut egui::Ui)) {
+    let screen = ctx.content_rect();
+    let anchor = ctx.data(|data| data.get_temp::<egui::Pos2>(anchor_id()));
+    let height = 190.0;
+    let position = match anchor {
+        Some(anchor) => egui::pos2(
+            (anchor.x + 12.0)
+                .min(screen.right() - width - 8.0)
+                .max(screen.left() + 8.0),
+            (anchor.y - 16.0)
+                .min(screen.bottom() - height - 8.0)
+                .max(screen.top() + 8.0),
+        ),
+        None => egui::pos2(
+            screen.center().x - width / 2.0,
+            screen.top() + screen.height() * 0.2,
+        ),
+    };
+    egui::Area::new(egui::Id::new("breakpoint_properties"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(position)
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .corner_radius(10)
+                .inner_margin(egui::Margin::same(12))
+                .show(ui, |ui| {
+                    ui.set_width(width - 24.0);
+                    add(ui);
+                });
+        });
+}
+
 fn breakpoint_properties(app: &mut IdeApp, ctx: &egui::Context) {
     let Some((path, line)) = app.state.debugger.editing_breakpoint.clone() else {
         // Closed (maybe by Escape in the workbench): the next open starts fresh.
-        ctx.data_mut(|data| data.remove::<BreakpointForm>(form_id()));
+        ctx.data_mut(|data| {
+            data.remove::<BreakpointForm>(form_id());
+            data.remove::<egui::Pos2>(anchor_id());
+        });
         return;
     };
     let mut form: BreakpointForm = ctx
@@ -71,7 +117,7 @@ fn breakpoint_properties(app: &mut IdeApp, ctx: &egui::Context) {
     }
     let mut done = false;
     let mut remove = false;
-    popup_frame(ctx, "breakpoint_properties", 460.0, |ui| {
+    breakpoint_frame(ctx, 460.0, |ui| {
         title(
             ui,
             &format!(
