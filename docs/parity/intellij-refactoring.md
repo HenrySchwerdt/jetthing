@@ -42,7 +42,7 @@ Statuses describe Jetthing, conservatively: nothing in this catalog is `Verified
 | IJ-REF-052 | [move-refactorings](https://www.jetbrains.com/help/idea/move-refactorings.html) | Copy class / file (F5) | Missing | 2 | — | — | not started |
 | IJ-REF-053 | [pull-members-up](https://www.jetbrains.com/help/idea/pull-members-up.html) | Pull Members Up | Missing | 2 | — | — | not started |
 | IJ-REF-054 | [push-members-down-dialog](https://www.jetbrains.com/help/idea/push-members-down-dialog.html) | Push Members Down | Missing | 1 | — | — | not started |
-| IJ-REF-060 | [safe-delete](https://www.jetbrains.com/help/idea/safe-delete.html) | Safe Delete (Alt+Delete) with usage search | Missing | 3 | — | — | not started |
+| IJ-REF-060 | [safe-delete](https://www.jetbrains.com/help/idea/safe-delete.html) | Safe Delete (Alt+Delete) with usage search | Partial | 3 | `project.safeDeleteUsages`, `project.safeDelete` | `safe_delete_reports_usages_until_forced` (`crates/jetthing-core/src/project_view.rs`) | Alt+Delete on a project file lists remaining usages (Safe Delete dialog in `crates/jetthing-ui/src/popups.rs`) and refuses to delete until forced; file-level text search only, not symbol-level usages (no methods, classes, parameters) |
 | IJ-REF-061 | [type-migration](https://www.jetbrains.com/help/idea/type-migration.html) | Type Migration (Ctrl+Shift+F6) | Missing | 1 | — | — | not started |
 | IJ-REF-062 | [encapsulate-fields](https://www.jetbrains.com/help/idea/encapsulate-fields.html) | Encapsulate Fields | Missing | 1 | — | — | not started |
 | IJ-REF-063 | [convert-anonymous-to-inner](https://www.jetbrains.com/help/idea/convert-anonymous-to-inner.html) | Convert Anonymous to Inner | Missing | 1 | — | — | not started |

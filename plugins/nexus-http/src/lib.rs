@@ -8,6 +8,7 @@
 pub mod complete;
 pub mod graphql_ui;
 pub mod oauth;
+pub mod plugin;
 pub mod state;
 pub mod theme;
 pub mod views;

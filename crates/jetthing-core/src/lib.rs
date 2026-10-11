@@ -479,6 +479,9 @@ impl IdeState {
         Ok(())
     }
     pub fn open_file(&mut self, path: &Path) -> Result<(), String> {
+        if self.open_in_plugin_editor(path) {
+            return Ok(());
+        }
         if let Some(index) = self.documents.iter().position(|d| d.path == path) {
             self.active_document = Some(index);
             self.diff_active = false;
