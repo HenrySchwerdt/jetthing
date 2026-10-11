@@ -459,7 +459,8 @@ fn closing_for(open: char) -> Option<char> {
     }
 }
 
-fn is_word(c: char) -> bool {
+/// Identifier character: alphanumeric or underscore.
+pub(crate) fn is_word(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 

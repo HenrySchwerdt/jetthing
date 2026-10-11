@@ -3,12 +3,8 @@
 //! with no editor open, when the project does), with Set up.
 
 use crate::{IdeApp, icons::Icon, theme};
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use serde_json::json;
-
-/// `Banner.warningBackground` / `Banner.warningBorderColor` (dark, `docs/spec/data/themes.json`).
-const BACKGROUND: Color32 = Color32::from_rgb(0x44, 0x32, 0x1D);
-const BORDER: Color32 = Color32::from_rgb(0x69, 0x48, 0x20);
 
 pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     let path = app
@@ -25,8 +21,8 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     };
     let mut action = None;
     egui::Frame::new()
-        .fill(BACKGROUND)
-        .stroke(egui::Stroke::new(1.0_f32, BORDER))
+        .fill(*theme::BANNER_WARNING)
+        .stroke(egui::Stroke::new(1.0_f32, *theme::BANNER_WARNING_BORDER))
         .corner_radius(6)
         .inner_margin(egui::Margin::symmetric(10, 6))
         .outer_margin(egui::Margin::symmetric(6, 4))

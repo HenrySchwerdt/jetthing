@@ -111,7 +111,7 @@ pub fn paint_badge(painter: &egui::Painter, center: egui::Pos2, kind: SymbolKind
         egui::Align2::CENTER_CENTER,
         letter,
         egui::FontId::proportional(10.0),
-        Color32::from_rgb(0x1E, 0x1F, 0x22),
+        *theme::editor::BACKGROUND,
     );
 }
 

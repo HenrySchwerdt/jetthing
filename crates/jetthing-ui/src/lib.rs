@@ -898,7 +898,7 @@ impl IdeApp {
         }
         if self.state.lsp.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(100));
-        } else if !self.state.lsp.servers().is_empty() || self.state.android.devices.is_tracking() {
+        } else if self.state.lsp.has_servers() || self.state.android.devices.is_tracking() {
             // Diagnostics, server messages and device changes arrive without user input.
             ctx.request_repaint_after(Duration::from_millis(500));
         }

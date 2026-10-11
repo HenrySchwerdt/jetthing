@@ -95,11 +95,14 @@ impl IdeState {
                 },
             );
         }
-        let text = self.documents[index].text.text();
         let entry = self.line_changes.get_mut(&path).expect("inserted above");
         if entry.revision != Some(revision) {
+            // Copying the rope out is only needed when the document changed.
             entry.hunks = match &entry.base {
-                Some(base) => FileDiff::compute(path.clone(), None, base.clone(), text).hunks,
+                Some(base) => {
+                    let text = self.documents[index].text.text();
+                    FileDiff::compute(path.clone(), None, base.clone(), text).hunks
+                }
                 None => Vec::new(),
             };
             entry.revision = Some(revision);

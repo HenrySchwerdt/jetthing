@@ -295,6 +295,6 @@ fn elide(name: &str, max: usize) -> String {
     if name.chars().count() <= max {
         return name.to_owned();
     }
-    let head: String = name.chars().take(max - 1).collect();
+    let head: String = name.chars().take(max.saturating_sub(1)).collect();
     format!("{head}…")
 }

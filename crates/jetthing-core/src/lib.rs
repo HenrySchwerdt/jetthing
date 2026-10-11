@@ -1159,7 +1159,12 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 state
                     .open_project(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
-                Ok(json!({"root": state.project.as_ref().unwrap().root()}))
+                let root = state
+                    .project
+                    .as_ref()
+                    .map(|project| project.root().to_owned())
+                    .ok_or_else(|| CommandError::Failed("no project is open".into()))?;
+                Ok(json!({"root": root}))
             },
         ))
         .expect("unique built-in id");
