@@ -1,8 +1,8 @@
 //! Settings | Build Tools | Gradle options reach the task plans. Kept in its own
 //! test binary because the options are process-wide.
 
-use jetthing_gradle::{Distribution, GradleBuild, GradleOptions, set_options};
-use jetthing_runner::TaskKind;
+use jetthing_gradle::{BuildRunner, Distribution, GradleBuild, GradleOptions, set_options};
+use jetthing_runner::{BuildSystem, TaskKind};
 
 #[test]
 fn plans_follow_the_gradle_options() {
@@ -24,6 +24,7 @@ fn plans_follow_the_gradle_options() {
     assert!(plan.env.is_empty());
 
     set_options(GradleOptions {
+        build_run: BuildRunner::Gradle,
         distribution: Distribution::Wrapper,
         offline: true,
         user_home: Some("/tmp/gh".into()),
@@ -43,6 +44,17 @@ fn plans_follow_the_gradle_options() {
             .args
             .contains(&"--offline".to_owned())
     );
+
+    // "Build and run using: Jetthing" compiles instead of running the full build.
+    let gradle = jetthing_gradle::Gradle;
+    let plan = gradle.build_plan(&root).unwrap();
+    assert_eq!(plan.args[0], "build");
+    set_options(GradleOptions {
+        build_run: BuildRunner::Jetthing,
+        ..GradleOptions::default()
+    });
+    let plan = gradle.build_plan(&root).unwrap();
+    assert_eq!(&plan.args[..2], ["classes", "testClasses"]);
 
     // The local distribution ignores the wrapper (and needs `gradle` on PATH).
     set_options(GradleOptions {

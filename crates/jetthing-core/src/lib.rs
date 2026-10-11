@@ -320,6 +320,8 @@ pub struct IdeState {
     /// Gradle model from the last sync (cached in `.jetthing/gradle/model.json`).
     pub gradle_model: Option<jetthing_gradle::GradleModel>,
     pub gradle_error: Option<String>,
+    /// Build scripts changed on disk since the last sync ("Load Gradle Changes").
+    pub gradle_changes_pending: bool,
     /// Bazel targets from the last sync (cached in `.jetthing/bazel/targets.json`).
     pub bazel_targets: Option<jetthing_bazel::BazelTargets>,
     pub bazel_error: Option<String>,

@@ -25,8 +25,31 @@ impl Distribution {
     }
 }
 
+/// Settings | Build Tools | Gradle "Build and run using".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BuildRunner {
+    /// Build, Run and Test execute the project's own Gradle tasks (`build`, `run`, `test`).
+    #[default]
+    Gradle,
+    /// Jetthing drives the build: Build only compiles (`classes testClasses`) instead of
+    /// running the full `build` lifecycle. Run configurations still execute through Gradle.
+    Jetthing,
+}
+
+impl BuildRunner {
+    /// Parses the settings option id; unknown ids mean Gradle.
+    pub fn from_id(id: &str) -> Self {
+        if id == "jetthing" {
+            Self::Jetthing
+        } else {
+            Self::Gradle
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GradleOptions {
+    pub build_run: BuildRunner,
     pub distribution: Distribution,
     pub offline: bool,
     /// `GRADLE_USER_HOME`; `None` keeps the default.

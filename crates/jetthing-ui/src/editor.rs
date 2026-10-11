@@ -77,12 +77,14 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             }
             if app.state.active_document.is_none() {
                 // Offer toolchain setup as soon as the project opens.
+                crate::gradle_banner::show(app, ui);
                 crate::toolchain_banner::show(app, ui);
                 empty_state(ui);
                 app.caret_screen_pos = None;
                 return;
             }
             crate::disk_banner::show(app, ui);
+            crate::gradle_banner::show(app, ui);
             crate::toolchain_banner::show(app, ui);
             if crate::merged_manifest_ui::applies(app) {
                 crate::merged_manifest_ui::tab_bar(app, ui);

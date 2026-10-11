@@ -60,9 +60,15 @@ impl IdeState {
 
     /// Hands Settings | Build Tools | Gradle to the Gradle integration.
     pub(crate) fn sync_gradle_options(&self) {
-        use jetthing_gradle::{Distribution, GradleOptions};
+        use jetthing_gradle::{BuildRunner, Distribution, GradleOptions};
         let path = |id| self.settings.text(id).filter(|v| !v.trim().is_empty());
         jetthing_gradle::set_options(GradleOptions {
+            build_run: BuildRunner::from_id(
+                &self
+                    .settings
+                    .text(ids::GRADLE_BUILD_RUN)
+                    .unwrap_or_default(),
+            ),
             distribution: Distribution::from_id(
                 &self
                     .settings

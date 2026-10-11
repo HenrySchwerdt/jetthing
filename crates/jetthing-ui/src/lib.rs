@@ -41,6 +41,7 @@ mod findbar;
 mod first_run;
 mod folding;
 mod git_log_ui;
+mod gradle_banner;
 mod gradle_window;
 mod gutter_popup;
 mod icons;
