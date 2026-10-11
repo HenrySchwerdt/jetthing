@@ -2,16 +2,14 @@
 //! code part of the navigation-bar breadcrumbs, all from the language
 //! analysis' tags-query structure.
 
-use crate::widgets::row_text;
+use crate::widgets;
 use crate::{IdeApp, theme};
-use eframe::egui::{self, Color32, Sense, vec2};
+use eframe::egui::{self, Color32};
 use jetthing_core::Document;
 use jetthing_language::{StructureItem, SymbolKind, structure};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-const ROW_HEIGHT: f32 = 24.0;
 
 /// Last computed structure and the edit it is waiting out.
 #[derive(Clone)]
@@ -115,45 +113,34 @@ pub fn paint_badge(painter: &egui::Painter, center: egui::Pos2, kind: SymbolKind
     );
 }
 
-/// Paints one structure row; returns its response.
+/// Paints one structure row; returns its response and the chevron rect.
+/// `expanded` draws a chevron for items with children (the tool window collapses them).
 pub fn row(
     ui: &mut egui::Ui,
     depth: usize,
     item: &StructureItem,
     selected: bool,
-) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
-    if selected {
-        ui.painter().rect_filled(rect, 4.0, theme::SELECTION);
-    } else if response.hovered() {
-        ui.painter().rect_filled(rect, 4.0, theme::HOVER);
-    }
-    let left = rect.left() + 8.0 + depth as f32 * 16.0;
-    paint_badge(
-        ui.painter(),
-        egui::pos2(left + 8.0, rect.center().y),
-        item.kind,
-    );
-    let x = row_text(
+    expanded: Option<bool>,
+) -> widgets::TreeRowOut {
+    let kind = item.kind;
+    let paint = move |painter: &egui::Painter, rect: egui::Rect| {
+        paint_badge(painter, rect.center(), kind);
+    };
+    widgets::tree_row(
         ui,
-        rect,
-        left + 22.0,
-        &item.name,
-        egui::FontId::proportional(theme::UI_FONT_SIZE),
-        theme::TEXT_BRIGHT,
-    );
-    if let Some(detail) = &item.detail {
-        row_text(
-            ui,
-            rect,
-            x + 2.0,
-            detail,
-            egui::FontId::proportional(theme::UI_FONT_SIZE),
-            theme::TEXT_SECONDARY,
-        );
-    }
-    response
+        widgets::TreeRow {
+            depth,
+            expanded,
+            selected,
+            paint_icon: Some(&paint),
+            color: *theme::TEXT_BRIGHT,
+            secondary: item
+                .detail
+                .as_deref()
+                .map(|detail| (detail, *theme::TEXT_SECONDARY)),
+            ..widgets::TreeRow::new(&item.name)
+        },
+    )
 }
 
 /// Moves the caret to the item's name and focuses the editor.
@@ -234,18 +221,49 @@ pub fn tool_window(app: &mut IdeApp, ui: &mut egui::Ui) {
     let current = item_at_caret(document, &items).map(|item| item.name_range.clone());
     let mut rows = Vec::new();
     flatten(&items, 0, &mut rows);
+    let collapsed_id = egui::Id::new("structure_collapsed").with(&document.path);
+    let mut collapsed: std::collections::HashSet<usize> = ui
+        .data(|data| data.get_temp(collapsed_id))
+        .unwrap_or_default();
     let mut clicked = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
+            let mut hidden_below = None;
             for (depth, item) in &rows {
+                if let Some(limit) = hidden_below {
+                    if *depth > limit {
+                        continue;
+                    }
+                    hidden_below = None;
+                }
+                let key = item.name_range.start;
+                let is_collapsed = collapsed.contains(&key);
                 let selected = current.as_ref() == Some(&item.name_range);
-                if row(ui, *depth, item, selected).clicked() {
-                    clicked = Some((*item).clone());
+                let has_children = !item.children.is_empty();
+                let out = row(
+                    ui,
+                    *depth,
+                    item,
+                    selected,
+                    has_children.then_some(!is_collapsed),
+                );
+                if has_children && is_collapsed {
+                    hidden_below = Some(*depth);
+                }
+                if out.response.clicked() {
+                    if has_children && out.on_chevron() {
+                        if !collapsed.remove(&key) {
+                            collapsed.insert(key);
+                        }
+                    } else {
+                        clicked = Some((*item).clone());
+                    }
                 }
             }
         });
+    ui.data_mut(|data| data.insert_temp(collapsed_id, collapsed));
     if let Some(item) = clicked {
         navigate(app, ui.ctx(), &item);
     }

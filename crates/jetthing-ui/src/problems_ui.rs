@@ -4,7 +4,7 @@
 //! Project Errors tabs. The data comes from `jetthing_core::problems`.
 
 use crate::icons::{self, Icon};
-use crate::widgets::{self, list_row, row_text};
+use crate::widgets::{self, row_text};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, Sense, Stroke, vec2};
 use jetthing_core::{Problem, ProblemCounts, Severity, ToolWindow};
@@ -389,7 +389,7 @@ pub fn tool_window(app: &mut IdeApp, ui: &mut egui::Ui) {
         vec2(ui.available_width(), widgets::TOOL_WINDOW_HEADER_HEIGHT),
         Sense::hover(),
     );
-    let mut x = header.left() + 12.0;
+    let mut x = header.left() + theme::layout::CONTENT_INSET;
     x = row_text(
         ui,
         header,
@@ -634,10 +634,16 @@ fn elide_path(path: &str, max: usize) -> String {
 }
 
 fn empty(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(8.0);
+    ui.add_space(theme::layout::SECTION_SPACING);
     ui.horizontal(|ui| {
-        ui.add_space(34.0);
-        ui.label(egui::RichText::new(text).color(theme::TEXT_SECONDARY));
+        ui.add_space(theme::layout::CONTENT_INSET);
+        widgets::icon_label(
+            ui,
+            Icon::Success,
+            *theme::SUCCESS,
+            text,
+            *theme::TEXT_SECONDARY,
+        );
     });
 }
 
@@ -650,46 +656,26 @@ fn file_group(
     view: &GroupView<'_>,
     jump: &mut Option<(PathBuf, usize, usize)>,
 ) {
-    let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
-    let (rect, _) = list_row(ui, false);
     let name = IdeApp::file_name(path);
-    icons::paint(
-        ui.painter(),
-        Rect::from_min_size(
-            egui::pos2(rect.left() + 12.0, rect.center().y - 8.0),
-            vec2(16.0, 16.0),
-        ),
-        Icon::for_file(&name),
-        icons::ICON,
-    );
-    let mut x = row_text(
-        ui,
-        rect,
-        rect.left() + 34.0,
-        &name,
-        font.clone(),
-        theme::TEXT_BRIGHT,
-    );
     let directory = root
         .map(|root| root.join(path))
         .unwrap_or_else(|| path.to_owned());
-    if let Some(parent) = directory.parent() {
-        x = row_text(
-            ui,
-            rect,
-            x + 8.0,
-            &elide_path(&parent.display().to_string(), 48),
-            font.clone(),
-            theme::TEXT_INFO,
-        );
-    }
-    row_text(
+    let location = directory
+        .parent()
+        .map(|parent| elide_path(&parent.display().to_string(), 48));
+    let count = widgets::pluralize(problems.len(), "problem", "problems");
+    let secondary = match &location {
+        Some(location) => format!("{location}  {count}"),
+        None => count,
+    };
+    widgets::tree_row(
         ui,
-        rect,
-        x + 8.0,
-        &widgets::pluralize(problems.len(), "problem", "problems"),
-        font.clone(),
-        theme::TEXT_INFO,
+        widgets::TreeRow {
+            icon: Some((Icon::for_file(&name), *icons::ICON)),
+            color: *theme::TEXT_BRIGHT,
+            secondary: Some((&secondary, *theme::TEXT_INFO)),
+            ..widgets::TreeRow::new(&name)
+        },
     );
     let mut ordered: Vec<&Problem> = problems.iter().collect();
     if view.group_by_severity {
@@ -703,58 +689,48 @@ fn file_group(
                 .iter()
                 .filter(|other| other.severity == problem.severity)
                 .count();
-            let (rect, _) = list_row(ui, false);
-            row_text(
+            widgets::tree_row(
                 ui,
-                rect,
-                rect.left() + 34.0,
-                &format!("{} {count}", severity_title(problem.severity)),
-                theme::semibold(theme::UI_FONT_SIZE),
-                theme::TEXT_SECONDARY,
+                widgets::TreeRow {
+                    depth: 1,
+                    font: theme::semibold(theme::UI_FONT_SIZE),
+                    color: *theme::TEXT_SECONDARY,
+                    ..widgets::TreeRow::new(&format!(
+                        "{} {count}",
+                        severity_title(problem.severity)
+                    ))
+                },
             );
         }
         let chosen = view
             .selected
             .is_some_and(|(p, line, _)| p == path && *line == problem.line);
-        let (rect, response) = list_row(ui, chosen);
-        icons::paint(
-            ui.painter(),
-            Rect::from_min_size(
-                egui::pos2(rect.left() + 34.0, rect.center().y - 7.0),
-                vec2(14.0, 14.0),
-            ),
-            icon(problem.severity),
-            icons::ICON,
-        );
         let first_line = problem.message.lines().next().unwrap_or_default();
-        let x = row_text(
+        let line_label = format!(":{}", problem.line + 1);
+        let response = widgets::tree_row(
             ui,
-            rect,
-            rect.left() + 56.0,
-            first_line,
-            font.clone(),
-            theme::TEXT,
-        );
-        row_text(
-            ui,
-            rect,
-            x + 8.0,
-            &format!(":{}", problem.line + 1),
-            font.clone(),
-            theme::TEXT_INFO,
-        );
+            widgets::TreeRow {
+                depth: 1,
+                selected: chosen,
+                icon: Some((icon(problem.severity), *icons::ICON)),
+                secondary: Some((&line_label, *theme::TEXT_INFO)),
+                ..widgets::TreeRow::new(first_line)
+            },
+        )
+        .response;
         if response.on_hover_text(&problem.message).clicked() {
             *jump = Some((path.to_owned(), problem.line, problem.column));
         }
         if let Some(code) = view.previews.get(&(path.to_owned(), problem.line)) {
-            let (rect, _) = list_row(ui, false);
-            row_text(
+            widgets::tree_row(
                 ui,
-                rect,
-                rect.left() + 56.0,
-                code,
-                egui::FontId::monospace(theme::UI_FONT_SIZE - 1.0),
-                theme::TEXT_INFO,
+                widgets::TreeRow {
+                    depth: 1,
+                    reserve_icon: true,
+                    font: egui::FontId::monospace(theme::UI_FONT_SIZE - 1.0),
+                    color: *theme::TEXT_INFO,
+                    ..widgets::TreeRow::new(code)
+                },
             );
         }
     }

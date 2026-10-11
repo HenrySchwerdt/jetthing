@@ -461,7 +461,7 @@ fn capture_window(
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::same(14))
+                .inner_margin(egui::Margin::same(theme::layout::DIALOG_PADDING as i8))
                 .show(ui, |ui| {
                     ui.set_width(420.0);
                     if let Some(others) = &capture.confirm {

@@ -23,8 +23,8 @@ pub fn glow_through_frame() -> egui::Frame {
     egui::Frame::new()
 }
 
-pub const TOOL_WINDOW_HEADER_HEIGHT: f32 = 31.0;
-pub const ROW_HEIGHT: f32 = 24.0;
+pub const TOOL_WINDOW_HEADER_HEIGHT: f32 = theme::layout::TOOLBAR_HEIGHT;
+pub const ROW_HEIGHT: f32 = theme::layout::ROW_HEIGHT;
 
 /// Tool window title bar. `actions` adds right-aligned icon buttons; returns
 /// `true` when the hide button was clicked.
@@ -40,7 +40,7 @@ pub fn tool_window_header(
     );
     let mut child = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(vec2(12.0, 0.0)))
+            .max_rect(rect.shrink2(vec2(theme::layout::CONTENT_INSET, 0.0)))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     child.label(
@@ -71,8 +71,11 @@ pub fn list_row(ui: &mut egui::Ui, selected: bool) -> (Rect, egui::Response) {
         Color32::TRANSPARENT
     };
     if fill != Color32::TRANSPARENT {
-        ui.painter()
-            .rect_filled(rect.shrink2(vec2(4.0, 0.0)), 4.0, fill);
+        ui.painter().rect_filled(
+            rect.shrink2(vec2(theme::layout::ROW_PILL_INSET, 0.0)),
+            theme::layout::ROW_PILL_RADIUS,
+            fill,
+        );
     }
     (rect, response)
 }
@@ -210,6 +213,191 @@ pub fn pluralize(count: usize, singular: &str, plural: &str) -> String {
     format!("{count} {}", if count == 1 { singular } else { plural })
 }
 
+/// Square of [`theme::layout::ICON_SIZE`] centred on `(x + size / 2, center_y)`.
+pub fn icon_rect(x: f32, center_y: f32) -> Rect {
+    let size = theme::layout::ICON_SIZE;
+    Rect::from_min_size(egui::pos2(x, center_y - size / 2.0), vec2(size, size))
+}
+
+/// Icon followed by text in one line. The icon is centred on the text's line box
+/// (the galley's row height, not the font size). Returns the allocated rect.
+pub fn icon_label(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    icon_color: impl Into<Color32>,
+    text: &str,
+    color: impl Into<Color32>,
+) -> Rect {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(theme::UI_FONT_SIZE),
+        color.into(),
+    );
+    let height = galley.size().y.max(theme::layout::ICON_SIZE);
+    let width = theme::layout::ICON_SIZE + theme::layout::ICON_TEXT_GAP + galley.size().x;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    icons::paint(
+        ui.painter(),
+        icon_rect(rect.left(), rect.center().y),
+        icon,
+        icon_color,
+    );
+    let text_pos = egui::pos2(
+        rect.left() + theme::layout::ICON_SIZE + theme::layout::ICON_TEXT_GAP,
+        rect.center().y - galley.size().y / 2.0,
+    );
+    let color = ui.visuals().text_color();
+    ui.painter().galley(text_pos, galley, color);
+    rect
+}
+
+/// What [`tree_row`] draws. Every tree and list in a tool window goes through it
+/// so rows share one inset, indent step, chevron column and icon alignment.
+pub struct TreeRow<'a> {
+    pub depth: usize,
+    /// `Some(expanded)` draws a chevron; `None` leaves the column empty.
+    pub expanded: Option<bool>,
+    pub selected: bool,
+    /// Faint fill for unselected rows (excluded or test folders).
+    pub tint: Option<Color32>,
+    /// Width reserved between the chevron column and the icon (a checkbox).
+    pub reserve: f32,
+    /// Keeps the icon column empty so text lines up with sibling rows that have icons.
+    pub reserve_icon: bool,
+    pub icon: Option<(Icon, Color32)>,
+    /// Custom icon painter (badges) in place of `icon`; gets the 16px icon rect.
+    pub paint_icon: Option<&'a dyn Fn(&egui::Painter, Rect)>,
+    pub text: &'a str,
+    pub font: egui::FontId,
+    pub color: Color32,
+    pub secondary: Option<(&'a str, Color32)>,
+}
+
+impl<'a> TreeRow<'a> {
+    pub fn new(text: &'a str) -> Self {
+        Self {
+            depth: 0,
+            expanded: None,
+            selected: false,
+            tint: None,
+            reserve: 0.0,
+            reserve_icon: false,
+            icon: None,
+            paint_icon: None,
+            text,
+            font: egui::FontId::proportional(theme::UI_FONT_SIZE),
+            color: *theme::TEXT,
+            secondary: None,
+        }
+    }
+}
+
+/// Geometry and interaction of a painted [`TreeRow`].
+pub struct TreeRowOut {
+    pub rect: Rect,
+    pub response: egui::Response,
+    pub chevron: Rect,
+    /// Where the reserved checkbox space starts (centred vertically on the row).
+    pub reserved: Rect,
+    pub icon: Rect,
+    pub text_start: f32,
+    /// End of the primary text (before any secondary text).
+    pub text_end: f32,
+    pub elided: bool,
+}
+
+impl TreeRowOut {
+    /// Whether the last click landed on the chevron column.
+    pub fn on_chevron(&self) -> bool {
+        self.response
+            .interact_pointer_pos()
+            .is_some_and(|pos| pos.x < self.chevron.right() + 2.0)
+    }
+}
+
+/// Paints a row with the shared tree geometry; see [`TreeRow`].
+pub fn tree_row(ui: &mut egui::Ui, spec: TreeRow<'_>) -> TreeRowOut {
+    let (rect, response) = list_row(ui, spec.selected);
+    if let (false, Some(tint)) = (spec.selected, spec.tint) {
+        ui.painter().rect_filled(
+            rect.shrink2(vec2(theme::layout::ROW_PILL_INSET, 0.0)),
+            theme::layout::ROW_PILL_RADIUS,
+            tint,
+        );
+    }
+    let cy = rect.center().y;
+    let mut x = rect.left() + theme::layout::indent(spec.depth);
+    let chevron = icon_rect(x, cy);
+    if let Some(expanded) = spec.expanded {
+        icons::paint(
+            ui.painter(),
+            chevron,
+            if expanded {
+                Icon::ChevronDown
+            } else {
+                Icon::ChevronRight
+            },
+            theme::TEXT_SECONDARY,
+        );
+    }
+    x += theme::layout::CHEVRON_COLUMN;
+    let reserved = Rect::from_min_size(egui::pos2(x, cy - 7.0), vec2(spec.reserve, 14.0));
+    if spec.reserve > 0.0 {
+        x += spec.reserve + theme::layout::ICON_TEXT_GAP;
+    }
+    let icon = icon_rect(x, cy);
+    if let Some(paint) = spec.paint_icon {
+        paint(ui.painter(), icon);
+    } else if let Some((glyph, color)) = spec.icon {
+        icons::paint(ui.painter(), icon, glyph, color);
+    }
+    if spec.reserve_icon || spec.icon.is_some() || spec.paint_icon.is_some() {
+        x += theme::layout::ICON_SIZE + theme::layout::ICON_TEXT_GAP;
+    }
+    let text_start = x;
+    let (text_end, elided) =
+        row_text_elided(ui, rect, text_start, spec.text, spec.font, spec.color);
+    if let Some((secondary, color)) = spec.secondary {
+        row_text(
+            ui,
+            rect,
+            text_end + theme::layout::SECONDARY_GAP,
+            secondary,
+            egui::FontId::proportional(theme::UI_FONT_SIZE),
+            color,
+        );
+    }
+    TreeRowOut {
+        rect,
+        response,
+        chevron,
+        reserved,
+        icon,
+        text_start,
+        text_end,
+        elided,
+    }
+}
+
+/// A toolbar line that clips at the panel edge and wraps onto a second line
+/// instead of painting over neighbouring panels.
+pub fn toolbar_row<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let bounds = Rect::from_min_max(
+        ui.cursor().min,
+        egui::pos2(ui.max_rect().right(), f32::INFINITY),
+    );
+    ui.scope(|ui| {
+        ui.set_clip_rect(ui.clip_rect().intersect(bounds));
+        ui.spacing_mut().item_spacing.x = theme::layout::TOOLBAR_GAP;
+        ui.horizontal_wrapped(|ui| {
+            ui.set_min_height(theme::layout::ICON_BUTTON);
+            add(ui)
+        })
+        .inner
+    })
+    .inner
+}
+
 /// A borderless menu-style button (popup and dropdown entries) that still shows
 /// the hover and pressed fill; `Button::frame(false)` would paint nothing.
 pub fn menu_button(button: egui::Button<'_>) -> egui::Button<'_> {
@@ -307,6 +495,89 @@ mod tests {
             cursor = output.platform_output.cursor_icon;
         }
         cursor
+    }
+
+    fn in_frame<R>(add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut out = None;
+        let mut add = Some(add);
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 300.0))),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::NONE)
+                    .show(ctx, |ui| {
+                        if let Some(add) = add.take() {
+                            out = Some(add(ui));
+                        }
+                    });
+            },
+        );
+        out.expect("frame ran")
+    }
+
+    #[test]
+    fn icon_label_centres_the_icon_on_the_text_line_box() {
+        let (rect, line_center, icon_center) = in_frame(|ui| {
+            let rect = icon_label(ui, Icon::Folder, Color32::WHITE, "Changes", Color32::WHITE);
+            let galley = ui.painter().layout_no_wrap(
+                "Changes".into(),
+                egui::FontId::proportional(theme::UI_FONT_SIZE),
+                Color32::WHITE,
+            );
+            let text_top = rect.center().y - galley.size().y / 2.0;
+            let line_center = text_top + galley.rows[0].rect().center().y;
+            (
+                rect,
+                line_center,
+                icon_rect(rect.left(), rect.center().y).center().y,
+            )
+        });
+        assert!(
+            (icon_center - line_center).abs() <= 0.5,
+            "{icon_center} vs {line_center}"
+        );
+        assert!(rect.height() >= theme::layout::ICON_SIZE);
+    }
+
+    #[test]
+    fn tree_rows_share_one_inset_and_icon_column() {
+        let (first, second, nested) = in_frame(|ui| {
+            let plain = |ui: &mut egui::Ui, depth, expanded| {
+                tree_row(
+                    ui,
+                    TreeRow {
+                        depth,
+                        expanded,
+                        icon: Some((Icon::Folder, Color32::WHITE)),
+                        ..TreeRow::new("name")
+                    },
+                )
+            };
+            (
+                plain(ui, 0, Some(true)),
+                plain(ui, 0, None),
+                plain(ui, 1, None),
+            )
+        });
+        // Same pill inset whether or not the row has a chevron.
+        assert_eq!(first.rect.left(), second.rect.left());
+        assert_eq!(first.icon.left(), second.icon.left());
+        assert_eq!(first.rect.height(), theme::layout::ROW_HEIGHT);
+        // One indent step per depth, icon centred on the row.
+        assert_eq!(
+            nested.icon.left() - second.icon.left(),
+            theme::layout::TREE_INDENT
+        );
+        assert_eq!(first.icon.center().y, first.rect.center().y);
+        assert_eq!(
+            first.icon.left() - first.rect.left(),
+            theme::layout::CONTENT_INSET + theme::layout::CHEVRON_COLUMN
+        );
     }
 
     #[test]
