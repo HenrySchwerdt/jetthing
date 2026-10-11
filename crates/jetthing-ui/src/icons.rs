@@ -6,7 +6,9 @@
 
 use crate::theme;
 use eframe::egui::{self, Color32, Pos2, Rect, Shape, Stroke, epaint::PathShape, vec2};
-use std::path::{Component, Path};
+use jetthing_core::project_view::DirRole;
+#[cfg(test)]
+use std::path::Path;
 
 /// Neutral icon color (palette `Gray11`).
 pub const ICON: theme::Token = theme::ICON;
@@ -14,9 +16,9 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 const SOURCE_ROOT: Color32 = rgb(0x54, 0x8A, 0xF7);
-const TEST_ROOT: Color32 = rgb(0x5F, 0xAD, 0x65);
+pub(crate) const TEST_ROOT: Color32 = rgb(0x5F, 0xAD, 0x65);
 const RESOURCES_ROOT: Color32 = rgb(0xB1, 0x8A, 0xDB);
-const EXCLUDED: Color32 = rgb(0xD0, 0x8A, 0x4B);
+pub(crate) const EXCLUDED: Color32 = rgb(0xD0, 0x8A, 0x4B);
 const IMAGE: Color32 = rgb(0x5F, 0xAD, 0x65);
 const ARCHIVE: Color32 = rgb(0xD9, 0xB0, 0x4C);
 const HIDDEN: Color32 = rgb(0x6C, 0x70, 0x7E);
@@ -212,38 +214,13 @@ pub enum FolderKind {
 }
 
 impl FolderKind {
-    /// Classifies a project-relative directory path.
+    /// Classifies a project-relative directory path from the conventional layout.
+    #[cfg(test)]
     pub fn classify(path: &Path) -> FolderKind {
-        let parts: Vec<String> = path
-            .components()
-            .filter_map(|c| match c {
-                Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-                _ => None,
-            })
-            .collect();
-        let Some(last) = parts.last() else {
-            return FolderKind::Plain;
-        };
-        if HIDDEN_DIRS.contains(&last.as_str()) {
-            return FolderKind::Hidden;
-        }
-        if parts.iter().any(|p| EXCLUDED_DIRS.contains(&p.as_str())) {
-            return FolderKind::Excluded;
-        }
-        // `src/<set>/<kind>[/package…]`
-        if let Some(i) = (0..parts.len().saturating_sub(2)).find(|&i| parts[i] == "src") {
-            let set = parts[i + 1].to_ascii_lowercase();
-            let is_test = set.starts_with("test") || set.starts_with("androidtest");
-            let depth = parts.len() - (i + 3);
-            match parts[i + 2].as_str() {
-                "java" | "kotlin" if depth > 0 => return FolderKind::Package,
-                "java" | "kotlin" if is_test => return FolderKind::Test,
-                "java" | "kotlin" => return FolderKind::Source,
-                "resources" | "res" if depth == 0 => return FolderKind::Resources,
-                _ => {}
-            }
-        }
-        FolderKind::Plain
+        FolderKind::from(jetthing_core::project_view::classify(
+            path,
+            &Default::default(),
+        ))
     }
 
     fn fill(self) -> Color32 {
@@ -269,8 +246,19 @@ impl FolderKind {
     }
 }
 
-const HIDDEN_DIRS: [&str; 4] = [".git", ".idea", ".gradle", ".jetthing"];
-const EXCLUDED_DIRS: [&str; 5] = ["build", "target", "out", "node_modules", "dist"];
+impl From<DirRole> for FolderKind {
+    fn from(role: DirRole) -> FolderKind {
+        match role {
+            DirRole::Plain => FolderKind::Plain,
+            DirRole::Source => FolderKind::Source,
+            DirRole::Test => FolderKind::Test,
+            DirRole::Resources | DirRole::TestResources => FolderKind::Resources,
+            DirRole::Excluded => FolderKind::Excluded,
+            DirRole::Hidden => FolderKind::Hidden,
+            DirRole::Package { .. } => FolderKind::Package,
+        }
+    }
+}
 
 /// Exact (lower-case) file names; checked before extensions.
 const NAME_BADGES: &[(&str, Badge)] = &[
@@ -463,6 +451,15 @@ impl Icon {
     }
 
     /// Folder icon by project-relative path.
+    /// Folder icon for a role computed by the Project view model.
+    pub fn for_role(role: DirRole) -> Icon {
+        match FolderKind::from(role) {
+            FolderKind::Plain => Icon::Folder,
+            kind => Icon::FolderKind(kind),
+        }
+    }
+
+    #[cfg(test)]
     pub fn for_folder(path: &Path) -> Icon {
         match FolderKind::classify(path) {
             FolderKind::Plain => Icon::Folder,
