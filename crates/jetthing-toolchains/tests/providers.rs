@@ -5,7 +5,8 @@ mod support;
 use jetthing_toolchains::download::{HttpClient, sha256_hex};
 use jetthing_toolchains::providers::github::GithubReleaseProvider;
 use jetthing_toolchains::providers::{
-    gradle::GradleDistributions, jdk::FoojayJdk, jdtls::EclipseJdtls, rust_analyzer,
+    gradle::GradleDistributions, jdk::FoojayJdk, jdtls::EclipseJdtls, kotlin_lsp::KotlinLsp,
+    rust_analyzer,
 };
 use jetthing_toolchains::{
     ArchiveKind, Checksum, ComponentProvider, ComponentSettings, Platform, ToolchainError,
@@ -155,6 +156,53 @@ fn jdtls_resolves_milestones_and_installs_with_sidecar_checksum() {
         provider.resolve(&VersionRequest::parse("1.9"), &linux(), &http, None),
         Err(ToolchainError::Catalog { .. })
     ));
+}
+
+#[test]
+fn kotlin_lsp_skips_versions_without_archives_and_falls_back_to_fwcd() {
+    let server = FakeServer::start();
+    server.serve(
+        "/RELEASES.md",
+        "### v263.9999.0\n### v263.6379.0\n### v262.9593.0\n",
+    );
+    let hex = "ab".repeat(32);
+    let file = "/kotlin-server/263.6379.0/kotlin-server-263.6379.0.tar.gz";
+    server.serve(
+        &format!("{file}.sha256"),
+        format!("{hex} *kotlin-server-263.6379.0.tar.gz"),
+    );
+    let provider = KotlinLsp::with_sources(
+        &server.url("/kotlin-server"),
+        &server.url("/RELEASES.md"),
+        &server.url("/api"),
+    );
+    let http = HttpClient::new();
+    // 263.9999.0 has no sidecar (404) so the next version is chosen.
+    let release = provider
+        .resolve(&VersionRequest::Latest, &linux(), &http, None)
+        .unwrap();
+    assert_eq!(release.version.as_str(), "263.6379.0");
+    assert_eq!(release.artifact.url, server.url(file));
+    assert_eq!(
+        release.artifact.checksum,
+        Checksum::Sha256Url(server.url(&format!("{file}.sha256")))
+    );
+    // A version that is not listed is an error, not a silent switch of server.
+    assert!(matches!(
+        provider.resolve(&VersionRequest::parse("1.0"), &linux(), &http, None),
+        Err(ToolchainError::NoMatchingVersion { .. })
+    ));
+    // macOS has no extractable JetBrains archive: fwcd's server.zip (with its digest) is used.
+    server.serve(
+        "/api/repos/fwcd/kotlin-language-server/releases/latest",
+        github_release(&server, "1.3.13", &[("server.zip", Some(hex.clone()))]),
+    );
+    let mac = Platform::parse("macos", "aarch64").unwrap();
+    let release = provider
+        .resolve(&VersionRequest::Latest, &mac, &http, None)
+        .unwrap();
+    assert_eq!(release.version.as_str(), "1.3.13");
+    assert_eq!(release.artifact.checksum, Checksum::Sha256(hex));
 }
 
 #[test]
