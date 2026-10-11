@@ -175,7 +175,11 @@ fn manager_restarts_crashed_servers_and_resyncs_documents() {
         )
     }));
     let message = manager.servers()[0].message.clone().unwrap_or_default();
-    assert!(message.contains("crashing on purpose"), "{message}");
+    // The manager may hit the closed pipe before it reads the server's stderr.
+    assert!(
+        message.contains("crashing on purpose") || message.contains("Broken pipe"),
+        "{message}"
+    );
     let mut resync = Vec::new();
     assert!(wait_until(|| {
         resync.extend(manager.poll());
@@ -435,6 +439,162 @@ fn code_actions_resolve_and_server_applied_edits() {
     assert_eq!(request.label.as_deref(), Some("Fake command"));
     assert_eq!(request.edit["changes"][&uri][0]["newText"], "// applied\n");
     manager.respond_apply_edit(&server, request.id, Ok(()));
+    manager.shutdown();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+fn call(
+    manager: &mut LspManager,
+    file: &std::path::Path,
+    feature: jetthing_lsp::Feature,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, LspError> {
+    let handle = loop {
+        manager.poll();
+        match manager.request_with_params(file, feature, params.clone()) {
+            Ok(handle) => break handle,
+            Err(LspError::Starting { .. }) => thread::sleep(Duration::from_millis(10)),
+            Err(error) => return Err(error),
+        }
+    };
+    let mut result = None;
+    assert!(wait_until(|| {
+        manager.poll();
+        result = manager.take_response(&handle);
+        result.is_some()
+    }));
+    result.unwrap()
+}
+
+#[test]
+fn rename_requests_prepare_and_edit_every_document() {
+    use jetthing_lsp::Feature;
+    use serde_json::json;
+    let root = workspace("rename");
+    let app = root.join("src/App.fake");
+    let other = root.join("src/Other.fake");
+    let mut manager = LspManager::new(registry(&[]));
+    manager.set_project(Some(&root));
+    manager
+        .sync_document(&app, "greeting();\nlet x = greeting;\n", 0)
+        .unwrap();
+    std::fs::write(&other, "use greeting;\n").unwrap();
+    manager.sync_document(&other, "use greeting;\n", 0).unwrap();
+    let uri = format!("file://{}", app.display());
+    let position = json!({"textDocument": {"uri": uri}, "position": {"line": 0, "character": 3}});
+    let prepared = call(&mut manager, &app, Feature::PrepareRename, position.clone()).unwrap();
+    assert_eq!(prepared["placeholder"], "greeting");
+    assert_eq!(prepared["range"]["end"]["character"], 8);
+    assert!(manager.supports(&app, Feature::Rename));
+    // Not on a word: the server declines.
+    let nothing = call(
+        &mut manager,
+        &app,
+        Feature::PrepareRename,
+        json!({"textDocument": {"uri": uri}, "position": {"line": 0, "character": 8}}),
+    )
+    .unwrap();
+    assert!(nothing.is_null() || nothing["placeholder"] == "greeting");
+    let mut rename = position;
+    rename["newName"] = json!("salutation");
+    let edit = call(&mut manager, &app, Feature::Rename, rename).unwrap();
+    let changes = edit["changes"].as_object().unwrap();
+    assert_eq!(changes.len(), 2, "both documents change: {edit}");
+    assert_eq!(changes[&uri].as_array().unwrap().len(), 2);
+    manager.shutdown();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn servers_without_prepare_rename_still_rename() {
+    use jetthing_lsp::Feature;
+    let root = workspace("rename-no-prepare");
+    let app = root.join("src/App.fake");
+    let mut manager = LspManager::new(registry(&["--no-prepare-rename"]));
+    manager.set_project(Some(&root));
+    manager.sync_document(&app, "greeting();\n", 0).unwrap();
+    assert!(wait_until(|| {
+        manager.poll();
+        manager.supports(&app, Feature::Rename)
+    }));
+    assert!(!manager.supports(&app, Feature::PrepareRename));
+    manager.shutdown();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn formatting_and_refactor_code_actions_are_scripted() {
+    use jetthing_lsp::Feature;
+    use serde_json::json;
+    let root = workspace("refactor");
+    let app = root.join("src/App.fake");
+    let mut manager = LspManager::new(registry(&[]));
+    manager.set_project(Some(&root));
+    let text = "import b\nimport a\nimport b\nlet x = 1 + 2;   \nz   \n";
+    manager.sync_document(&app, text, 0).unwrap();
+    let uri = format!("file://{}", app.display());
+    let options = json!({"tabSize": 4, "insertSpaces": true});
+    let edits = call(
+        &mut manager,
+        &app,
+        Feature::Formatting,
+        json!({"textDocument": {"uri": uri}, "options": options}),
+    )
+    .unwrap();
+    assert_eq!(edits.as_array().unwrap().len(), 2);
+    let range = |line, start, end| json!({"start": {"line": line, "character": start}, "end": {"line": line, "character": end}});
+    let edits = call(
+        &mut manager,
+        &app,
+        Feature::RangeFormatting,
+        json!({"textDocument": {"uri": uri}, "range": range(4, 0, 1), "options": options}),
+    )
+    .unwrap();
+    assert_eq!(edits.as_array().unwrap().len(), 1);
+    let actions = |manager: &mut LspManager, only: &str, range: serde_json::Value| {
+        call(
+            manager,
+            &app,
+            Feature::CodeAction,
+            json!({"textDocument": {"uri": uri}, "range": range,
+                "context": {"diagnostics": [], "only": [only]}}),
+        )
+        .unwrap()
+    };
+    let organize = actions(&mut manager, "source.organizeImports", range(0, 0, 0));
+    assert_eq!(
+        organize[0]["edit"]["changes"][&uri][0]["newText"],
+        "import a\nimport b"
+    );
+    let extract = actions(&mut manager, "refactor.extract", range(3, 8, 13));
+    let kinds: Vec<_> = extract
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "refactor.extract.variable",
+            "refactor.extract.function",
+            "refactor.extract.constant"
+        ]
+    );
+    // An empty selection offers nothing to extract; inline is still offered.
+    assert!(
+        actions(&mut manager, "refactor.extract", range(3, 8, 8))
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        actions(&mut manager, "refactor.inline", range(3, 8, 8))
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     manager.shutdown();
     std::fs::remove_dir_all(root).unwrap();
 }

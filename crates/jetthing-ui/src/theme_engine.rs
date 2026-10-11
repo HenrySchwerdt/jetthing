@@ -159,6 +159,8 @@ pub mod tokens {
         EDITOR_BACKGROUND_PANEL = ["ui:Editor.SearchField.background"] or 0x212326;
         /// `TEXT_SEARCH_RESULT_ATTRIBUTES` background.
         EDITOR_SEARCH_RESULT = ["attr:TEXT_SEARCH_RESULT_ATTRIBUTES.BACKGROUND"] or 0x114957;
+        /// `IDENTIFIER_UNDER_CARET_ATTRIBUTES` background (rename preview of the occurrences).
+        EDITOR_RENAME_OCCURRENCE = ["attr:IDENTIFIER_UNDER_CARET_ATTRIBUTES.BACKGROUND"] or 0x373B39;
         /// `MATCHED_BRACE_ATTRIBUTES` background.
         EDITOR_MATCHED_BRACE = ["attr:MATCHED_BRACE_ATTRIBUTES.BACKGROUND"] or 0x43454A;
         /// `INDENT_GUIDE`.

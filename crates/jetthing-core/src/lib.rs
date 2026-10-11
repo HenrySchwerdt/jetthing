@@ -54,7 +54,10 @@ pub mod quick_nav;
 pub use new_class::{JavaKind, KotlinKind};
 mod project_commands;
 mod quick_doc;
+mod refactor;
 mod remote_commands;
+mod welcome_commands;
+pub use welcome_commands::{CloneJob, JdkChoice, jdk_major, repository_name};
 mod run_config_commands;
 mod settings_commands;
 mod signature_help;
@@ -94,6 +97,7 @@ pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
 pub use quick_doc::{DocsState, QuickDoc};
+pub use refactor::{RefactorState, Refactoring, RenameSession};
 pub use signature_help::{ParameterInfo, SignatureLine, SignatureState};
 pub use snippet_session::SnippetSession;
 pub use toolchain_commands::ToolchainState;
@@ -192,6 +196,12 @@ pub struct IdeState {
     pub remote_job: Option<jetthing_git::RemoteJob>,
     /// Latest progress line of the running remote operation.
     pub remote_progress: Option<String>,
+    /// Recently opened projects (welcome screen).
+    pub recent_projects: jetthing_project::recent::RecentProjects,
+    /// Running Get from VCS clone.
+    pub clone_job: Option<CloneJob>,
+    pub clone_progress: Option<String>,
+    pub clone_error: Option<String>,
     /// Message of the last failed remote operation.
     pub remote_error: Option<String>,
     /// Blame annotations of documents that have them switched on.
@@ -228,6 +238,8 @@ pub struct IdeState {
     pub quick_nav: quick_nav::QuickNavState,
     /// Quick fixes and intentions at the caret (Alt+Enter).
     pub code_actions: CodeActionState,
+    /// Rename and the other server-backed refactorings.
+    pub refactor: RefactorState,
     /// Quick documentation popup and completion documentation panel.
     pub docs: DocsState,
     /// Parameter info popup.
@@ -336,11 +348,13 @@ impl IdeState {
         self.refresh_toolchain_resolver();
         self.navigation = NavigationState::default();
         self.code_actions = CodeActionState::default();
+        self.refactor = RefactorState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
         self.quick_nav = quick_nav::QuickNavState::default();
         self.tool_windows = ToolWindowLayout::default();
         self.tool_windows.show(ToolWindow::Project);
+        self.recent_projects.record(project.root());
         self.status = format!("Opened {}", project.root().display());
         self.load_project_settings(project.root());
         self.android.project_opened(project.root());
@@ -697,6 +711,7 @@ impl IdeState {
         self.refresh_problems();
         self.poll_navigation();
         self.poll_code_actions();
+        self.poll_refactor();
         self.poll_docs();
         self.poll_signature();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
@@ -903,10 +918,12 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     git_log::register(&mut registry);
     branch_commands::register(&mut registry);
     remote_commands::register(&mut registry);
+    welcome_commands::register(&mut registry);
     annotations::register(&mut registry);
     worktree_commands::register(&mut registry);
     navigation::register(&mut registry);
     code_actions::register(&mut registry);
+    refactor::register(&mut registry);
     ai_commands::register(&mut registry);
     registry
         .register(Command::new(

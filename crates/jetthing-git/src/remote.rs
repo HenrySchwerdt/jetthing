@@ -23,6 +23,8 @@ pub enum RemoteOperation {
         set_upstream: bool,
         force_with_lease: bool,
     },
+    /// `git clone url directory`; the job runs in the existing parent of `directory`.
+    Clone { url: String, directory: String },
 }
 
 impl RemoteOperation {
@@ -31,12 +33,26 @@ impl RemoteOperation {
             Self::Fetch => "Fetching",
             Self::Pull { .. } => "Updating",
             Self::Push { .. } => "Pushing",
+            Self::Clone { .. } => "Cloning",
         }
     }
 
     fn args(&self) -> Result<Vec<String>, GitError> {
         let reject = |value: &str| value.is_empty() || value.starts_with('-');
         Ok(match self {
+            Self::Clone { url, directory } => {
+                // `ext::` and `fd::` transports run arbitrary commands.
+                if reject(url) || reject(directory) || url.contains("::") {
+                    return Err(GitError::Command("invalid repository URL".into()));
+                }
+                vec![
+                    "clone".into(),
+                    "--progress".into(),
+                    "--".into(),
+                    url.clone(),
+                    directory.clone(),
+                ]
+            }
             Self::Fetch => ["fetch", "--all", "--prune", "--progress"]
                 .map(String::from)
                 .to_vec(),
@@ -172,8 +188,12 @@ fn summary(label: &str, stdout: &str, transcript: &str) -> String {
     let done = match label {
         "Fetching" => "Fetch finished",
         "Updating" => "Project updated",
+        "Cloning" => "Repository cloned",
         _ => "Pushed",
     };
+    if label == "Cloning" {
+        return done.to_owned();
+    }
     let text = format!("{stdout}\n{transcript}");
     if text.contains("Already up to date") || text.contains("Everything up-to-date") {
         return format!("{done}: already up to date");
@@ -382,6 +402,33 @@ mod tests {
         let a = clone("a");
         let b = clone("b");
         (base, a, b)
+    }
+
+    #[test]
+    fn clones_with_progress_and_rejects_command_transports() {
+        let (base, _a, _b) = setup("clone");
+        let noop: Notify = Arc::new(|| {});
+        let target = base.join("cloned");
+        let job = RemoteJob::start(
+            &base,
+            RemoteOperation::Clone {
+                url: base.join("origin.git").display().to_string(),
+                directory: target.display().to_string(),
+            },
+            noop.clone(),
+        )
+        .unwrap();
+        let (_, result) = wait(&job);
+        assert_eq!(result.unwrap(), "Repository cloned");
+        assert!(target.join(".git").exists());
+        for url in ["ext::sh -c id", "--upload-pack=x", ""] {
+            let bad = RemoteOperation::Clone {
+                url: url.into(),
+                directory: "/tmp/x".into(),
+            };
+            assert!(RemoteJob::start(&base, bad, noop.clone()).is_err(), "{url}");
+        }
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
