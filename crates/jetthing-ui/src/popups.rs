@@ -771,6 +771,8 @@ fn file_structure(
         }
         egui::ScrollArea::vertical()
             .max_height(420.0)
+            .min_scrolled_height(420.0)
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for (row_index, (depth, item)) in rows.iter().enumerate() {
@@ -784,6 +786,8 @@ fn file_structure(
                     }
                 }
             });
+        ui.add_space(4.0);
+        structure_options(ui);
     });
     *selected = Some(index);
     if let Some(item) = open
@@ -794,6 +798,25 @@ fn file_structure(
         return false;
     }
     true
+}
+
+/// Option checkboxes under the structure list. The tags-based outline has no
+/// inherited members, anonymous classes or lambdas to show, so they are
+/// disabled (and unchecked) rather than pretending to filter.
+fn structure_options(ui: &mut egui::Ui) {
+    ui.horizontal_wrapped(|ui| {
+        for label in [
+            "Inherited members (Ctrl+F12)",
+            "Anonymous classes (Ctrl+I)",
+            "Lambdas (Ctrl+L)",
+        ] {
+            let mut unchecked = false;
+            ui.add_enabled(false, egui::Checkbox::new(&mut unchecked, label))
+                .on_disabled_hover_text(
+                    "Not available: the outline is built without type information",
+                );
+        }
+    });
 }
 
 #[cfg(test)]

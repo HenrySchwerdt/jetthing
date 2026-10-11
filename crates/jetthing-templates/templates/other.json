@@ -1,0 +1,15 @@
+{
+ "group": "Other",
+ "extensions": [],
+ "templates": [
+  {
+   "abbreviation": "todo",
+   "description": "TODO note",
+   "text": "TODO: $END$",
+   "contexts": [
+    "OTHER"
+   ]
+  }
+ ],
+ "postfix": []
+}

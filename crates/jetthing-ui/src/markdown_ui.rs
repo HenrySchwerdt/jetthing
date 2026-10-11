@@ -114,7 +114,7 @@ pub fn layout_island(
     egui::Area::new(egui::Id::new("markdown_layout_island"))
         .order(egui::Order::Foreground)
         .pivot(egui::Align2::RIGHT_TOP)
-        .fixed_pos(top_right + egui::vec2(-8.0, 6.0))
+        .fixed_pos(top_right + egui::vec2(-8.0, 0.0))
         .show(ctx, |ui| {
             egui::Frame::new()
                 .fill(*theme::POPUP)
@@ -367,6 +367,7 @@ fn code_block(ui: &mut egui::Ui, ctx: &mut Ctx, lang: Option<&str>, code: &str) 
     let font = FontId::monospace(BODY_SIZE * 0.93);
     egui::Frame::new()
         .fill(*theme::editor::BACKGROUND_PANEL)
+        .stroke(Stroke::new(1.0_f32, *theme::POPUP_BORDER))
         .corner_radius(6)
         .inner_margin(egui::Margin::same(10))
         .show(ui, |ui| {
