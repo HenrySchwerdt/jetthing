@@ -1027,6 +1027,7 @@ mod tests {
         let mut catalog = Catalog::new();
         for spec in [
             jetthing_toolchains::providers::jdtls::spec(),
+            jetthing_toolchains::providers::java_debug::spec(),
             jetthing_toolchains::providers::jdk::spec(),
             jetthing_toolchains::providers::gradle::spec(),
         ] {
@@ -1060,9 +1061,12 @@ mod tests {
         // No wrapper: the project also needs Gradle.
         assert_eq!(
             banner["text"],
-            "Java project: JDK, Gradle and the Java language server are missing"
+            "Java project: JDK, Gradle, the Java language server and Java debugger (java-debug) are missing"
         );
-        assert_eq!(banner["components"], json!(["jdk", "gradle", "jdtls"]));
+        assert_eq!(
+            banner["components"],
+            json!(["jdk", "gradle", "jdtls", "java-debug"])
+        );
         // The same bar is offered while no editor is open.
         assert_eq!(
             state.toolchains.project_banner().map(|banner| banner.text),
@@ -1094,7 +1098,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             banner["text"],
-            "Java project: Gradle and the Java language server are missing"
+            "Java project: Gradle, the Java language server and Java debugger (java-debug) are missing"
         );
         // A configured JDK is handed to builds (bin on PATH, JAVA_HOME).
         let environment = tool_environment(&state.toolchains.toolchains);
