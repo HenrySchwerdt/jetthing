@@ -518,7 +518,7 @@ fn stream_view(
             .filter(|e| e.direction == Direction::Outgoing)
             .count();
         pill(ui, &format!("{received} received"), pal.weak, false);
-        if protocol == Protocol::WebSocket {
+        if matches!(protocol, Protocol::WebSocket | Protocol::Grpc) {
             pill(ui, &format!("{sent} sent"), pal.weak, false);
         }
         if let Some(last) = events.last() {
@@ -543,6 +543,9 @@ fn stream_view(
     if events.is_empty() {
         let hint = match protocol {
             Protocol::WebSocket => "Connect, then send messages from the Message tab (Ctrl+Enter).",
+            Protocol::Grpc => {
+                "Pick a method, then Connect (Ctrl+Enter) to call it. Client-streaming calls take more messages from the Message tab."
+            }
             _ => "Connect to stream events as they arrive.",
         };
         widgets::empty_state(ui, &format!("{} stream", protocol.label()), hint);

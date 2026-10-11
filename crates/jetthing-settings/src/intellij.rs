@@ -48,6 +48,10 @@ pub mod ids {
     pub const KEYMAP: &str = "keymap.active";
     /// User shortcut changes, one `keymap<TAB>action<TAB>shortcut…` line per action.
     pub const KEYMAP_OVERRIDES: &str = "keymap.overrides";
+    /// User live templates, one JSON `UserTemplate` per line.
+    pub const LIVE_TEMPLATES_USER: &str = "editor.liveTemplates.user";
+    /// Switched-off live template groups and templates (`group` or `group/abbreviation`).
+    pub const LIVE_TEMPLATES_DISABLED: &str = "editor.liveTemplates.disabled";
     pub const EDITOR_FONT_FAMILY: &str = "editor.font.family";
     pub const EDITOR_FONT_SIZE: &str = "editor.font.size";
     pub const EDITOR_LINE_HEIGHT: &str = "editor.font.lineHeight";
@@ -410,6 +414,20 @@ fn add_definitions(registry: &mut SettingsRegistry) {
             ids::KEYMAP_OVERRIDES,
             "preferences.keymap",
             "Modified shortcuts",
+            SettingKind::List,
+            SettingValue::List(Vec::new()),
+        ),
+        SettingDef::new(
+            ids::LIVE_TEMPLATES_USER,
+            "editing.templates",
+            "User live templates",
+            SettingKind::List,
+            SettingValue::List(Vec::new()),
+        ),
+        SettingDef::new(
+            ids::LIVE_TEMPLATES_DISABLED,
+            "editing.templates",
+            "Disabled live templates",
             SettingKind::List,
             SettingValue::List(Vec::new()),
         ),

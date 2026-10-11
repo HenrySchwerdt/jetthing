@@ -106,8 +106,13 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             }
             let md_layout = app.state.markdown_layout();
             let full = ui.available_rect_before_wrap();
+            // The toggle lives in the editor's top-right toolbar: the tab strip row.
+            let toolbar_right = egui::pos2(
+                full.right(),
+                ui.max_rect().top() + TAB_BAR_HEIGHT / 2.0 - 12.0,
+            );
             if let Some(layout) = md_layout
-                && let Some(picked) = markdown_ui::layout_island(ui.ctx(), full.right_top(), layout)
+                && let Some(picked) = markdown_ui::layout_island(ui.ctx(), toolbar_right, layout)
             {
                 requests.push(EditorRequest::Command(
                     "markdown.layout",
@@ -1709,10 +1714,8 @@ fn editor_surface(
                 if multi_line {
                     requests.push(command("editor.indent"));
                 } else {
-                    document
-                        .selections
-                        .insert(&mut document.text, "    ")
-                        .map_err(text_error)?;
+                    // Expands a live template abbreviation; otherwise indents.
+                    requests.push(command("template.expand"));
                 }
             }
             egui::Key::Backspace if word && document.selections.primary().is_caret() => {
