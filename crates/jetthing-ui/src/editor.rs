@@ -1594,6 +1594,7 @@ fn editor_surface(
     let command = |id: &'static str| EditorRequest::Command(id, Value::Null);
     let clone_armed = editor_keys::clone_gesture_armed(ui.ctx(), response.id, mac);
     let mut typed = String::new();
+    let pairing = theme::pair_options(ui.ctx());
     for event in events {
         let (key, modifiers) = match event {
             egui::Event::Text(text) if !text.is_empty() => {
@@ -1601,8 +1602,13 @@ fn editor_surface(
                 let mut chars = text.chars();
                 let single = chars.next().filter(|_| chars.next().is_none());
                 let handled = match single {
-                    Some(c) => ops::type_char(&mut document.text, &mut document.selections, c)
-                        .map_err(text_error)?,
+                    Some(c) => ops::type_char_with(
+                        &mut document.text,
+                        &mut document.selections,
+                        c,
+                        pairing,
+                    )
+                    .map_err(text_error)?,
                     None => false,
                 };
                 if !handled {

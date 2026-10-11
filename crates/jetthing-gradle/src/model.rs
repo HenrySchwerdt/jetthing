@@ -262,10 +262,7 @@ impl GradleBuild {
             "--console=plain".to_owned(),
             MODEL_TASK.to_owned(),
         ];
-        Ok(
-            TaskPlan::new("Gradle Sync", self.program()?, args, &self.root)
-                .with_kind(TaskKind::Sync),
-        )
+        Ok(self.plan("Gradle Sync", args)?.with_kind(TaskKind::Sync))
     }
 }
 

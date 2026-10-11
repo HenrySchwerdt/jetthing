@@ -13,8 +13,10 @@ use crate::theme;
 use crate::widgets;
 use eframe::egui::{self, Color32, Rect, RichText, Sense, vec2};
 use jetthing_core::IdeState;
+use jetthing_plugins::catalog::{Catalog, CatalogEntry};
 use jetthing_plugins::{PluginEntry, PluginSource, PluginStatus, SettingKind};
 use serde_json::{Value, json};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
@@ -40,6 +42,10 @@ pub struct PluginManager {
     /// Path field of "Install Plugin from Disk…" while it is open.
     pub install_path: Option<String>,
     pub install_error: Option<String>,
+    /// Local registry listing of the Marketplace tab; read when the tab opens.
+    catalog: Option<Catalog>,
+    /// Selected Marketplace plugin id.
+    market_selected: Option<String>,
 }
 
 const LIST_WIDTH: f32 = 340.0;
@@ -72,11 +78,14 @@ fn group_of(state: &IdeState, entry: &PluginEntry) -> Group {
 }
 
 fn matches(entry: &PluginEntry, query: &str) -> bool {
+    matches_manifest(&entry.manifest, query)
+}
+
+fn matches_manifest(manifest: &jetthing_plugins::PluginManifest, query: &str) -> bool {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return true;
     }
-    let manifest = &entry.manifest;
     [
         manifest.name.as_str(),
         manifest.id.as_str(),
@@ -130,6 +139,22 @@ impl PluginManager {
 
 /// The page body, filling the rest of the settings dialog's page area.
 pub fn page(ui: &mut egui::Ui, manager: &mut PluginManager, cx: &mut PageContext<'_>) {
+    let registry = &cx.state.plugin_host.registry;
+    if manager.tab == Tab::Installed
+        && manager
+            .selected
+            .as_deref()
+            .is_none_or(|id| registry.get(id).is_none())
+    {
+        // Like the reference, the first plugin is previewed until another is picked.
+        manager.selected = registry
+            .entries()
+            .first()
+            .map(|entry| entry.id().to_owned());
+    }
+    if manager.tab == Tab::Marketplace && manager.catalog.is_none() {
+        manager.catalog = Some(Catalog::scan(&jetthing_core::plugin_registry_dirs()));
+    }
     let full = ui.available_rect_before_wrap();
     ui.allocate_rect(full, Sense::hover());
     let header = Rect::from_min_size(full.min, vec2(full.width(), 40.0));
@@ -168,11 +193,12 @@ pub fn page(ui: &mut egui::Ui, manager: &mut PluginManager, cx: &mut PageContext
     );
     match manager.tab {
         Tab::Installed => details(cx, &mut details_ui, manager),
-        Tab::Marketplace => plugin_directories(cx, &mut details_ui),
+        Tab::Marketplace => market_details(cx, &mut details_ui, manager),
     }
 }
 
-/// Where plugins come from while there is no marketplace catalog.
+/// Where plugins can be installed from, shown when nothing is selected.
+
 fn plugin_directories(cx: &PageContext<'_>, ui: &mut egui::Ui) {
     ui.label(
         RichText::new("Plugin directories")
@@ -258,6 +284,9 @@ fn header_row(cx: &mut PageContext<'_>, ui: &mut egui::Ui, manager: &mut PluginM
         }
         if response.clicked() {
             manager.tab = tab;
+            if tab == Tab::Marketplace {
+                manager.catalog = None; // rescan the registries
+            }
         }
         x += width + 4.0;
     }
@@ -281,6 +310,7 @@ fn header_row(cx: &mut PageContext<'_>, ui: &mut egui::Ui, manager: &mut PluginM
             ui.close();
         }
         if ui.button("Refresh Plugin List").clicked() {
+            manager.catalog = None;
             cx.dispatch("plugin.refresh", Value::Null);
             ui.close();
         }
@@ -354,26 +384,352 @@ fn list(cx: &mut PageContext<'_>, ui: &mut egui::Ui, manager: &mut PluginManager
         }
     }
     match manager.tab {
-        Tab::Marketplace => marketplace(ui, manager),
+        Tab::Marketplace => marketplace(cx, ui, manager),
         Tab::Installed => installed_list(cx, ui, manager),
     }
 }
 
-fn marketplace(ui: &mut egui::Ui, manager: &mut PluginManager) {
-    ui.add_space(40.0);
-    ui.vertical_centered(|ui| {
-        ui.label(RichText::new("No plugin marketplace is configured").color(theme::TEXT_BRIGHT));
-        ui.add_space(4.0);
+fn marketplace(cx: &mut PageContext<'_>, ui: &mut egui::Ui, manager: &mut PluginManager) {
+    let catalog = manager.catalog.clone().unwrap_or_default();
+    let visible: Vec<&CatalogEntry> = catalog
+        .entries
+        .iter()
+        .filter(|entry| matches_manifest(&entry.manifest, &manager.search))
+        .collect();
+    if manager.market_selected.is_none() {
+        manager.market_selected = visible.first().map(|entry| entry.manifest.id.clone());
+    }
+    if visible.is_empty() {
+        ui.add_space(40.0);
+        ui.vertical_centered(|ui| {
+            let (title, hint) = if catalog.entries.is_empty() {
+                (
+                    "No plugins in the local registry",
+                    "Put .jtplugin archives into one of the registry\ndirectories listed on the right.",
+                )
+            } else {
+                ("Nothing found", "No registry plugin matches the search.")
+            };
+            ui.label(RichText::new(title).color(theme::TEXT_BRIGHT));
+            ui.add_space(4.0);
+            ui.label(RichText::new(hint).color(theme::TEXT_SECONDARY));
+            ui.add_space(8.0);
+            if ui.button("Install Plugin from Disk…").clicked() {
+                manager.tab = Tab::Installed;
+                manager.install_path = Some(String::new());
+            }
+        });
+        return;
+    }
+    let mut installs: Vec<PathBuf> = Vec::new();
+    egui::ScrollArea::vertical()
+        .id_salt("plugin_market_list")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            group_header(ui, "Local registry", true, false);
+            for entry in visible {
+                let installed = cx.state.plugin_host.registry.get(&entry.manifest.id);
+                if market_row(
+                    ui,
+                    entry,
+                    installed.map(|e| e.manifest.version.as_str()),
+                    manager,
+                ) {
+                    installs.push(entry.archive.clone());
+                }
+            }
+        });
+    for archive in installs {
+        manager.install_error = None;
+        cx.dispatch(
+            "plugin.install",
+            json!({"path": archive.display().to_string()}),
+        );
+    }
+}
+
+/// One Marketplace card: icon, name, version and vendor, Install/Installed.
+/// Returns true when Install was clicked.
+fn market_row(
+    ui: &mut egui::Ui,
+    entry: &CatalogEntry,
+    installed: Option<&str>,
+    manager: &mut PluginManager,
+) -> bool {
+    let manifest = &entry.manifest;
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+    let selected = manager.market_selected.as_deref() == Some(manifest.id.as_str());
+    if selected {
+        ui.painter().rect_filled(rect, 0.0, theme::SELECTION);
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 0.0, theme::HOVER);
+    }
+    paint_plugin_icon(
+        ui.painter(),
+        Rect::from_min_size(rect.left_center() + vec2(10.0, -18.0), vec2(36.0, 36.0)),
+        &manifest.name,
+    );
+    let text_left = rect.left() + 58.0;
+    let name = ui.painter().layout(
+        manifest.name.clone(),
+        theme::semibold(theme::UI_FONT_SIZE),
+        *theme::TEXT_BRIGHT,
+        rect.width() - 150.0,
+    );
+    ui.painter().galley(
+        egui::pos2(text_left, rect.top() + 14.0),
+        name,
+        *theme::TEXT_BRIGHT,
+    );
+    let vendor = if manifest.vendor.is_empty() {
+        "Unknown vendor"
+    } else {
+        &manifest.vendor
+    };
+    ui.painter().text(
+        egui::pos2(text_left, rect.top() + 36.0),
+        egui::Align2::LEFT_TOP,
+        format!("{}  {vendor}", manifest.version),
+        egui::FontId::proportional(theme::UI_FONT_SIZE - 0.5),
+        *theme::TEXT_INFO,
+    );
+    let button_rect = Rect::from_center_size(
+        egui::pos2(rect.right() - 46.0, rect.center().y),
+        vec2(76.0, 26.0),
+    );
+    let mut install = false;
+    let mut button_ui = ui.new_child(egui::UiBuilder::new().max_rect(button_rect));
+    match installed {
+        Some(version) if version == manifest.version => {
+            button_ui.add_enabled(
+                false,
+                egui::Button::new("Installed").min_size(button_rect.size()),
+            );
+        }
+        Some(_) => {
+            install = button_ui
+                .add(egui::Button::new("Update").min_size(button_rect.size()))
+                .clicked()
+        }
+        None => {
+            install = button_ui
+                .add(egui::Button::new("Install").min_size(button_rect.size()))
+                .clicked()
+        }
+    }
+    if response.clicked() {
+        manager.market_selected = Some(manifest.id.clone());
+        manager.detail = DetailTab::Overview;
+    }
+    install
+}
+
+fn market_details(cx: &mut PageContext<'_>, ui: &mut egui::Ui, manager: &mut PluginManager) {
+    let entry = manager.catalog.as_ref().and_then(|catalog| {
+        catalog
+            .entries
+            .iter()
+            .find(|entry| Some(entry.manifest.id.as_str()) == manager.market_selected.as_deref())
+    });
+    let Some(entry) = entry.cloned() else {
+        plugin_directories_with_registries(cx, ui);
+        return;
+    };
+    let manifest = &entry.manifest;
+    ui.label(
+        RichText::new(&manifest.name)
+            .font(theme::semibold(20.0))
+            .color(theme::TEXT_BRIGHT),
+    );
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
         ui.label(
-            RichText::new(
-                "Install .jtplugin archives from disk.\nJetBrains Marketplace browsing is planned.",
-            )
+            RichText::new(if manifest.vendor.is_empty() {
+                "Unknown vendor"
+            } else {
+                &manifest.vendor
+            })
             .color(theme::TEXT_SECONDARY),
         );
+        if let Some(homepage) = &manifest.homepage {
+            ui.hyperlink_to("Plugin homepage ↗", homepage);
+        }
+    });
+    ui.add_space(8.0);
+    let installed_version = cx
+        .state
+        .plugin_host
+        .registry
+        .get(&manifest.id)
+        .map(|installed| installed.manifest.version.clone());
+    ui.horizontal(|ui| {
+        let (label, enabled) = match &installed_version {
+            Some(version) if *version == manifest.version => ("Installed", false),
+            Some(_) => ("Update", true),
+            None => ("Install", true),
+        };
+        if ui
+            .add_enabled(enabled, egui::Button::new(label).min_size(vec2(84.0, 28.0)))
+            .clicked()
+        {
+            manager.install_error = None;
+            cx.dispatch(
+                "plugin.install",
+                json!({"path": entry.archive.display().to_string()}),
+            );
+        }
         ui.add_space(8.0);
-        if ui.button("Install Plugin from Disk…").clicked() {
-            manager.tab = Tab::Installed;
-            manager.install_path = Some(String::new());
+        ui.label(RichText::new(&manifest.version).color(theme::TEXT));
+        if let Some(installed) = &installed_version
+            && *installed != manifest.version
+        {
+            ui.label(
+                RichText::new(format!("(installed {installed})")).color(theme::TEXT_SECONDARY),
+            );
+        }
+    });
+    if let Some(error) = &manager.install_error {
+        ui.add_space(6.0);
+        ui.label(RichText::new(error).color(theme::ERROR));
+    }
+    ui.add_space(10.0);
+    detail_tabs(
+        ui,
+        manager,
+        &[
+            (DetailTab::Overview, "Overview"),
+            (DetailTab::AdditionalInfo, "Additional Info"),
+        ],
+    );
+    ui.separator();
+    ui.add_space(6.0);
+    egui::ScrollArea::vertical()
+        .id_salt(("plugin_market_details", &manifest.id))
+        .auto_shrink([false, false])
+        .show(ui, |ui| match manager.detail {
+            DetailTab::AdditionalInfo => {
+                let rows = additional_info(manifest, &entry.archive.display().to_string());
+                for (key, value) in rows {
+                    info_row(ui, key, &value);
+                }
+            }
+            _ => {
+                ui.label(if manifest.description.is_empty() {
+                    RichText::new("No description.").color(theme::TEXT_SECONDARY)
+                } else {
+                    RichText::new(&manifest.description).color(theme::TEXT)
+                });
+                ui.add_space(10.0);
+                ui.label(
+                    RichText::new("Requested permissions")
+                        .font(theme::semibold(theme::UI_FONT_SIZE)),
+                );
+                if manifest.permissions.is_empty() {
+                    ui.label(RichText::new("None").color(theme::TEXT_SECONDARY));
+                }
+                for permission in &manifest.permissions {
+                    ui.label(format!("• {}", permission.description()));
+                }
+            }
+        });
+}
+
+fn plugin_directories_with_registries(cx: &PageContext<'_>, ui: &mut egui::Ui) {
+    ui.label(
+        RichText::new("Plugin registries")
+            .font(theme::semibold(theme::UI_FONT_SIZE + 2.0))
+            .color(theme::TEXT_BRIGHT),
+    );
+    ui.add_space(6.0);
+    ui.label(
+        RichText::new(
+            "The Marketplace lists the .jtplugin archives found in these directories \
+             (JETTHING_REGISTRY_DIR overrides the first entry):",
+        )
+        .color(theme::TEXT_SECONDARY),
+    );
+    ui.add_space(4.0);
+    for dir in jetthing_core::plugin_registry_dirs() {
+        ui.label(RichText::new(dir.display().to_string()).color(theme::TEXT));
+    }
+    ui.add_space(12.0);
+    plugin_directories(cx, ui);
+}
+
+fn info_row(ui: &mut egui::Ui, key: &str, value: &str) {
+    ui.horizontal_top(|ui| {
+        ui.add_sized(
+            [110.0, 18.0],
+            egui::Label::new(RichText::new(key).color(theme::TEXT_SECONDARY)),
+        );
+        ui.label(value);
+    });
+    ui.add_space(4.0);
+}
+
+/// Key/value rows of the Additional Info tab shared by both tabs' details.
+fn additional_info(
+    manifest: &jetthing_plugins::PluginManifest,
+    source: &str,
+) -> Vec<(&'static str, String)> {
+    let list = |items: Vec<String>| {
+        if items.is_empty() {
+            "None".to_owned()
+        } else {
+            items.join(", ")
+        }
+    };
+    vec![
+        ("Plugin ID", manifest.id.clone()),
+        ("Kind", manifest.kind.label().to_owned()),
+        ("API version", manifest.api_version.to_string()),
+        ("Source", source.to_owned()),
+        (
+            "License",
+            manifest
+                .license
+                .clone()
+                .unwrap_or_else(|| "Not specified".into()),
+        ),
+        ("Dependencies", list(manifest.dependencies.clone())),
+        ("Tags", list(manifest.capabilities.clone())),
+    ]
+}
+
+fn detail_tabs(ui: &mut egui::Ui, manager: &mut PluginManager, tabs: &[(DetailTab, &str)]) {
+    if !tabs.iter().any(|(tab, _)| *tab == manager.detail) {
+        manager.detail = DetailTab::Overview;
+    }
+    ui.horizontal(|ui| {
+        for (tab, label) in tabs {
+            let active = manager.detail == *tab;
+            let text = RichText::new(*label).color(if active {
+                theme::TEXT_BRIGHT
+            } else {
+                theme::TEXT
+            });
+            let response = ui.add(
+                egui::Button::new(text)
+                    .frame(false)
+                    .min_size(vec2(0.0, 28.0)),
+            );
+            if active {
+                let r = response.rect;
+                ui.painter().rect_filled(
+                    Rect::from_min_max(
+                        egui::pos2(r.left(), r.bottom() + 1.0),
+                        egui::pos2(r.right(), r.bottom() + 4.0),
+                    ),
+                    0.0,
+                    theme::ACCENT,
+                );
+            }
+            if response.clicked() {
+                manager.detail = *tab;
+            }
+            ui.add_space(8.0);
         }
     });
 }

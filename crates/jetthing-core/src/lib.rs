@@ -51,7 +51,7 @@ mod new_class;
 mod plugin_host;
 mod problems;
 pub mod quick_nav;
-pub use new_class::{JavaKind, KotlinKind};
+pub use new_class::{FileTemplate, JavaKind, KotlinKind, file_templates};
 mod project_commands;
 mod quick_doc;
 mod refactor;
@@ -79,8 +79,8 @@ pub use gutter_commands::GutterMark;
 pub use jetthing_runnables::RunnableKind;
 pub use jetthing_search::SearchOptions;
 pub use plugin_host::{
-    PluginHostState, PluginStatusWidget, PluginTab, plugin_dirs, sync_plugin_commands,
-    user_plugin_dir,
+    PluginHostState, PluginStatusWidget, PluginTab, plugin_dirs, plugin_registry_dirs,
+    sync_plugin_commands, user_plugin_dir,
 };
 mod workspace_edit;
 pub use ai_agent::{
