@@ -2,7 +2,7 @@
 
 use crate::{IdeState, spec, string_param};
 use jetthing_command::{Command, CommandError, CommandRegistry};
-use jetthing_settings::{SettingValue, SettingsRegistry, SettingsStore};
+use jetthing_settings::{SettingValue, SettingsRegistry, SettingsStore, ids};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -48,17 +48,37 @@ impl IdeState {
             self.status = format!("{error}. Using defaults; the file is left unchanged.");
         }
         self.refresh_keymap();
+        self.sync_gradle_options();
     }
 
     pub(crate) fn load_project_settings(&mut self, root: &Path) {
         if let Err(error) = self.settings.store.load_project(root) {
             self.status = format!("{error}. Using defaults; the file is left unchanged.");
         }
+        self.sync_gradle_options();
+    }
+
+    /// Hands Settings | Build Tools | Gradle to the Gradle integration.
+    pub(crate) fn sync_gradle_options(&self) {
+        use jetthing_gradle::{Distribution, GradleOptions};
+        let path = |id| self.settings.text(id).filter(|v| !v.trim().is_empty());
+        jetthing_gradle::set_options(GradleOptions {
+            distribution: Distribution::from_id(
+                &self
+                    .settings
+                    .text(ids::GRADLE_DISTRIBUTION)
+                    .unwrap_or_default(),
+            ),
+            offline: self.settings.bool(ids::GRADLE_OFFLINE).unwrap_or(false),
+            user_home: path(ids::GRADLE_USER_HOME),
+            jvm: path(ids::GRADLE_JVM),
+        });
     }
 
     /// Saves the settings and updates state derived from them (the keymap).
     pub(crate) fn persist_settings(&mut self) -> Result<(), CommandError> {
         self.refresh_keymap();
+        self.sync_gradle_options();
         self.settings
             .store
             .save()

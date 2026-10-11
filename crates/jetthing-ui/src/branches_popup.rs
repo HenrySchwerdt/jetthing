@@ -3,7 +3,7 @@
 //! of branch operations. Also hosts the small branch name/confirm dialogs.
 
 use crate::icons::{self, Icon};
-use crate::{IdeApp, keys, theme};
+use crate::{IdeApp, theme};
 use eframe::egui::{self, RichText, vec2};
 use serde_json::{Value, json};
 
@@ -62,6 +62,7 @@ pub fn menu(app: &mut IdeApp, ui: &mut egui::Ui) {
     ui.set_min_width(260.0);
     let mut action: Option<(&'static str, Value)> = None;
     let mut dialog = None;
+    let mut push = false;
     if let Some(operation) = pending {
         ui.label(RichText::new(format!("{} in progress", operation.label())).color(theme::WARNING));
         if ui.button(jetthing_core::abort_label(operation)).clicked() {
@@ -70,37 +71,21 @@ pub fn menu(app: &mut IdeApp, ui: &mut egui::Ui) {
         ui.separator();
     }
     let busy = app.state.remote_busy();
-    if ui
-        .add_enabled(
-            !busy,
-            egui::Button::new("Update Project…").shortcut_text(keys::display("⌘T")),
-        )
-        .clicked()
-    {
-        action = Some(("git.pull", Value::Null));
+    let query_id = egui::Id::new("branches_popup_search");
+    let mut query: String = ui.data_mut(|data| data.get_temp(query_id).unwrap_or_default());
+    let search = ui.add(
+        egui::TextEdit::singleline(&mut query)
+            .id(query_id.with("edit"))
+            .hint_text("Search")
+            .desired_width(f32::INFINITY)
+            .margin(egui::Margin::symmetric(6, 5)),
+    );
+    if !search.has_focus() && query.is_empty() {
+        search.request_focus();
     }
-    if ui
-        .add(egui::Button::new("Commit…").shortcut_text(keys::display("⌘K")))
-        .clicked()
-    {
-        action = Some(("toolwindow.activate.commit", Value::Null));
-    }
-    let mut push = false;
-    if ui
-        .add_enabled(
-            !busy,
-            egui::Button::new("Push…").shortcut_text(keys::display("⇧⌘K")),
-        )
-        .clicked()
-    {
-        push = true;
-    }
-    if ui.add_enabled(!busy, egui::Button::new("Fetch")).clicked() {
-        action = Some(("git.fetch", Value::Null));
-    }
-    if let Some(progress) = &app.state.remote_progress {
-        ui.label(RichText::new(progress).color(theme::TEXT_SECONDARY));
-    }
+    ui.data_mut(|data| data.insert_temp(query_id, query.clone()));
+    let needle = query.to_lowercase();
+    let matches = |name: &str| needle.is_empty() || name.to_lowercase().contains(&needle);
     if ui.button("New Branch…").clicked() {
         dialog = Some(GitDialog::NewBranch {
             from: None,
@@ -115,30 +100,15 @@ pub fn menu(app: &mut IdeApp, ui: &mut egui::Ui) {
             error: None,
         });
     }
-    if ui.button("Stash Changes…").clicked() {
-        dialog = Some(GitDialog::Stash {
-            message: String::new(),
-            keep_index: false,
-            include_untracked: false,
-            error: None,
-        });
+    if ui.add_enabled(!busy, egui::Button::new("Fetch")).clicked() {
+        action = Some(("git.fetch", Value::Null));
     }
-    if ui.button("Unstash Changes…").clicked() {
-        dialog = Some(GitDialog::Unstash {
-            selected: 0,
-            pop: true,
-            error: None,
-        });
-    }
-    if ui
-        .add(egui::Button::new("Show Git Log").shortcut_text(keys::display("⌘9")))
-        .clicked()
-    {
-        action = Some(("git.log.show", Value::Null));
+    if let Some(progress) = &app.state.remote_progress {
+        ui.label(RichText::new(progress).color(theme::TEXT_SECONDARY));
     }
     ui.separator();
     section(ui, "Local");
-    for branch in &branches.local {
+    for branch in branches.local.iter().filter(|branch| matches(&branch.name)) {
         let is_current = branch.name == current;
         let mut label = branch.name.clone();
         if branch.ahead > 0 {
@@ -166,20 +136,41 @@ pub fn menu(app: &mut IdeApp, ui: &mut egui::Ui) {
             );
             ui.menu_button(text, |ui| {
                 ui.set_min_width(240.0);
-                branch_actions(ui, &branch.name, &current, false, &mut action, &mut dialog);
+                branch_actions(
+                    ui,
+                    &branch.name,
+                    &current,
+                    false,
+                    &mut action,
+                    &mut dialog,
+                    &mut push,
+                );
             });
         });
     }
-    if !branches.remote.is_empty() {
+    let remote: Vec<&String> = branches
+        .remote
+        .iter()
+        .filter(|name| matches(name))
+        .collect();
+    if !remote.is_empty() {
         ui.separator();
         section(ui, "Remote");
-        for branch in &branches.remote {
+        for branch in remote {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 icons::show(ui, Icon::Branch, 14.0, theme::TEXT_SECONDARY);
                 ui.menu_button(branch.as_str(), |ui| {
                     ui.set_min_width(240.0);
-                    branch_actions(ui, branch, &current, true, &mut action, &mut dialog);
+                    branch_actions(
+                        ui,
+                        branch,
+                        &current,
+                        true,
+                        &mut action,
+                        &mut dialog,
+                        &mut push,
+                    );
                 });
             });
         }
@@ -215,6 +206,7 @@ fn branch_actions(
     remote: bool,
     action: &mut Option<(&'static str, Value)>,
     dialog: &mut Option<GitDialog>,
+    push: &mut bool,
 ) {
     let is_current = branch == current;
     if !is_current && ui.button("Checkout").clicked() {
@@ -227,6 +219,15 @@ fn branch_actions(
             checkout: true,
             error: None,
         });
+    }
+    if is_current && !remote {
+        ui.separator();
+        if ui.button("Update").clicked() {
+            *action = Some(("git.pull", Value::Null));
+        }
+        if ui.button("Push…").clicked() {
+            *push = true;
+        }
     }
     if !is_current {
         ui.separator();

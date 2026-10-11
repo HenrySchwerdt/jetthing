@@ -56,6 +56,12 @@ pub mod ids {
     pub const ENSURE_NEWLINE: &str = "editor.general.ensureNewlineAtEof";
     pub const WHEEL_ZOOM: &str = "editor.general.wheelFontChange";
     pub const SHOW_LINE_NUMBERS: &str = "editor.appearance.lineNumbers";
+    pub const PAIR_BRACKETS: &str = "editor.codeEditing.pairBrackets";
+    pub const PAIR_QUOTES: &str = "editor.codeEditing.pairQuotes";
+    pub const GRADLE_DISTRIBUTION: &str = "gradle.distribution";
+    pub const GRADLE_OFFLINE: &str = "gradle.offline";
+    pub const GRADLE_USER_HOME: &str = "gradle.userHome";
+    pub const GRADLE_JVM: &str = "gradle.jvm";
     pub const CHECK_UPDATES: &str = "updates.checkOnStartup";
     pub const TERMINAL_SHELL: &str = "terminal.shellPath";
     pub const AUTOSAVE_FOCUS: &str = "system.saveOnFrameDeactivation";
@@ -251,6 +257,9 @@ fn keymap_options() -> Vec<EnumOption> {
         })
         .collect()
 }
+
+const CODE_EDITING: &str = "preferences.editor.code.editing";
+const GRADLE: &str = "reference.settingsdialog.project.gradle";
 
 fn add_definitions(registry: &mut SettingsRegistry) {
     use SettingKind::{Bool, Path};
@@ -468,6 +477,50 @@ fn add_definitions(registry: &mut SettingsRegistry) {
             B(true),
         )
         .group("Appearance"),
+        SettingDef::new(
+            ids::PAIR_BRACKETS,
+            CODE_EDITING,
+            "Insert pair bracket",
+            Bool,
+            B(true),
+        )
+        .group("Smart Keys")
+        .description("Typing ( [ or { also inserts the closing bracket"),
+        SettingDef::new(
+            ids::PAIR_QUOTES,
+            CODE_EDITING,
+            "Insert pair quote",
+            Bool,
+            B(true),
+        )
+        .group("Smart Keys")
+        .description("Typing a quote also inserts the closing quote"),
+        SettingDef::new(
+            ids::GRADLE_DISTRIBUTION,
+            GRADLE,
+            "Distribution",
+            options(&[
+                ("wrapper", "Wrapper"),
+                ("local", "Local installation (gradle on PATH)"),
+            ]),
+            text("wrapper"),
+        )
+        .scope(Scope::Project)
+        .description("Wrapper falls back to gradle on PATH when the project has no gradlew"),
+        SettingDef::new(ids::GRADLE_OFFLINE, GRADLE, "Offline work", Bool, B(false))
+            .scope(Scope::Project)
+            .description("Runs Gradle with --offline"),
+        SettingDef::new(
+            ids::GRADLE_USER_HOME,
+            GRADLE,
+            "Gradle user home",
+            Path,
+            text(""),
+        )
+        .description("Sets GRADLE_USER_HOME; empty uses the default (~/.gradle)"),
+        SettingDef::new(ids::GRADLE_JVM, GRADLE, "Gradle JVM", Path, text(""))
+            .scope(Scope::Project)
+            .description("JDK home passed as JAVA_HOME; empty uses the environment's JDK"),
         SettingDef::new(
             ids::REOPEN_PROJECT,
             "preferences.general",

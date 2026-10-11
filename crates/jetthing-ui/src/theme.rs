@@ -129,6 +129,16 @@ pub fn editor_row_height(ctx: &egui::Context, font: &egui::FontId, base: f32) ->
 
 const DEFAULT_LINE_HEIGHT: f32 = 1.2;
 
+fn pairing_id() -> egui::Id {
+    egui::Id::new("editor_pairing")
+}
+
+/// Bracket/quote auto-insert from Settings | Editor | Code Editing.
+pub fn pair_options(ctx: &egui::Context) -> jetthing_text::ops::PairOptions {
+    ctx.data(|data| data.get_temp(pairing_id()))
+        .unwrap_or_default()
+}
+
 /// Applies settings that change the look live: theme, editor color scheme, editor
 /// font size and line height.
 pub fn apply_settings(ctx: &egui::Context, settings: &jetthing_core::Settings) {
@@ -147,6 +157,15 @@ pub fn apply_settings(ctx: &egui::Context, settings: &jetthing_core::Settings) {
         .map(|value| value as f32)
         .unwrap_or(DEFAULT_LINE_HEIGHT);
     ctx.data_mut(|data| data.insert_temp(line_height_id(), line_height));
+    let pairing = jetthing_text::ops::PairOptions {
+        brackets: settings
+            .bool(jetthing_settings::ids::PAIR_BRACKETS)
+            .unwrap_or(true),
+        quotes: settings
+            .bool(jetthing_settings::ids::PAIR_QUOTES)
+            .unwrap_or(true),
+    };
+    ctx.data_mut(|data| data.insert_temp(pairing_id(), pairing));
     let size = settings
         .int(jetthing_settings::ids::EDITOR_FONT_SIZE)
         .map(|size| size as f32)
