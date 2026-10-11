@@ -578,6 +578,56 @@ mod tests {
     }
 
     #[test]
+    fn drag_and_drop_commands_split_at_an_edge_or_move_between_groups() {
+        let (mut state, commands, root) = project(&["a", "b", "c"], "drop");
+        open(&mut state, &commands, &["a", "b", "c"]);
+        commands
+            .execute(
+                "editor.splitAt",
+                &mut state,
+                json!({"index": 2, "group": 0, "edge": "bottom"}),
+            )
+            .unwrap();
+        assert_eq!(group_tabs(&state), [vec!["a", "b"], vec!["c"]]);
+        commands
+            .execute(
+                "editor.splitAt",
+                &mut state,
+                json!({"index": 0, "group": 0, "edge": "left"}),
+            )
+            .unwrap();
+        assert_eq!(group_tabs(&state), [vec!["a"], vec!["b"], vec!["c"]]);
+        let other = state.splits.groups()[2].id;
+        commands
+            .execute(
+                "editor.moveToGroup",
+                &mut state,
+                json!({"index": 1, "group": other}),
+            )
+            .unwrap();
+        assert_eq!(group_tabs(&state), [vec!["a"], vec!["c", "b"]]);
+        assert!(
+            commands
+                .execute(
+                    "editor.splitAt",
+                    &mut state,
+                    json!({"index": 0, "group": 99, "edge": "left"})
+                )
+                .is_err()
+        );
+        assert!(
+            commands
+                .execute(
+                    "editor.splitAt",
+                    &mut state,
+                    json!({"index": 0, "group": 0, "edge": "middle"})
+                )
+                .is_err()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn opening_an_open_file_focuses_its_group() {
         let (mut state, commands, root) = project(&["a", "b"], "refocus");
         open(&mut state, &commands, &["a", "b"]);
