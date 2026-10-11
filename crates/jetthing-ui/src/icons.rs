@@ -411,6 +411,10 @@ pub enum Icon {
     ExpandAll,
     CollapseAll,
     Add,
+    Debug,
+    StepOver,
+    StepInto,
+    StepOut,
 }
 
 impl Icon {
@@ -964,6 +968,41 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: impl Into<C
             }
             painter.circle_stroke(center, g.len(4.0), stroke);
             painter.circle_stroke(center, g.len(1.6), stroke);
+        }
+        Icon::Debug => {
+            // Bug: body, head and legs (original drawing).
+            painter.add(egui::Shape::ellipse_stroke(
+                g.p(8.0, 9.5),
+                vec2(g.len(3.5), g.len(4.5)),
+                stroke,
+            ));
+            painter.circle_stroke(g.p(8.0, 3.8), g.len(1.8), stroke);
+            for y in [7.5, 10.0, 12.5] {
+                line(&[(1.5, y), (4.5, y)]);
+                line(&[(11.5, y), (14.5, y)]);
+            }
+        }
+        Icon::StepOver => {
+            let center = g.p(8.0, 9.0);
+            let points = (0..=16)
+                .map(|step| {
+                    let angle = std::f32::consts::PI + step as f32 / 16.0 * std::f32::consts::PI;
+                    center + vec2(angle.cos(), angle.sin()) * g.len(5.0)
+                })
+                .collect();
+            painter.add(Shape::Path(PathShape::line(points, stroke)));
+            line(&[(11.0, 7.0), (13.0, 9.0), (15.0, 7.0)]);
+            painter.circle_filled(g.p(8.0, 13.5), g.len(1.3), color);
+        }
+        Icon::StepInto => {
+            line(&[(8.0, 1.5), (8.0, 10.0)]);
+            line(&[(4.5, 6.5), (8.0, 10.0), (11.5, 6.5)]);
+            line(&[(3.0, 14.0), (13.0, 14.0)]);
+        }
+        Icon::StepOut => {
+            line(&[(8.0, 11.0), (8.0, 2.5)]);
+            line(&[(4.5, 6.0), (8.0, 2.5), (11.5, 6.0)]);
+            line(&[(3.0, 14.0), (13.0, 14.0)]);
         }
         Icon::Add => {
             line(&[(8.0, 3.0), (8.0, 13.0)]);

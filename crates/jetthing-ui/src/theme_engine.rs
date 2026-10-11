@@ -167,6 +167,10 @@ pub mod tokens {
         EDITOR_ERROR_EFFECT = ["attr:ERRORS_ATTRIBUTES.EFFECT_COLOR"] or 0xFA6675;
         /// `WARNING_ATTRIBUTES` effect (or error-stripe) color.
         EDITOR_WARNING_EFFECT = ["attr:WARNING_ATTRIBUTES.EFFECT_COLOR", "attr:WARNING_ATTRIBUTES.ERROR_STRIPE_COLOR"] or 0xF2C55C;
+        /// `BREAKPOINT_ATTRIBUTES` background (line tint of a breakpoint line).
+        EDITOR_BREAKPOINT_LINE = ["attr:BREAKPOINT_ATTRIBUTES.BACKGROUND"] or 0x40252B;
+        /// `EXECUTIONPOINT_ATTRIBUTES` background (suspended line).
+        EDITOR_EXECUTION_LINE = ["attr:EXECUTIONPOINT_ATTRIBUTES.BACKGROUND"] or 0x2A5091;
         /// `INFO_ATTRIBUTES` (weak warning) effect color.
         EDITOR_WEAK_WARNING_EFFECT = ["attr:INFO_ATTRIBUTES.EFFECT_COLOR", "attr:WARNING_ATTRIBUTES.EFFECT_COLOR"] or 0x857042;
         /// `ERRORS_ATTRIBUTES` error-stripe color.

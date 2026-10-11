@@ -145,6 +145,13 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             }
             let navigable = app.state.active_has_language_server();
             let mut text_ui = ui.new_child(egui::UiBuilder::new().max_rect(text_rect));
+            let path = app.state.documents[index].path.clone();
+            let breakpoints = app.state.breakpoint_lines(&path);
+            let execution_line = app
+                .state
+                .execution_point()
+                .filter(|point| point.path == path)
+                .map(|point| point.line);
             let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
             let changes = app.state.document_changes(index).to_vec();
             let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
@@ -165,6 +172,8 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     changes: &changes,
                     blame: blame.as_deref(),
                     run: &gutter,
+                    breakpoints: &breakpoints,
+                    execution_line,
                 },
                 navigable,
                 editor_scroll,
@@ -764,10 +773,15 @@ fn move_primary(document: &mut Document, head: usize, extend: bool) {
 }
 
 /// Horizontal layout of the editor gutter. Left to right: blame annotations,
-/// line numbers, run icons (when the file has any), folding markers, the
+/// line numbers (breakpoint dots and the execution arrow sit in their left
+/// margin), run icons (when the file has any), folding markers, the
 /// change bar, then the text.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct GutterLayout {
+    /// Left edge of the line-number column (right of the blame annotations).
+    numbers_left: f32,
+    /// Center of the breakpoint dot in the line-number column.
+    breakpoint_center: f32,
     /// Right edge of the right-aligned line numbers.
     numbers_right: f32,
     /// Center of the run-icon column (equal to `numbers_right` without icons).
@@ -791,12 +805,18 @@ impl GutterLayout {
         let run_left = numbers_right + 4.0;
         let fold_left = run_left + run_width;
         Self {
+            numbers_left: blame_width,
+            breakpoint_center: blame_width + 12.0,
             numbers_right,
             run_center: run_left + run_width / 2.0,
             run_width,
             fold_center: fold_left + Self::FOLD_COLUMN / 2.0,
             width: fold_left + Self::FOLD_COLUMN + Self::CHANGE_COLUMN,
         }
+    }
+
+    fn in_number_column(&self, x: f32) -> bool {
+        x >= self.numbers_left && x < self.numbers_right + 2.0
     }
 
     fn in_run_column(&self, x: f32) -> bool {
@@ -844,6 +864,10 @@ struct GutterData<'a> {
     blame: Option<&'a [jetthing_git::BlameLine]>,
     /// Run icons (mains, tests, Bazel rules).
     run: &'a [jetthing_core::GutterMark],
+    /// Zero-based lines with breakpoints.
+    breakpoints: &'a [usize],
+    /// Zero-based line where the debugger is suspended.
+    execution_line: Option<usize>,
 }
 
 #[allow(clippy::too_many_arguments)] // paint inputs of one editor frame
@@ -861,6 +885,8 @@ fn editor_surface(
         changes,
         blame,
         run: gutter,
+        breakpoints,
+        execution_line,
     } = gutter_data;
     let mut requests = Vec::new();
     let font = theme::editor_font(ui.style());
@@ -1015,6 +1041,11 @@ fn editor_surface(
                     .any(|mark| mark.line == line)
                     .then_some((line, position))
             });
+        // Clicking a line number toggles a breakpoint, as in the reference.
+        let number_hit = response
+            .interact_pointer_pos()
+            .filter(|position| layout.in_number_column(position.x - rect.left()))
+            .map(|position| folds.row_to_line(row_at(position)));
         // Fold markers sit in the gutter just left of the text; placeholders
         // expand their region when clicked.
         let fold_click = response
@@ -1048,6 +1079,13 @@ fn editor_surface(
             && let Some((line, position)) = gutter_hit
         {
             requests.push(EditorRequest::Gutter(line, position));
+        } else if response.clicked()
+            && let Some(line) = number_hit
+        {
+            requests.push(EditorRequest::Command(
+                "debug.toggleBreakpoint",
+                json!({"path": document.path, "line": line}),
+            ));
         } else if response.clicked()
             && let Some(position) = response.interact_pointer_pos()
         {
@@ -1211,8 +1249,19 @@ fn editor_surface(
             let line_end = line_start + content.chars().count();
             let row =
                 Rect::from_min_size(egui::pos2(rect.left(), y), vec2(rect.width(), row_height));
-            if line == caret_line && document.selections.primary().is_caret() {
+            if execution_line == Some(line) {
+                painter.rect_filled(row, 0.0, theme::editor::EXECUTION_LINE);
+            } else if breakpoints.contains(&line) {
+                painter.rect_filled(row, 0.0, theme::editor::BREAKPOINT_LINE);
+            } else if line == caret_line && document.selections.primary().is_caret() {
                 painter.rect_filled(row, 0.0, theme::editor::CARET_ROW);
+            }
+            let dot = egui::pos2(rect.left() + layout.breakpoint_center, y + row_height / 2.0);
+            if breakpoints.contains(&line) {
+                painter.circle_filled(dot, 6.0, *theme::ERROR);
+            }
+            if execution_line == Some(line) {
+                crate::debug_window::paint_execution_arrow(&painter, dot);
             }
             painter.text(
                 egui::pos2(rect.left() + layout.numbers_right, y + row_height / 2.0),
@@ -1685,6 +1734,9 @@ mod tests {
         let plain = super::GutterLayout::new(0.0, 20.0, false);
         assert!(!plain.in_run_column(plain.numbers_right + 2.0));
         assert!(plain.numbers_right < plain.fold_center);
+        assert!(plain.in_number_column(plain.breakpoint_center));
+        assert!(!plain.in_number_column(plain.fold_center));
+        assert!(plain.breakpoint_center < plain.numbers_right);
         assert!(
             plain.fold_center + super::GutterLayout::FOLD_COLUMN / 2.0 <= plain.width - 7.0 - 4.0
         );

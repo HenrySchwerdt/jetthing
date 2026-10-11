@@ -288,6 +288,13 @@ impl IdeApp {
                 // Ctrl+Shift+Tab walks the Switcher backwards.
                 params = serde_json::json!({"backward": ctx.input(|input| input.modifiers.shift)});
             }
+            // Debugger keys (F7/F8/F9, ...) stay free outside a debug session.
+            if binding.command.starts_with("debug.")
+                && binding.command != "debug.start"
+                && !self.commands.is_enabled(binding.command, &self.state)
+            {
+                continue;
+            }
             if binding.command == "navigate.declaration"
                 && self.state.android.project.is_some()
                 && self.state.resource_at_caret().is_some()

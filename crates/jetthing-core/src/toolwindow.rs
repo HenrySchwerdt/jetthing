@@ -28,10 +28,11 @@ pub enum ToolWindow {
     Gradle,
     Bazel,
     AiChat,
+    Debug,
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 14] = [
+    pub const ALL: [ToolWindow; 15] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Structure,
@@ -46,6 +47,7 @@ impl ToolWindow {
         ToolWindow::Gradle,
         ToolWindow::Bazel,
         ToolWindow::AiChat,
+        ToolWindow::Debug,
     ];
 
     pub fn id(self) -> &'static str {
@@ -62,6 +64,7 @@ impl ToolWindow {
             ToolWindow::Git => "git",
             ToolWindow::BuildVariants => "buildVariants",
             ToolWindow::AiChat => "aiChat",
+            ToolWindow::Debug => "debug",
             ToolWindow::Gradle => "gradle",
             ToolWindow::Bazel => "bazel",
         }
@@ -81,6 +84,7 @@ impl ToolWindow {
             ToolWindow::Git => "Git",
             ToolWindow::BuildVariants => "Build Variants",
             ToolWindow::AiChat => "AI Chat",
+            ToolWindow::Debug => "Debug",
             ToolWindow::Gradle => "Gradle",
             ToolWindow::Bazel => "Bazel",
         }
@@ -105,6 +109,7 @@ impl ToolWindow {
             | ToolWindow::Gradle
             | ToolWindow::Bazel
             | ToolWindow::AiChat => "",
+            ToolWindow::Debug => "⌘5",
             ToolWindow::Git => "⌘9",
         }
     }
@@ -120,6 +125,7 @@ impl ToolWindow {
             | ToolWindow::Problems
             | ToolWindow::Terminal
             | ToolWindow::Logcat
+            | ToolWindow::Debug
             | ToolWindow::Git => Anchor::Bottom,
             ToolWindow::DeviceManager
             | ToolWindow::Gradle

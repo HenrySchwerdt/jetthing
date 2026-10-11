@@ -26,6 +26,7 @@ mod completion_ui;
 mod context_menus;
 mod control;
 mod crash_notice;
+mod debug_window;
 mod device_manager;
 mod diff_ui;
 mod disk_banner;
@@ -792,6 +793,10 @@ impl IdeApp {
         ctx.options_mut(|options| options.zoom_with_keyboard = false);
         self.state.poll_search();
         self.state.poll_runner();
+        self.state.poll_debug();
+        if self.state.is_debugging() {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
         self.state.poll_lsp();
         self.state.poll_updates();
         if self.state.poll_android() {

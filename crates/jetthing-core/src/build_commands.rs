@@ -149,6 +149,7 @@ impl IdeState {
             return;
         }
         if was_running && !self.runner.is_running() {
+            self.continue_pending_debug();
             if self
                 .runner
                 .plan()

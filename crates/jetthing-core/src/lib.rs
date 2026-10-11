@@ -32,6 +32,7 @@ pub mod build_info;
 mod code_actions;
 mod completion;
 mod completion_stats;
+mod debug_commands;
 mod diagnostic_commands;
 pub mod diagnostics;
 mod disk_sync;
@@ -89,6 +90,7 @@ pub use ai_inline::InlineSuggestion;
 pub use ai_terminal::{ShellSuggestion, ShellSuggestionState};
 pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
 pub use completion_stats::CompletionStats;
+pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
 pub use quick_doc::{DocsState, QuickDoc};
@@ -242,6 +244,8 @@ pub struct IdeState {
     pub edit_run_configurations: Option<String>,
     /// Gutter run targets of the active document, cached per text revision.
     pub runnable_cache: gutter_commands::RunnableCache,
+    /// Breakpoints and the active debug session.
+    pub debugger: debug_commands::DebuggerState,
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
@@ -347,6 +351,7 @@ impl IdeState {
         self.load_gradle_model();
         self.load_bazel_targets();
         self.load_run_configurations();
+        self.load_breakpoints();
         self.restore_workspace();
         self.load_ai_project();
         Ok(())
@@ -871,6 +876,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_logcat::register(&mut registry);
     bazel_commands::register(&mut registry);
     build_commands::register(&mut registry);
+    debug_commands::register(&mut registry);
     editor_commands::register(&mut registry);
     markdown_commands::register(&mut registry);
     disk_sync::register(&mut registry);

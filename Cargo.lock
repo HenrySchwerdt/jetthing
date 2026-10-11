@@ -2912,6 +2912,7 @@ dependencies = [
  "jetthing-android",
  "jetthing-bazel",
  "jetthing-command",
+ "jetthing-dap",
  "jetthing-git",
  "jetthing-gradle",
  "jetthing-keymap",
@@ -2931,7 +2932,17 @@ dependencies = [
  "serde",
  "serde_json",
  "tar",
+ "toml",
  "url",
+]
+
+[[package]]
+name = "jetthing-dap"
+version = "0.0.4"
+dependencies = [
+ "jetthing-runner",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3179,6 +3190,7 @@ dependencies = [
  "jetthing-command",
  "jetthing-control",
  "jetthing-core",
+ "jetthing-dap",
  "jetthing-git",
  "jetthing-gradle",
  "jetthing-keymap",

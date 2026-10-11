@@ -1,0 +1,10 @@
+[package]
+name = "jetthing-dap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+jetthing-runner = { path = "../jetthing-runner" }
+serde_json.workspace = true
+thiserror.workspace = true
