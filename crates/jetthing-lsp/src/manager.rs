@@ -981,6 +981,15 @@ impl LspManager {
             .unwrap_or_default()
     }
 
+    /// Characters that accept the selected completion for every item of
+    /// `path`'s server (`allCommitCharacters`).
+    pub fn all_commit_characters(&self, path: &Path) -> Vec<String> {
+        self.server_for(path)
+            .and_then(|service| service.capabilities().completion_provider.as_ref())
+            .and_then(|provider| provider.all_commit_characters.clone())
+            .unwrap_or_default()
+    }
+
     /// Sends a typed request to the ready server of `path`. The handle is used
     /// to collect (`take_response`) or cancel (`cancel_request`) the result.
     pub fn send_request<R: lsp_types::request::Request>(
