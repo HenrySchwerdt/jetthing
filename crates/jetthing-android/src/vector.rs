@@ -44,10 +44,10 @@ impl Rgba {
         ];
         let dst_a = self.pixels[i + 3] as f32 / 255.0;
         let out_a = a + dst_a * (1.0 - a);
-        for c in 0..3 {
-            let dst = self.pixels[i + c] as f32;
-            let value = (src[c] * a + dst * dst_a * (1.0 - a)) / out_a.max(f32::EPSILON);
-            self.pixels[i + c] = value.round().clamp(0.0, 255.0) as u8;
+        for (pixel, src) in self.pixels[i..i + 3].iter_mut().zip(src) {
+            let dst = *pixel as f32;
+            let value = (src * a + dst * dst_a * (1.0 - a)) / out_a.max(f32::EPSILON);
+            *pixel = value.round().clamp(0.0, 255.0) as u8;
         }
         self.pixels[i + 3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
     }

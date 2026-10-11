@@ -246,22 +246,18 @@ fn cell(
             );
         }
         Preview::Image(path) | Preview::Vector(path) => {
-            let texture = textures
-                .lock()
-                .ok()
-                .map(|mut cache| {
-                    cache
-                        .entry(path.clone())
-                        .or_insert_with(|| {
-                            if matches!(item.preview, Preview::Vector(_)) {
-                                load_vector(ui.ctx(), root, path, colors)
-                            } else {
-                                load_png(ui.ctx(), root, path)
-                            }
-                        })
-                        .clone()
-                })
-                .flatten();
+            let texture = textures.lock().ok().and_then(|mut cache| {
+                cache
+                    .entry(path.clone())
+                    .or_insert_with(|| {
+                        if matches!(item.preview, Preview::Vector(_)) {
+                            load_vector(ui.ctx(), root, path, colors)
+                        } else {
+                            load_png(ui.ctx(), root, path)
+                        }
+                    })
+                    .clone()
+            });
             if let Some(texture) = texture {
                 let size = texture.size_vec2();
                 let scale = (PREVIEW_SIZE / size.x.max(size.y)).min(1.0e3);
