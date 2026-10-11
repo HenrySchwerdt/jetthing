@@ -84,7 +84,8 @@ impl RepositoryStatus {
                 "--untracked-files=all",
             ],
         )?;
-        let changes = parse_porcelain(&output.stdout);
+        let mut changes = parse_porcelain(&output.stdout);
+        changes.retain(|change| !is_ide_artefact(&root, change));
         Ok(Self {
             root,
             branch,
@@ -409,8 +410,73 @@ fn parse_porcelain(bytes: &[u8]) -> Vec<FileChange> {
     changes
 }
 
+/// Untracked files the IDE itself generates: everything under `.jetthing/` plus the
+/// jdtls metadata (`.classpath`, `.project`, `.settings/`, class files in `bin/`) and
+/// `jetthing-model.json` at the root of a Gradle/Maven project. Tracked files are
+/// never filtered.
+fn is_ide_artefact(root: &Path, change: &FileChange) -> bool {
+    if change.kind != ChangeKind::Untracked {
+        return false;
+    }
+    let mut parts = change.path.components();
+    let Some(first) = parts.next().and_then(|c| c.as_os_str().to_str()) else {
+        return false;
+    };
+    if first == ".jetthing" {
+        return true;
+    }
+    let is_class = change.path.extension().is_some_and(|ext| ext == "class");
+    let nested = parts.next().is_some();
+    let generated = match first {
+        ".classpath" | ".project" | "jetthing-model.json" => !nested,
+        ".settings" => nested,
+        "bin" => is_class,
+        _ => false,
+    };
+    generated
+        && [
+            "build.gradle",
+            "build.gradle.kts",
+            "settings.gradle",
+            "settings.gradle.kts",
+            "pom.xml",
+        ]
+        .iter()
+        .any(|file| root.join(file).is_file())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ide_artefacts_are_not_reported_as_unversioned() {
+        let dir = std::env::temp_dir().join(format!("jt-git-artefacts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let change = |path: &str| FileChange {
+            path: PathBuf::from(path),
+            kind: ChangeKind::Untracked,
+            staged: false,
+            unstaged: true,
+        };
+        assert!(is_ide_artefact(&dir, &change(".jetthing/model.json")));
+        assert!(
+            !is_ide_artefact(&dir, &change(".classpath")),
+            "no build file"
+        );
+        std::fs::write(dir.join("build.gradle"), "").unwrap();
+        for path in [
+            ".classpath",
+            ".project",
+            ".settings/a.prefs",
+            "bin/main/A.class",
+        ] {
+            assert!(is_ide_artefact(&dir, &change(path)), "{path}");
+        }
+        assert!(!is_ide_artefact(&dir, &change("bin/run.sh")));
+        assert!(!is_ide_artefact(&dir, &change("src/App.java")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
     use std::fs;
 

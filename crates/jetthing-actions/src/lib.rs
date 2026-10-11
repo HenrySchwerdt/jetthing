@@ -162,7 +162,14 @@ impl Catalog {
         {
             return format!("{} (tool window)", split_camel_case(name));
         }
-        id.to_owned()
+        // No menu text: a title-cased label, never the raw id.
+        let tail = id.rsplit('.').next().unwrap_or(id);
+        let label = split_camel_case(tail.trim_start_matches('$'));
+        if label.is_empty() {
+            id.to_owned()
+        } else {
+            label
+        }
     }
 
     pub fn actions(&self) -> impl Iterator<Item = &Action> {
@@ -219,7 +226,9 @@ impl Catalog {
                         stack.push(r#ref.clone());
                         let children = self.expand(r#ref, stack);
                         stack.pop();
-                        if action.and_then(|a| a.popup).unwrap_or(false) {
+                        let popup = action.and_then(|a| a.popup).unwrap_or(false)
+                            || RUNTIME_POPUPS.contains(&r#ref.as_str());
+                        if popup {
                             if children
                                 .iter()
                                 .any(|item| !matches!(item, MenuItem::Separator(_)))
@@ -251,6 +260,10 @@ const RUNTIME_GROUPS: [(&str, &str); 2] = [
     ("NewElementInMenuGroup", "NewGroup"),
     ("WeighingNewGroup", "NewGroup"),
 ];
+
+/// Groups the spec marks inline that the reference IDE shows as submenus
+/// (`reference/*/07-main-menu.png`: File > New Projects Setup).
+const RUNTIME_POPUPS: [&str; 1] = ["FileOtherSettingsGroup"];
 
 /// Groups only visible in the reference IDE's internal mode.
 const INTERNAL_GROUPS: [&str; 5] = [
@@ -348,7 +361,7 @@ mod tests {
             catalog.label("ActivateProblemsViewToolWindow"),
             "Problems View (tool window)"
         );
-        assert_eq!(catalog.label("NoSuchAction"), "NoSuchAction");
+        assert_eq!(catalog.label("NoSuchAction"), "No Such Action");
         assert_eq!(catalog.get("FileMenu").unwrap().kind, Kind::Group);
         let main: Vec<_> = catalog
             .children("MainMenu")
