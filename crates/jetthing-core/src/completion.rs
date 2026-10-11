@@ -126,7 +126,11 @@ impl IdeState {
             ),
             // No language server for this file: live templates still apply.
             Err(error) => {
-                if self.template_completion_items(anchor).is_empty() {
+                // Ctrl+Space on nothing explains the missing server; a typed
+                // abbreviation still expands.
+                if self.template_completion_items(anchor).is_empty()
+                    || (explicit && anchor == caret)
+                {
                     return Err(error.to_string());
                 }
                 if explicit {
@@ -235,10 +239,13 @@ impl IdeState {
             .as_ref()
             .map(|session| self.template_completion_items(session.anchor))
             .unwrap_or_default();
+        let server_empty = result.items.is_empty();
         let mut result = result;
         result.items.retain(|item| {
             item.kind != Some(jetthing_lsp::lsp_types::CompletionItemKind::SNIPPET)
-                || !templates.iter().any(|template| template.label == item.label)
+                || !templates
+                    .iter()
+                    .any(|template| template.label == item.label)
         });
         result.items.extend(templates);
         if let Some(session) = self.completion.as_mut() {
@@ -252,11 +259,16 @@ impl IdeState {
             // keep the popup with a notice and ask again when it is done.
             session.requery_when_ready = indexing.is_some() && session.items.is_empty();
             session.indexing = indexing;
-            if session.items.is_empty() && session.explicit && session.indexing.is_none() {
-                self.status = "No suggestions".into();
-            }
         }
         self.refresh_completion();
+        if server_empty
+            && let Some(session) = self.completion.as_ref()
+            && session.explicit
+            && session.indexing.is_none()
+            && session.ranked.is_empty()
+        {
+            self.status = "No suggestions".into();
+        }
         // The server may ask for an item to be selected first (`preselect`).
         if let Some(session) = self.completion.as_mut()
             && let Some(row) = session

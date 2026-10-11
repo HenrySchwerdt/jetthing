@@ -92,7 +92,15 @@ pub struct Scan {
 
 const TYPE_KEYWORDS: [&str; 6] = ["class", "interface", "enum", "record", "object", "trait"];
 const NOT_METHODS: [&str; 9] = [
-    "if", "for", "while", "switch", "catch", "synchronized", "try", "when", "return",
+    "if",
+    "for",
+    "while",
+    "switch",
+    "catch",
+    "synchronized",
+    "try",
+    "when",
+    "return",
 ];
 
 fn words(text: &str) -> impl Iterator<Item = &str> {
@@ -206,8 +214,9 @@ impl Scan {
             return None;
         }
         let segment = self.segment.trim();
-        let expression_start = segment.ends_with(['=', '(', ',', '+', '-', '*', '/', '?', '&', '|', '!', '<', '>'])
-            || segment.ends_with("return")
+        let expression_start = segment.ends_with([
+            '=', '(', ',', '+', '-', '*', '/', '?', '&', '|', '!', '<', '>',
+        ]) || segment.ends_with("return")
             || self.parens > self.frames.last().map_or(0, |frame| frame.parens);
         match self.frames.last() {
             None => Some(Context::JavaDeclaration),
@@ -272,7 +281,8 @@ impl Scan {
             // `if`/`for` bodies are blocks too: require a declaration-like header.
             let before = header[..open].trim_end().strip_suffix(name)?.trim_end();
             let declaration = before.is_empty()
-                || before.ends_with(|c: char| c.is_alphanumeric() || matches!(c, '_' | '>' | ']' | '?'));
+                || before
+                    .ends_with(|c: char| c.is_alphanumeric() || matches!(c, '_' | '>' | ']' | '?'));
             if !declaration || before.ends_with("new") || header[close..].contains("->") {
                 return None;
             }
@@ -348,17 +358,26 @@ mod tests {
         use Context::*;
         assert_eq!(at("A.java", ""), [JavaDeclaration, Other]);
         assert_eq!(at("A.java", "class A {\n    "), [JavaDeclaration, Other]);
-        assert_eq!(at("A.java", "class A {\n    int x = "), [JavaExpression, Other]);
+        assert_eq!(
+            at("A.java", "class A {\n    int x = "),
+            [JavaExpression, Other]
+        );
         assert_eq!(
             at("A.java", "class A {\n    void f() {\n        "),
             [JavaStatement, Other]
         );
         assert_eq!(
-            at("A.java", "class A {\n    void f() {\n        int x = 1;\n        foo("),
+            at(
+                "A.java",
+                "class A {\n    void f() {\n        int x = 1;\n        foo("
+            ),
             [JavaExpression, Other]
         );
         assert_eq!(
-            at("A.java", "class A {\n    void f() {\n        if (x) {}\n        "),
+            at(
+                "A.java",
+                "class A {\n    void f() {\n        if (x) {}\n        "
+            ),
             [JavaStatement, Other]
         );
         assert_eq!(
@@ -371,7 +390,10 @@ mod tests {
             "string literal"
         );
         assert_eq!(
-            at("A.java", "class A { void f() { for (int i = 0; i < 3; i++) { "),
+            at(
+                "A.java",
+                "class A { void f() { for (int i = 0; i < 3; i++) { "
+            ),
             [JavaStatement, Other],
             "semicolons inside parentheses do not end the statement"
         );
@@ -379,7 +401,10 @@ mod tests {
 
     #[test]
     fn other_languages() {
-        assert_eq!(at("a.kt", "fun f() {\n  "), [Context::Kotlin, Context::Other]);
+        assert_eq!(
+            at("a.kt", "fun f() {\n  "),
+            [Context::Kotlin, Context::Other]
+        );
         assert_eq!(at("a.rs", "fn f() {\n  "), [Context::Rust, Context::Other]);
         assert_eq!(at("a.rs", "let x: &'a str = \"x"), [Context::Other]);
         assert_eq!(at("a.txt", "x"), [Context::Other]);
@@ -387,7 +412,9 @@ mod tests {
 
     #[test]
     fn enclosing_class_and_method() {
-        let scan = scan("public class Foo<T> {\n  static int add(int a, Map<String, List<Integer>> b) throws X {\n    if (a) {\n  ");
+        let scan = scan(
+            "public class Foo<T> {\n  static int add(int a, Map<String, List<Integer>> b) throws X {\n    if (a) {\n  ",
+        );
         assert_eq!(scan.class_name().as_deref(), Some("Foo"));
         assert_eq!(
             scan.method(),
@@ -399,6 +426,12 @@ mod tests {
             Some(("go".to_owned(), vec!["name".to_owned(), "n".to_owned()]))
         );
         assert_eq!(super::scan("class A {\n  int x;\n  ").method(), None);
-        assert_eq!(super::scan("void f() { while (x) {\n").method().map(|m| m.0).as_deref(), Some("f"));
+        assert_eq!(
+            super::scan("void f() { while (x) {\n")
+                .method()
+                .map(|m| m.0)
+                .as_deref(),
+            Some("f")
+        );
     }
 }

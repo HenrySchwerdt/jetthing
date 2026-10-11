@@ -15,8 +15,8 @@ use jetthing_lsp::{
 };
 use jetthing_settings::{SettingValue, ids};
 use jetthing_templates::{
-    Context, ExpansionContext, Template, TemplateRegistry, UserTemplate, abbreviation_before,
-    contexts_at, expression_before, instantiate, scan, template_key,
+    Context, ExpansionContext, Language, Template, TemplateRegistry, UserTemplate,
+    abbreviation_before, contexts_at, expression_before, instantiate, scan, template_key,
 };
 use jetthing_text::{Selection, TextDocument};
 use serde_json::{Value, json};
@@ -123,6 +123,12 @@ impl IdeState {
     /// Live template and postfix items for the identifier `anchor..caret` of
     /// the active document (an empty list when none apply).
     pub(crate) fn template_completion_items(&self, anchor: usize) -> Vec<CompletionItem> {
+        self.template_items(anchor, false)
+    }
+
+    /// `listing`: the user asked for the list (Insert Live Template), so
+    /// templates show even without a typed prefix in files of unknown language.
+    fn template_items(&self, anchor: usize, listing: bool) -> Vec<CompletionItem> {
         let Some(document) = self
             .active_document
             .and_then(|index| self.documents.get(index))
@@ -131,6 +137,11 @@ impl IdeState {
         };
         let caret = document.selections.primary().head;
         if anchor > caret {
+            return Vec::new();
+        }
+        // Completion in files without a language would list the general
+        // templates for every empty prefix: only offer them once typing started.
+        if !listing && anchor == caret && Language::of(&document.path) == Language::Other {
             return Vec::new();
         }
         let registry = self.live_templates();
@@ -210,7 +221,7 @@ impl IdeState {
             .ok_or("no active document")?;
         let anchor = word_start(&document.text, document.selections.primary().head);
         let items: Vec<_> = self
-            .template_completion_items(anchor)
+            .template_items(anchor, true)
             .into_iter()
             .filter(|item| {
                 item.data
@@ -302,9 +313,7 @@ impl IdeState {
             let contexts = contexts_at(&document.path, &text, start);
             abbreviation_before(&document.text, caret)
                 .is_some_and(|(_, abbreviation)| abbreviation == key)
-                && registry
-                    .find_in(&document.path, &contexts, &key)
-                    .is_some()
+                && registry.find_in(&document.path, &contexts, &key).is_some()
         };
         if !known {
             return Ok(false);
@@ -369,7 +378,8 @@ impl IdeState {
                 "the group name must not be empty or contain `/`".into(),
             ));
         }
-        let candidate = UserTemplate::from_line(&user.to_line()).map_err(CommandError::InvalidParams)?;
+        let candidate =
+            UserTemplate::from_line(&user.to_line()).map_err(CommandError::InvalidParams)?;
         let same = |line: &String| {
             UserTemplate::from_line(line).is_ok_and(|other| {
                 other.group.eq_ignore_ascii_case(&candidate.group)
@@ -441,7 +451,10 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             ),
             has_document,
             |state: &mut IdeState, _| {
-                if state.expand_template_at_caret().map_err(CommandError::Failed)? {
+                if state
+                    .expand_template_at_caret()
+                    .map_err(CommandError::Failed)?
+                {
                     return Ok(json!({"expanded": true}));
                 }
                 // Nothing to expand: Tab inserts one indentation level.
@@ -646,7 +659,10 @@ mod tests {
         let item = session.selected_item().unwrap();
         assert_eq!(item.label, "sout");
         assert_eq!(item.kind, Some(CompletionItemKind::SNIPPET));
-        assert_eq!(item.detail.as_deref(), Some("Prints a string to System.out"));
+        assert_eq!(
+            item.detail.as_deref(),
+            Some("Prints a string to System.out")
+        );
         state.accept_completion(false).unwrap();
         assert_eq!(text(&state), format!("{BODY}System.out.println();"));
         let caret = state.documents[0].selections.primary().head;
@@ -698,7 +714,11 @@ mod tests {
         assert_eq!(selected(&state), ["i", "i", "i"], "the index is mirrored");
         type_text(&mut state, "k");
         state.snippet_after_change();
-        assert!(text(&state).contains("for (int k = 0; k < ; k++)"), "{}", text(&state));
+        assert!(
+            text(&state).contains("for (int k = 0; k < ; k++)"),
+            "{}",
+            text(&state)
+        );
         commands
             .execute("snippet.next", &mut state, Value::Null)
             .unwrap();
@@ -728,7 +748,10 @@ mod tests {
             .iter()
             .map(|row| session.items[row.index].label.as_str())
             .collect();
-        for key in ["if", "else", "for", "fori", "var", "not", "null", "nn", "return", "sout", "try", "cast", "par"] {
+        for key in [
+            "if", "else", "for", "fori", "var", "not", "null", "nn", "return", "sout", "try",
+            "cast", "par",
+        ] {
             assert!(labels.contains(&key), "{key} in {labels:?}");
         }
         assert!(!labels.contains(&"val"), "Java has no .val");
@@ -736,7 +759,7 @@ mod tests {
 
     #[test]
     fn insert_and_surround_are_commands_over_the_popup() {
-        let (mut state, commands) = java_state(&format!("{BODY}"));
+        let (mut state, commands) = java_state(BODY);
         commands
             .execute("template.insert", &mut state, Value::Null)
             .unwrap();
@@ -779,32 +802,77 @@ mod tests {
                 json!({"group": "Java", "abbreviation": "sout", "description": "log", "text": "log($END$);"}),
             )
             .unwrap();
-        assert_eq!(state.live_templates().find(Path::new("A.java"), "sout").unwrap().text, "log($END$);");
+        assert_eq!(
+            state
+                .live_templates()
+                .find(Path::new("A.java"), "sout")
+                .unwrap()
+                .text,
+            "log($END$);"
+        );
         commands
             .execute("template.expand", &mut state, Value::Null)
             .unwrap();
         assert_eq!(text(&state), format!("{BODY}log();"));
         // Invalid input is a structured error, not a panic.
-        assert!(commands
-            .execute("template.save", &mut state, json!({"group": "x/y", "abbreviation": "a", "text": "t"}))
-            .is_err());
-        assert!(commands
-            .execute("template.save", &mut state, json!({"group": "x", "abbreviation": " ", "text": "t"}))
-            .is_err());
+        assert!(
+            commands
+                .execute(
+                    "template.save",
+                    &mut state,
+                    json!({"group": "x/y", "abbreviation": "a", "text": "t"})
+                )
+                .is_err()
+        );
+        assert!(
+            commands
+                .execute(
+                    "template.save",
+                    &mut state,
+                    json!({"group": "x", "abbreviation": " ", "text": "t"})
+                )
+                .is_err()
+        );
         commands
-            .execute("template.delete", &mut state, json!({"group": "Java", "abbreviation": "sout"}))
+            .execute(
+                "template.delete",
+                &mut state,
+                json!({"group": "Java", "abbreviation": "sout"}),
+            )
             .unwrap();
         assert_eq!(
-            state.live_templates().find(Path::new("A.java"), "sout").unwrap().text,
+            state
+                .live_templates()
+                .find(Path::new("A.java"), "sout")
+                .unwrap()
+                .text,
             "System.out.println($END$);"
         );
         commands
-            .execute("template.setEnabled", &mut state, json!({"key": "Java/sout", "enabled": false}))
+            .execute(
+                "template.setEnabled",
+                &mut state,
+                json!({"key": "Java/sout", "enabled": false}),
+            )
             .unwrap();
-        assert!(state.live_templates().find(Path::new("A.java"), "sout").is_none());
+        assert!(
+            state
+                .live_templates()
+                .find(Path::new("A.java"), "sout")
+                .is_none()
+        );
         commands
-            .execute("template.setEnabled", &mut state, json!({"key": "Java/sout", "enabled": true}))
+            .execute(
+                "template.setEnabled",
+                &mut state,
+                json!({"key": "Java/sout", "enabled": true}),
+            )
             .unwrap();
-        assert!(state.live_templates().find(Path::new("A.java"), "sout").is_some());
+        assert!(
+            state
+                .live_templates()
+                .find(Path::new("A.java"), "sout")
+                .is_some()
+        );
     }
 }

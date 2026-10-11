@@ -58,7 +58,11 @@ pub fn show(
             .map(|(group, _, _)| group.clone())
             .or_else(|| registry.sets.first().map(|set| set.group.clone()))
             .unwrap_or_else(|| "user".into());
-        if ui.button("Add").on_hover_text("New live template").clicked() {
+        if ui
+            .button("Add")
+            .on_hover_text("New live template")
+            .clicked()
+        {
             page.selected = None;
             page.draft = Some(Draft::new(&group));
         }
@@ -108,7 +112,15 @@ pub fn show(
                             continue;
                         }
                         for (template, postfix) in rows {
-                            template_row(ui, page, registry, &set.group, template, postfix, &mut request);
+                            template_row(
+                                ui,
+                                page,
+                                registry,
+                                &set.group,
+                                template,
+                                postfix,
+                                &mut request,
+                            );
                         }
                     }
                 });
@@ -179,9 +191,11 @@ fn template_row(
         };
         let response = ui.selectable_label(
             selected,
-            RichText::new(label)
-                .monospace()
-                .color(if enabled { *theme::TEXT } else { *theme::TEXT_DISABLED }),
+            RichText::new(label).monospace().color(if enabled {
+                *theme::TEXT
+            } else {
+                *theme::TEXT_DISABLED
+            }),
         );
         ui.label(RichText::new(&template.description).color(theme::TEXT_INFO));
         if response.clicked() {
@@ -196,11 +210,7 @@ fn template_row(
     });
 }
 
-fn editor(
-    ui: &mut egui::Ui,
-    page: &mut LiveTemplatesPage,
-    request: &mut impl FnMut(&str, Value),
-) {
+fn editor(ui: &mut egui::Ui, page: &mut LiveTemplatesPage, request: &mut impl FnMut(&str, Value)) {
     let Some(draft) = page.draft.as_mut() else {
         ui.label(
             RichText::new("Select a template to edit it, or Add to create one.")
@@ -213,10 +223,14 @@ fn editor(
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label("Abbreviation:");
-            ui.add(egui::TextEdit::singleline(&mut draft.template.abbreviation).desired_width(200.0));
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.template.abbreviation).desired_width(200.0),
+            );
             ui.end_row();
             ui.label("Description:");
-            ui.add(egui::TextEdit::singleline(&mut draft.template.description).desired_width(420.0));
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.template.description).desired_width(420.0),
+            );
             ui.end_row();
             ui.label("Group:");
             ui.horizontal(|ui| {
@@ -256,7 +270,8 @@ fn editor(
     );
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        let valid = !draft.template.abbreviation.trim().is_empty() && !draft.group.trim().is_empty();
+        let valid =
+            !draft.template.abbreviation.trim().is_empty() && !draft.group.trim().is_empty();
         if ui
             .add_enabled(valid, egui::Button::new("Save template"))
             .clicked()

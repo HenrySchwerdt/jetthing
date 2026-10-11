@@ -74,7 +74,7 @@ impl TemplateSet {
             .extension()
             .and_then(|ext| ext.to_str())
             .map(str::to_ascii_lowercase);
-        extension.is_some_and(|ext| self.extensions.iter().any(|e| *e == ext))
+        extension.is_some_and(|ext| self.extensions.contains(&ext))
     }
 }
 
@@ -248,7 +248,12 @@ impl TemplateRegistry {
     }
 
     /// The template `abbreviation` expands to at the caret, honoring contexts.
-    pub fn find_in(&self, path: &Path, contexts: &[Context], abbreviation: &str) -> Option<&Template> {
+    pub fn find_in(
+        &self,
+        path: &Path,
+        contexts: &[Context],
+        abbreviation: &str,
+    ) -> Option<&Template> {
         self.templates_for(path)
             .find(|t| t.abbreviation == abbreviation && t.applies_in(contexts))
     }
@@ -428,7 +433,11 @@ pub fn expression_type(expression: &str) -> Option<String> {
     if expression.starts_with('\'') {
         return Some("char".into());
     }
-    if expression.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+    if expression
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_digit())
+    {
         let float = expression.contains('.') || expression.ends_with(['f', 'F', 'd', 'D']);
         return Some(
             match (float, expression.ends_with(['l', 'L'])) {
@@ -636,8 +645,8 @@ pub fn instantiate(template: &Template, context: &ExpansionContext) -> Instance 
                 .and_then(|d| d.expression.as_deref())
                 .and_then(|expression| evaluate(expression, context))
         };
-        let skip = name == "EXPR"
-            || (computed.is_some() && definition.is_some_and(|d| d.skip_if_defined));
+        let skip =
+            name == "EXPR" || (computed.is_some() && definition.is_some_and(|d| d.skip_if_defined));
         let value = computed
             .or_else(|| definition.and_then(|d| d.default.clone()))
             .unwrap_or_default();
@@ -660,7 +669,10 @@ fn is_abbreviation_char(c: char) -> bool {
 }
 
 /// The abbreviation ending at `offset` and its start, if any.
-pub fn abbreviation_before(doc: &jetthing_text::TextDocument, offset: usize) -> Option<(usize, String)> {
+pub fn abbreviation_before(
+    doc: &jetthing_text::TextDocument,
+    offset: usize,
+) -> Option<(usize, String)> {
     let mut start = offset;
     while start > 0 && doc.char_at(start - 1).is_some_and(is_abbreviation_char) {
         start -= 1;
@@ -758,7 +770,11 @@ mod tests {
             let mut seen = std::collections::HashSet::new();
             for template in set.templates.iter().chain(&set.postfix) {
                 assert!(
-                    seen.insert((template.is_surround(), set.postfix.contains(template), &template.abbreviation)),
+                    seen.insert((
+                        template.is_surround(),
+                        set.postfix.contains(template),
+                        &template.abbreviation
+                    )),
                     "{}: duplicate {}",
                     set.group,
                     template.abbreviation
@@ -767,12 +783,20 @@ mod tests {
             }
         }
         let java = Path::new("A.java");
-        for abbreviation in ["psvm", "main", "sout", "soutv", "fori", "iter", "ifn", "inn", "thr"] {
-            assert!(registry.find(java, abbreviation).is_some(), "{abbreviation}");
+        for abbreviation in [
+            "psvm", "main", "sout", "soutv", "fori", "iter", "ifn", "inn", "thr",
+        ] {
+            assert!(
+                registry.find(java, abbreviation).is_some(),
+                "{abbreviation}"
+            );
         }
         assert!(registry.find(Path::new("a.kt"), "fun0").is_some());
         assert!(registry.find(Path::new("a.rs"), "test").is_some());
-        assert!(registry.find(java, "todo").is_some(), "general set applies everywhere");
+        assert!(
+            registry.find(java, "todo").is_some(),
+            "general set applies everywhere"
+        );
         assert!(registry.find(Path::new("a.rs"), "psvm").is_none());
         assert!(registry.find_postfix(java, "if").is_some());
     }
@@ -863,7 +887,11 @@ mod tests {
     fn finds_abbreviations_and_postfix_expressions() {
         let doc = TextDocument::new("  sout x.sout foo(a, b)[0].size().if \"s\".len");
         assert_eq!(abbreviation_before(&doc, 6), Some((2, "sout".into())));
-        assert_eq!(abbreviation_before(&doc, 13), None, "postfix, not a template");
+        assert_eq!(
+            abbreviation_before(&doc, 13),
+            None,
+            "postfix, not a template"
+        );
         assert_eq!(abbreviation_before(&doc, 2), None);
         let dot = 33;
         assert_eq!(doc.char_at(dot), Some('.'));
@@ -871,14 +899,26 @@ mod tests {
         assert_eq!(doc.slice(start, dot).unwrap(), "foo(a, b)[0].size()");
         let dot = 40;
         assert_eq!(doc.char_at(dot), Some('.'));
-        assert_eq!(doc.slice(expression_before(&doc, dot).unwrap(), dot).unwrap(), "\"s\"");
+        assert_eq!(
+            doc.slice(expression_before(&doc, dot).unwrap(), dot)
+                .unwrap(),
+            "\"s\""
+        );
         assert_eq!(expression_before(&TextDocument::new(" .x"), 1), None);
         let generic = TextDocument::new("x = new Map<String, List<Integer>>().size");
         let dot = generic.text().rfind('.').unwrap();
         let start = expression_before(&generic, dot).unwrap();
-        assert_eq!(generic.slice(start, dot).unwrap(), "new Map<String, List<Integer>>()");
+        assert_eq!(
+            generic.slice(start, dot).unwrap(),
+            "new Map<String, List<Integer>>()"
+        );
         let compare = TextDocument::new("a > b.if");
-        assert_eq!(compare.slice(expression_before(&compare, 5).unwrap(), 5).unwrap(), "b");
+        assert_eq!(
+            compare
+                .slice(expression_before(&compare, 5).unwrap(), 5)
+                .unwrap(),
+            "b"
+        );
     }
 
     #[test]
@@ -896,12 +936,23 @@ mod tests {
             instance.to_snippet(),
             "for (int ${1:i} = 0; ${1} < ${2:}; ${1}++) {\n    $0\n}"
         );
-        let mut ctx = ExpansionContext::default();
-        ctx.surrounding = "int i;".into();
+        let ctx = ExpansionContext {
+            surrounding: "int i;".into(),
+            ..Default::default()
+        };
         let sout = instantiate(registry.find(Path::new("A.java"), "soutv").unwrap(), &ctx);
-        assert_eq!(sout.to_snippet(), "System.out.println(\"${1:} = \" + ${1});");
-        let literal = Template { text: "a${b}\\$$".into(), ..Default::default() };
-        assert_eq!(instantiate(&literal, &ExpansionContext::default()).to_snippet(), "a\\${b}\\\\\\$");
+        assert_eq!(
+            sout.to_snippet(),
+            "System.out.println(\"${1:} = \" + ${1});"
+        );
+        let literal = Template {
+            text: "a${b}\\$$".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            instantiate(&literal, &ExpansionContext::default()).to_snippet(),
+            "a\\${b}\\\\\\$"
+        );
     }
 
     #[test]
@@ -917,13 +968,20 @@ mod tests {
             instantiate(registry.find_postfix(java, key).unwrap(), &ctx(expr)).text()
         };
         assert_eq!(text("var", "new Foo()"), "Foo foo = new Foo();");
-        assert_eq!(text("var", "getUserName()"), "var userName = getUserName();");
+        assert_eq!(
+            text("var", "getUserName()"),
+            "var userName = getUserName();"
+        );
         assert_eq!(text("not", "ready"), "!ready");
         assert_eq!(text("sout", "x + 1"), "System.out.println(x + 1);");
         assert_eq!(text("par", "a"), "(a)");
         assert_eq!(text("nn", "p"), "if (p != null) {\n    \n}");
         assert_eq!(
-            instantiate(registry.find_postfix(Path::new("a.kt"), "val").unwrap(), &ctx("items.size()")).text(),
+            instantiate(
+                registry.find_postfix(Path::new("a.kt"), "val").unwrap(),
+                &ctx("items.size()")
+            )
+            .text(),
             "val size = items.size()"
         );
         assert!(registry.find_postfix(Path::new("a.rs"), "if").is_none());
@@ -937,7 +995,10 @@ mod tests {
         assert_eq!(suggest_variable_name("list.get(0)"), "get");
         assert_eq!(suggest_variable_name("\"text\""), "value");
         assert_eq!(expression_type("1L").as_deref(), Some("long"));
-        assert_eq!(expression_type("new ArrayList<>()").as_deref(), Some("ArrayList"));
+        assert_eq!(
+            expression_type("new ArrayList<>()").as_deref(),
+            Some("ArrayList")
+        );
         assert_eq!(expression_type("foo()"), None);
     }
 
@@ -953,8 +1014,16 @@ mod tests {
         assert!(registry.find_in(java, &members, "psvm").is_some());
         assert!(registry.find_in(java, &body, "psvm").is_none());
         assert!(registry.find_in(java, &body, "St").is_some());
-        assert!(registry.find_in(java, &at("class A {\n  void f() {\n    // "), "todo").is_some());
-        assert!(registry.surround_templates(java, &body).any(|t| t.abbreviation == "T"));
+        assert!(
+            registry
+                .find_in(java, &at("class A {\n  void f() {\n    // "), "todo")
+                .is_some()
+        );
+        assert!(
+            registry
+                .surround_templates(java, &body)
+                .any(|t| t.abbreviation == "T")
+        );
         assert!(registry.templates_for(java).all(|t| !t.is_surround()));
     }
 
@@ -972,11 +1041,15 @@ mod tests {
         };
         let lines = [user.to_line(), "not json".to_owned()];
         let java = Path::new("A.java");
-        let registry = TemplateRegistry::bundled().with_user(&lines, ["Kotlin".to_owned(), "Java/inn".to_owned()]);
+        let registry = TemplateRegistry::bundled()
+            .with_user(&lines, ["Kotlin".to_owned(), "Java/inn".to_owned()]);
         assert_eq!(registry.find(java, "sout").unwrap().description, "mine");
         assert_eq!(registry.errors.len(), 1);
         assert!(registry.find(java, "inn").is_none(), "toggled off");
-        assert!(registry.find(Path::new("a.kt"), "main").is_none(), "group toggled off");
+        assert!(
+            registry.find(Path::new("a.kt"), "main").is_none(),
+            "group toggled off"
+        );
         assert!(registry.find(java, "ifn").is_some());
         assert!(UserTemplate::from_line("{\"group\":\"x\",\"template\":{}}").is_err());
     }
