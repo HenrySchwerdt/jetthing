@@ -64,8 +64,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 let running = app.state.runner.is_running();
                 let run = ui.add_enabled(
                     !running,
-                    egui::Button::new(format!("▶  {}", mark.label))
-                        .frame(false)
+                    crate::widgets::menu_button(egui::Button::new(format!("▶  {}", mark.label)))
                         .shortcut_text(app.action_shortcut("RunClass").unwrap_or_default())
                         .min_size(vec2(270.0, 24.0)),
                 );
@@ -74,8 +73,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 }
                 let debug = ui.add_enabled(
                     !app.state.is_debugging() && !running,
-                    egui::Button::new(format!("     Debug {target}"))
-                        .frame(false)
+                    crate::widgets::menu_button(egui::Button::new(format!("     Debug {target}")))
                         .shortcut_text(keys::display("⌃D"))
                         .min_size(vec2(270.0, 24.0)),
                 );
@@ -84,16 +82,18 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 }
                 ui.add_enabled(
                     false,
-                    egui::Button::new(format!("     Run {target} with Coverage"))
-                        .frame(false)
-                        .min_size(vec2(270.0, 24.0)),
+                    crate::widgets::menu_button(egui::Button::new(format!(
+                        "     Run {target} with Coverage"
+                    )))
+                    .min_size(vec2(270.0, 24.0)),
                 )
                 .on_disabled_hover_text("Code coverage is not available yet (IJ-RUN-069)");
                 if ui
                     .add(
-                        egui::Button::new("     Modify Run Configuration…")
-                            .frame(false)
-                            .min_size(vec2(270.0, 24.0)),
+                        crate::widgets::menu_button(egui::Button::new(
+                            "     Modify Run Configuration…",
+                        ))
+                        .min_size(vec2(270.0, 24.0)),
                     )
                     .clicked()
                 {
@@ -101,13 +101,17 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 }
             });
         });
-    let escape = ctx.input(|input| input.key_pressed(egui::Key::Escape));
-    let clicked_elsewhere = ctx.cumulative_pass_nr() > open.opened
-        && ctx.input(|input| input.pointer.any_click())
-        && !area.response.rect.contains(
-            ctx.input(|input| input.pointer.interact_pos())
-                .unwrap_or_default(),
-        )
+    // Escape is handled by the workbench's Escape chain (see `is_open`). A press
+    // outside closes the popup, as in the reference, so dragging a selection
+    // in the editor does not leave it open.
+    let pressed_elsewhere = ctx.cumulative_pass_nr() > open.opened
+        && ctx.input(|input| {
+            input.pointer.any_pressed()
+                && input
+                    .pointer
+                    .press_origin()
+                    .is_some_and(|origin| !area.response.rect.contains(origin))
+        })
         && action.is_none();
     if debug_action {
         close(ctx);
@@ -118,11 +122,19 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     } else if let Some(edit) = action {
         close(ctx);
         app.dispatch("run.gutter", json!({"line": open.line, "edit": edit}));
-    } else if escape || clicked_elsewhere {
+    } else if pressed_elsewhere {
         close(ctx);
     }
 }
 
-fn close(ctx: &egui::Context) {
+/// Whether the run popup is showing (Escape closes it before anything else).
+pub fn is_open(ctx: &egui::Context) -> bool {
+    matches!(
+        ctx.data(|data| data.get_temp::<Option<Open>>(state_id())),
+        Some(Some(_))
+    )
+}
+
+pub fn close(ctx: &egui::Context) {
     ctx.data_mut(|data| data.insert_temp::<Option<Open>>(state_id(), None));
 }

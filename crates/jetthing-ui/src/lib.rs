@@ -43,6 +43,7 @@ mod folding;
 mod git_log_ui;
 mod gradle_window;
 mod gutter_popup;
+mod hierarchy_ui;
 mod icons;
 mod intentions_ui;
 mod keybindings;
@@ -128,6 +129,8 @@ pub struct IdeApp {
     last_right: Option<ToolWindow>,
     /// Active editor file seen last frame; opening another one focuses the editor.
     last_active_file: Option<PathBuf>,
+    /// A single click in the Project tree opened a preview: keep the keyboard in the tree.
+    pub(crate) keep_tree_focus: bool,
     find: findbar::FindBar,
     /// Text of the last whole-line copy, so pasting it inserts a line.
     clipboard_line: Option<String>,
@@ -297,6 +300,7 @@ impl IdeApp {
             last_bottom: None,
             last_right: None,
             last_active_file: None,
+            keep_tree_focus: false,
             find: findbar::FindBar::default(),
             clipboard_line: None,
             dialog: None,
@@ -665,6 +669,8 @@ impl IdeApp {
             if egui::Popup::is_any_open(ctx) {
                 // Context menus and main-menu dropdowns close first.
                 egui::Popup::close_all(ctx);
+            } else if gutter_popup::is_open(ctx) {
+                gutter_popup::close(ctx);
             } else if self.menu_bar_open {
                 self.menu_bar_open = false;
             } else if self.state.about_open {
@@ -738,11 +744,13 @@ impl IdeApp {
                 && self.dialog.is_none()
                 && !self.palette.open
                 && !self.find_popup.open
+                && !self.keep_tree_focus
             {
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
             }
             self.last_active_file = active;
         }
+        self.keep_tree_focus = false;
         // Hiding a right-anchored tool window also hands focus back to the editor.
         let right = self.state.tool_windows.visible(Anchor::Right);
         if right != self.last_right {
@@ -1031,6 +1039,7 @@ impl IdeApp {
         if self.state.updates.is_busy() {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
+        widgets::apply_pointer_cursor(ctx);
         self.control_after_frame(ctx);
     }
 

@@ -59,6 +59,7 @@ pub mod ids {
     pub const STRIP_TRAILING_SPACES: &str = "editor.general.stripTrailingSpaces";
     pub const ENSURE_NEWLINE: &str = "editor.general.ensureNewlineAtEof";
     pub const WHEEL_ZOOM: &str = "editor.general.wheelFontChange";
+    pub const EDITOR_PREVIEW_TAB: &str = "editor.tabs.preview";
     pub const SHOW_LINE_NUMBERS: &str = "editor.appearance.lineNumbers";
     pub const PAIR_BRACKETS: &str = "editor.codeEditing.pairBrackets";
     pub const PAIR_QUOTES: &str = "editor.codeEditing.pairQuotes";
@@ -487,6 +488,14 @@ fn add_definitions(registry: &mut SettingsRegistry) {
             B(false),
         )
         .group("On Save"),
+        SettingDef::new(
+            ids::EDITOR_PREVIEW_TAB,
+            "preferences.editor",
+            "Open files in a preview tab on single click in the Project tree",
+            Bool,
+            B(true),
+        )
+        .group("Editor Tabs"),
         SettingDef::new(
             ids::SHOW_LINE_NUMBERS,
             "preferences.editor",

@@ -62,6 +62,7 @@ pub fn tool_window_header(
 pub fn list_row(ui: &mut egui::Ui, selected: bool) -> (Rect, egui::Response) {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+    keep_arrow_cursor(ui.ctx(), response.id);
     let fill = if selected {
         *theme::SELECTION
     } else if response.hovered() {
@@ -234,6 +235,54 @@ pub fn busy_spinner(ui: &mut egui::Ui, size: f32, color: Color32) {
         .request_repaint_after(std::time::Duration::from_secs_f64(STEP_SECONDS));
 }
 
+/// A borderless menu-style button (popup and dropdown entries) that still shows
+/// the hover and pressed fill; `Button::frame(false)` would paint nothing.
+pub fn menu_button(button: egui::Button<'_>) -> egui::Button<'_> {
+    button
+        .frame(true)
+        .frame_when_inactive(false)
+        .stroke(egui::Stroke::NONE)
+}
+
+fn arrow_cursor_ids() -> egui::Id {
+    egui::Id::new("widgets_arrow_cursor_ids")
+}
+
+/// Marks a clickable widget (list or tree row, tab) that keeps the arrow cursor
+/// on hover instead of the pointing hand buttons get.
+pub fn keep_arrow_cursor(ctx: &egui::Context, id: egui::Id) {
+    ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<Vec<egui::Id>>(arrow_cursor_ids())
+            .push(id);
+    });
+}
+
+/// Shows the pointing hand over hovered, enabled click-only widgets (buttons,
+/// links, icon buttons). Runs once at the end of the frame; widgets that set
+/// their own cursor, drag targets and rows marked with [`keep_arrow_cursor`]
+/// keep theirs.
+pub fn apply_pointer_cursor(ctx: &egui::Context) {
+    let arrow_ids = ctx.data_mut(|data| {
+        data.remove_temp::<Vec<egui::Id>>(arrow_cursor_ids())
+            .unwrap_or_default()
+    });
+    if ctx.output(|output| output.cursor_icon) != egui::CursorIcon::Default
+        || ctx.dragged_id().is_some()
+    {
+        return;
+    }
+    let hovered = ctx.interaction_snapshot(|snapshot| snapshot.hovered.clone());
+    let clickable = hovered.iter().any(|id| {
+        !arrow_ids.contains(id)
+            && ctx.read_response(*id).is_some_and(|response| {
+                response.enabled() && response.sense.senses_click() && !response.sense.senses_drag()
+            })
+    });
+    if clickable {
+        ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +312,43 @@ mod tests {
             assert!(!short.elided);
             assert_eq!(short.text(), "App.kt");
         });
+    }
+
+    /// Runs two frames with the pointer at `pointer` (hover is resolved from the
+    /// previous frame) and returns the cursor of the second one.
+    fn cursor_over(pointer: egui::Pos2, add: impl Fn(&mut egui::Ui)) -> egui::CursorIcon {
+        let ctx = egui::Context::default();
+        let input = || egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 300.0))),
+            events: vec![egui::Event::PointerMoved(pointer)],
+            ..Default::default()
+        };
+        let mut cursor = egui::CursorIcon::Default;
+        for _ in 0..2 {
+            let output = ctx.run(input(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| add(ui));
+                apply_pointer_cursor(ctx);
+            });
+            cursor = output.platform_output.cursor_icon;
+        }
+        cursor
+    }
+
+    #[test]
+    fn buttons_show_the_pointing_hand_and_rows_keep_the_arrow() {
+        let over_button = cursor_over(egui::pos2(20.0, 15.0), |ui| {
+            ui.add_sized(vec2(120.0, 30.0), egui::Button::new("Create"));
+        });
+        assert_eq!(over_button, egui::CursorIcon::PointingHand);
+        let over_row = cursor_over(egui::pos2(20.0, 12.0), |ui| {
+            list_row(ui, false);
+        });
+        assert_eq!(over_row, egui::CursorIcon::Default);
+        let over_disabled = cursor_over(egui::pos2(20.0, 15.0), |ui| {
+            ui.add_enabled_ui(false, |ui| {
+                ui.add_sized(vec2(120.0, 30.0), egui::Button::new("Create"));
+            });
+        });
+        assert_eq!(over_disabled, egui::CursorIcon::Default);
     }
 }

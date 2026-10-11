@@ -296,16 +296,24 @@ impl IdeState {
             document.text.revision(),
             self.lsp.diagnostics_generation(),
         );
-        if let Some(cache) = &self.problems_cache
+        // One entry per document, so split groups showing different files
+        // don't evict each other.
+        if let Some(cache) = self.problems_cache.get(&key.1)
             && cache.key == key
         {
             return cache.problems.clone();
         }
         let problems = std::sync::Arc::new(self.problems_for_document(index));
-        self.problems_cache = Some(ActiveProblemsCache {
-            key,
-            problems: problems.clone(),
-        });
+        if self.problems_cache.len() >= 16 {
+            self.problems_cache.clear();
+        }
+        self.problems_cache.insert(
+            key.1.clone(),
+            ActiveProblemsCache {
+                key,
+                problems: problems.clone(),
+            },
+        );
         problems
     }
 

@@ -666,6 +666,9 @@ pub fn left_stripe(app: &mut IdeApp, ctx: &egui::Context) {
                 );
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                     stripe_button(app, ui, ToolWindow::Git, Icon::Branch);
+                    if app.state.hierarchy.current.is_some() {
+                        stripe_button(app, ui, ToolWindow::Hierarchy, Icon::Structure);
+                    }
                     if app.state.android.project.is_some() {
                         stripe_button(app, ui, ToolWindow::Logcat, Icon::Logcat);
                     }
