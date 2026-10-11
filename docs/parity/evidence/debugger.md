@@ -21,7 +21,7 @@ always failed with "cannot tell which binary to debug". Fixed, with a test.
 
 ## Remaining differences from the reference
 
-- Java debugging (jdtls java-debug) is not implemented; see the TODO in `jetthing-dap`.
+- Java debugging works against real jdtls (see below); the remaining items apply to it as well.
 - No Breakpoints dialog, conditional breakpoints, logpoints, watches, inline values or run to cursor.
 - The tool window has no separate Threads and Variables panes, only one combined view.
 - Locals only list the adapter's `Locals` scope; Rust-aware pretty printing is lldb's.
@@ -37,5 +37,20 @@ localhost port and launches the main class. The `java-debug` toolchain component
 Reproducible evidence: `cargo test -p jetthing-core --test java_debug_flow` (scripted jdtls and DAP
 server: start, breakpoint stop, execution point) and `cargo test -p jetthing-dap --test java_tcp`.
 
-Not verified: a live run against real jdtls + java-debug and Xvfb screenshots. The sandbox that built
-this change could not download the plugin (Maven Central rate limit), so no `*-fixed-*.png` was captured.
+
+### Live Java verification (#146, 2026-10-11)
+
+Real jdtls 1.61.0 + java-debug 0.53.1, installed by `toolchain.setup` into an empty `$HOME`, Gradle
+Java sample (`App.square(int)` called from a loop in `main`, breakpoint on line 5), Xvfb 1600x1000.
+
+| File | Steps → result |
+|---|---|
+| `debugger/146-java-breakpoint.png` | `debug.start` → build, jdtls resolves main class and classpath, java-debug starts a DAP session; stops at the breakpoint (`"Thread [main]"@1: suspended (breakpoint)`), frames `App.square(int)` / `App.main(String[])`, local `n = {int} 1` |
+| `debugger/146-java-step-over.png` | Step Over: line 5 → 6, `suspended (step)`, locals now include `result = {int} 1` |
+| `debugger/146-java-second-stop.png` | Step Into / Out then Resume: stops at the breakpoint again with the next `n` |
+| `debugger/146-java-shift-f9.png` | `debug.stop`, then the key chord Shift+F9 starts a fresh session and stops at the breakpoint |
+
+Found and fixed: the `java-debug` install failed (`…0.53.1.jar.sha256` → HTTP 404) because Maven Central
+publishes only `.sha1`/`.md5` for it, so the debugger could never be provisioned. The provider now pins the
+SHA-256 of 0.53.1 (computed from a download whose SHA-1 matched Central's `.sha1`). Central rate-limited
+(HTTP 429) once during capture; the download was retried with backoff.

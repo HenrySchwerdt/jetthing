@@ -4,6 +4,7 @@
 //! |---|---|
 //! | `jdk` | foojay Disco API (Temurin by default) |
 //! | `jdtls` | download.eclipse.org milestones |
+//! | `kotlin-lsp` | JetBrains kotlin-lsp (fwcd/kotlin-language-server as fallback) |
 //! | `java-debug` | Maven Central (microsoft/java-debug jdtls plugin) |
 //! | `gradle` | services.gradle.org distributions (for projects without `gradlew`) |
 //! | `rust-analyzer` | GitHub releases of rust-lang/rust-analyzer |
@@ -15,6 +16,7 @@ pub mod gradle;
 pub mod java_debug;
 pub mod jdk;
 pub mod jdtls;
+pub mod kotlin_lsp;
 
 use crate::{Arch, ArchiveKind, Catalog, ComponentKind, ComponentSpec, Os, Platform};
 use github::GithubReleaseProvider;
@@ -26,6 +28,7 @@ pub fn builtin_catalog() -> Catalog {
     catalog.register(Arc::new(jdk::FoojayJdk::default()));
     catalog.register(Arc::new(jdtls::EclipseJdtls::default()));
     catalog.register(Arc::new(java_debug::JavaDebugPlugin::default()));
+    catalog.register(Arc::new(kotlin_lsp::KotlinLsp::default()));
     catalog.register(Arc::new(gradle::GradleDistributions::default()));
     catalog.register(Arc::new(rust_analyzer()));
     catalog.register(Arc::new(bazelisk()));
@@ -172,7 +175,7 @@ const REQUIREMENTS: &[(&[&str], ProjectRequirement)] = &[
         ProjectRequirement {
             language: "Java",
             components: &["jdk", "jdtls", "java-debug"],
-            extensions: &["java", "gradle", "kts", "kt"],
+            extensions: &["java", "gradle"],
             file_names: &["pom.xml"],
         },
     ),
@@ -212,12 +215,46 @@ const GRADLE_MARKERS: &[&str] = &[
 const JAVA_GRADLE_WITHOUT_WRAPPER: ProjectRequirement = ProjectRequirement {
     language: "Java",
     components: &["jdk", "gradle", "jdtls", "java-debug"],
-    extensions: &["java", "gradle", "kts", "kt"],
+    extensions: &["java", "gradle"],
     file_names: &["pom.xml"],
 };
 
+const KOTLIN: ProjectRequirement = ProjectRequirement {
+    language: "Kotlin",
+    components: &["kotlin-lsp"],
+    extensions: &["kt", "kts"],
+    file_names: &[],
+};
+
+/// Whether the build at `root` uses Kotlin: Kotlin DSL scripts, a Kotlin plugin or
+/// dependency in a Gradle/Maven build file, or a Kotlin source directory.
+fn uses_kotlin(root: &std::path::Path) -> bool {
+    let has = |name: &str| root.join(name).exists();
+    if has("build.gradle.kts") || has("settings.gradle.kts") || has("src/main/kotlin") {
+        return true;
+    }
+    ["build.gradle", "settings.gradle", "pom.xml"]
+        .iter()
+        .any(|name| {
+            std::fs::read_to_string(root.join(name))
+                .is_ok_and(|text| text.to_ascii_lowercase().contains("kotlin"))
+        })
+}
+
 /// Requirements of the project at `root`, from marker files in the root.
 pub fn project_requirements(root: &std::path::Path) -> Vec<ProjectRequirement> {
+    let mut requirements = base_requirements(root);
+    if uses_kotlin(root) {
+        let at = requirements
+            .iter()
+            .position(|r| r.language == "Java")
+            .map_or(requirements.len(), |index| index + 1);
+        requirements.insert(at, KOTLIN);
+    }
+    requirements
+}
+
+fn base_requirements(root: &std::path::Path) -> Vec<ProjectRequirement> {
     let has = |name: &str| root.join(name).exists();
     let gradle_without_wrapper =
         GRADLE_MARKERS.iter().any(|marker| has(marker)) && !has("gradlew") && !has("gradlew.bat");
@@ -249,10 +286,12 @@ mod tests {
         std::fs::write(dir.join("MODULE.bazel"), "").unwrap();
         let found = project_requirements(&dir);
         let languages: Vec<&str> = found.iter().map(|r| r.language).collect();
-        assert_eq!(languages, ["Java", "Bazel"]);
+        // A Kotlin DSL build adds the Kotlin language server after Java's components.
+        assert_eq!(languages, ["Java", "Kotlin", "Bazel"]);
         assert!(found[0].applies_to(Path::new("src/App.java")));
         assert!(!found[0].applies_to(Path::new("README.md")));
-        assert!(found[1].applies_to(Path::new("pkg/BUILD")));
+        assert!(found[1].applies_to(Path::new("src/Main.kt")));
+        assert!(found[2].applies_to(Path::new("pkg/BUILD")));
         // Without a wrapper the Java project also needs Gradle; with one it does not.
         assert_eq!(
             found[0].components,
@@ -268,12 +307,36 @@ mod tests {
         let all = REQUIREMENTS
             .iter()
             .map(|(_, requirement)| requirement)
-            .chain([&JAVA_GRADLE_WITHOUT_WRAPPER]);
+            .chain([&JAVA_GRADLE_WITHOUT_WRAPPER, &KOTLIN]);
         for requirement in all {
             for component in requirement.components {
                 assert!(catalog.get(component).is_some(), "{component}");
             }
         }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn kotlin_is_detected_from_build_files_and_sources() {
+        let dir = std::env::temp_dir().join(format!("jetthing-kt-reqs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let kotlin = |dir: &std::path::Path| {
+            project_requirements(dir)
+                .iter()
+                .any(|r| r.language == "Kotlin")
+        };
+        std::fs::write(dir.join("build.gradle"), "plugins { id 'java' }").unwrap();
+        assert!(!kotlin(&dir));
+        std::fs::write(
+            dir.join("build.gradle"),
+            "plugins { id 'org.jetbrains.kotlin.jvm' version '2.0.0' }",
+        )
+        .unwrap();
+        assert!(kotlin(&dir));
+        std::fs::write(dir.join("build.gradle"), "").unwrap();
+        std::fs::create_dir_all(dir.join("src/main/kotlin")).unwrap();
+        assert!(kotlin(&dir));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
