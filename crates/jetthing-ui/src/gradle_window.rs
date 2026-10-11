@@ -57,6 +57,21 @@ pub fn rows(model: &GradleModel, expanded: &HashSet<String>, filter: &str) -> Ve
     rows
 }
 
+/// Configurations listed under a project's `Dependencies` node.
+const DEPENDENCY_CONFIGURATIONS: &[&str] = &[
+    "compileClasspath",
+    "runtimeClasspath",
+    "testRuntimeClasspath",
+];
+
+/// `:app:` for project `:app`, empty for the root project.
+fn task_prefix(project_path: &str) -> String {
+    match project_path.trim_matches(':') {
+        "" => String::new(),
+        path => format!(":{path}:"),
+    }
+}
+
 fn project_rows(
     model: &GradleModel,
     project: &ProjectModel,
@@ -137,6 +152,35 @@ fn project_rows(
         if !any_task && !filter.is_empty() {
             rows.truncate(tasks_start);
         }
+        // Dependencies: the `dependencies` report of the main classpaths.
+        let deps_id = format!("d:{}", project.path);
+        let has_report = project.tasks.iter().any(|task| task.name == "dependencies");
+        if has_report && filter.is_empty() {
+            rows.push(Row {
+                id: deps_id.clone(),
+                depth: depth + 1,
+                label: "Dependencies".into(),
+                kind: RowKind::Folder,
+                expandable: true,
+            });
+            if open(&deps_id) {
+                for configuration in DEPENDENCY_CONFIGURATIONS {
+                    rows.push(Row {
+                        id: format!("dep:{}:{configuration}", project.path),
+                        depth: depth + 2,
+                        label: (*configuration).to_owned(),
+                        kind: RowKind::Task {
+                            path: format!(
+                                "{}dependencies --configuration {configuration}",
+                                task_prefix(&project.path)
+                            ),
+                            description: Some(format!("Print the {configuration} dependency tree")),
+                        },
+                        expandable: false,
+                    });
+                }
+            }
+        }
         any |= any_task;
         for child in project.children(model) {
             any |= project_rows(model, child, depth + 1, expanded, filter, rows);
@@ -203,6 +247,41 @@ fn content(app: &mut IdeApp, ui: &mut egui::Ui) {
                 Some(_) => None,
                 None => Some(String::new()),
             };
+        }
+        ui.add_space(6.0);
+        let offline = app
+            .state
+            .settings
+            .bool(jetthing_settings::ids::GRADLE_OFFLINE)
+            .unwrap_or(false);
+        if ui
+            .selectable_label(
+                offline,
+                RichText::new("Offline").size(theme::UI_FONT_SIZE - 1.0),
+            )
+            .on_hover_text("Toggle Offline Mode (--offline)")
+            .clicked()
+        {
+            app.dispatch(
+                "settings.set",
+                json!({"id": jetthing_settings::ids::GRADLE_OFFLINE, "value": !offline}),
+            );
+        }
+        let can_run = app.commands.is_enabled("gradle.runTask", &app.state);
+        if ui
+            .add_enabled_ui(can_run, |ui| {
+                icons::button(ui, Icon::Structure, "Analyze Dependencies")
+            })
+            .inner
+            .clicked()
+        {
+            app.dispatch("gradle.runTask", json!({"task": "dependencies"}));
+        }
+        if icons::button(ui, Icon::MainMenu, "Gradle Settings").clicked() {
+            app.dispatch(
+                "settings.open",
+                json!({"page": "reference.settingsdialog.project.gradle"}),
+            );
         }
         ui.add_space(6.0);
         if icons::button(ui, Icon::ExpandAll, "Expand All").clicked()
@@ -383,6 +462,7 @@ fn all_ids(model: &GradleModel) -> HashSet<String> {
     for project in &model.projects {
         ids.insert(format!("p:{}", project.path));
         ids.insert(format!("t:{}", project.path));
+        ids.insert(format!("d:{}", project.path));
         for group in project.task_groups().keys() {
             ids.insert(format!("g:{}:{group}", project.path));
         }
@@ -442,6 +522,39 @@ mod tests {
                 path: ":app:run".into(),
                 description: None
             }
+        );
+    }
+
+    #[test]
+    fn projects_with_a_dependencies_task_get_a_dependencies_node() {
+        let model = GradleModel::parse(
+            r#"{"gradleVersion":"8.14.3","rootDir":"/w","projects":[
+                {"path":":","name":"demo","dir":"/w","tasks":[]},
+                {"path":":app","name":"app","dir":"/w/app","tasks":[
+                    {"name":"dependencies","path":":app:dependencies","group":"help"}]}
+            ]}"#,
+        )
+        .unwrap();
+        let rows = rows(&model, &all_ids(&model), "");
+        let labels = labels(&rows);
+        assert!(labels.contains(&"  app".to_owned()));
+        assert!(labels.contains(&"    Dependencies".to_owned()));
+        let report = rows
+            .iter()
+            .find(|row| row.label == "runtimeClasspath")
+            .unwrap();
+        assert_eq!(
+            report.kind,
+            RowKind::Task {
+                path: ":app:dependencies --configuration runtimeClasspath".into(),
+                description: Some("Print the runtimeClasspath dependency tree".into())
+            }
+        );
+        assert_eq!(task_prefix(":"), "");
+        assert!(
+            !labels
+                .iter()
+                .any(|label| label.trim() == "demo Dependencies")
         );
     }
 

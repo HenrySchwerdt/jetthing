@@ -113,13 +113,33 @@ pub fn status_widget(app: &mut IdeApp, ui: &mut egui::Ui, font: egui::FontId) {
     }
 }
 
+/// Seconds a language-server balloon stays before it fades.
+const BALLOON_SECONDS: f64 = 10.0;
+
 /// Balloons for missing or crashing servers, stacked above the update balloon.
 pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
-    let notices = app.state.lsp.notices().to_vec();
+    // Balloons fade after a few seconds (they stay in the status bar entry);
+    // hovering one keeps it.
+    let seen_id = egui::Id::new("lsp_notice_first_seen");
+    let now = ctx.input(|input| input.time);
+    let mut first_seen: std::collections::HashMap<String, f64> =
+        ctx.data(|data| data.get_temp(seen_id)).unwrap_or_default();
+    let notices: Vec<_> = app
+        .state
+        .lsp
+        .notices()
+        .iter()
+        .filter(|notice| {
+            now - *first_seen.entry(notice.id.clone()).or_insert(now) < BALLOON_SECONDS
+        })
+        .cloned()
+        .collect();
+    ctx.data_mut(|data| data.insert_temp(seen_id, first_seen));
     if notices.is_empty() {
         return;
     }
-    let width = 380.0;
+    ctx.request_repaint_after(std::time::Duration::from_secs(1));
+    let width = 300.0;
     let mut bottom = crate::chrome::STATUS_BAR_HEIGHT + 16.0;
     if app.state.update_notification {
         bottom += 170.0;
@@ -138,9 +158,21 @@ pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
                     .fill(*theme::NOTIFICATION)
                     .stroke(egui::Stroke::new(1.0_f32, theme::NOTIFICATION))
                     .corner_radius(8)
-                    .inner_margin(egui::Margin::same(14))
+                    .inner_margin(egui::Margin::same(10))
                     .show(ui, |ui| {
-                        ui.set_width(width - 28.0);
+                        ui.set_width(width - 20.0);
+                        if ui.rect_contains_pointer(ui.max_rect()) {
+                            let seen = egui::Id::new("lsp_notice_first_seen");
+                            ui.data_mut(|data| {
+                                if let Some(map) =
+                                    data.get_temp::<std::collections::HashMap<String, f64>>(seen)
+                                {
+                                    let mut map = map;
+                                    map.insert(notice.id.clone(), now);
+                                    data.insert_temp(seen, map);
+                                }
+                            });
+                        }
                         ui.horizontal(|ui| {
                             let icon = if notice.error {
                                 (Icon::Error, *theme::ERROR)
@@ -162,8 +194,16 @@ pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
                                 },
                             );
                         });
-                        ui.label(RichText::new(&notice.body).color(theme::TEXT));
-                        ui.add_space(6.0);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&notice.body)
+                                    .size(theme::UI_FONT_SIZE - 1.0)
+                                    .color(theme::TEXT),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(&notice.body);
+                        ui.add_space(2.0);
                         ui.horizontal(|ui| {
                             let link = |ui: &mut egui::Ui, text: &str| {
                                 ui.add(
@@ -179,11 +219,11 @@ pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
                                 setup = Some((notice.id.clone(), component.clone()));
                             }
                             ui.add_space(12.0);
-                            if notice.id.starts_with("missing:") && link(ui, "Copy Install Hint") {
+                            if notice.id.starts_with("missing:") && link(ui, "Copy Hint") {
                                 copy = Some(notice.body.clone());
                             }
                             ui.add_space(12.0);
-                            if link(ui, "Restart Language Servers") {
+                            if link(ui, "Restart") {
                                 restart = true;
                             }
                         });

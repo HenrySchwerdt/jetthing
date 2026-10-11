@@ -255,3 +255,62 @@ fn completion_during_import_says_indexing_and_requeries_when_ready() {
     }));
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn code_vision_shows_usages_authors_and_parameter_hints() {
+    let Some(server) = fake_server() else {
+        eprintln!("jetthing-fake-lsp is not built; skipping");
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("jetthing-core-vision-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let source = "class App {\n    String greeting(String name) {\n        return name;\n    }\n    void main() {\n        greeting(\"x\");\n    }\n}\n";
+    std::fs::write(root.join("App.java"), source).unwrap();
+    let mut registry = ServerRegistry::empty();
+    registry.register(Arc::new(Fake(
+        server,
+        ServerSpec {
+            id: "fake",
+            language: "Java",
+            extensions: &[("java", "java")],
+            file_names: &[],
+            candidates: &[],
+            root_markers: &[],
+            install_hint: "",
+            notify_missing: false,
+            initialization_options: None,
+        },
+        Vec::new(),
+    )));
+    let commands = built_in_commands();
+    let mut state = IdeState::default();
+    state.lsp = LspManager::new(registry);
+    commands
+        .execute("project.open", &mut state, json!({"path": root}))
+        .unwrap();
+    commands
+        .execute("editor.openFile", &mut state, json!({"path": "App.java"}))
+        .unwrap();
+    assert!(wait(&mut state, |state| {
+        let (lenses, inlays) = state.code_vision(0);
+        lenses.iter().any(|lens| lens.usages.is_some()) && !inlays.is_empty()
+    }));
+    let (lenses, inlays) = state.code_vision(0);
+    let greeting = lenses
+        .iter()
+        .find(|lens| lens.line == 1)
+        .expect("method lens");
+    // The fake server lists the declaration among the references.
+    assert_eq!(greeting.usages, Some(2));
+    assert_eq!(greeting.column, 11);
+    assert_eq!(inlays.len(), 1);
+    assert_eq!((inlays[0].line, inlays[0].column), (5, 17));
+    assert_eq!(inlays[0].text, "name:");
+
+    commands
+        .execute("view.codeVision", &mut state, json!({}))
+        .unwrap();
+    assert!(state.code_vision(0).0.is_empty() && state.code_vision(0).1.is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
