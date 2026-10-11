@@ -291,9 +291,10 @@ impl IdeState {
     pub fn poll_android(&mut self) -> bool {
         let devices = self.android.devices.poll();
         let logcat = self.android.logcat.poll();
+        let mirror = self.android.mirror.poll();
         let deploy = self.poll_deploy();
         let sdk_repo = self.poll_sdk_repo();
-        devices || logcat || deploy || sdk_repo
+        devices || logcat || mirror || deploy || sdk_repo
     }
 }
 

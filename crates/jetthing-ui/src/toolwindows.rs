@@ -39,6 +39,12 @@ pub fn left(app: &mut IdeApp, ctx: &egui::Context) {
                     if window == ToolWindow::Project {
                         project_options_menu(app, ui);
                     }
+                    if window == ToolWindow::ResourceManager
+                        && icons::button(ui, Icon::Refresh, "Refresh").clicked()
+                    {
+                        crate::resource_manager_ui::clear_cache(ui.ctx());
+                        app.dispatch("android.resourceManager.refresh", Value::Null);
+                    }
                     if window == ToolWindow::Commit
                         && icons::button(ui, Icon::Refresh, "Refresh").clicked()
                     {
@@ -56,6 +62,7 @@ pub fn left(app: &mut IdeApp, ctx: &egui::Context) {
                 ToolWindow::Project => project_tree(app, ui),
                 ToolWindow::Commit => commit(app, ui),
                 ToolWindow::BuildVariants => crate::build_variants_ui::show(app, ui),
+                ToolWindow::ResourceManager => crate::resource_manager_ui::show(app, ui),
                 ToolWindow::Structure => crate::structure_view::tool_window(app, ui),
                 _ => {}
             }

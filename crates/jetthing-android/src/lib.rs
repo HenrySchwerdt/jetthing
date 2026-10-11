@@ -8,14 +8,18 @@
 pub mod adb;
 pub mod avd;
 pub mod deploy;
+pub mod layout;
 pub mod logcat;
 pub mod merged_manifest;
+pub mod mirror;
 pub mod project;
 mod properties;
+pub mod resource_manager;
 pub mod resources;
 pub mod sdk;
 pub mod sdk_repo;
 pub mod variants;
+pub mod vector;
 pub mod view;
 
 pub use adb::{
