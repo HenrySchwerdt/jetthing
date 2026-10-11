@@ -1328,7 +1328,7 @@ mod tests {
             column: 1,
             length: 4,
             preview: "main".into(),
-            highlights: vec![0..4],
+            highlights: std::iter::once(0..4).collect(),
         };
         let library = SymbolEntry {
             name: "main".into(),
