@@ -238,12 +238,6 @@ pub struct TreeRow {
     pub excluded: bool,
 }
 
-impl TreeRow {
-    pub fn is_expandable(&self) -> bool {
-        matches!(self.kind, RowKind::Directory | RowKind::Group)
-    }
-}
-
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())

@@ -467,13 +467,6 @@ pub fn plan_replacements(
         .collect()
 }
 
-pub fn searchable_paths(root: &Path, paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
-    paths
-        .into_iter()
-        .filter(|path| root.join(path).is_file())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

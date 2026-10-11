@@ -22,7 +22,8 @@ pub fn commit_message_button(app: &mut IdeApp, ui: &mut egui::Ui, selected: &[Pa
         {
             app.dispatch("ai.vcs.stopCommitMessage", Value::Null);
         }
-        ui.ctx().request_repaint();
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(30));
         return;
     }
     if !app

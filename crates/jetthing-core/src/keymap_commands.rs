@@ -343,7 +343,10 @@ impl IdeState {
 /// Same shortcut, or one is a single stroke that starts the other's chord.
 fn overlaps(a: &Shortcut, b: &Shortcut) -> bool {
     match (a, b) {
-        (Shortcut::Keys(a), Shortcut::Keys(b)) if a.len() != b.len() => a[0] == b[0],
+        (Shortcut::Keys(a), Shortcut::Keys(b)) if a.len() != b.len() => {
+            // An empty key list can come from a hand-edited override file.
+            a.first().is_some_and(|first| b.first() == Some(first))
+        }
         _ => a == b,
     }
 }

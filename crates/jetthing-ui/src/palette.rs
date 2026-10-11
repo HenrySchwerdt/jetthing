@@ -353,7 +353,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     }
     let found = items(app);
     if app.state.quick_nav.text.is_running() {
-        ctx.request_repaint();
+        ctx.request_repaint_after(std::time::Duration::from_millis(30));
     }
     if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         app.palette.open = false;

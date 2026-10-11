@@ -3,12 +3,8 @@
 //! These only change the [`SelectionSet`]; they never edit text, so they add no
 //! undo steps and produce no edit notifications.
 
-use crate::ops::{self, FindOptions, line_bounds, selection_lines};
+use crate::ops::{self, FindOptions, is_word, line_bounds, selection_lines};
 use crate::{Selection, SelectionSet, TextDocument};
-
-fn is_word(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
 
 /// Word range at `position` if the caret touches a word character.
 fn word_range(doc: &TextDocument, position: usize) -> Option<(usize, usize)> {
