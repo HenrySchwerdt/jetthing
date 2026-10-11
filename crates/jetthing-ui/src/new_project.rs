@@ -7,6 +7,9 @@ use eframe::egui::{self, RichText, vec2};
 use jetthing_core::JdkChoice;
 use serde_json::json;
 
+/// Height of the generator list and form row; the button row sits below it.
+const CONTENT_HEIGHT: f32 = 420.0;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Preset {
     Jvm {
@@ -215,8 +218,11 @@ pub fn show(
     popup_frame(ctx, "dialog_new_project", 780.0, |ui| {
         title(ui, "New Project");
         ui.horizontal_top(|ui| {
+            // Bound the row: the vertical separator below grows to the available height,
+            // which would otherwise push the Create/Cancel row off-screen.
+            ui.set_max_height(CONTENT_HEIGHT);
             ui.allocate_ui_with_layout(
-                vec2(210.0, 400.0),
+                vec2(210.0, CONTENT_HEIGHT),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.set_width(210.0);
@@ -248,147 +254,155 @@ pub fn show(
                 },
             );
             ui.separator();
-            ui.vertical(|ui| {
-                ui.set_width(520.0);
-                egui::Grid::new("new_project_fields")
-                    .num_columns(2)
-                    .spacing([16.0, 10.0])
-                    .show(ui, |ui| {
-                        field_label(ui, "Name");
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut form.name)
-                                .id(egui::Id::new("new_project_name"))
-                                .desired_width(380.0),
-                        );
-                        if focus {
-                            response.request_focus();
-                        }
-                        ui.end_row();
-                        field_label(ui, "Location");
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut form.location)
-                                    .id(egui::Id::new("new_project_parent"))
-                                    .desired_width(320.0),
-                            );
-                            if ui.button("Browse…").clicked() {
-                                *browse = Some(Purpose::NewProjectLocation);
-                            }
-                        });
-                        ui.end_row();
-                        ui.label("");
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(format!(
-                                    "Project will be created in: {}/{}",
-                                    form.location.trim_end_matches(['/', '\\']),
-                                    form.name
-                                ))
-                                .color(theme::TEXT_INFO),
-                            )
-                            .truncate(),
-                        );
-                        ui.end_row();
-                        ui.label("");
-                        ui.checkbox(&mut form.git, "Create Git repository");
-                        ui.end_row();
-                        if let Preset::Jvm { .. } = form.preset() {
-                            field_label(ui, "Language");
-                            segmented(
-                                ui,
-                                &[("java", "Java"), ("kotlin", "Kotlin")],
-                                &mut form.language,
-                            );
-                            ui.end_row();
-                            field_label(ui, "Build system");
-                            segmented(
-                                ui,
-                                &[
-                                    ("intellij", "IntelliJ"),
-                                    ("maven", "Maven"),
-                                    ("gradle", "Gradle"),
-                                ],
-                                &mut form.build,
-                            );
-                            ui.end_row();
-                            if form.build == "gradle" {
-                                field_label(ui, "Gradle DSL");
-                                segmented(
-                                    ui,
-                                    &[("kotlin", "Kotlin"), ("groovy", "Groovy")],
-                                    &mut form.dsl,
+            egui::ScrollArea::vertical()
+                .id_salt("new_project_form")
+                .max_height(CONTENT_HEIGHT)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(520.0);
+                        egui::Grid::new("new_project_fields")
+                            .num_columns(2)
+                            .spacing([16.0, 10.0])
+                            .show(ui, |ui| {
+                                field_label(ui, "Name");
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut form.name)
+                                        .id(egui::Id::new("new_project_name"))
+                                        .desired_width(380.0),
                                 );
+                                if focus {
+                                    response.request_focus();
+                                }
                                 ui.end_row();
-                            }
-                            field_label(ui, "JDK");
-                            ui.horizontal(|ui| {
-                                let selected = form
-                                    .jdks
-                                    .iter()
-                                    .find(|choice| choice.major == form.jdk)
-                                    .map_or_else(
-                                        || format!("{} (not installed)", form.jdk),
-                                        |choice| choice.label.clone(),
+                                field_label(ui, "Location");
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut form.location)
+                                            .id(egui::Id::new("new_project_parent"))
+                                            .desired_width(320.0),
                                     );
-                                egui::ComboBox::from_id_salt("new_project_jdk")
-                                    .selected_text(selected)
-                                    .width(300.0)
-                                    .show_ui(ui, |ui| {
-                                        for choice in &form.jdks {
-                                            ui.selectable_value(
-                                                &mut form.jdk,
-                                                choice.major,
-                                                &choice.label,
-                                            );
-                                        }
-                                    });
-                                ui.menu_button("Download JDK…", |ui| {
-                                    for major in [17_u32, 21, 25] {
-                                        if ui.button(format!("JDK {major}")).clicked() {
-                                            download = Some(major);
-                                            form.jdk = major;
-                                            ui.close();
-                                        }
+                                    if ui.button("Browse…").clicked() {
+                                        *browse = Some(Purpose::NewProjectLocation);
                                     }
                                 });
-                            });
-                            ui.end_row();
-                            if let Some((text, _)) = &progress {
-                                ui.label("");
-                                ui.label(RichText::new(text).color(theme::TEXT_SECONDARY));
                                 ui.end_row();
-                            }
-                            ui.label("");
-                            ui.checkbox(&mut form.sample, "Add sample code");
-                            ui.end_row();
-                        }
-                    });
-                if matches!(form.preset(), Preset::Jvm { .. }) {
-                    ui.add_space(8.0);
-                    egui::CollapsingHeader::new("Advanced Settings")
-                        .id_salt("new_project_advanced")
-                        .show(ui, |ui| {
-                            egui::Grid::new("new_project_advanced_fields")
-                                .spacing([16.0, 8.0])
-                                .show(ui, |ui| {
-                                    field_label(ui, "GroupId");
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut form.group)
-                                            .id(egui::Id::new("new_project_group"))
-                                            .desired_width(300.0),
+                                ui.label("");
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(format!(
+                                            "Project will be created in: {}/{}",
+                                            form.location.trim_end_matches(['/', '\\']),
+                                            form.name
+                                        ))
+                                        .color(theme::TEXT_INFO),
+                                    )
+                                    .truncate(),
+                                );
+                                ui.end_row();
+                                ui.label("");
+                                ui.checkbox(&mut form.git, "Create Git repository");
+                                ui.end_row();
+                                if let Preset::Jvm { .. } = form.preset() {
+                                    field_label(ui, "Language");
+                                    segmented(
+                                        ui,
+                                        &[("java", "Java"), ("kotlin", "Kotlin")],
+                                        &mut form.language,
                                     );
                                     ui.end_row();
-                                    field_label(ui, "ArtifactId");
-                                    ui.label(RichText::new(&form.name).color(theme::TEXT_INFO));
+                                    field_label(ui, "Build system");
+                                    segmented(
+                                        ui,
+                                        &[
+                                            ("intellij", "IntelliJ"),
+                                            ("maven", "Maven"),
+                                            ("gradle", "Gradle"),
+                                        ],
+                                        &mut form.build,
+                                    );
                                     ui.end_row();
+                                    if form.build == "gradle" {
+                                        field_label(ui, "Gradle DSL");
+                                        segmented(
+                                            ui,
+                                            &[("kotlin", "Kotlin"), ("groovy", "Groovy")],
+                                            &mut form.dsl,
+                                        );
+                                        ui.end_row();
+                                    }
+                                    field_label(ui, "JDK");
+                                    ui.horizontal(|ui| {
+                                        let selected = form
+                                            .jdks
+                                            .iter()
+                                            .find(|choice| choice.major == form.jdk)
+                                            .map_or_else(
+                                                || format!("{} (not installed)", form.jdk),
+                                                |choice| choice.label.clone(),
+                                            );
+                                        egui::ComboBox::from_id_salt("new_project_jdk")
+                                            .selected_text(selected)
+                                            .width(300.0)
+                                            .show_ui(ui, |ui| {
+                                                for choice in &form.jdks {
+                                                    ui.selectable_value(
+                                                        &mut form.jdk,
+                                                        choice.major,
+                                                        &choice.label,
+                                                    );
+                                                }
+                                            });
+                                        ui.menu_button("Download JDK…", |ui| {
+                                            for major in [17_u32, 21, 25] {
+                                                if ui.button(format!("JDK {major}")).clicked() {
+                                                    download = Some(major);
+                                                    form.jdk = major;
+                                                    ui.close();
+                                                }
+                                            }
+                                        });
+                                    });
+                                    ui.end_row();
+                                    if let Some((text, _)) = &progress {
+                                        ui.label("");
+                                        ui.label(RichText::new(text).color(theme::TEXT_SECONDARY));
+                                        ui.end_row();
+                                    }
+                                    ui.label("");
+                                    ui.checkbox(&mut form.sample, "Add sample code");
+                                    ui.end_row();
+                                }
+                            });
+                        if matches!(form.preset(), Preset::Jvm { .. }) {
+                            ui.add_space(8.0);
+                            egui::CollapsingHeader::new("Advanced Settings")
+                                .id_salt("new_project_advanced")
+                                .show(ui, |ui| {
+                                    egui::Grid::new("new_project_advanced_fields")
+                                        .spacing([16.0, 8.0])
+                                        .show(ui, |ui| {
+                                            field_label(ui, "GroupId");
+                                            ui.add_sized(
+                                                vec2(300.0, ui.spacing().interact_size.y),
+                                                egui::TextEdit::singleline(&mut form.group)
+                                                    .id(egui::Id::new("new_project_group")),
+                                            );
+                                            ui.end_row();
+                                            field_label(ui, "ArtifactId");
+                                            ui.label(
+                                                RichText::new(&form.name).color(theme::TEXT_INFO),
+                                            );
+                                            ui.end_row();
+                                        });
                                 });
-                        });
-                }
-                if let Some(message) = &form.error {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(message).color(theme::ERROR));
-                }
-            });
+                        }
+                        if let Some(message) = &form.error {
+                            ui.add_space(6.0);
+                            ui.label(RichText::new(message).color(theme::ERROR));
+                        }
+                    })
+                });
         });
         ui.add_space(10.0);
         ui.horizontal(|ui| {
