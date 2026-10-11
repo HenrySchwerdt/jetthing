@@ -46,6 +46,7 @@ mod icons;
 mod intentions_ui;
 mod keybindings;
 mod keys;
+mod layout_editor_ui;
 mod logcat_ui;
 mod lsp_status;
 mod main_menu;
@@ -62,7 +63,9 @@ mod popups;
 mod problems_ui;
 mod push_dialog;
 mod refactor_ui;
+mod resource_manager_ui;
 mod run_config_dialog;
+mod running_devices_ui;
 mod settings_dialog;
 mod settings_keymap;
 mod settings_live_templates;
@@ -345,7 +348,22 @@ impl IdeApp {
         if let Err(error) = self.commands.execute(id, &mut self.state, params) {
             diagnostics::log(diagnostics::Level::Warn, &format!("{id}: {error}"));
             self.state.status = error.to_string();
+        } else if id == "project.close" {
+            self.project_closed();
         }
+    }
+
+    /// Resets project-bound UI state after `project.close`.
+    fn project_closed(&mut self) {
+        self.tree_selection = None;
+        self.tree_revealed = None;
+        self.commit_overrides.clear();
+        self.commit_message.clear();
+        self.search_input.clear();
+        self.terminal_selection = None;
+        self.dialog = None;
+        self.find = findbar::FindBar::default();
+        self.dispatch("plugin.refresh", Value::Null);
     }
 
     pub(crate) fn open_dialog(&mut self, dialog: popups::Dialog) {
@@ -963,6 +981,7 @@ impl IdeApp {
             plugin_ui::right_side(self, ctx);
             toolwindows::left(self, ctx);
             device_manager::right(self, ctx);
+            running_devices_ui::right(self, ctx);
             ai_chat::right(self, ctx);
             gradle_window::show(self, ctx);
             bazel_window::show(self, ctx);

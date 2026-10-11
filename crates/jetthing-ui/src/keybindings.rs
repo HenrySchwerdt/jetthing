@@ -26,6 +26,7 @@ pub enum UiAction {
     SaveAll,
     NewProject,
     OpenProject,
+    ManageProjects,
     NewFile,
     NewDirectory,
     NewJavaClass,
@@ -46,6 +47,7 @@ pub fn ui_action(action: &str) -> Option<UiAction> {
         "SaveAll" => UiAction::SaveAll,
         "NewProject" | "WelcomeScreen.DefaultNewProjectAction" => UiAction::NewProject,
         "OpenFile" => UiAction::OpenProject,
+        "ManageRecentProjects" => UiAction::ManageProjects,
         "NewFile" => UiAction::NewFile,
         "NewDir" => UiAction::NewDirectory,
         "NewClass" => UiAction::NewJavaClass,
@@ -193,6 +195,7 @@ impl IdeApp {
             | UiAction::NewJavaClass
             | UiAction::NewKotlinFile => self.state.project.is_some(),
             UiAction::Push => self.state.git.is_some(),
+            UiAction::ManageProjects => self.state.project.is_some(),
             _ => true,
         }
     }
@@ -225,6 +228,8 @@ impl IdeApp {
             UiAction::SaveAll => self.autosave(),
             UiAction::NewProject => self.new_project_dialog(),
             UiAction::OpenProject => self.open_project_dialog(),
+            // Manage Projects shows the welcome screen's project list.
+            UiAction::ManageProjects => self.dispatch("project.close", Value::Null),
             UiAction::NewFile | UiAction::NewDirectory => {
                 if let Some(parent) = self.new_entry_parent() {
                     self.open_dialog(popups::Dialog::NewEntry {

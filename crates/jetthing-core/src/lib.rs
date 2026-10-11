@@ -1,6 +1,6 @@
 use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
 use jetthing_git::RepositoryStatus;
-use jetthing_language::{LanguageAnalysis, analyze};
+use jetthing_language::{LanguageAnalysis, analyze_lazy};
 use jetthing_lsp::{LspDiagnostic, LspManager};
 use jetthing_project::{FileEntry, Project};
 use jetthing_runner::TaskService;
@@ -25,6 +25,7 @@ mod android_logcat;
 mod android_manifest;
 mod android_resources;
 mod android_sdk_repo;
+mod android_tools;
 mod android_variants;
 mod annotations;
 mod bazel_commands;
@@ -78,6 +79,7 @@ pub use android_commands::AndroidState;
 pub use android_deploy::{DeployPhase, DeployState};
 pub use android_devices::DeviceHub;
 pub use android_logcat::LogcatState;
+pub use android_tools::{LayoutEditorState, LayoutMode};
 pub use disk_sync::{DiskConflict, Waker, content_hash};
 pub use settings_commands::Settings;
 mod vcs;
@@ -183,7 +185,7 @@ impl Document {
     /// Creates a document and its initial language analysis.
     pub fn new(path: PathBuf, text: &str) -> Self {
         let mut document = Self {
-            analysis: analyze(&path, text),
+            analysis: analyze_lazy(&path, text),
             text: TextDocument::new(text),
             path,
             selections: SelectionSet::default(),
@@ -209,7 +211,7 @@ impl Document {
             }
             EditJournal::Reset => {
                 self.folds.clear();
-                self.analysis = analyze(&self.path, source);
+                self.analysis = analyze_lazy(&self.path, source);
             }
         }
     }
@@ -362,6 +364,37 @@ impl IdeState {
         let project = Project::open(path).map_err(|e| e.to_string())?;
         self.prepare_project_switch()?;
         self.install_project(project)
+    }
+
+    /// Saves and closes the open project, returning to the welcome screen.
+    pub fn close_project(&mut self) -> Result<(), String> {
+        if self.project.is_none() {
+            return Err("no project is open".into());
+        }
+        self.prepare_project_switch()?;
+        self.documents.clear();
+        self.active_document = None;
+        self.tabs = tabs::EditorTabs {
+            limit: self.tabs.limit,
+            ..Default::default()
+        };
+        self.search.cancel();
+        self.search_results.clear();
+        self.search_query.clear();
+        self.terminal = None;
+        self.runner = TaskService::default();
+        self.git = None;
+        self.git_watcher = None;
+        self.watcher = None;
+        self.lsp.set_project(None);
+        self.close_diff();
+        self.files.clear();
+        self.expanded_dirs.clear();
+        self.recent_files.clear();
+        self.tool_windows = ToolWindowLayout::default();
+        self.project = None;
+        self.status = "Closed project".into();
+        Ok(())
     }
 
     pub(crate) fn prepare_project_switch(&mut self) -> Result<(), String> {
@@ -1046,6 +1079,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_deploy::register(&mut registry);
     android_variants::register(&mut registry);
     android_resources::register(&mut registry);
+    android_tools::register(&mut registry);
     android_manifest::register(&mut registry);
     android_logcat::register(&mut registry);
     android_sdk_repo::register(&mut registry);
@@ -1103,6 +1137,16 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .open_project(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"root": state.project.as_ref().unwrap().root()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("project.close", "Close Project", "Project", None, "{}"),
+            |state: &IdeState| state.project.is_some(),
+            |state: &mut IdeState, _| {
+                state.close_project().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
             },
         ))
         .expect("unique built-in id");
@@ -1397,7 +1441,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Toggle Tool Window",
                 "Window",
                 None,
-                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat|buildVariants"}"#,
+                r#"{"id":"project|commit|find|build|problems|terminal|deviceManager|logcat|buildVariants|resourceManager|runningDevices"}"#,
             ),
             |_| true,
             |state: &mut IdeState, params| {
@@ -1414,6 +1458,12 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 }
                 if window == ToolWindow::Logcat && !state.tool_windows.is_visible(window) {
                     state.logcat_opened();
+                }
+                if window == ToolWindow::ResourceManager && !state.tool_windows.is_visible(window) {
+                    state.resource_manager_opened();
+                }
+                if window == ToolWindow::RunningDevices && !state.tool_windows.is_visible(window) {
+                    state.running_devices_opened();
                 }
                 Ok(json!({"visible": state.tool_windows.toggle(window)}))
             },
@@ -1453,6 +1503,12 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     }
                     if window == ToolWindow::Logcat {
                         state.logcat_opened();
+                    }
+                    if window == ToolWindow::ResourceManager {
+                        state.resource_manager_opened();
+                    }
+                    if window == ToolWindow::RunningDevices {
+                        state.running_devices_opened();
                     }
                     if window == ToolWindow::Terminal {
                         state.open_terminal().map_err(CommandError::Failed)?;
@@ -1600,14 +1656,14 @@ mod tests {
         document.text.edit(20, 21, "\"s\"").unwrap();
         let source = document.text.text();
         document.refresh_analysis(&source);
-        let full = analyze(&document.path, &source);
+        let full = jetthing_language::analyze(&document.path, &source);
         assert_eq!(document.analysis.highlights, full.highlights);
         assert!(document.text.undo());
         let source = document.text.text();
         document.refresh_analysis(&source);
         assert_eq!(
             document.analysis.highlights,
-            analyze(&document.path, &source).highlights
+            jetthing_language::analyze(&document.path, &source).highlights
         );
     }
 

@@ -1,4 +1,5 @@
 //! Deterministic project templates. Generation never runs downloaded code.
+use crate::android_template::AndroidActivity;
 use crate::{Project, ProjectError};
 use std::path::{Path, PathBuf};
 
@@ -11,6 +12,8 @@ pub enum ProjectKind {
     JavaGradleGroovy,
     /// Configurable Java/Kotlin project from the New Project wizard.
     Jvm(JvmSpec),
+    /// Android app (Gradle, Kotlin DSL) from the New Project wizard.
+    Android(crate::android_template::AndroidActivity),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +78,9 @@ impl ProjectKind {
             "rust-library" => Some(Self::RustLibrary),
             "java-gradle-kotlin" => Some(Self::JavaGradleKotlin),
             "java-gradle-groovy" => Some(Self::JavaGradleGroovy),
+            "android-compose" => Some(Self::Android(AndroidActivity::Compose)),
+            "android-views" => Some(Self::Android(AndroidActivity::Views)),
+            "android-no-activity" => Some(Self::Android(AndroidActivity::None)),
             _ => None,
         }
     }
@@ -125,7 +131,7 @@ pub fn create_project_with(
         ProjectKind::Jvm(spec) => Some(spec),
         _ => None,
     };
-    let java = jvm.is_some();
+    let java = jvm.is_some() || matches!(kind, ProjectKind::Android(_));
     if java && !valid_package(group) {
         return Err(ProjectError::InvalidName(format!(
             "Java group/package: {group}"
@@ -147,7 +153,7 @@ pub fn create_project_with(
         ("README.md".into(), format!("# {name}\n")),
         (
             ".gitignore".into(),
-            ".jetthing/\n.idea/\ntarget/\nbuild/\n.gradle/\n".into(),
+            ".jetthing/\n.idea/\ntarget/\nbuild/\n.gradle/\nlocal.properties\n".into(),
         ),
     ];
     match kind {
@@ -159,6 +165,9 @@ pub fn create_project_with(
             } else {
                 ("src/lib.rs".into(), "pub fn add(left: u64, right: u64) -> u64 {\n    left + right\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn adds() {\n        assert_eq!(super::add(2, 2), 4);\n    }\n}\n".into())
             });
+        }
+        ProjectKind::Android(activity) => {
+            crate::android_template::files(&mut files, name, group, activity);
         }
         ProjectKind::JavaGradleKotlin | ProjectKind::JavaGradleGroovy | ProjectKind::Jvm(_) => {
             let spec = jvm.expect("JVM kinds carry a spec");
@@ -454,5 +463,44 @@ mod tests {
         assert!(JvmSpec::parse("java", "ant", "kotlin", true, 17).is_none());
         assert!(JvmSpec::parse("java", "gradle", "kotlin", true, 3).is_none());
         std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn android_templates_generate_detectable_modules() {
+        for (kind, name, has_activity, layout) in [
+            ("android-compose", "Hello-App", true, false),
+            ("android-views", "viewsapp", true, true),
+            ("android-no-activity", "bare", false, false),
+        ] {
+            let dir =
+                std::env::temp_dir().join(format!("jt-android-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let project =
+                create_project(&dir, name, ProjectKind::parse(kind).unwrap(), "org.example")
+                    .unwrap();
+            let root = project.root();
+            let package = crate::android_template::application_id("org.example", name);
+            let manifest =
+                std::fs::read_to_string(root.join("app/src/main/AndroidManifest.xml")).unwrap();
+            assert_eq!(
+                manifest.contains("android.intent.action.MAIN"),
+                has_activity
+            );
+            let source = root
+                .join("app/src/main/kotlin")
+                .join(package.replace('.', "/"))
+                .join("MainActivity.kt");
+            assert_eq!(source.is_file(), has_activity);
+            assert_eq!(
+                root.join("app/src/main/res/layout/activity_main.xml")
+                    .is_file(),
+                layout
+            );
+            let build = std::fs::read_to_string(root.join("app/build.gradle.kts")).unwrap();
+            assert!(build.contains(&format!("namespace = \"{package}\"")));
+            assert_eq!(build.contains("compose = true"), kind == "android-compose");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 }

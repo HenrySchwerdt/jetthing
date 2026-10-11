@@ -90,6 +90,20 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     return;
                 }
             }
+            if crate::layout_editor_ui::applies(app) {
+                crate::layout_editor_ui::mode_bar(app, ui);
+                match app.state.android.layout.mode {
+                    jetthing_core::LayoutMode::Design => {
+                        crate::layout_editor_ui::design_body(app, ui);
+                        app.caret_screen_pos = None;
+                        return;
+                    }
+                    jetthing_core::LayoutMode::Split => {
+                        crate::layout_editor_ui::split_panel(app, ui)
+                    }
+                    jetthing_core::LayoutMode::Code => {}
+                }
+            }
             let md_layout = app.state.markdown_layout();
             let full = ui.available_rect_before_wrap();
             // The toggle lives in the editor's top-right toolbar: the tab strip row.
@@ -930,6 +944,22 @@ fn editor_surface(
     document.reveal_carets();
     let folds = FoldView::new(document);
     let row_count = folds.row_count(line_count);
+    // Highlights are computed lazily: make sure last frame's visible rows plus
+    // a page of margin are highlighted before painting.
+    let viewport_id = egui::Id::new(("editor_viewport_rows", &document.path));
+    let (seen_first, seen_last) = ui
+        .data(|data| data.get_temp::<(usize, usize)>(viewport_id))
+        .unwrap_or((0, 80));
+    if row_count > 0 {
+        let first_line = folds.row_to_line(seen_first.saturating_sub(60).min(row_count - 1));
+        let last_line = folds.row_to_line((seen_last + 60).min(row_count - 1));
+        let start = document.text.line_to_byte(first_line).unwrap_or(0);
+        let end = document
+            .text
+            .line_to_byte(last_line + 1)
+            .unwrap_or_else(|| document.text.char_to_byte(document.text.len_chars()));
+        document.analysis.ensure_highlighted(start..end);
+    }
     let digits = line_count.max(1).to_string().len().max(2);
     let blame_width = if blame.is_some() {
         crate::blame_gutter::WIDTH
@@ -1237,6 +1267,13 @@ fn editor_surface(
         // Gutter background matches the editor in Islands; draw caret row first.
         let first_row = ((viewport.top() / row_height).floor().max(0.0) as usize).min(row_count);
         let last_row = ((viewport.bottom() / row_height).ceil() as usize + 1).min(row_count);
+        if (first_row, last_row) != (seen_first, seen_last) {
+            ui.data_mut(|data| data.insert_temp(viewport_id, (first_row, last_row)));
+            // Newly exposed rows get highlighted on the next frame.
+            if !document.analysis.fully_highlighted() {
+                ui.ctx().request_repaint();
+            }
+        }
         // Gutter fold markers for regions starting in the viewport.
         let gutter_hovered = ui
             .input(|input| input.pointer.hover_pos())
@@ -1868,17 +1905,14 @@ mod tests {
 
     #[test]
     fn highlighting_skips_spans_that_split_characters() {
-        let analysis = LanguageAnalysis {
-            language: Some("Rust"),
-            highlights: jetthing_language::HighlightLayer::from_spans([
-                jetthing_language::HighlightSpan {
-                    start_byte: 1,
-                    end_byte: 2,
-                    key: "DEFAULT_KEYWORD",
-                },
-            ]),
-            ..Default::default()
-        };
+        let mut analysis = LanguageAnalysis::default();
+        analysis.language = Some("Rust");
+        analysis.highlights =
+            jetthing_language::HighlightLayer::from_spans([jetthing_language::HighlightSpan {
+                start_byte: 1,
+                end_byte: 2,
+                key: "DEFAULT_KEYWORD",
+            }]);
         let job = highlighted_line_job("ä", 0, &analysis, &egui::FontId::monospace(13.0));
         assert_eq!(job.text, "ä");
     }

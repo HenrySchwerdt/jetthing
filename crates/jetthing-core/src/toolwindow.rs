@@ -25,6 +25,8 @@ pub enum ToolWindow {
     Logcat,
     Git,
     BuildVariants,
+    ResourceManager,
+    RunningDevices,
     Gradle,
     Bazel,
     AiChat,
@@ -32,7 +34,7 @@ pub enum ToolWindow {
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 15] = [
+    pub const ALL: [ToolWindow; 17] = [
         ToolWindow::Project,
         ToolWindow::Commit,
         ToolWindow::Structure,
@@ -44,6 +46,8 @@ impl ToolWindow {
         ToolWindow::Logcat,
         ToolWindow::Git,
         ToolWindow::BuildVariants,
+        ToolWindow::ResourceManager,
+        ToolWindow::RunningDevices,
         ToolWindow::Gradle,
         ToolWindow::Bazel,
         ToolWindow::AiChat,
@@ -63,6 +67,8 @@ impl ToolWindow {
             ToolWindow::Logcat => "logcat",
             ToolWindow::Git => "git",
             ToolWindow::BuildVariants => "buildVariants",
+            ToolWindow::ResourceManager => "resourceManager",
+            ToolWindow::RunningDevices => "runningDevices",
             ToolWindow::AiChat => "aiChat",
             ToolWindow::Debug => "debug",
             ToolWindow::Gradle => "gradle",
@@ -83,6 +89,8 @@ impl ToolWindow {
             ToolWindow::Logcat => "Logcat",
             ToolWindow::Git => "Git",
             ToolWindow::BuildVariants => "Build Variants",
+            ToolWindow::ResourceManager => "Resource Manager",
+            ToolWindow::RunningDevices => "Running Devices",
             ToolWindow::AiChat => "AI Chat",
             ToolWindow::Debug => "Debug",
             ToolWindow::Gradle => "Gradle",
@@ -106,6 +114,8 @@ impl ToolWindow {
             ToolWindow::DeviceManager
             | ToolWindow::Logcat
             | ToolWindow::BuildVariants
+            | ToolWindow::ResourceManager
+            | ToolWindow::RunningDevices
             | ToolWindow::Gradle
             | ToolWindow::Bazel
             | ToolWindow::AiChat => "",
@@ -119,7 +129,8 @@ impl ToolWindow {
             ToolWindow::Project
             | ToolWindow::Commit
             | ToolWindow::Structure
-            | ToolWindow::BuildVariants => Anchor::Left,
+            | ToolWindow::BuildVariants
+            | ToolWindow::ResourceManager => Anchor::Left,
             ToolWindow::Find
             | ToolWindow::Build
             | ToolWindow::Problems
@@ -128,6 +139,7 @@ impl ToolWindow {
             | ToolWindow::Debug
             | ToolWindow::Git => Anchor::Bottom,
             ToolWindow::DeviceManager
+            | ToolWindow::RunningDevices
             | ToolWindow::Gradle
             | ToolWindow::Bazel
             | ToolWindow::AiChat => Anchor::Right,

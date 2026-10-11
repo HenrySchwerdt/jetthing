@@ -50,12 +50,39 @@ impl Palette {
     }
 }
 
+/// Window-level actions (keymap `UiAction`s) that are not typed commands; they are
+/// searchable alongside commands, with or without an open project.
+const UI_ACTIONS: [(&str, &str); 3] = [
+    ("NewProject", "New Project…"),
+    ("OpenFile", "Open…"),
+    ("Exit", "Exit"),
+];
+
+/// Id prefix of a [`UI_ACTIONS`] candidate (the rest is the keymap action id).
+const UI_ACTION_PREFIX: &str = "ui:";
+
 fn actions(app: &IdeApp, include_disabled: bool) -> Vec<ActionCandidate> {
+    let ui_actions = UI_ACTIONS
+        .iter()
+        .map(|(action, label)| ActionCandidate {
+            enabled: app.menu_action_enabled(action),
+            shortcut: app.action_shortcut(action).unwrap_or_default(),
+            id: format!("{UI_ACTION_PREFIX}{action}"),
+            label: (*label).into(),
+            category: "File".into(),
+        })
+        .filter(|candidate| include_disabled || candidate.enabled);
     app.commands
         .specs()
         .into_iter()
         .filter(IdeApp::parameterless)
         .filter(|spec| include_disabled || app.commands.is_enabled(&spec.id, &app.state))
+        // Android actions only apply to Android projects; the SDK manager is global.
+        .filter(|spec| {
+            spec.category != "Android"
+                || app.state.android.project.is_some()
+                || app.commands.is_enabled(&spec.id, &app.state)
+        })
         .map(|spec| ActionCandidate {
             enabled: app.commands.is_enabled(&spec.id, &app.state),
             shortcut: app.command_shortcut(&spec),
@@ -63,6 +90,7 @@ fn actions(app: &IdeApp, include_disabled: bool) -> Vec<ActionCandidate> {
             label: spec.label,
             category: spec.category,
         })
+        .chain(ui_actions)
         .collect()
 }
 
@@ -484,7 +512,10 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 if action.enabled {
                     let id = action.id.clone();
                     app.palette.open = false;
-                    app.dispatch(&id, Value::Null);
+                    match id.strip_prefix(UI_ACTION_PREFIX) {
+                        Some(action) => app.run_menu_action(action, ctx),
+                        None => app.dispatch(&id, Value::Null),
+                    }
                 }
             }
             Hit::File { path, line } => {
@@ -517,5 +548,24 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     }
     if close {
         app.palette.open = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_action_offers_window_actions_and_hides_android_outside_android_projects() {
+        let app = IdeApp::with_update_check(None, Vec::new(), false);
+        let found = actions(&app, false);
+        for label in ["New Project…", "Open…", "Exit"] {
+            assert!(
+                found.iter().any(|a| a.label == label && a.enabled),
+                "{label}"
+            );
+        }
+        assert!(found.iter().all(|a| a.id != "android.app.run"));
+        assert!(found.iter().any(|a| a.id == "android.sdk.manager"));
     }
 }
