@@ -99,3 +99,7 @@ Found and fixed by this pass: Enter did not commit an inline watch edit (focus w
 frame), the add-watch field lost focus after the first Enter (unstable widget id), the Evaluate dialog
 did not take focus when another field held it, and Escape did not close either popup (the workbench
 consumed it first).
+
+The same real-input pass was repeated at 1440x900 (right-click popup: Enter applies the condition,
+Escape closes it; Alt+F8 dialog: Enter evaluates, Escape closes; double-click edits a watch):
+`debugger/19-mouse-08-1440-evaluate.png`, `debugger/19-mouse-09-1440-watches-after-escape.png`.
