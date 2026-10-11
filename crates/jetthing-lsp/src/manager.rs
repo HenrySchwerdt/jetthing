@@ -653,6 +653,11 @@ impl LspManager {
     }
 
     /// One entry per started server.
+    /// Whether any language server has been started for this project.
+    pub fn has_servers(&self) -> bool {
+        !self.servers.is_empty()
+    }
+
     pub fn servers(&self) -> Vec<ServerInfo> {
         self.servers
             .iter()
