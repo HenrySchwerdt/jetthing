@@ -20,6 +20,10 @@ pub struct Workspace {
     pub bottom_tool_height: Option<u32>,
     pub recent_files: Vec<PathBuf>,
     pub pinned_files: Vec<PathBuf>,
+    /// Directories marked as source/test/resources roots or excluded.
+    pub marked_dirs: std::collections::BTreeMap<PathBuf, crate::project_view::DirMark>,
+    /// `Some(false)` when Compact Middle Packages was switched off.
+    pub compact_packages: Option<bool>,
 }
 
 pub const WORKSPACE_FILE: &str = ".jetthing/workspace.json";
@@ -59,12 +63,21 @@ impl IdeState {
         let renamed = project
             .rename(path, new_name)
             .map_err(|error| error.to_string())?;
+        self.remap_paths(path, &renamed);
+        self.refresh_files();
+        self.status = format!("Renamed to {}", renamed.display());
+        Ok(renamed)
+    }
+
+    /// Re-points open editors, expansion and recent files from `old` (and below)
+    /// to `new` after a rename or move.
+    pub(crate) fn remap_paths(&mut self, old_root: &Path, new_root: &Path) {
         let remap = |old: &Path| -> Option<PathBuf> {
-            old.strip_prefix(path).ok().map(|rest| {
+            old.strip_prefix(old_root).ok().map(|rest| {
                 if rest.as_os_str().is_empty() {
-                    renamed.clone()
+                    new_root.to_owned()
                 } else {
-                    renamed.join(rest)
+                    new_root.join(rest)
                 }
             })
         };
@@ -83,9 +96,10 @@ impl IdeState {
                 *recent = next;
             }
         }
-        self.refresh_files();
-        self.status = format!("Renamed to {}", renamed.display());
-        Ok(renamed)
+        self.project_view.marks = std::mem::take(&mut self.project_view.marks)
+            .into_iter()
+            .map(|(dir, mark)| (remap(&dir).unwrap_or(dir), mark))
+            .collect();
     }
 
     pub fn delete_path(&mut self, path: &Path) -> Result<(), String> {
@@ -205,6 +219,8 @@ impl IdeState {
             bottom_tool_height: self.tool_windows.bottom_height().map(|h| h as u32),
             recent_files: self.recent_files.clone(),
             pinned_files: self.tabs.pinned.iter().cloned().collect(),
+            marked_dirs: self.project_view.marks.clone(),
+            compact_packages: Some(self.project_view.compact_packages),
             selected_run_configuration: self
                 .run_configurations
                 .selected()
@@ -251,6 +267,15 @@ impl IdeState {
                 .collect()
         };
         self.expanded_dirs = keep(&workspace.expanded_dirs).into_iter().collect();
+        self.project_view.marks = workspace
+            .marked_dirs
+            .iter()
+            .filter(|(path, _)| known.contains(*path))
+            .map(|(path, mark)| (path.clone(), *mark))
+            .collect();
+        if let Some(compact) = workspace.compact_packages {
+            self.project_view.compact_packages = compact;
+        }
         let recent = keep(&workspace.recent_files);
         for path in keep(&workspace.open_files) {
             let _ = self.open_file(&path);

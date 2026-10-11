@@ -63,6 +63,18 @@ gradle.projectsEvaluated { g ->
                 ]
             }
         }
+        def libraries = []
+        def runtime = p.configurations.findByName('runtimeClasspath')
+        if (runtime != null && runtime.canBeResolved) {
+            try {
+                runtime.resolvedConfiguration.lenientConfiguration.artifacts.each { a ->
+                    def id = a.moduleVersion.id
+                    libraries << [name: "${id.group}:${id.name}:${id.version}".toString(), path: a.file.absolutePath]
+                }
+            } catch (Exception ignored) {
+                // Unresolvable dependencies are left out of External Libraries.
+            }
+        }
         def tasks = p.tasks.findAll { !it.name.startsWith('jetthing') }.collect { t ->
             [name: t.name, path: t.path, group: t.group?.toString(), description: t.description?.toString()]
         }
@@ -80,6 +92,7 @@ gradle.projectsEvaluated { g ->
             ],
             tasks: tasks,
             sourceSets: sourceSets,
+            libraries: libraries,
         ]
     }
     def out = new File(jetthingModelFile)
@@ -87,6 +100,7 @@ gradle.projectsEvaluated { g ->
     out.text = JsonOutput.toJson([
         gradleVersion: g.gradleVersion,
         rootDir: root.rootDir.absolutePath,
+        jdk: [home: System.getProperty('java.home'), version: System.getProperty('java.version')],
         projects: projects,
     ])
 }
@@ -97,7 +111,26 @@ gradle.projectsEvaluated { g ->
 pub struct GradleModel {
     pub gradle_version: String,
     pub root_dir: PathBuf,
+    /// The JVM that ran Gradle (External Libraries shows it as the project JDK).
+    #[serde(default)]
+    pub jdk: Option<JdkModel>,
     pub projects: Vec<ProjectModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JdkModel {
+    pub home: PathBuf,
+    pub version: String,
+}
+
+/// A resolved runtime dependency (one jar).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryModel {
+    /// `group:name:version`.
+    pub name: String,
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +149,8 @@ pub struct ProjectModel {
     pub tasks: Vec<TaskModel>,
     #[serde(default)]
     pub source_sets: Vec<SourceSetModel>,
+    #[serde(default)]
+    pub libraries: Vec<LibraryModel>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
