@@ -1,6 +1,6 @@
 use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
 use jetthing_git::RepositoryStatus;
-use jetthing_language::{LanguageAnalysis, analyze};
+use jetthing_language::{LanguageAnalysis, analyze_lazy};
 use jetthing_lsp::{LspDiagnostic, LspManager};
 use jetthing_project::{FileEntry, Project};
 use jetthing_runner::TaskService;
@@ -142,7 +142,7 @@ impl Document {
     /// Creates a document and its initial language analysis.
     pub fn new(path: PathBuf, text: &str) -> Self {
         let mut document = Self {
-            analysis: analyze(&path, text),
+            analysis: analyze_lazy(&path, text),
             text: TextDocument::new(text),
             path,
             selections: SelectionSet::default(),
@@ -168,7 +168,7 @@ impl Document {
             }
             EditJournal::Reset => {
                 self.folds.clear();
-                self.analysis = analyze(&self.path, source);
+                self.analysis = analyze_lazy(&self.path, source);
             }
         }
     }
@@ -1501,14 +1501,14 @@ mod tests {
         document.text.edit(20, 21, "\"s\"").unwrap();
         let source = document.text.text();
         document.refresh_analysis(&source);
-        let full = analyze(&document.path, &source);
+        let full = jetthing_language::analyze(&document.path, &source);
         assert_eq!(document.analysis.highlights, full.highlights);
         assert!(document.text.undo());
         let source = document.text.text();
         document.refresh_analysis(&source);
         assert_eq!(
             document.analysis.highlights,
-            analyze(&document.path, &source).highlights
+            jetthing_language::analyze(&document.path, &source).highlights
         );
     }
 
