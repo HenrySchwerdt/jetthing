@@ -26,6 +26,18 @@ Xvfb 1440×900, `JETTHING_CONTROL_SOCKET` driving (`docs/parity/evidence/ui-cont
 Mechanics covered by tests: `cargo test -p jetthing-core --test generate_hierarchy` (needs the fake server
 built: `cargo build -p jetthing-lsp --bins`) and `cargo test -p jetthing-core test_nav`.
 
+## Real mouse and keyboard pass (xdotool, Xvfb 1280×800)
+
+Driven only with `xdotool` (`windowfocus`, `mousemove`, `click`, `key`), no command dispatch; screenshots are
+`mouse-*.png`: `mouse-generate-hover.png` (Alt+Insert popup, hover highlight on "Getter and Setter", inside the
+window), `mouse-generate-click-getter.png` (a click on an entry applied it: status "Applied: Generate Setters"),
+`mouse-type-hierarchy-hover.png`, `mouse-hierarchy-button-hover.png`, `mouse-type-hierarchy-supertypes.png`
+(clicking "Show Supertypes"), `mouse-call-hierarchy.png` (Ctrl+Alt+H) and `mouse-super-method.png` (Ctrl+U).
+Observed: Alt+Insert, Ctrl+H, Ctrl+Alt+H and Ctrl+U work from real key events; the Generate popup (the intention
+popup) has hover states, Up/Down/Enter/Escape and stays in the window. Known gaps: the Hierarchy window has no
+keyboard navigation yet (arrows, Enter, Escape) and no speed search; no dialog was added, so default-button and
+Tab-order checks do not apply.
+
 ## Still different from the reference
 
 - Generate entries come from the server's `source.generate.*` code actions; jdtls actions that ask the client
