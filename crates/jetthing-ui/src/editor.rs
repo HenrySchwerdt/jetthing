@@ -3,6 +3,7 @@
 use crate::editor_keys;
 use crate::folding::{CollapsedRow, FoldView};
 use crate::icons::{self, Icon};
+use crate::markdown_ui;
 use crate::problems_ui;
 use crate::widgets::island_frame;
 use crate::{IdeApp, theme};
@@ -44,6 +45,8 @@ pub struct EditorOutput {
     pub typed: String,
     /// Char offset and screen position under the resting mouse pointer.
     pub hover: Option<(usize, egui::Pos2)>,
+    /// Vertical scroll offset after this frame (Markdown scroll sync).
+    pub scroll_y: f32,
 }
 
 pub fn editor_id() -> egui::Id {
@@ -79,6 +82,21 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             }
             crate::disk_banner::show(app, ui);
             crate::toolchain_banner::show(app, ui);
+            let md_layout = app.state.markdown_layout();
+            let full = ui.available_rect_before_wrap();
+            if let Some(layout) = md_layout
+                && let Some(picked) = markdown_ui::layout_island(ui.ctx(), full.right_top(), layout)
+            {
+                requests.push(EditorRequest::Command(
+                    "markdown.layout",
+                    json!({"mode": picked.id()}),
+                ));
+            }
+            if md_layout == Some(jetthing_markdown::Layout::PreviewOnly) {
+                markdown_preview_only(app, ui, full);
+                app.caret_screen_pos = None;
+                return;
+            }
             if app.find.open {
                 crate::findbar::show(app, ui);
             }
@@ -97,7 +115,16 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 // The painter only visits the matches of visible lines: keep them sorted.
                 highlights.sort_unstable();
             }
-            let available = ui.available_rect_before_wrap();
+            let full = ui.available_rect_before_wrap();
+            let (available, preview_rect) = if md_layout == Some(jetthing_markdown::Layout::Split) {
+                let mid = (full.left() + full.width() / 2.0).round();
+                (
+                    full.with_max_x(mid),
+                    Some(full.with_min_x(mid + theme::ISLAND_GAP)),
+                )
+            } else {
+                (full, None)
+            };
             let stripe_rect = Rect::from_min_max(
                 egui::pos2(
                     available.right() - problems_ui::STRIPE_WIDTH,
@@ -122,6 +149,11 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let changes = app.state.document_changes(index).to_vec();
             let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
             let gutter = run_icons(app, ui.ctx());
+            let doc_path = app.state.absolute_path(&app.state.documents[index].path);
+            if md_layout.is_some() {
+                app.markdown_ui.reset_for(&doc_path);
+            }
+            let editor_scroll = app.markdown_ui.take_editor_scroll();
             let doc = &mut app.state.documents[index];
             let surface = editor_surface(
                 &mut text_ui,
@@ -135,9 +167,15 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     run: &gutter,
                 },
                 navigable,
+                editor_scroll,
             );
             let counts = jetthing_core::ProblemCounts::of(&problems);
-            match problems_ui::inspection_widget(ui, text_rect.right_top(), counts) {
+            let widget_anchor = if md_layout == Some(jetthing_markdown::Layout::EditorOnly) {
+                text_rect.right_top() - vec2(MARKDOWN_ISLAND_WIDTH, 0.0)
+            } else {
+                text_rect.right_top()
+            };
+            match problems_ui::inspection_widget(ui, widget_anchor, counts) {
                 Some(problems_ui::WidgetAction::Next) => {
                     requests.push(EditorRequest::Command("editor.nextProblem", Value::Null));
                 }
@@ -153,6 +191,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 None => {}
             }
             let mut bulb = None;
+            let mut editor_scroll_y = None;
             let doc = &mut app.state.documents[index];
             match surface {
                 Ok(EditorOutput {
@@ -162,7 +201,9 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     requests: editor_requests,
                     typed: typed_text,
                     hover: hovered,
+                    scroll_y,
                 }) => {
+                    editor_scroll_y = Some(scroll_y);
                     hover = hovered;
                     app.caret_screen_pos = caret_pos;
                     bulb = bulb_anchor;
@@ -179,6 +220,41 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     }
                 }
                 Err(error) => app.state.status = error,
+            }
+            if let Some(preview_rect) = preview_rect {
+                let doc = &app.state.documents[index];
+                let (revision, lines) = (doc.text.revision(), doc.text.len_lines());
+                let absolute = app.state.absolute_path(&doc.path);
+                let pending = app.markdown_ui.take_preview_scroll();
+                let output = markdown_ui::preview(
+                    ui,
+                    &mut app.markdown_ui,
+                    preview_rect,
+                    &absolute,
+                    revision,
+                    || doc.text.text(),
+                    lines,
+                    pending,
+                );
+                if let Some(editor_y) = editor_scroll_y
+                    && app.markdown_ui.sync(
+                        editor_y,
+                        row_height,
+                        output.scroll_y,
+                        editor_scroll.is_some(),
+                        pending.is_some(),
+                    )
+                {
+                    ui.ctx().request_repaint();
+                }
+            }
+            let selection = app.state.documents[index].selections.primary();
+            if md_layout.is_some()
+                && !selection.is_caret()
+                && let Some(pos) = app.caret_screen_pos
+                && let Some((command, params)) = markdown_ui::floating_bar(ui.ctx(), pos, text_rect)
+            {
+                requests.push(EditorRequest::Command(command, params));
             }
             crate::intentions_ui::lightbulb(app, ui, bulb);
             crate::ai_inline::paint(app, ui);
@@ -239,6 +315,31 @@ pub(crate) fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: Edi
             );
         }
     }
+}
+
+/// Width reserved for the Markdown layout island next to the inspection widget.
+const MARKDOWN_ISLAND_WIDTH: f32 = 190.0;
+
+/// Preview-only layout: the rendered document fills the editor area.
+fn markdown_preview_only(app: &mut IdeApp, ui: &mut egui::Ui, rect: Rect) {
+    let Some(index) = app.state.active_document else {
+        return;
+    };
+    ui.allocate_rect(rect, Sense::hover());
+    let doc = &app.state.documents[index];
+    let absolute = app.state.absolute_path(&doc.path);
+    app.markdown_ui.reset_for(&absolute);
+    let (revision, lines) = (doc.text.revision(), doc.text.len_lines());
+    markdown_ui::preview(
+        ui,
+        &mut app.markdown_ui,
+        rect,
+        &absolute,
+        revision,
+        || doc.text.text(),
+        lines,
+        None,
+    );
 }
 
 fn empty_state(ui: &mut egui::Ui) {
@@ -745,6 +846,7 @@ struct GutterData<'a> {
     run: &'a [jetthing_core::GutterMark],
 }
 
+#[allow(clippy::too_many_arguments)] // paint inputs of one editor frame
 fn editor_surface(
     ui: &mut egui::Ui,
     document: &mut Document,
@@ -753,6 +855,7 @@ fn editor_surface(
     context_model: &crate::context_menus::Model,
     gutter_data: GutterData<'_>,
     navigable: bool,
+    scroll_to: Option<f32>,
 ) -> Result<EditorOutput, String> {
     let GutterData {
         changes,
@@ -817,524 +920,524 @@ fn editor_surface(
             .flat_map(|(a, b)| [a, b])
             .collect()
     };
-    let output = egui::ScrollArea::both()
-        .auto_shrink([false, false])
-        .show_viewport(ui, |ui, viewport| {
-            let longest = 400.0_f32;
-            let content_size = egui::vec2(
-                ui.available_width().max(text_left + longest * char_width),
-                row_count as f32 * row_height + ui.available_height() * 0.5,
-            );
-            let (rect, response) = ui.allocate_exact_size(content_size, Sense::click_and_drag());
-            let response = ui
-                .interact(rect, editor_id(), Sense::click_and_drag())
-                .union(response)
-                .on_hover_cursor(egui::CursorIcon::Text);
-            if response.clicked() || response.drag_started() {
-                response.request_focus();
+    let mut scroll_area = egui::ScrollArea::both().auto_shrink([false, false]);
+    if let Some(y) = scroll_to {
+        scroll_area = scroll_area.vertical_scroll_offset(y);
+    }
+    let output = scroll_area.show_viewport(ui, |ui, viewport| {
+        let longest = 400.0_f32;
+        let content_size = egui::vec2(
+            ui.available_width().max(text_left + longest * char_width),
+            row_count as f32 * row_height + ui.available_height() * 0.5,
+        );
+        let (rect, response) = ui.allocate_exact_size(content_size, Sense::click_and_drag());
+        let response = ui
+            .interact(rect, editor_id(), Sense::click_and_drag())
+            .union(response)
+            .on_hover_cursor(egui::CursorIcon::Text);
+        if response.clicked() || response.drag_started() {
+            response.request_focus();
+        }
+        let row_at = |position: egui::Pos2| {
+            (((position.y - rect.top()) / row_height).floor().max(0.0) as usize)
+                .min(row_count.saturating_sub(1))
+        };
+        let position_to_offset = |position: egui::Pos2| {
+            let line = folds.row_to_line(row_at(position));
+            let line_text = document.text.line(line).unwrap_or_default();
+            let content = line_text.trim_end_matches(['\r', '\n']);
+            let column = (((position.x - rect.left() - text_left) / char_width)
+                .round()
+                .max(0.0) as usize)
+                .min(content.chars().count());
+            document.text.line_to_char(line).unwrap_or(0) + column
+        };
+        // Line/column under the pointer; the column may lie past the line end.
+        let position_to_point = |position: egui::Pos2| jetthing_text::multicaret::BlockPoint {
+            line: folds.row_to_line(row_at(position)),
+            column: ((position.x - rect.left() - text_left) / char_width)
+                .round()
+                .max(0.0) as usize,
+        };
+        let block_drag_id = editor_id().with("block_drag_anchor");
+        // The character under the pointer (not the nearest boundary),
+        // only over text, for hover documentation.
+        hover = response.hover_pos().and_then(|position| {
+            let line = ((position.y - rect.top()) / row_height).floor();
+            if line < 0.0 || line as usize >= line_count {
+                return None;
             }
-            let row_at = |position: egui::Pos2| {
-                (((position.y - rect.top()) / row_height).floor().max(0.0) as usize)
-                    .min(row_count.saturating_sub(1))
-            };
-            let position_to_offset = |position: egui::Pos2| {
+            let line = line as usize;
+            let line_text = document.text.line(line).unwrap_or_default();
+            let length = line_text.trim_end_matches(['\r', '\n']).chars().count();
+            let column = (position.x - rect.left() - text_left) / char_width;
+            (column >= 0.0 && (column as usize) < length).then(|| {
+                (
+                    document.text.line_to_char(line).unwrap_or(0) + column as usize,
+                    egui::pos2(position.x, rect.top() + (line + 1) as f32 * row_height),
+                )
+            })
+        });
+        // Clicking a change marker opens the change popup instead of
+        // moving the caret.
+        let marker_hit = response
+            .interact_pointer_pos()
+            .filter(|position| {
+                crate::change_popup::in_marker_column(position.x - rect.left(), layout.width)
+            })
+            .and_then(|position| {
                 let line = folds.row_to_line(row_at(position));
-                let line_text = document.text.line(line).unwrap_or_default();
-                let content = line_text.trim_end_matches(['\r', '\n']);
-                let column = (((position.x - rect.left() - text_left) / char_width)
-                    .round()
-                    .max(0.0) as usize)
-                    .min(content.chars().count());
-                document.text.line_to_char(line).unwrap_or(0) + column
-            };
-            // Line/column under the pointer; the column may lie past the line end.
-            let position_to_point = |position: egui::Pos2| jetthing_text::multicaret::BlockPoint {
-                line: folds.row_to_line(row_at(position)),
-                column: ((position.x - rect.left() - text_left) / char_width)
-                    .round()
-                    .max(0.0) as usize,
-            };
-            let block_drag_id = editor_id().with("block_drag_anchor");
-            // The character under the pointer (not the nearest boundary),
-            // only over text, for hover documentation.
-            hover = response.hover_pos().and_then(|position| {
-                let line = ((position.y - rect.top()) / row_height).floor();
-                if line < 0.0 || line as usize >= line_count {
-                    return None;
-                }
-                let line = line as usize;
-                let line_text = document.text.line(line).unwrap_or_default();
-                let length = line_text.trim_end_matches(['\r', '\n']).chars().count();
-                let column = (position.x - rect.left() - text_left) / char_width;
-                (column >= 0.0 && (column as usize) < length).then(|| {
-                    (
-                        document.text.line_to_char(line).unwrap_or(0) + column as usize,
-                        egui::pos2(position.x, rect.top() + (line + 1) as f32 * row_height),
-                    )
-                })
+                jetthing_core::hunk_at_line(changes, line).map(|hunk| (hunk, position))
             });
-            // Clicking a change marker opens the change popup instead of
-            // moving the caret.
-            let marker_hit = response
-                .interact_pointer_pos()
-                .filter(|position| {
-                    crate::change_popup::in_marker_column(position.x - rect.left(), layout.width)
-                })
-                .and_then(|position| {
-                    let line = folds.row_to_line(row_at(position));
-                    jetthing_core::hunk_at_line(changes, line).map(|hunk| (hunk, position))
-                });
-            let blame_line = response
-                .hover_pos()
-                .or(response.interact_pointer_pos())
-                .filter(|position| position.x - rect.left() < blame_width)
-                .map(|position| folds.row_to_line(row_at(position)));
-            if let (Some(lines), Some(line)) = (blame, blame_line) {
-                if let Some(text) = crate::blame_gutter::tooltip(lines, line) {
-                    response.clone().on_hover_text_at_pointer(text);
-                }
-                if response.clicked()
-                    && let Some(entry) = lines.get(line).filter(|entry| !entry.is_uncommitted())
-                {
-                    requests.push(EditorRequest::ShowCommit(entry.hash.clone()));
-                }
+        let blame_line = response
+            .hover_pos()
+            .or(response.interact_pointer_pos())
+            .filter(|position| position.x - rect.left() < blame_width)
+            .map(|position| folds.row_to_line(row_at(position)));
+        if let (Some(lines), Some(line)) = (blame, blame_line) {
+            if let Some(text) = crate::blame_gutter::tooltip(lines, line) {
+                response.clone().on_hover_text_at_pointer(text);
             }
-            // Run icons sit between the line numbers and the text.
-            let gutter_hit = response
-                .interact_pointer_pos()
-                .filter(|position| layout.in_run_column(position.x - rect.left()))
-                .and_then(|position| {
-                    let line = folds.row_to_line(row_at(position));
-                    gutter
-                        .iter()
-                        .any(|mark| mark.line == line)
-                        .then_some((line, position))
+            if response.clicked()
+                && let Some(entry) = lines.get(line).filter(|entry| !entry.is_uncommitted())
+            {
+                requests.push(EditorRequest::ShowCommit(entry.hash.clone()));
+            }
+        }
+        // Run icons sit between the line numbers and the text.
+        let gutter_hit = response
+            .interact_pointer_pos()
+            .filter(|position| layout.in_run_column(position.x - rect.left()))
+            .and_then(|position| {
+                let line = folds.row_to_line(row_at(position));
+                gutter
+                    .iter()
+                    .any(|mark| mark.line == line)
+                    .then_some((line, position))
+            });
+        // Fold markers sit in the gutter just left of the text; placeholders
+        // expand their region when clicked.
+        let fold_click = response
+            .clicked()
+            .then(|| response.interact_pointer_pos())
+            .flatten()
+            .and_then(|position| {
+                let line = folds.row_to_line(row_at(position));
+                let x = position.x - rect.left();
+                let in_marker_column = layout.in_fold_column(x);
+                let on_placeholder = folds.collapsed_on(line).is_some_and(|row| {
+                    let line_start = document.text.line_to_char(line).unwrap_or(0);
+                    let column = (x - text_left) / char_width;
+                    let start = (row.start_char - line_start) as f32;
+                    column >= start && column <= start + row.placeholder.chars().count() as f32
                 });
-            // Fold markers sit in the gutter just left of the text; placeholders
-            // expand their region when clicked.
-            let fold_click = response
-                .clicked()
-                .then(|| response.interact_pointer_pos())
-                .flatten()
-                .and_then(|position| {
-                    let line = folds.row_to_line(row_at(position));
-                    let x = position.x - rect.left();
-                    let in_marker_column = layout.in_fold_column(x);
-                    let on_placeholder = folds.collapsed_on(line).is_some_and(|row| {
-                        let line_start = document.text.line_to_char(line).unwrap_or(0);
-                        let column = (x - text_left) / char_width;
-                        let start = (row.start_char - line_start) as f32;
-                        column >= start && column <= start + row.placeholder.chars().count() as f32
-                    });
-                    (in_marker_column || on_placeholder).then_some(line)
-                });
-            if response.clicked() && blame_line.is_some() {
-                // Handled above: annotation clicks never move the caret.
-            } else if let Some(line) = fold_click {
-                requests.push(EditorRequest::Command(
-                    "editor.toggleFold",
-                    serde_json::json!({ "line": line }),
-                ));
-            } else if response.clicked()
-                && let Some((hunk, position)) = marker_hit
-            {
-                requests.push(EditorRequest::ShowChange(hunk, position));
-            } else if response.clicked()
-                && let Some((line, position)) = gutter_hit
-            {
-                requests.push(EditorRequest::Gutter(line, position));
-            } else if response.clicked()
-                && let Some(position) = response.interact_pointer_pos()
-            {
-                let offset = position_to_offset(position);
-                let modifiers = ui.input(|input| input.modifiers);
-                if modifiers.command && navigable {
-                    // Ctrl/⌘+click: Go to Declaration; with Shift the type
-                    // declaration, with Alt the implementations.
-                    document.selections.set_single(Selection::caret(offset));
-                    let id = if modifiers.shift {
-                        "navigate.typeDeclaration"
-                    } else if modifiers.alt {
-                        "navigate.implementation"
-                    } else {
-                        "navigate.declaration"
-                    };
-                    requests.push(EditorRequest::Command(id, Value::Null));
-                } else if modifiers.alt && modifiers.shift {
-                    editor_keys::toggle_caret(&mut document.selections, offset);
-                } else if modifiers.shift {
-                    let anchor = document.selections.primary().anchor;
-                    document.selections.set_single(Selection {
-                        anchor,
-                        head: offset,
-                    });
+                (in_marker_column || on_placeholder).then_some(line)
+            });
+        if response.clicked() && blame_line.is_some() {
+            // Handled above: annotation clicks never move the caret.
+        } else if let Some(line) = fold_click {
+            requests.push(EditorRequest::Command(
+                "editor.toggleFold",
+                serde_json::json!({ "line": line }),
+            ));
+        } else if response.clicked()
+            && let Some((hunk, position)) = marker_hit
+        {
+            requests.push(EditorRequest::ShowChange(hunk, position));
+        } else if response.clicked()
+            && let Some((line, position)) = gutter_hit
+        {
+            requests.push(EditorRequest::Gutter(line, position));
+        } else if response.clicked()
+            && let Some(position) = response.interact_pointer_pos()
+        {
+            let offset = position_to_offset(position);
+            let modifiers = ui.input(|input| input.modifiers);
+            if modifiers.command && navigable {
+                // Ctrl/⌘+click: Go to Declaration; with Shift the type
+                // declaration, with Alt the implementations.
+                document.selections.set_single(Selection::caret(offset));
+                let id = if modifiers.shift {
+                    "navigate.typeDeclaration"
+                } else if modifiers.alt {
+                    "navigate.implementation"
                 } else {
-                    document.selections.set_single(Selection::caret(offset));
-                }
-            }
-            if response.double_clicked()
-                && let Some(position) = response.interact_pointer_pos()
-            {
-                let (start, end) = ops::word_at(&document.text, position_to_offset(position));
-                document.selections.set_single(Selection {
-                    anchor: start,
-                    head: end,
-                });
-            }
-            if response.triple_clicked()
-                && let Some(position) = response.interact_pointer_pos()
-            {
-                let line = document.text.char_to_line(position_to_offset(position));
-                let (start, _, full_end) = ops::line_bounds(&document.text, line);
-                document.selections.set_single(Selection {
-                    anchor: start,
-                    head: full_end,
-                });
-            }
-            if response.drag_started()
-                && let Some(position) = ui
-                    .input(|input| input.pointer.press_origin())
-                    .or(response.interact_pointer_pos())
-            {
-                // Alt-drag, middle-drag or column mode: rectangular selection.
-                let block = ui.input(|input| input.modifiers.alt)
-                    || response.dragged_by(egui::PointerButton::Middle)
-                    || document.selections.column_mode();
-                let anchor = block.then(|| position_to_point(position));
-                ui.data_mut(|data| data.insert_temp(block_drag_id, anchor));
-                document
-                    .selections
-                    .set_single(Selection::caret(position_to_offset(position)));
-            }
-            response.context_menu(|ui| {
-                let mut chosen = None;
-                crate::context_menus::show(ui, context_model, &mut chosen);
-                match chosen.as_deref() {
-                    // Copy/Cut also fill the system clipboard.
-                    Some("$Copy") => requests.push(EditorRequest::Copy),
-                    Some("$Cut") => requests.push(EditorRequest::Cut),
-                    Some(action) => requests.push(EditorRequest::ContextAction(action.to_owned())),
-                    None => {}
-                }
-                ui.separator();
-                ui.menu_button("Git", |ui| {
-                    ui.set_min_width(220.0);
-                    let annotate = if blame.is_some() {
-                        "Close Annotations"
-                    } else {
-                        "Annotate with Git Blame"
-                    };
-                    for (label, id) in [
-                        (annotate, "git.annotate"),
-                        ("Show History", "git.fileHistory"),
-                        ("Show Diff", "vcs.showChangeDiff"),
-                        ("Rollback Lines", "vcs.rollbackChange"),
-                    ] {
-                        if ui.button(label).clicked() {
-                            requests.push(EditorRequest::Command(id, Value::Null));
-                            ui.close();
-                        }
-                    }
-                });
-                ui.separator();
-                if let Some((id, params)) = crate::ai_actions::editor_menu(ui) {
-                    requests.push(EditorRequest::Command(id, params));
-                    ui.close();
-                }
-            });
-            let block_anchor: Option<jetthing_text::multicaret::BlockPoint> =
-                ui.data(|data| data.get_temp(block_drag_id)).flatten();
-            if response.dragged()
-                && let Some(position) = response.interact_pointer_pos()
-                && let Some(anchor) = block_anchor
-            {
-                editor_keys::drag_block(
-                    &document.text,
-                    &mut document.selections,
-                    anchor,
-                    position_to_point(position),
-                );
-            } else if response.dragged()
-                && let Some(position) = response.interact_pointer_pos()
-            {
-                let offset = position_to_offset(position);
+                    "navigate.declaration"
+                };
+                requests.push(EditorRequest::Command(id, Value::Null));
+            } else if modifiers.alt && modifiers.shift {
+                editor_keys::toggle_caret(&mut document.selections, offset);
+            } else if modifiers.shift {
                 let anchor = document.selections.primary().anchor;
                 document.selections.set_single(Selection {
                     anchor,
                     head: offset,
                 });
-            }
-
-            let painter = ui.painter().clone();
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_secs() as i64);
-            // Gutter background matches the editor in Islands; draw caret row first.
-            let first_row =
-                ((viewport.top() / row_height).floor().max(0.0) as usize).min(row_count);
-            let last_row = ((viewport.bottom() / row_height).ceil() as usize + 1).min(row_count);
-            // Gutter fold markers for regions starting in the viewport.
-            let gutter_hovered = ui
-                .input(|input| input.pointer.hover_pos())
-                .is_some_and(|pos| rect.contains(pos) && pos.x - rect.left() < layout.width + 4.0);
-            let markers: Vec<(usize, bool)> = if first_row < last_row {
-                let first_line = folds.row_to_line(first_row);
-                let last_line = folds.row_to_line(last_row - 1);
-                let start = document.text.line_to_char(first_line).unwrap_or(0);
-                let end = document
-                    .text
-                    .line_to_char(last_line + 1)
-                    .unwrap_or(document.text.len_chars());
-                document
-                    .folds_in_chars(start, end)
-                    .iter()
-                    .map(|fold| (fold.start_line, document.folds.is_collapsed(fold)))
-                    .collect()
             } else {
-                Vec::new()
-            };
-            let focused = response.has_focus();
-            let blink_on = {
-                let time = ui.input(|input| input.time);
-                (time * 2.0) as i64 % 2 == 0
-            };
-            for row_index in first_row..last_row {
-                let line = folds.row_to_line(row_index);
-                let y = rect.top() + row_index as f32 * row_height;
-                let line_start = document.text.line_to_char(line).unwrap_or(0);
-                let line_text = document.text.line(line).unwrap_or_default();
-                let content = line_text.trim_end_matches(['\r', '\n']);
-                let line_end = line_start + content.chars().count();
-                let row =
-                    Rect::from_min_size(egui::pos2(rect.left(), y), vec2(rect.width(), row_height));
-                if line == caret_line && document.selections.primary().is_caret() {
-                    painter.rect_filled(row, 0.0, theme::editor::CARET_ROW);
+                document.selections.set_single(Selection::caret(offset));
+            }
+        }
+        if response.double_clicked()
+            && let Some(position) = response.interact_pointer_pos()
+        {
+            let (start, end) = ops::word_at(&document.text, position_to_offset(position));
+            document.selections.set_single(Selection {
+                anchor: start,
+                head: end,
+            });
+        }
+        if response.triple_clicked()
+            && let Some(position) = response.interact_pointer_pos()
+        {
+            let line = document.text.char_to_line(position_to_offset(position));
+            let (start, _, full_end) = ops::line_bounds(&document.text, line);
+            document.selections.set_single(Selection {
+                anchor: start,
+                head: full_end,
+            });
+        }
+        if response.drag_started()
+            && let Some(position) = ui
+                .input(|input| input.pointer.press_origin())
+                .or(response.interact_pointer_pos())
+        {
+            // Alt-drag, middle-drag or column mode: rectangular selection.
+            let block = ui.input(|input| input.modifiers.alt)
+                || response.dragged_by(egui::PointerButton::Middle)
+                || document.selections.column_mode();
+            let anchor = block.then(|| position_to_point(position));
+            ui.data_mut(|data| data.insert_temp(block_drag_id, anchor));
+            document
+                .selections
+                .set_single(Selection::caret(position_to_offset(position)));
+        }
+        response.context_menu(|ui| {
+            let mut chosen = None;
+            crate::context_menus::show(ui, context_model, &mut chosen);
+            match chosen.as_deref() {
+                // Copy/Cut also fill the system clipboard.
+                Some("$Copy") => requests.push(EditorRequest::Copy),
+                Some("$Cut") => requests.push(EditorRequest::Cut),
+                Some(action) => requests.push(EditorRequest::ContextAction(action.to_owned())),
+                None => {}
+            }
+            ui.separator();
+            ui.menu_button("Git", |ui| {
+                ui.set_min_width(220.0);
+                let annotate = if blame.is_some() {
+                    "Close Annotations"
+                } else {
+                    "Annotate with Git Blame"
+                };
+                for (label, id) in [
+                    (annotate, "git.annotate"),
+                    ("Show History", "git.fileHistory"),
+                    ("Show Diff", "vcs.showChangeDiff"),
+                    ("Rollback Lines", "vcs.rollbackChange"),
+                ] {
+                    if ui.button(label).clicked() {
+                        requests.push(EditorRequest::Command(id, Value::Null));
+                        ui.close();
+                    }
                 }
-                painter.text(
-                    egui::pos2(rect.left() + layout.numbers_right, y + row_height / 2.0),
-                    egui::Align2::RIGHT_CENTER,
-                    format!("{}", line + 1),
-                    font.clone(),
-                    if line == caret_line {
-                        *theme::editor::LINE_NUMBER_CARET
-                    } else {
-                        *theme::editor::LINE_NUMBER
-                    },
+            });
+            ui.separator();
+            if let Some((id, params)) = crate::ai_actions::editor_menu(ui) {
+                requests.push(EditorRequest::Command(id, params));
+                ui.close();
+            }
+        });
+        let block_anchor: Option<jetthing_text::multicaret::BlockPoint> =
+            ui.data(|data| data.get_temp(block_drag_id)).flatten();
+        if response.dragged()
+            && let Some(position) = response.interact_pointer_pos()
+            && let Some(anchor) = block_anchor
+        {
+            editor_keys::drag_block(
+                &document.text,
+                &mut document.selections,
+                anchor,
+                position_to_point(position),
+            );
+        } else if response.dragged()
+            && let Some(position) = response.interact_pointer_pos()
+        {
+            let offset = position_to_offset(position);
+            let anchor = document.selections.primary().anchor;
+            document.selections.set_single(Selection {
+                anchor,
+                head: offset,
+            });
+        }
+
+        let painter = ui.painter().clone();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs() as i64);
+        // Gutter background matches the editor in Islands; draw caret row first.
+        let first_row = ((viewport.top() / row_height).floor().max(0.0) as usize).min(row_count);
+        let last_row = ((viewport.bottom() / row_height).ceil() as usize + 1).min(row_count);
+        // Gutter fold markers for regions starting in the viewport.
+        let gutter_hovered = ui
+            .input(|input| input.pointer.hover_pos())
+            .is_some_and(|pos| rect.contains(pos) && pos.x - rect.left() < layout.width + 4.0);
+        let markers: Vec<(usize, bool)> = if first_row < last_row {
+            let first_line = folds.row_to_line(first_row);
+            let last_line = folds.row_to_line(last_row - 1);
+            let start = document.text.line_to_char(first_line).unwrap_or(0);
+            let end = document
+                .text
+                .line_to_char(last_line + 1)
+                .unwrap_or(document.text.len_chars());
+            document
+                .folds_in_chars(start, end)
+                .iter()
+                .map(|fold| (fold.start_line, document.folds.is_collapsed(fold)))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let focused = response.has_focus();
+        let blink_on = {
+            let time = ui.input(|input| input.time);
+            (time * 2.0) as i64 % 2 == 0
+        };
+        for row_index in first_row..last_row {
+            let line = folds.row_to_line(row_index);
+            let y = rect.top() + row_index as f32 * row_height;
+            let line_start = document.text.line_to_char(line).unwrap_or(0);
+            let line_text = document.text.line(line).unwrap_or_default();
+            let content = line_text.trim_end_matches(['\r', '\n']);
+            let line_end = line_start + content.chars().count();
+            let row =
+                Rect::from_min_size(egui::pos2(rect.left(), y), vec2(rect.width(), row_height));
+            if line == caret_line && document.selections.primary().is_caret() {
+                painter.rect_filled(row, 0.0, theme::editor::CARET_ROW);
+            }
+            painter.text(
+                egui::pos2(rect.left() + layout.numbers_right, y + row_height / 2.0),
+                egui::Align2::RIGHT_CENTER,
+                format!("{}", line + 1),
+                font.clone(),
+                if line == caret_line {
+                    *theme::editor::LINE_NUMBER_CARET
+                } else {
+                    *theme::editor::LINE_NUMBER
+                },
+            );
+            if let Some(lines) = blame {
+                crate::blame_gutter::paint(
+                    &painter,
+                    lines,
+                    line,
+                    egui::pos2(rect.left(), y),
+                    row_height,
+                    now,
                 );
-                if let Some(lines) = blame {
-                    crate::blame_gutter::paint(
-                        &painter,
-                        lines,
-                        line,
-                        egui::pos2(rect.left(), y),
-                        row_height,
-                        now,
+            }
+            crate::change_popup::paint_marker(
+                &painter,
+                changes,
+                line,
+                egui::pos2(rect.left() + gutter_width, y),
+                row_height,
+            );
+            if let Some(mark) = gutter.iter().find(|mark| mark.line == line) {
+                crate::gutter_popup::paint_icon(
+                    &painter,
+                    egui::pos2(rect.left() + layout.run_center, y + row_height / 2.0),
+                    mark.kind,
+                );
+            }
+            if let Some(&(_, collapsed)) = markers.iter().find(|(start, _)| *start == line)
+                && (collapsed || gutter_hovered)
+            {
+                crate::folding::paint_marker(
+                    &painter,
+                    egui::pos2(rect.left() + layout.fold_center, y + row_height / 2.0),
+                    collapsed,
+                    *theme::editor::LINE_NUMBER_CARET,
+                );
+            }
+            // Indent guides every four columns of leading whitespace.
+            let indent = content.chars().take_while(|c| *c == ' ').count();
+            for level in (4..=indent.saturating_sub(1)).step_by(4) {
+                let x = rect.left() + text_left + level as f32 * char_width;
+                painter.line_segment(
+                    [egui::pos2(x, y), egui::pos2(x, y + row_height)],
+                    Stroke::new(1.0_f32, theme::editor::INDENT_GUIDE),
+                );
+            }
+            // Matches are sorted and disjoint: only visit those on this line.
+            let first_match = highlights.partition_point(|&(_, end)| end <= line_start);
+            let visible_matches = highlights[first_match..]
+                .iter()
+                .take_while(|&&(start, _)| start <= line_end);
+            for &(match_start, match_end) in visible_matches {
+                let start = match_start.max(line_start).min(line_end);
+                let end = match_end.max(line_start).min(line_end);
+                if start < end {
+                    let x1 = rect.left() + text_left + (start - line_start) as f32 * char_width;
+                    let x2 = rect.left() + text_left + (end - line_start) as f32 * char_width;
+                    painter.rect_filled(
+                        Rect::from_min_max(egui::pos2(x1, y), egui::pos2(x2, y + row_height)),
+                        2.0,
+                        theme::editor::SEARCH_RESULT,
                     );
                 }
-                crate::change_popup::paint_marker(
+            }
+            for &offset in &brace_pair {
+                if offset >= line_start && offset < line_end {
+                    let x1 = rect.left() + text_left + (offset - line_start) as f32 * char_width;
+                    painter.rect_filled(
+                        Rect::from_min_size(egui::pos2(x1, y), vec2(char_width, row_height)),
+                        2.0,
+                        theme::editor::MATCHED_BRACE,
+                    );
+                }
+            }
+            for selection in document.selections.selections() {
+                let start = selection.start().max(line_start).min(line_end);
+                let end = selection.end().max(line_start).min(line_end);
+                let spans_newline = selection.end() > line_end && selection.start() <= line_end;
+                if start < end || (spans_newline && !selection.is_caret()) {
+                    let x1 = rect.left() + text_left + (start - line_start) as f32 * char_width;
+                    let mut x2 = rect.left() + text_left + (end - line_start) as f32 * char_width;
+                    if spans_newline {
+                        x2 += char_width * 0.6;
+                    }
+                    painter.rect_filled(
+                        Rect::from_min_max(egui::pos2(x1, y), egui::pos2(x2, y + row_height)),
+                        2.0,
+                        theme::editor::SELECTION,
+                    );
+                }
+            }
+            let line_start_byte = document.text.line_to_byte(line).unwrap_or(0);
+            let collapsed = folds.collapsed_on(line);
+            // A collapsed region shows the text before it, its placeholder,
+            // then the rest of its last line.
+            let visible = match collapsed {
+                Some(row) => {
+                    let prefix_chars = row.start_char.saturating_sub(line_start);
+                    let end = content
+                        .char_indices()
+                        .nth(prefix_chars)
+                        .map_or(content.len(), |(index, _)| index);
+                    &content[..end]
+                }
+                None => content,
+            };
+            let job = highlighted_line_job(visible, line_start_byte, &document.analysis, &font);
+            let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+            let text_y = y + (row_height - galley.size().y) / 2.0;
+            painter.galley(
+                egui::pos2(rect.left() + text_left, text_y),
+                galley,
+                Color32::WHITE,
+            );
+            if let Some(row) = collapsed {
+                paint_collapsed_tail(
                     &painter,
-                    changes,
-                    line,
-                    egui::pos2(rect.left() + gutter_width, y),
+                    document,
+                    row,
+                    egui::pos2(
+                        rect.left() + text_left + visible.chars().count() as f32 * char_width,
+                        y,
+                    ),
+                    char_width,
+                    &font,
                     row_height,
                 );
-                if let Some(mark) = gutter.iter().find(|mark| mark.line == line) {
-                    crate::gutter_popup::paint_icon(
-                        &painter,
-                        egui::pos2(rect.left() + layout.run_center, y + row_height / 2.0),
-                        mark.kind,
-                    );
-                }
-                if let Some(&(_, collapsed)) = markers.iter().find(|(start, _)| *start == line)
-                    && (collapsed || gutter_hovered)
-                {
-                    crate::folding::paint_marker(
-                        &painter,
-                        egui::pos2(rect.left() + layout.fold_center, y + row_height / 2.0),
-                        collapsed,
-                        *theme::editor::LINE_NUMBER_CARET,
-                    );
-                }
-                // Indent guides every four columns of leading whitespace.
-                let indent = content.chars().take_while(|c| *c == ' ').count();
-                for level in (4..=indent.saturating_sub(1)).step_by(4) {
-                    let x = rect.left() + text_left + level as f32 * char_width;
-                    painter.line_segment(
-                        [egui::pos2(x, y), egui::pos2(x, y + row_height)],
-                        Stroke::new(1.0_f32, theme::editor::INDENT_GUIDE),
-                    );
-                }
-                // Matches are sorted and disjoint: only visit those on this line.
-                let first_match = highlights.partition_point(|&(_, end)| end <= line_start);
-                let visible_matches = highlights[first_match..]
-                    .iter()
-                    .take_while(|&&(start, _)| start <= line_end);
-                for &(match_start, match_end) in visible_matches {
-                    let start = match_start.max(line_start).min(line_end);
-                    let end = match_end.max(line_start).min(line_end);
-                    if start < end {
-                        let x1 = rect.left() + text_left + (start - line_start) as f32 * char_width;
-                        let x2 = rect.left() + text_left + (end - line_start) as f32 * char_width;
-                        painter.rect_filled(
-                            Rect::from_min_max(egui::pos2(x1, y), egui::pos2(x2, y + row_height)),
-                            2.0,
-                            theme::editor::SEARCH_RESULT,
-                        );
-                    }
-                }
-                for &offset in &brace_pair {
-                    if offset >= line_start && offset < line_end {
-                        let x1 =
-                            rect.left() + text_left + (offset - line_start) as f32 * char_width;
-                        painter.rect_filled(
-                            Rect::from_min_size(egui::pos2(x1, y), vec2(char_width, row_height)),
-                            2.0,
-                            theme::editor::MATCHED_BRACE,
-                        );
-                    }
-                }
-                for selection in document.selections.selections() {
-                    let start = selection.start().max(line_start).min(line_end);
-                    let end = selection.end().max(line_start).min(line_end);
-                    let spans_newline = selection.end() > line_end && selection.start() <= line_end;
-                    if start < end || (spans_newline && !selection.is_caret()) {
-                        let x1 = rect.left() + text_left + (start - line_start) as f32 * char_width;
-                        let mut x2 =
-                            rect.left() + text_left + (end - line_start) as f32 * char_width;
-                        if spans_newline {
-                            x2 += char_width * 0.6;
-                        }
-                        painter.rect_filled(
-                            Rect::from_min_max(egui::pos2(x1, y), egui::pos2(x2, y + row_height)),
-                            2.0,
-                            theme::editor::SELECTION,
-                        );
-                    }
-                }
-                let line_start_byte = document.text.line_to_byte(line).unwrap_or(0);
-                let collapsed = folds.collapsed_on(line);
-                // A collapsed region shows the text before it, its placeholder,
-                // then the rest of its last line.
-                let visible = match collapsed {
-                    Some(row) => {
-                        let prefix_chars = row.start_char.saturating_sub(line_start);
-                        let end = content
-                            .char_indices()
-                            .nth(prefix_chars)
-                            .map_or(content.len(), |(index, _)| index);
-                        &content[..end]
-                    }
-                    None => content,
-                };
-                let job = highlighted_line_job(visible, line_start_byte, &document.analysis, &font);
-                let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-                let text_y = y + (row_height - galley.size().y) / 2.0;
-                painter.galley(
-                    egui::pos2(rect.left() + text_left, text_y),
-                    galley,
-                    Color32::WHITE,
-                );
-                if let Some(row) = collapsed {
-                    paint_collapsed_tail(
-                        &painter,
-                        document,
-                        row,
-                        egui::pos2(
-                            rect.left() + text_left + visible.chars().count() as f32 * char_width,
-                            y,
-                        ),
-                        char_width,
-                        &font,
-                        row_height,
-                    );
-                }
+            }
 
-                let column_x = |column: usize| rect.left() + text_left + column as f32 * char_width;
-                problems_ui::paint_line(
-                    &painter,
+            let column_x = |column: usize| rect.left() + text_left + column as f32 * char_width;
+            problems_ui::paint_line(
+                &painter,
+                problems,
+                line,
+                content.chars().count(),
+                column_x,
+                row,
+            );
+            for selection in document.selections.selections() {
+                if selection.head >= line_start && selection.head <= line_end {
+                    let x = column_x(selection.head - line_start);
+                    if *selection == document.selections.primary() {
+                        caret_pos = Some(egui::pos2(x, y + row_height));
+                        bulb_anchor = Some(egui::pos2(
+                            rect.left() + gutter_width + 2.0,
+                            y + row_height / 2.0,
+                        ));
+                    }
+                    if focused && blink_on {
+                        painter.line_segment(
+                            [egui::pos2(x, y + 2.0), egui::pos2(x, y + row_height - 2.0)],
+                            Stroke::new(2.0_f32, theme::editor::CARET),
+                        );
+                    }
+                }
+            }
+        }
+        if let Some(pointer) = response.hover_pos() {
+            let line = folds.row_to_line(row_at(pointer));
+            let column = (pointer.x - rect.left() - text_left) / char_width;
+            if line < line_count && column >= 0.0 {
+                let line_len = document
+                    .text
+                    .line(line)
+                    .unwrap_or_default()
+                    .trim_end_matches(['\r', '\n'])
+                    .chars()
+                    .count();
+                problems_ui::hover_tooltip(
+                    &response,
                     problems,
                     line,
-                    content.chars().count(),
-                    column_x,
-                    row,
+                    column.floor() as usize,
+                    line_len,
                 );
-                for selection in document.selections.selections() {
-                    if selection.head >= line_start && selection.head <= line_end {
-                        let x = column_x(selection.head - line_start);
-                        if *selection == document.selections.primary() {
-                            caret_pos = Some(egui::pos2(x, y + row_height));
-                            bulb_anchor = Some(egui::pos2(
-                                rect.left() + gutter_width + 2.0,
-                                y + row_height / 2.0,
-                            ));
-                        }
-                        if focused && blink_on {
-                            painter.line_segment(
-                                [egui::pos2(x, y + 2.0), egui::pos2(x, y + row_height - 2.0)],
-                                Stroke::new(2.0_f32, theme::editor::CARET),
-                            );
-                        }
+                // Ctrl/⌘+hover turns the identifier into a link.
+                let column = column.floor() as usize;
+                if navigable && ui.input(|input| input.modifiers.command) && column < line_len {
+                    let line_start = document.text.line_to_char(line).unwrap_or(0);
+                    let (start, end) = ops::word_at(&document.text, line_start + column);
+                    if start < end && (start..end).contains(&(line_start + column)) {
+                        let y = rect.top() + (line + 1) as f32 * ROW_HEIGHT - 3.0;
+                        let x = |offset: usize| {
+                            rect.left() + text_left + (offset - line_start) as f32 * char_width
+                        };
+                        painter.line_segment(
+                            [egui::pos2(x(start), y), egui::pos2(x(end), y)],
+                            Stroke::new(1.0_f32, crate::navigation_ui::LINK),
+                        );
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
                 }
             }
-            if let Some(pointer) = response.hover_pos() {
-                let line = folds.row_to_line(row_at(pointer));
-                let column = (pointer.x - rect.left() - text_left) / char_width;
-                if line < line_count && column >= 0.0 {
-                    let line_len = document
-                        .text
-                        .line(line)
-                        .unwrap_or_default()
-                        .trim_end_matches(['\r', '\n'])
-                        .chars()
-                        .count();
-                    problems_ui::hover_tooltip(
-                        &response,
-                        problems,
-                        line,
-                        column.floor() as usize,
-                        line_len,
-                    );
-                    // Ctrl/⌘+hover turns the identifier into a link.
-                    let column = column.floor() as usize;
-                    if navigable && ui.input(|input| input.modifiers.command) && column < line_len {
-                        let line_start = document.text.line_to_char(line).unwrap_or(0);
-                        let (start, end) = ops::word_at(&document.text, line_start + column);
-                        if start < end && (start..end).contains(&(line_start + column)) {
-                            let y = rect.top() + (line + 1) as f32 * ROW_HEIGHT - 3.0;
-                            let x = |offset: usize| {
-                                rect.left() + text_left + (offset - line_start) as f32 * char_width
-                            };
-                            painter.line_segment(
-                                [egui::pos2(x(start), y), egui::pos2(x(end), y)],
-                                Stroke::new(1.0_f32, crate::navigation_ui::LINK),
-                            );
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        }
-                    }
-                }
-            }
-            if focused {
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_millis(500));
-            }
-            // Keep the primary caret visible after keyboard navigation.
-            if focused
-                && ui.input(|input| !input.events.is_empty())
-                && let Some(pos) = caret_pos
+        }
+        if focused {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(500));
+        }
+        // Keep the primary caret visible after keyboard navigation.
+        if focused
+            && ui.input(|input| !input.events.is_empty())
+            && let Some(pos) = caret_pos
+        {
+            let caret_rect =
+                Rect::from_min_size(pos - vec2(0.0, row_height), vec2(char_width, row_height));
+            if !viewport
+                .translate(rect.min.to_vec2())
+                .contains_rect(caret_rect)
             {
-                let caret_rect =
-                    Rect::from_min_size(pos - vec2(0.0, row_height), vec2(char_width, row_height));
-                if !viewport
-                    .translate(rect.min.to_vec2())
-                    .contains_rect(caret_rect)
-                {
-                    ui.scroll_to_rect(caret_rect.expand2(vec2(char_width * 4.0, row_height)), None);
-                }
+                ui.scroll_to_rect(caret_rect.expand2(vec2(char_width * 4.0, row_height)), None);
             }
-            response
-        });
+        }
+        response
+    });
 
+    let scroll_y = output.state.offset.y;
     let response = output.inner;
     if !response.has_focus() {
         return Ok(EditorOutput {
@@ -1344,6 +1447,7 @@ fn editor_surface(
             requests,
             typed: String::new(),
             hover,
+            scroll_y,
         });
     }
     ui.memory_mut(|memory| {
@@ -1570,6 +1674,7 @@ fn editor_surface(
         requests,
         typed,
         hover,
+        scroll_y,
     })
 }
 

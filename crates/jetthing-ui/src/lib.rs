@@ -46,6 +46,7 @@ mod keys;
 mod logcat_ui;
 mod lsp_status;
 mod main_menu;
+mod markdown_ui;
 mod merged_manifest_ui;
 mod native_dialog;
 mod navigation_ui;
@@ -155,6 +156,8 @@ pub struct IdeApp {
     /// Open gutter change-marker popup.
     change_popup: Option<change_popup::ChangePopup>,
     deploy_balloon: android_run_ui::DeployBalloon,
+    /// Markdown preview, scroll sync and floating bar state.
+    markdown_ui: markdown_ui::State,
     doc_view: doc_ui::DocView,
     ai_ui: ai_chat::AiChatUi,
 }
@@ -293,6 +296,7 @@ impl IdeApp {
             git_dialog: None,
             push_dialog: None,
             deploy_balloon: android_run_ui::DeployBalloon::default(),
+            markdown_ui: markdown_ui::State::default(),
             commit_amend: false,
             doc_view: doc_ui::DocView::default(),
             ai_ui: ai_chat::AiChatUi::default(),
