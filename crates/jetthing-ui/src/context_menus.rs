@@ -72,7 +72,7 @@ fn applies(action: &str, target: &Target) -> bool {
                 "RenameElement" | "$Delete" | "CopyFileName" | "$Cut" | "$Copy" | "SafeDelete"
                 | "Move" => !root,
                 "RenameFile" => !root && !is_dir,
-                "ProjectViewEditSource" => !is_dir,
+                "ProjectViewEditSource" | "OpenInRightSplit" => !is_dir,
                 // Run on a file, the active editor's refactoring commands once
                 // they are registered (they stay hidden until then).
                 "ReformatCode" | "OptimizeImports" => {
@@ -96,6 +96,13 @@ fn applies(action: &str, target: &Target) -> bool {
                 | "PinActiveEditorTab"
                 | "PinActiveTabToggle"
                 | "ReopenClosedTab"
+                | "SplitVertically"
+                | "SplitHorizontally"
+                | "MoveEditorToOppositeTabGroup"
+                | "ChangeSplitOrientation"
+                | "Unsplit"
+                | "UnsplitAll"
+                | "KeepTabOpen"
                 | "CopyAbsolutePath"
                 | "CopyFileName"
                 | "CopyContentRootPath"
@@ -432,6 +439,27 @@ impl IdeApp {
                 }
             }
             "ReopenClosedTab" => self.dispatch("editor.reopenClosed", serde_json::Value::Null),
+            "SplitVertically"
+            | "SplitHorizontally"
+            | "MoveEditorToOppositeTabGroup"
+            | "KeepTabOpen"
+                if matches!(target, Target::Tab(_)) =>
+            {
+                if let Target::Tab(index) = target {
+                    let command = match action {
+                        "SplitVertically" => "editor.splitRight",
+                        "SplitHorizontally" => "editor.splitDown",
+                        "KeepTabOpen" => "editor.keepTabOpen",
+                        _ => "editor.moveToOppositeGroup",
+                    };
+                    self.dispatch(command, json!({"index": index}));
+                }
+            }
+            "OpenInRightSplit" => {
+                if let Target::Tree { path, .. } = target {
+                    self.dispatch("editor.openInRightSplit", json!({"path": path}));
+                }
+            }
             _ => self.run_menu_action(action, ctx),
         }
     }

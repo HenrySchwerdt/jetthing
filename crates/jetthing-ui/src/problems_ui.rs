@@ -169,7 +169,7 @@ pub fn error_stripe(
     line_count: usize,
     row_height: f32,
 ) -> Option<(usize, usize)> {
-    let response = ui.interact(rect, egui::Id::new("editor_error_stripe"), Sense::click());
+    let response = ui.interact(rect, ui.id().with("editor_error_stripe"), Sense::click());
     // Marks line up with their rows until the document is taller than the
     // editor; then the whole document is scaled onto the stripe.
     let usable = (rect.height() - 4.0).max(1.0);
@@ -245,13 +245,13 @@ pub fn inspection_widget(
             ],
             stroke,
         );
-        ui.interact(rect, egui::Id::new("inspection_widget_ok"), Sense::hover())
+        ui.interact(rect, ui.id().with("inspection_widget_ok"), Sense::hover())
             .on_hover_text("No problems found");
         return None;
     }
     for (icon, forward) in [(Icon::ChevronDown, true), (Icon::ChevronUp, false)] {
         let rect = Rect::from_center_size(egui::pos2(x - 9.0, y), vec2(18.0, 18.0));
-        let id = egui::Id::new(("inspection_widget_arrow", forward));
+        let id = ui.id().with(("inspection_widget_arrow", forward));
         let response = ui.interact(rect, id, Sense::click());
         if response.hovered() {
             painter.rect_filled(rect, 4.0, theme::HOVER);
@@ -313,7 +313,7 @@ pub fn inspection_widget(
     );
     let response = ui.interact(
         counts_rect,
-        egui::Id::new("inspection_widget_counts"),
+        ui.id().with("inspection_widget_counts"),
         Sense::click(),
     );
     if response.hovered() {
