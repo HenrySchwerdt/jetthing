@@ -933,6 +933,7 @@ mod tests {
             relative_path: path.into(),
             is_dir: false,
             is_symlink: false,
+            lazy: false,
         }
     }
 
