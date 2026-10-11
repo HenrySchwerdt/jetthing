@@ -54,6 +54,7 @@ mod problems;
 pub mod quick_nav;
 pub use new_class::{JavaKind, KotlinKind};
 mod project_commands;
+pub mod project_view;
 mod quick_doc;
 mod refactor;
 mod remote_commands;
@@ -262,6 +263,8 @@ pub struct IdeState {
     pub tool_windows: ToolWindowLayout,
     /// Project-relative directories expanded in the Project tool window.
     pub expanded_dirs: BTreeSet<PathBuf>,
+    /// Project view options, directory marks and the file clipboard.
+    pub project_view: project_view::ProjectView,
     /// Most recently used files, newest first (Recent Files, ⌘E).
     pub recent_files: Vec<PathBuf>,
     pub updates: jetthing_update::UpdateService,
@@ -497,7 +500,7 @@ impl IdeState {
         let linked = path.ancestors().any(|ancestor| {
             self.files
                 .iter()
-                .any(|entry| entry.is_symlink && entry.relative_path == ancestor)
+                .any(|entry| (entry.is_symlink || entry.lazy) && entry.relative_path == ancestor)
         });
         if loaded || !linked {
             return Ok(());
@@ -585,15 +588,26 @@ impl IdeState {
     }
 
     pub fn open_terminal(&mut self) -> Result<(), String> {
-        if self
+        self.open_terminal_in(None)
+    }
+
+    /// Opens the Terminal; a new shell starts in `dir` (default: the project
+    /// root) and a running shell is sent a `cd` there.
+    pub fn open_terminal_in(&mut self, dir: Option<&Path>) -> Result<(), String> {
+        if let Some(dir) = dir
+            && let Some(terminal) = self.terminal.as_mut().filter(|t| !t.is_exited())
+        {
+            let quoted = dir.display().to_string().replace('\'', "'\\''");
+            terminal
+                .send(&format!("cd '{quoted}'\n"))
+                .map_err(|error| error.to_string())?;
+        } else if self
             .terminal
             .as_ref()
             .is_none_or(|terminal| terminal.is_exited())
         {
-            let cwd = self
-                .project
-                .as_ref()
-                .map(Project::root)
+            let cwd = dir
+                .or_else(|| self.project.as_ref().map(Project::root))
                 .unwrap_or_else(|| Path::new("."));
             let shell = self
                 .settings
@@ -630,6 +644,12 @@ impl IdeState {
             .files
             .iter()
             .filter(|entry| !entry.is_dir)
+            .filter(|entry| {
+                self.project_view
+                    .search_scope
+                    .as_ref()
+                    .is_none_or(|scope| entry.relative_path.starts_with(scope))
+            })
             .map(|entry| entry.relative_path.clone())
             .collect();
         self.search_results.clear();
@@ -902,6 +922,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     run_config_commands::register(&mut registry);
     folds::register(&mut registry);
     project_commands::register(&mut registry);
+    project_view::register(&mut registry);
     new_class::register(&mut registry);
     update_commands::register(&mut registry);
     diagnostic_commands::register(&mut registry);
@@ -1017,7 +1038,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Find in Files",
                 "Search",
                 Some("⇧⌘F"),
-                r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?","fileMask":"string?"}"#,
+                r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?","fileMask":"string?","scope":"string?"}"#,
             ),
             |state: &IdeState| state.project.is_some(),
             |state: &mut IdeState, params| {
@@ -1033,6 +1054,12 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                         .unwrap_or_default()
                         .to_owned(),
                 };
+                // `scope` limits the search to a directory ("Find in Files" on a folder).
+                state.project_view.search_scope = params
+                    .get("scope")
+                    .and_then(Value::as_str)
+                    .filter(|scope| !scope.is_empty())
+                    .map(PathBuf::from);
                 let job = state
                     .start_search_with(query, options)
                     .map_err(CommandError::InvalidParams)?;
