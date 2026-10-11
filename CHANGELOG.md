@@ -2,11 +2,13 @@
 
 ## [0.0.9](https://github.com/HenrySchwerdt/jetthing/compare/v0.0.8...v0.0.9) (2026-10-11)
 
-v0.0.8 was published without downloads; this release ships its contents plus the fixes below.
+v0.0.8 was published without downloads; this release ships its contents plus the changes below.
 
 ### Features
 
 * **java:** Generate popup (Alt+Insert / ⌘N), Go to Super Method, Go to Test / Create Test, and a Hierarchy tool window for type and call hierarchies ([#216](https://github.com/HenrySchwerdt/jetthing/pull/216))
+
+* **editor:** splits (Split Right / Down, drag a tab to an editor edge, Move to Opposite Group, Unsplit), Open in Right Split (Shift+Enter) and an italic preview tab on single click ([#217](https://github.com/HenrySchwerdt/jetthing/pull/217))
 
 ### Bug Fixes
 
