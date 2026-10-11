@@ -8,6 +8,7 @@
 pub mod adb;
 pub mod avd;
 pub mod deploy;
+pub mod layout;
 pub mod logcat;
 pub mod merged_manifest;
 pub mod mirror;

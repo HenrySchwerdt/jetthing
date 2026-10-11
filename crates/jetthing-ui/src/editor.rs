@@ -90,6 +90,20 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     return;
                 }
             }
+            if crate::layout_editor_ui::applies(app) {
+                crate::layout_editor_ui::mode_bar(app, ui);
+                match app.state.android.layout.mode {
+                    jetthing_core::LayoutMode::Design => {
+                        crate::layout_editor_ui::design_body(app, ui);
+                        app.caret_screen_pos = None;
+                        return;
+                    }
+                    jetthing_core::LayoutMode::Split => {
+                        crate::layout_editor_ui::split_panel(app, ui)
+                    }
+                    jetthing_core::LayoutMode::Code => {}
+                }
+            }
             let md_layout = app.state.markdown_layout();
             let full = ui.available_rect_before_wrap();
             if let Some(layout) = md_layout

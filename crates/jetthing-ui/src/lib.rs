@@ -45,6 +45,7 @@ mod icons;
 mod intentions_ui;
 mod keybindings;
 mod keys;
+mod layout_editor_ui;
 mod logcat_ui;
 mod lsp_status;
 mod main_menu;

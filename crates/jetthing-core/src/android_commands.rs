@@ -30,6 +30,7 @@ pub struct AndroidState {
     pub android_view: bool,
     pub resource_manager: crate::android_tools::ResourceManagerState,
     pub mirror: crate::android_tools::MirrorState,
+    pub layout: crate::android_tools::LayoutEditorState,
 }
 
 impl AndroidState {

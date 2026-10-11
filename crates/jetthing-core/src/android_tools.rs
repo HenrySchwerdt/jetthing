@@ -35,6 +35,42 @@ impl ResourceManagerState {
     }
 }
 
+/// Layout editor presentation of a layout XML file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LayoutMode {
+    #[default]
+    Code,
+    Split,
+    Design,
+}
+
+impl LayoutMode {
+    pub const ALL: [LayoutMode; 3] = [LayoutMode::Code, LayoutMode::Split, LayoutMode::Design];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            LayoutMode::Code => "code",
+            LayoutMode::Split => "split",
+            LayoutMode::Design => "design",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            LayoutMode::Code => "Code",
+            LayoutMode::Split => "Split",
+            LayoutMode::Design => "Design",
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct LayoutEditorState {
+    pub mode: LayoutMode,
+    /// Pre-order index of the selected view in the Component Tree.
+    pub selected: usize,
+}
+
 /// Screen mirroring of the selected device.
 #[derive(Default)]
 pub struct MirrorState {
@@ -74,6 +110,20 @@ impl MirrorState {
             }
         }
         changed
+    }
+}
+
+impl IdeState {
+    /// The view tree of the active editor file when it is an Android layout.
+    pub fn active_layout(&self) -> Option<Result<jetthing_android::layout::LayoutNode, String>> {
+        self.android.project.as_ref()?;
+        let document = self.documents.get(self.active_document?)?;
+        if !jetthing_android::layout::is_layout_file(&document.path) {
+            return None;
+        }
+        Some(jetthing_android::layout::parse_layout(
+            &document.text.text(),
+        ))
     }
 }
 
@@ -217,6 +267,57 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
     registry
         .register(Command::new(
             spec(
+                "android.layout.mode",
+                "Layout Editor Mode",
+                "Android",
+                None,
+                r#"{"mode":"code|split|design"}"#,
+            ),
+            |state: &IdeState| state.active_layout().is_some(),
+            |state: &mut IdeState, params| {
+                let mode = string_param(&params, "mode")?;
+                let mode = LayoutMode::ALL
+                    .into_iter()
+                    .find(|m| m.id() == mode)
+                    .ok_or_else(|| {
+                        CommandError::InvalidParams(format!("unknown layout mode `{mode}`"))
+                    })?;
+                state.android.layout.mode = mode;
+                Ok(json!({"mode": mode.id()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "android.layout.select",
+                "Select Layout Component",
+                "Android",
+                None,
+                r#"{"node":"number"}"#,
+            ),
+            |state: &IdeState| state.active_layout().is_some(),
+            |state: &mut IdeState, params| {
+                let node =
+                    params.get("node").and_then(Value::as_u64).ok_or_else(|| {
+                        CommandError::InvalidParams("`node` must be a number".into())
+                    })? as usize;
+                let tree = state
+                    .active_layout()
+                    .and_then(Result::ok)
+                    .ok_or_else(|| CommandError::Failed("the layout does not parse".into()))?;
+                let selected = tree
+                    .nth(node)
+                    .ok_or_else(|| CommandError::InvalidParams(format!("no component {node}")))?;
+                let tag = selected.tag.clone();
+                state.android.layout.selected = node;
+                Ok(json!({"tag": tag}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
                 "android.mirror.start",
                 "Start Screen Mirroring",
                 "Android",
@@ -326,6 +427,49 @@ mod tests {
             )
             .unwrap();
         assert!(state.active_document.is_some());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn layout_modes_and_selection() {
+        let (mut state, root) = android_state("layout");
+        let commands = built_in_commands();
+        assert!(
+            commands
+                .execute("android.layout.mode", &mut state, json!({"mode": "design"}))
+                .is_err(),
+            "needs an open layout file"
+        );
+        write(
+            &root,
+            "app/src/main/res/layout/main.xml",
+            "<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\">\n<Button android:id=\"@+id/ok\"/>\n</LinearLayout>\n",
+        );
+        commands
+            .execute(
+                "editor.openFile",
+                &mut state,
+                json!({"path": "app/src/main/res/layout/main.xml"}),
+            )
+            .unwrap();
+        commands
+            .execute("android.layout.mode", &mut state, json!({"mode": "split"}))
+            .unwrap();
+        assert_eq!(state.android.layout.mode, super::LayoutMode::Split);
+        assert!(
+            commands
+                .execute("android.layout.mode", &mut state, json!({"mode": "x"}))
+                .is_err()
+        );
+        let selected = commands
+            .execute("android.layout.select", &mut state, json!({"node": 1}))
+            .unwrap();
+        assert_eq!(selected["tag"], "Button");
+        assert!(
+            commands
+                .execute("android.layout.select", &mut state, json!({"node": 9}))
+                .is_err()
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

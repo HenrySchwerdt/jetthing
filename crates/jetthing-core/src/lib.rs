@@ -76,6 +76,7 @@ pub use android_commands::AndroidState;
 pub use android_deploy::{DeployPhase, DeployState};
 pub use android_devices::DeviceHub;
 pub use android_logcat::LogcatState;
+pub use android_tools::{LayoutEditorState, LayoutMode};
 pub use disk_sync::{DiskConflict, Waker, content_hash};
 pub use settings_commands::Settings;
 mod vcs;
