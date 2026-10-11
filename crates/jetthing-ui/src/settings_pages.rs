@@ -77,6 +77,9 @@ pub fn file_templates(ui: &mut egui::Ui) {
     ui.data_mut(|data| data.insert_temp(id, selected));
 }
 
+/// Cache entry: capture time, project root, rows.
+type VcsCache = (f64, std::path::PathBuf, Vec<(String, &'static str)>);
+
 /// Directory → VCS rows for the project root and its direct children.
 fn vcs_mappings(root: &Path) -> Vec<(String, &'static str)> {
     let mut rows = Vec::new();
@@ -113,8 +116,7 @@ pub fn version_control(ui: &mut egui::Ui, state: &IdeState) {
     };
     let id = egui::Id::new("vcs_mappings_cache");
     let now = ui.input(|input| input.time);
-    let cached: Option<(f64, std::path::PathBuf, Vec<(String, &'static str)>)> =
-        ui.data(|data| data.get_temp(id));
+    let cached: Option<VcsCache> = ui.data(|data| data.get_temp(id));
     let rows = match cached {
         Some((at, root, rows)) if root == project.root() && now - at < 2.0 => rows,
         _ => {

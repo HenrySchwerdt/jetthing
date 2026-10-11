@@ -198,7 +198,6 @@ pub fn page(ui: &mut egui::Ui, manager: &mut PluginManager, cx: &mut PageContext
 }
 
 /// Where plugins can be installed from, shown when nothing is selected.
-
 fn plugin_directories(cx: &PageContext<'_>, ui: &mut egui::Ui) {
     ui.label(
         RichText::new("Plugin directories")
