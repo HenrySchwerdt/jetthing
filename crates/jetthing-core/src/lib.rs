@@ -1,6 +1,6 @@
 use jetthing_command::{Command, CommandError, CommandRegistry, CommandSpec};
 use jetthing_git::RepositoryStatus;
-use jetthing_language::{LanguageAnalysis, analyze};
+use jetthing_language::{LanguageAnalysis, analyze_lazy};
 use jetthing_lsp::{LspDiagnostic, LspManager};
 use jetthing_project::{FileEntry, Project};
 use jetthing_runner::TaskService;
@@ -59,8 +59,10 @@ pub mod project_view;
 mod quick_doc;
 mod refactor;
 mod remote_commands;
+mod search_replace;
 mod welcome_commands;
 pub use welcome_commands::{CloneJob, JdkChoice, jdk_major, repository_name};
+mod live_templates;
 mod run_config_commands;
 mod settings_commands;
 mod signature_help;
@@ -97,6 +99,7 @@ pub use ai_terminal::{ShellSuggestion, ShellSuggestionState};
 pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
 pub use completion_stats::CompletionStats;
 pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
+pub use live_templates::context_labels;
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
 pub use problems::{FileProblems, Problem, ProblemCounts, ProblemIndex, Severity};
 pub use quick_doc::{DocsState, QuickDoc};
@@ -139,7 +142,7 @@ impl Document {
     /// Creates a document and its initial language analysis.
     pub fn new(path: PathBuf, text: &str) -> Self {
         let mut document = Self {
-            analysis: analyze(&path, text),
+            analysis: analyze_lazy(&path, text),
             text: TextDocument::new(text),
             path,
             selections: SelectionSet::default(),
@@ -165,7 +168,7 @@ impl Document {
             }
             EditJournal::Reset => {
                 self.folds.clear();
-                self.analysis = analyze(&self.path, source);
+                self.analysis = analyze_lazy(&self.path, source);
             }
         }
     }
@@ -313,6 +316,37 @@ impl IdeState {
         let project = Project::open(path).map_err(|e| e.to_string())?;
         self.prepare_project_switch()?;
         self.install_project(project)
+    }
+
+    /// Saves and closes the open project, returning to the welcome screen.
+    pub fn close_project(&mut self) -> Result<(), String> {
+        if self.project.is_none() {
+            return Err("no project is open".into());
+        }
+        self.prepare_project_switch()?;
+        self.documents.clear();
+        self.active_document = None;
+        self.tabs = tabs::EditorTabs {
+            limit: self.tabs.limit,
+            ..Default::default()
+        };
+        self.search.cancel();
+        self.search_results.clear();
+        self.search_query.clear();
+        self.terminal = None;
+        self.runner = TaskService::default();
+        self.git = None;
+        self.git_watcher = None;
+        self.watcher = None;
+        self.lsp.set_project(None);
+        self.close_diff();
+        self.files.clear();
+        self.expanded_dirs.clear();
+        self.recent_files.clear();
+        self.tool_windows = ToolWindowLayout::default();
+        self.project = None;
+        self.status = "Closed project".into();
+        Ok(())
     }
 
     pub(crate) fn prepare_project_switch(&mut self) -> Result<(), String> {
@@ -633,16 +667,9 @@ impl IdeState {
     }
 
     /// Find in Files with match-case, whole-word, regex and file-mask options.
-    pub fn start_search_with(
-        &mut self,
-        query: String,
-        options: SearchOptions,
-    ) -> Result<u64, String> {
-        // Validate before clearing the previous results.
-        jetthing_search::Matcher::new(&query, &options).map_err(|error| error.to_string())?;
-        let project = self.project.as_ref().ok_or("no project is open")?;
-        let files = self
-            .files
+    /// Project files in the current Find in Files scope.
+    pub(crate) fn search_files(&self) -> Vec<PathBuf> {
+        self.files
             .iter()
             .filter(|entry| !entry.is_dir)
             .filter(|entry| {
@@ -652,7 +679,18 @@ impl IdeState {
                     .is_none_or(|scope| entry.relative_path.starts_with(scope))
             })
             .map(|entry| entry.relative_path.clone())
-            .collect();
+            .collect()
+    }
+
+    pub fn start_search_with(
+        &mut self,
+        query: String,
+        options: SearchOptions,
+    ) -> Result<u64, String> {
+        // Validate before clearing the previous results.
+        jetthing_search::Matcher::new(&query, &options).map_err(|error| error.to_string())?;
+        let project = self.project.as_ref().ok_or("no project is open")?;
+        let files = self.search_files();
         self.search_results.clear();
         self.search_files_scanned = 0;
         self.search_truncated = false;
@@ -932,6 +970,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     settings_commands::register(&mut registry);
     quick_nav::register(&mut registry);
     keymap_commands::register(&mut registry);
+    live_templates::register(&mut registry);
     first_run::register(&mut registry);
     lsp_commands::register(&mut registry);
     vcs::register(&mut registry);
@@ -945,6 +984,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     welcome_commands::register(&mut registry);
     annotations::register(&mut registry);
     worktree_commands::register(&mut registry);
+    search_replace::register(&mut registry);
     navigation::register(&mut registry);
     code_actions::register(&mut registry);
     refactor::register(&mut registry);
@@ -964,6 +1004,16 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .open_project(Path::new(&string_param(&params, "path")?))
                     .map_err(CommandError::Failed)?;
                 Ok(json!({"root": state.project.as_ref().unwrap().root()}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec("project.close", "Close Project", "Project", None, "{}"),
+            |state: &IdeState| state.project.is_some(),
+            |state: &mut IdeState, _| {
+                state.close_project().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
             },
         ))
         .expect("unique built-in id");
@@ -1451,14 +1501,14 @@ mod tests {
         document.text.edit(20, 21, "\"s\"").unwrap();
         let source = document.text.text();
         document.refresh_analysis(&source);
-        let full = analyze(&document.path, &source);
+        let full = jetthing_language::analyze(&document.path, &source);
         assert_eq!(document.analysis.highlights, full.highlights);
         assert!(document.text.undo());
         let source = document.text.text();
         document.refresh_analysis(&source);
         assert_eq!(
             document.analysis.highlights,
-            analyze(&document.path, &source).highlights
+            jetthing_language::analyze(&document.path, &source).highlights
         );
     }
 

@@ -17,6 +17,7 @@ enum Preset {
     Empty,
     RustBinary,
     RustLibrary,
+    Android(&'static str),
 }
 
 struct Generator {
@@ -73,6 +74,21 @@ const GENERATORS: &[Generator] = &[
         section: "Generators",
         label: "Maven – Java",
         preset: jvm("java", "maven", "kotlin"),
+    },
+    Generator {
+        section: "Generators",
+        label: "Android – Empty Activity (Compose)",
+        preset: Preset::Android("android-compose"),
+    },
+    Generator {
+        section: "Generators",
+        label: "Android – Empty Views Activity",
+        preset: Preset::Android("android-views"),
+    },
+    Generator {
+        section: "Generators",
+        label: "Android – No Activity",
+        preset: Preset::Android("android-no-activity"),
     },
     Generator {
         section: "Generators",
@@ -410,6 +426,7 @@ pub fn show(
             Preset::Empty => params["kind"] = "empty".into(),
             Preset::RustBinary => params["kind"] = "rust-binary".into(),
             Preset::RustLibrary => params["kind"] = "rust-library".into(),
+            Preset::Android(kind) => params["kind"] = kind.into(),
             Preset::Jvm { .. } => {
                 params["kind"] = "jvm".into();
                 params["language"] = form.language.clone().into();

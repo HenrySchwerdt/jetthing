@@ -29,3 +29,18 @@ Tests: `regex_find_and_capture_group_replacement` (text),
 
 Gaps: no Replace in Files, no Alt+C/O/X shortcuts, no regex help popup, no
 "preserve case" option.
+
+## Replace in Files (IJ-NAV-067)
+
+`search.replacePreview` returns, per file, the replacement count and the before/after
+text of each changed line without touching disk; `search.replaceInFiles` applies the
+same plan. The `jetthing-search` engine (`Matcher::replace_contents`,
+`plan_replacements`) works line by line like Find in Files, keeps CRLF/LF endings,
+expands `$1`/`${name}` only in regex mode (plain queries replace literally) and skips
+empty matches. Files whose open editor has unsaved changes are never overwritten and
+are reported as skipped; clean open editors reload the new contents.
+
+Tests: `replacements_expand_groups_only_in_regex_mode_and_keep_line_endings` (search),
+`preview_leaves_files_alone_and_replace_expands_groups_skipping_dirty_buffers` (core).
+The Find popup has no Replace field yet; its layout belongs to the Find in Files popup
+work (#157/#163/#169/#170).

@@ -64,6 +64,7 @@ const fn editor(action: &'static str, command: &'static str) -> ActionCommand {
 pub const ACTION_COMMANDS: &[ActionCommand] = &[
     global("ShowSettings", "settings.open", "{}"),
     menu("ShowPlugins", "plugin.manager.open"),
+    menu("CloseProject", "project.close"),
     global("SearchEverywhere", "navigate.searchEverywhere", "{}"),
     global("GotoAction", "navigate.findAction", "{}"),
     global("GotoClass", "navigate.gotoClass", "{}"),
@@ -141,6 +142,8 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     editor("$Undo", "editor.undo"),
     editor("$Redo", "editor.redo"),
     editor("CodeCompletion", "language.complete"),
+    editor("InsertLiveTemplate", "template.insert"),
+    editor("SurroundWithLiveTemplate", "template.surround"),
     editor("GotoNextError", "editor.nextProblem"),
     // In Android projects the UI resolves `R.x.y` references at the caret through
     // `android.resources.gotoDeclaration` first; everything else asks the language server.

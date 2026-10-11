@@ -6,6 +6,7 @@
 //! `injection.include-children`; legacy captures named after the language.
 
 use crate::registry::{self, LANGUAGES, LanguageSpec};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::OnceLock;
@@ -27,12 +28,27 @@ impl Injection {
         start..end
     }
 
-    /// Parses the injected ranges with the injected language's grammar.
+    /// Parses the injected ranges with the injected language's grammar,
+    /// reusing one parser per language and thread.
     pub fn parse(&self, source: &str) -> Option<Tree> {
-        let mut parser = Parser::new();
-        parser.set_language(&self.spec.grammar()).ok()?;
-        parser.set_included_ranges(&self.ranges).ok()?;
-        parser.parse(source, None)
+        thread_local! {
+            static PARSERS: RefCell<HashMap<&'static str, Parser>> = RefCell::new(HashMap::new());
+        }
+        PARSERS.with(|parsers| {
+            let mut parsers = parsers.borrow_mut();
+            let parser = match parsers.entry(self.spec.id) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    let mut parser = Parser::new();
+                    parser.set_language(&self.spec.grammar()).ok()?;
+                    entry.insert(parser)
+                }
+            };
+            parser.set_included_ranges(&self.ranges).ok()?;
+            let tree = parser.parse(source, None);
+            parser.reset();
+            tree
+        })
     }
 }
 
@@ -155,6 +171,19 @@ pub(crate) fn injections(
             .dedup_by(|later, earlier| later.start_byte < earlier.end_byte);
     }
     found
+}
+
+/// True when no injected region parses with syntax errors. Error recovery in
+/// an injected tree can depend on its absolute position, so only error-free
+/// injections are guaranteed to re-highlight identically after edits elsewhere.
+pub(crate) fn error_free(spec: &'static LanguageSpec, tree: &Tree, source: &str) -> bool {
+    injections(spec, tree, source, 0..source.len())
+        .iter()
+        .all(|injection| {
+            injection
+                .parse(source)
+                .is_some_and(|tree| !tree.root_node().has_error())
+        })
 }
 
 #[cfg(test)]

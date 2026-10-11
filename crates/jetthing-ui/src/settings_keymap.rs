@@ -17,6 +17,8 @@ pub struct KeymapPage {
     query: String,
     by_shortcut: bool,
     selected: Option<String>,
+    /// Group headers the user collapsed (ignored while searching).
+    collapsed: std::collections::BTreeSet<String>,
     capture: Option<Capture>,
     /// Keymap shown when the selector differs from the active keymap.
     preview: Option<Keymap>,
@@ -105,6 +107,7 @@ fn list(
         RichText::new(crate::widgets::pluralize(rows.len(), "action", "actions"))
             .color(theme::TEXT_INFO),
     );
+    let entries = grouped(&rows, &page.collapsed, !page.query.trim().is_empty());
     egui::Frame::new()
         .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
         .corner_radius(4)
@@ -113,9 +116,19 @@ fn list(
                 .id_salt("keymap_actions")
                 .max_height(list_height)
                 .auto_shrink([false, false])
-                .show_rows(ui, ROW, rows.len(), |ui, range| {
-                    for row in &rows[range] {
-                        action_row(ui, page, row, notation);
+                .show_rows(ui, ROW, entries.len(), |ui, range| {
+                    for entry in &entries[range] {
+                        match entry {
+                            Entry::Action(row) => action_row(ui, page, row, notation),
+                            Entry::Group { name, count, open } => {
+                                if group_row(ui, name, *count, *open) {
+                                    let name = name.clone();
+                                    if !page.collapsed.remove(&name) {
+                                        page.collapsed.insert(name);
+                                    }
+                                }
+                            }
+                        }
                     }
                 });
         });
@@ -130,7 +143,89 @@ fn list(
     }
 }
 
+/// Group an action is listed under: the top-level main-menu entry that
+/// contains it (`File`, `Edit`, …), or `Other` for actions outside the menu.
+fn group_of(action: &str) -> &'static str {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static GROUPS: OnceLock<HashMap<String, String>> = OnceLock::new();
+    fn collect(
+        items: &[jetthing_actions::MenuItem],
+        group: &str,
+        map: &mut HashMap<String, String>,
+    ) {
+        for item in items {
+            match item {
+                jetthing_actions::MenuItem::Action { id, .. } => {
+                    map.entry(id.clone()).or_insert_with(|| group.to_owned());
+                }
+                jetthing_actions::MenuItem::Submenu { items, .. } => collect(items, group, map),
+                jetthing_actions::MenuItem::Separator(_) => {}
+            }
+        }
+    }
+    let groups = GROUPS.get_or_init(|| {
+        let mut map = HashMap::new();
+        for item in Catalog::shared_menu("MainMenu").iter() {
+            if let jetthing_actions::MenuItem::Submenu { label, items, .. } = item {
+                collect(items, label, &mut map);
+            }
+        }
+        map
+    });
+    groups.get(action).map_or(OTHER_GROUP, String::as_str)
+}
+
+const OTHER_GROUP: &str = "Other";
+
+/// One line of the grouped tree.
+enum Entry<'a> {
+    Group {
+        name: String,
+        count: usize,
+        open: bool,
+    },
+    Action(&'a Row),
+}
+
+/// Rows bucketed by group in main-menu order (`Other` last); a collapsed
+/// group keeps only its header. Searching expands every group.
+fn grouped<'a>(
+    rows: &'a [Row],
+    collapsed: &std::collections::BTreeSet<String>,
+    searching: bool,
+) -> Vec<Entry<'a>> {
+    let mut order: Vec<String> = Vec::new();
+    for item in Catalog::shared_menu("MainMenu").iter() {
+        if let jetthing_actions::MenuItem::Submenu { label, .. } = item {
+            order.push(label.clone());
+        }
+    }
+    order.push(OTHER_GROUP.to_owned());
+    let mut entries = Vec::new();
+    for name in order {
+        let members: Vec<&Row> = rows
+            .iter()
+            .filter(|row| row.group == name.as_str())
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        let open = searching || !collapsed.contains(&name);
+        entries.push(Entry::Group {
+            name,
+            count: members.len(),
+            open,
+        });
+        if open {
+            entries.extend(members.into_iter().map(Entry::Action));
+        }
+    }
+    entries
+}
+
 struct Row {
+    group: &'static str,
     action: String,
     label: String,
     shortcuts: String,
@@ -171,6 +266,7 @@ fn action_rows(
                 }
             };
             keep.then(|| Row {
+                group: group_of(id),
                 action: id.to_owned(),
                 shortcuts: keymap
                     .shortcuts(id)
@@ -192,6 +288,33 @@ fn action_rows(
     rows
 }
 
+/// Group header row; returns whether it was clicked (toggles collapse).
+fn group_row(ui: &mut egui::Ui, name: &str, count: usize, open: bool) -> bool {
+    let (rect, response) = crate::widgets::list_row(ui, false);
+    crate::icons::paint(
+        ui.painter(),
+        egui::Rect::from_center_size(
+            egui::pos2(rect.left() + 14.0, rect.center().y),
+            vec2(12.0, 12.0),
+        ),
+        if open {
+            crate::icons::Icon::ChevronDown
+        } else {
+            crate::icons::Icon::ChevronRight
+        },
+        *theme::TEXT_SECONDARY,
+    );
+    crate::widgets::row_text(
+        ui,
+        rect,
+        rect.left() + 26.0,
+        &format!("{name}  ({count})"),
+        theme::semibold(theme::UI_FONT_SIZE),
+        *theme::TEXT_BRIGHT,
+    );
+    response.clicked()
+}
+
 fn action_row(ui: &mut egui::Ui, page: &mut KeymapPage, row: &Row, notation: Notation) {
     let _ = notation;
     let selected = page.selected.as_deref() == Some(row.action.as_str());
@@ -204,7 +327,7 @@ fn action_row(ui: &mut egui::Ui, page: &mut KeymapPage, row: &Row, notation: Not
     let x = crate::widgets::row_text(
         ui,
         rect,
-        rect.left() + 10.0,
+        rect.left() + 28.0,
         &row.label,
         egui::FontId::proportional(theme::UI_FONT_SIZE),
         color,
@@ -502,6 +625,32 @@ fn record_keys(ctx: &egui::Context, capture: &mut Capture, close: &mut bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(action: &str) -> Row {
+        Row {
+            group: group_of(action),
+            action: action.to_owned(),
+            label: action.to_owned(),
+            shortcuts: String::new(),
+            implemented: true,
+        }
+    }
+
+    #[test]
+    fn rows_are_grouped_and_collapsible() {
+        let rows = vec![row("$Undo"), row("no.such.action")];
+        let none = std::collections::BTreeSet::new();
+        let entries = grouped(&rows, &none, false);
+        let groups = entries
+            .iter()
+            .filter(|entry| matches!(entry, Entry::Group { .. }))
+            .count();
+        assert_eq!(entries.len(), groups + 2);
+        let collapsed = [OTHER_GROUP.to_owned()].into();
+        assert_eq!(grouped(&rows, &collapsed, false).len(), entries.len() - 1);
+        // Searching expands every group.
+        assert_eq!(grouped(&rows, &collapsed, true).len(), entries.len());
+    }
 
     #[test]
     fn rows_search_by_name_and_shortcut() {
