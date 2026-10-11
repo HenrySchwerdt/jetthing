@@ -2,7 +2,7 @@
 //! commit graph, and the selected commit's changed files and message.
 
 use crate::icons::{self, Icon};
-use crate::widgets::{self, list_row, row_text, tool_window_header};
+use crate::widgets::{self, row_text, tool_window_header};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, RichText, Sense, Stroke, pos2, vec2};
 use jetthing_core::DateRange;
@@ -80,13 +80,16 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     ui.painter()
         .vline(details_rect.left(), area.y_range(), divider);
     ui.scope_builder(egui::UiBuilder::new().max_rect(branches_rect), |ui| {
+        ui.set_clip_rect(ui.clip_rect().intersect(branches_rect));
         branches_pane(app, ui, &mut actions);
     });
     ui.scope_builder(egui::UiBuilder::new().max_rect(commits_rect), |ui| {
+        ui.set_clip_rect(ui.clip_rect().intersect(commits_rect));
         commits_pane(app, ui, &mut actions);
     });
     if !app.state.git_log.hide_details {
         ui.scope_builder(egui::UiBuilder::new().max_rect(details_rect), |ui| {
+            ui.set_clip_rect(ui.clip_rect().intersect(details_rect));
             details_pane(app, ui, &mut actions);
         });
     }
@@ -187,42 +190,39 @@ fn branches_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static st
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.add_space(4.0);
             let mut entry = |ui: &mut egui::Ui,
-                             indent: f32,
+                             depth: usize,
                              icon: Option<Icon>,
                              label: &str,
                              filter: Option<&str>,
                              bold: bool| {
                 let selected = log.branch.as_deref() == filter && filter.is_some();
-                let (rect, response) = list_row(ui, selected);
-                let mut x = rect.left() + 12.0 + indent;
-                if let Some(icon) = icon {
-                    icons::paint(
-                        ui.painter(),
-                        Rect::from_min_size(pos2(x, rect.center().y - 7.0), vec2(14.0, 14.0)),
-                        icon,
-                        theme::WARNING,
-                    );
-                    x += 20.0;
-                }
-                row_text(
+                let paint = icon.map(|icon| {
+                    move |painter: &egui::Painter, rect: Rect| {
+                        icons::paint(painter, rect, icon, theme::WARNING)
+                    }
+                });
+                let out = widgets::tree_row(
                     ui,
-                    rect,
-                    x,
-                    label,
-                    if bold {
-                        theme::semibold(theme::UI_FONT_SIZE)
-                    } else {
-                        font.clone()
+                    widgets::TreeRow {
+                        depth,
+                        selected,
+                        paint_icon: paint.as_ref().map(|p| p as &dyn Fn(&egui::Painter, Rect)),
+                        font: if bold {
+                            theme::semibold(theme::UI_FONT_SIZE)
+                        } else {
+                            font.clone()
+                        },
+                        ..widgets::TreeRow::new(label)
                     },
-                    theme::TEXT,
                 );
+                let response = out.response;
                 if response.clicked() {
                     let branch = if selected { None } else { filter };
                     actions.push(("git.log.filterBranch", json!({ "branch": branch })));
                 }
                 response
             };
-            entry(ui, 0.0, None, "HEAD (Current Branch)", Some("HEAD"), false)
+            entry(ui, 0, None, "HEAD (Current Branch)", Some("HEAD"), false)
                 .on_hover_text("Show only commits reachable from HEAD");
             group(ui, "Local");
             for branch in &log.branches.local {
@@ -236,7 +236,7 @@ fn branches_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static st
                 }
                 let response = entry(
                     ui,
-                    18.0,
+                    1,
                     Some(Icon::Branch),
                     &label,
                     Some(&branch.name),
@@ -249,44 +249,33 @@ fn branches_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static st
             if !log.branches.remote.is_empty() {
                 group(ui, "Remote");
                 for branch in &log.branches.remote {
-                    entry(ui, 18.0, Some(Icon::Branch), branch, Some(branch), false);
+                    entry(ui, 1, Some(Icon::Branch), branch, Some(branch), false);
                 }
             }
             if !log.branches.tags.is_empty() {
                 group(ui, "Tags");
                 for tag in &log.branches.tags {
-                    entry(ui, 18.0, None, tag, Some(tag), false);
+                    entry(ui, 1, None, tag, Some(tag), false);
                 }
             }
         });
 }
 
 fn group(ui: &mut egui::Ui, title: &str) {
-    let (rect, _) = list_row(ui, false);
-    icons::paint(
-        ui.painter(),
-        Rect::from_min_size(
-            pos2(rect.left() + 8.0, rect.center().y - 7.0),
-            vec2(14.0, 14.0),
-        ),
-        Icon::ChevronDown,
-        theme::TEXT_SECONDARY,
-    );
-    row_text(
+    widgets::tree_row(
         ui,
-        rect,
-        rect.left() + 28.0,
-        title,
-        egui::FontId::proportional(theme::UI_FONT_SIZE),
-        theme::TEXT,
+        widgets::TreeRow {
+            expanded: Some(true),
+            ..widgets::TreeRow::new(title)
+        },
     );
 }
 
 fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str, Value)>) {
     let log = &app.state.git_log;
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
+    widgets::toolbar_row(ui, |ui| {
+        ui.add_space(theme::layout::CONTENT_INSET);
         let mut filter = log.filter.clone();
         let response = widgets::search_field(ui, filter_id(), &mut filter, "Text or hash", 120.0);
         let (mut regex, mut case) = (log.regex, log.match_case);
@@ -364,8 +353,8 @@ fn commits_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
             });
     });
     ui.add_space(2.0);
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
+    widgets::toolbar_row(ui, |ui| {
+        ui.add_space(theme::layout::CONTENT_INSET);
         // Paths: a repository-relative file or directory.
         let path_id = egui::Id::new("git_log_path_filter");
         let mut path: String = ui.data_mut(|data| {
@@ -640,7 +629,7 @@ fn details_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
             }
             let total = details.files.len();
             ui.horizontal(|ui| {
-                ui.add_space(12.0);
+                ui.add_space(theme::layout::CONTENT_INSET);
                 ui.label(
                     RichText::new(widgets::pluralize(total, "file", "files"))
                         .color(theme::TEXT_SECONDARY),
@@ -659,7 +648,10 @@ fn details_pane(app: &IdeApp, ui: &mut egui::Ui, actions: &mut Vec<(&'static str
         .show(ui, |ui| {
             ui.add_space(8.0);
             egui::Frame::new()
-                .inner_margin(egui::Margin::symmetric(12, 0))
+                .inner_margin(egui::Margin::symmetric(
+                    theme::layout::CONTENT_INSET as i8,
+                    0,
+                ))
                 .show(ui, |ui| {
                     let mut lines = details.message.lines();
                     if let Some(subject) = lines.next() {
@@ -734,32 +726,21 @@ fn tree_rows(
     hash: &str,
     actions: &mut Vec<(&'static str, Value)>,
 ) {
-    let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
     for (name, child) in &node.dirs {
         let key = format!("{prefix}{name}/");
         let id = egui::Id::new(("git_log_dir_collapsed", &key));
         let collapsed: bool = ui.data(|data| data.get_temp(id)).unwrap_or(false);
-        let (rect, response) = list_row(ui, false);
-        let x = rect.left() + 8.0 + depth as f32 * 14.0;
-        icons::paint(
-            ui.painter(),
-            Rect::from_min_size(pos2(x, rect.center().y - 7.0), vec2(14.0, 14.0)),
-            if collapsed {
-                Icon::ChevronRight
-            } else {
-                Icon::ChevronDown
-            },
-            theme::TEXT_SECONDARY,
-        );
-        let end = row_text(ui, rect, x + 20.0, name, font.clone(), theme::TEXT);
-        row_text(
+        let count = widgets::pluralize(child.count(), "file", "files");
+        let response = widgets::tree_row(
             ui,
-            rect,
-            end + 8.0,
-            &widgets::pluralize(child.count(), "file", "files"),
-            font.clone(),
-            theme::TEXT_INFO,
-        );
+            widgets::TreeRow {
+                depth,
+                expanded: Some(!collapsed),
+                secondary: Some((&count, *theme::TEXT_INFO)),
+                ..widgets::TreeRow::new(name)
+            },
+        )
+        .response;
         if response.clicked() {
             ui.data_mut(|data| data.insert_temp(id, !collapsed));
         }
@@ -768,23 +749,17 @@ fn tree_rows(
         }
     }
     for file in &node.files {
-        let (rect, response) = list_row(ui, false);
         let name = IdeApp::file_name(&file.path);
-        let x = rect.left() + 8.0 + depth as f32 * 14.0 + 20.0;
-        icons::paint(
-            ui.painter(),
-            Rect::from_min_size(pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-            Icon::for_file(&name),
-            icons::ICON,
-        );
-        row_text(
+        let response = widgets::tree_row(
             ui,
-            rect,
-            x + 22.0,
-            &name,
-            font.clone(),
-            crate::toolwindows::change_color(Some(file.kind)),
-        );
+            widgets::TreeRow {
+                depth,
+                icon: Some((Icon::for_file(&name), *icons::ICON)),
+                color: crate::toolwindows::change_color(Some(file.kind)),
+                ..widgets::TreeRow::new(&name)
+            },
+        )
+        .response;
         let response = response.on_hover_text(match file.kind {
             ChangeKind::Added => "Added",
             ChangeKind::Deleted => "Deleted",

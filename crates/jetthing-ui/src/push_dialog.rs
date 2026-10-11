@@ -52,7 +52,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style())
                 .corner_radius(10)
-                .inner_margin(egui::Margin::same(14))
+                .inner_margin(egui::Margin::same(theme::layout::DIALOG_PADDING as i8))
                 .show(ui, |ui| {
                     ui.set_width(width - 28.0);
                     ui.label(

@@ -7,7 +7,7 @@
 pub mod model;
 mod options;
 
-pub use options::{Distribution, GradleOptions, options, set_options};
+pub use options::{BuildRunner, Distribution, GradleOptions, options, set_options};
 
 pub use model::{GradleModel, JdkModel, LibraryModel, ProjectModel, TaskModel};
 
@@ -200,6 +200,22 @@ impl GradleBuild {
     }
 }
 
+/// Whether the project-relative `path` is a file whose change makes the imported Gradle
+/// model stale (build and settings scripts, `gradle.properties`, version catalogs).
+pub fn is_build_input(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    matches!(
+        name,
+        "build.gradle"
+            | "build.gradle.kts"
+            | "settings.gradle"
+            | "settings.gradle.kts"
+            | "gradle.properties"
+    ) || name.ends_with(".versions.toml")
+}
+
 /// Extracts project paths from `include(...)` statements in a settings script.
 pub fn included_projects(settings: &str) -> Vec<String> {
     let mut paths = Vec::new();
@@ -305,6 +321,10 @@ impl BuildSystem for Gradle {
                 "Gradle Assemble",
                 &["assembleDebug".into()],
             );
+        }
+        if options().build_run == BuildRunner::Jetthing {
+            let tasks = ["classes".to_owned(), "testClasses".to_owned()];
+            return build.task_plan(TaskKind::Build, "Gradle Compile", &tasks);
         }
         build.task_plan(TaskKind::Build, "Gradle Build", &["build".into()])
     }
@@ -626,5 +646,27 @@ mod tests {
         let error = Gradle.run_plan(&fixture.0).unwrap_err();
         assert!(matches!(error, RunnerError::NotRunnable(_)));
         assert!(error.to_string().contains("application"));
+    }
+}
+
+#[cfg(test)]
+mod build_input_tests {
+    use super::is_build_input;
+    use std::path::Path;
+
+    #[test]
+    fn recognises_gradle_build_inputs() {
+        for yes in [
+            "build.gradle",
+            "app/build.gradle.kts",
+            "settings.gradle.kts",
+            "gradle.properties",
+            "gradle/libs.versions.toml",
+        ] {
+            assert!(is_build_input(Path::new(yes)), "{yes}");
+        }
+        for no in ["src/Main.java", "build.rs", "Cargo.toml"] {
+            assert!(!is_build_input(Path::new(no)), "{no}");
+        }
     }
 }

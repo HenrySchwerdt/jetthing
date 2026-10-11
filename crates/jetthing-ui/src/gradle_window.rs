@@ -1,7 +1,7 @@
 //! Gradle tool window: synced projects → Tasks → groups → tasks.
 
 use crate::icons::{self, Icon};
-use crate::widgets::{island_frame, list_row, row_text, search_field, tool_window_header};
+use crate::widgets::{self, island_frame, search_field, tool_window_header};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, RichText, vec2};
 use jetthing_core::ToolWindow;
@@ -9,8 +9,6 @@ use jetthing_gradle::{GradleModel, ProjectModel};
 use jetthing_runner::TaskKind;
 use serde_json::{Value, json};
 use std::collections::HashSet;
-
-const INDENT: f32 = 18.0;
 
 #[derive(Clone, Default)]
 struct View {
@@ -216,8 +214,8 @@ fn content(app: &mut IdeApp, ui: &mut egui::Ui) {
             .runner
             .plan()
             .is_some_and(|plan| plan.kind == TaskKind::Sync);
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
+    widgets::toolbar_row(ui, |ui| {
+        ui.add_space(theme::layout::TOOLBAR_LEAD);
         ui.spacing_mut().item_spacing.x = 2.0;
         let can_sync = app.commands.is_enabled("gradle.sync", &app.state);
         if syncing {
@@ -296,7 +294,7 @@ fn content(app: &mut IdeApp, ui: &mut egui::Ui) {
     if let Some(mut command) = view.execute.take() {
         let mut keep = true;
         ui.horizontal(|ui| {
-            ui.add_space(10.0);
+            ui.add_space(theme::layout::CONTENT_INSET);
             let id = egui::Id::new("gradle_execute_input");
             let response = search_field(
                 ui,
@@ -335,8 +333,8 @@ fn content(app: &mut IdeApp, ui: &mut egui::Ui) {
         view.expanded.insert("p::".into());
         view.expanded.insert("t::".into());
     }
-    ui.horizontal(|ui| {
-        ui.add_space(10.0);
+    widgets::toolbar_row(ui, |ui| {
+        ui.add_space(theme::layout::CONTENT_INSET);
         search_field(
             ui,
             egui::Id::new("gradle_filter"),
@@ -354,48 +352,23 @@ fn content(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.y = 0.0;
             for row in rows(&model, &view.expanded, &view.filter) {
                 let selected = view.selected.as_deref() == Some(row.id.as_str());
-                let (rect, response) = list_row(ui, selected);
-                let mut x = rect.left() + 10.0 + INDENT * row.depth as f32;
-                if row.expandable {
-                    let open = !view.filter.trim().is_empty() || view.expanded.contains(&row.id);
-                    icons::paint(
-                        ui.painter(),
-                        egui::Rect::from_min_size(
-                            egui::pos2(x, rect.center().y - 7.0),
-                            vec2(14.0, 14.0),
-                        ),
-                        if open {
-                            Icon::ChevronDown
-                        } else {
-                            Icon::ChevronRight
-                        },
-                        theme::TEXT_SECONDARY,
-                    );
-                }
-                x += 16.0;
+                let open = !view.filter.trim().is_empty() || view.expanded.contains(&row.id);
                 let icon = match row.kind {
                     RowKind::Project => Icon::Model,
                     RowKind::Folder => Icon::Folder,
                     RowKind::Task { .. } => Icon::Task,
                 };
-                icons::paint(
-                    ui.painter(),
-                    egui::Rect::from_min_size(
-                        egui::pos2(x, rect.center().y - 8.0),
-                        vec2(16.0, 16.0),
-                    ),
-                    icon,
-                    icons::ICON,
-                );
-                x += 22.0;
-                row_text(
+                let response = widgets::tree_row(
                     ui,
-                    rect,
-                    x,
-                    &row.label,
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    theme::TEXT,
-                );
+                    widgets::TreeRow {
+                        depth: row.depth,
+                        expanded: row.expandable.then_some(open),
+                        selected,
+                        icon: Some((icon, *icons::ICON)),
+                        ..widgets::TreeRow::new(&row.label)
+                    },
+                )
+                .response;
                 let response = match &row.kind {
                     RowKind::Task { path, description } => {
                         response.on_hover_text(match description {

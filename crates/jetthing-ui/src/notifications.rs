@@ -51,7 +51,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 .fill(*theme::NOTIFICATION)
                 .stroke(egui::Stroke::new(1.0_f32, theme::NOTIFICATION))
                 .corner_radius(8)
-                .inner_margin(egui::Margin::same(14))
+                .inner_margin(egui::Margin::same(theme::layout::DIALOG_PADDING as i8))
                 .show(ui, |ui| {
                     ui.set_width(width - 28.0);
                     let (title, body) = match &app.state.update_state {

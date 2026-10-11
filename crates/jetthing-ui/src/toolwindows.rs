@@ -2,7 +2,7 @@
 
 use crate::icons::{self, Icon};
 use crate::popups::Dialog;
-use crate::widgets::{self, island_frame, list_row, row_text, tool_window_header};
+use crate::widgets::{self, island_frame, tool_window_header};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, RichText, vec2};
 use jetthing_core::project_view::{RowKind, TreeRow};
@@ -139,8 +139,6 @@ pub fn change_color(kind: Option<ChangeKind>) -> Color32 {
     }
 }
 
-const TREE_INDENT: f32 = 18.0;
-
 fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
     let Some(project) = app.state.project.as_ref() else {
         ui.add_space(16.0);
@@ -200,42 +198,26 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.y = 0.0;
         for row in range {
             if row == 0 {
-                let (rect, response) = list_row(ui, false);
-                tree_context_menu(app, &response, Path::new(""), true, &mut context_choice);
-                let mut x = rect.left() + 12.0 + 16.0;
-                icons::paint(
-                    ui.painter(),
-                    Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-                    Icon::Folder,
-                    icons::ICON,
-                );
-                x += 22.0;
-                let name_start = x;
-                x = row_text(
+                let out = widgets::tree_row(
                     ui,
-                    rect,
-                    x,
-                    &root_name,
-                    theme::semibold(theme::UI_FONT_SIZE),
-                    *theme::TEXT_BRIGHT,
+                    widgets::TreeRow {
+                        icon: Some((Icon::Folder, *icons::ICON)),
+                        font: theme::semibold(theme::UI_FONT_SIZE),
+                        color: *theme::TEXT_BRIGHT,
+                        secondary: Some((&root_path, *theme::TEXT_INFO)),
+                        ..widgets::TreeRow::new(&root_name)
+                    },
                 );
+                tree_context_menu(app, &out.response, Path::new(""), true, &mut context_choice);
                 if root_has_errors {
                     crate::problems_ui::squiggle(
                         ui.painter(),
-                        name_start,
-                        x,
-                        rect.center().y + 8.0,
+                        out.text_start,
+                        out.text_end,
+                        out.rect.center().y + 8.0,
                         *theme::editor::ERROR_EFFECT,
                     );
                 }
-                row_text(
-                    ui,
-                    rect,
-                    x + 8.0,
-                    &root_path,
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    theme::TEXT_INFO,
-                );
                 continue;
             }
             let tree_row = &rows[row - 1];
@@ -250,49 +232,19 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
             let is_dir = &(tree_row.kind == RowKind::Directory);
             let depth = tree_row.depth + 1;
             let selected = app.tree_selection.as_deref() == Some(path.as_path());
-            let (rect, response) = list_row(ui, selected);
-            if !selected {
-                let tint = if tree_row.excluded {
-                    Some(icons::EXCLUDED.gamma_multiply(0.14))
-                } else if tree_row.role.is_test() {
-                    Some(icons::TEST_ROOT.gamma_multiply(0.10))
-                } else {
-                    None
-                };
-                if let Some(tint) = tint {
-                    ui.painter()
-                        .rect_filled(rect.shrink2(vec2(4.0, 0.0)), 4.0, tint);
-                }
-            }
-            let mut x = rect.left() + 12.0 + depth as f32 * TREE_INDENT;
-            let chevron =
-                Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0));
-            if *is_dir {
-                icons::paint(
-                    ui.painter(),
-                    chevron,
-                    if tree_row.expanded {
-                        Icon::ChevronDown
-                    } else {
-                        Icon::ChevronRight
-                    },
-                    theme::TEXT_SECONDARY,
-                );
-            }
-            x += 16.0;
+            let tint = if tree_row.excluded {
+                Some(icons::EXCLUDED.gamma_multiply(0.14))
+            } else if tree_row.role.is_test() {
+                Some(icons::TEST_ROOT.gamma_multiply(0.10))
+            } else {
+                None
+            };
             let name = tree_row.label.clone();
             let icon = if *is_dir {
                 Icon::for_role(tree_row.role)
             } else {
                 app.file_icon(path)
             };
-            icons::paint(
-                ui.painter(),
-                Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-                icon,
-                icons::ICON,
-            );
-            x += 22.0;
             let kind = colors.get(path).copied().or_else(|| {
                 is_dir
                     .then(|| {
@@ -303,28 +255,33 @@ fn project_tree(app: &mut IdeApp, ui: &mut egui::Ui) {
                     })
                     .flatten()
             });
-            let (end, elided) = widgets::row_text_elided(
+            let out = widgets::tree_row(
                 ui,
-                rect,
-                x,
-                &name,
-                egui::FontId::proportional(theme::UI_FONT_SIZE),
-                if tree_row.excluded {
-                    icons::EXCLUDED.gamma_multiply(0.85)
-                } else {
-                    change_color(kind)
+                widgets::TreeRow {
+                    depth,
+                    expanded: is_dir.then_some(tree_row.expanded),
+                    selected,
+                    tint,
+                    icon: Some((icon, *icons::ICON)),
+                    color: if tree_row.excluded {
+                        icons::EXCLUDED.gamma_multiply(0.85)
+                    } else {
+                        change_color(kind)
+                    },
+                    ..widgets::TreeRow::new(&name)
                 },
             );
+            let (rect, response, chevron) = (out.rect, out.response, out.chevron);
             if app.state.problems.has_errors(path) {
                 crate::problems_ui::squiggle(
                     ui.painter(),
-                    x,
-                    end,
+                    out.text_start,
+                    out.text_end,
                     rect.center().y + 8.0,
                     *theme::editor::ERROR_EFFECT,
                 );
             }
-            let response = if elided {
+            let response = if out.elided {
                 response.on_hover_text(&name)
             } else {
                 response
@@ -482,40 +439,19 @@ fn paint_virtual_row(
     row: &TreeRow,
     toggle_group: &mut Option<&'static str>,
 ) {
-    let (rect, response) = list_row(ui, false);
-    let mut x = rect.left() + 12.0 + (row.depth + 1) as f32 * TREE_INDENT;
-    if row.kind == RowKind::Group {
-        icons::paint(
-            ui.painter(),
-            Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-            if row.expanded {
-                Icon::ChevronDown
-            } else {
-                Icon::ChevronRight
-            },
-            theme::TEXT_SECONDARY,
-        );
-    }
-    x += 16.0;
-    icons::paint(
-        ui.painter(),
-        Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-        Icon::Folder,
-        icons::ICON,
-    );
-    x += 22.0;
-    let (_, elided) = widgets::row_text_elided(
+    let out = widgets::tree_row(
         ui,
-        rect,
-        x,
-        &row.label,
-        egui::FontId::proportional(theme::UI_FONT_SIZE),
-        *theme::TEXT,
+        widgets::TreeRow {
+            depth: row.depth + 1,
+            expanded: (row.kind == RowKind::Group).then_some(row.expanded),
+            icon: Some((Icon::Folder, *icons::ICON)),
+            ..widgets::TreeRow::new(&row.label)
+        },
     );
-    let response = if elided {
-        response.on_hover_text(&row.label)
+    let response = if out.elided {
+        out.response.on_hover_text(&row.label)
     } else {
-        response
+        out.response
     };
     if let (RowKind::Group, Some(group)) = (row.kind, row.group) {
         if response.clicked() {
@@ -668,8 +604,8 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
     let selection_id = egui::Id::new("commit_selected_row");
     let mut selected_row: Option<PathBuf> = ui.data(|data| data.get_temp(selection_id));
     // Toolbar: rollback checked files, diff of the selected row.
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
+    widgets::toolbar_row(ui, |ui| {
+        ui.add_space(theme::layout::TOOLBAR_LEAD);
         ui.spacing_mut().item_spacing.x = 2.0;
         if icons::button(ui, Icon::Refresh, "Refresh").clicked() {
             app.dispatch("git.refresh", Value::Null);
@@ -727,47 +663,23 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                 let group_id = group_collapsed_id(title);
                 let group_collapsed: bool =
                     ui.data(|data| data.get_temp(group_id)).unwrap_or(false);
-                let (rect, response) = list_row(ui, false);
-                icons::paint(
-                    ui.painter(),
-                    Rect::from_min_size(
-                        egui::pos2(rect.left() + 10.0, rect.center().y - 8.0),
-                        vec2(16.0, 16.0),
-                    ),
-                    if group_collapsed {
-                        Icon::ChevronRight
-                    } else {
-                        Icon::ChevronDown
+                let count = widgets::pluralize(files.len(), "file", "files");
+                let out = widgets::tree_row(
+                    ui,
+                    widgets::TreeRow {
+                        expanded: Some(!group_collapsed),
+                        reserve: if files.is_empty() { 0.0 } else { 14.0 },
+                        font: theme::semibold(theme::UI_FONT_SIZE),
+                        color: *theme::TEXT_BRIGHT,
+                        secondary: Some((&count, *theme::TEXT_INFO)),
+                        ..widgets::TreeRow::new(title)
                     },
-                    *theme::TEXT_SECONDARY,
                 );
-                let check = Rect::from_min_size(
-                    egui::pos2(rect.left() + 30.0, rect.center().y - 7.0),
-                    vec2(14.0, 14.0),
-                );
+                let response = out.response.clone();
                 if !files.is_empty() {
-                    checkbox(ui, check, state);
+                    checkbox(ui, out.reserved, state);
                 }
-                let x = row_text(
-                    ui,
-                    rect,
-                    rect.left() + 52.0,
-                    title,
-                    theme::semibold(theme::UI_FONT_SIZE),
-                    *theme::TEXT_BRIGHT,
-                );
-                row_text(
-                    ui,
-                    rect,
-                    x + 8.0,
-                    &widgets::pluralize(files.len(), "file", "files"),
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    *theme::TEXT_INFO,
-                );
-                let on_chevron = response
-                    .interact_pointer_pos()
-                    .is_some_and(|pos| pos.x < rect.left() + 28.0);
-                if response.clicked() && on_chevron {
+                if response.clicked() && out.on_chevron() {
                     ui.data_mut(|data| data.insert_temp(group_id, !group_collapsed));
                 } else if response.clicked() && !files.is_empty() {
                     let value = state != Some(true);
@@ -777,43 +689,29 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     continue;
                 }
                 for (path, kind) in files {
-                    let (rect, response) = list_row(ui, selected_row.as_ref() == Some(path));
+                    let name = IdeApp::file_name(path);
+                    let is_included = included(app, path, *kind);
+                    let parent = path
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .map(|p| p.display().to_string());
+                    let out = widgets::tree_row(
+                        ui,
+                        widgets::TreeRow {
+                            depth: 1,
+                            selected: selected_row.as_ref() == Some(path),
+                            reserve: 14.0,
+                            icon: Some((app.file_icon(path), *icons::ICON)),
+                            color: change_color(Some(*kind)),
+                            secondary: parent.as_deref().map(|p| (p, *theme::TEXT_INFO)),
+                            ..widgets::TreeRow::new(&name)
+                        },
+                    );
+                    let (check, response) = (out.reserved, out.response);
                     if response.clicked() {
                         selected_row = Some(path.clone());
                     }
-                    let check = Rect::from_min_size(
-                        egui::pos2(rect.left() + 46.0, rect.center().y - 7.0),
-                        vec2(14.0, 14.0),
-                    );
-                    let is_included = included(app, path, *kind);
                     checkbox(ui, check, Some(is_included));
-                    let name = IdeApp::file_name(path);
-                    let mut x = rect.left() + 68.0;
-                    icons::paint(
-                        ui.painter(),
-                        Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-                        app.file_icon(path),
-                        *icons::ICON,
-                    );
-                    x += 22.0;
-                    x = row_text(
-                        ui,
-                        rect,
-                        x,
-                        &name,
-                        egui::FontId::proportional(theme::UI_FONT_SIZE),
-                        change_color(Some(*kind)),
-                    );
-                    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                        row_text(
-                            ui,
-                            rect,
-                            x + 8.0,
-                            &parent.display().to_string(),
-                            egui::FontId::proportional(theme::UI_FONT_SIZE),
-                            *theme::TEXT_INFO,
-                        );
-                    }
                     let on_check = response
                         .interact_pointer_pos()
                         .is_some_and(|pos| check.expand(4.0).contains(pos));
@@ -827,9 +725,16 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                 }
             }
             if git.changes.is_empty() {
-                ui.add_space(16.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("No changes").color(theme::TEXT_SECONDARY));
+                ui.add_space(theme::layout::SECTION_SPACING);
+                ui.horizontal(|ui| {
+                    ui.add_space(theme::layout::CONTENT_INSET);
+                    widgets::icon_label(
+                        ui,
+                        Icon::Success,
+                        *theme::SUCCESS,
+                        "No changes",
+                        *theme::TEXT_SECONDARY,
+                    );
                 });
             }
         });
@@ -853,7 +758,10 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
     let mut commit_now = false;
     let mut push_after = false;
     egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(10, 6))
+        .inner_margin(egui::Margin::symmetric(
+            theme::layout::CONTENT_INSET as i8,
+            6,
+        ))
         .show(ui, |ui| {
             ui.painter().hline(
                 ui.max_rect().x_range(),
@@ -1030,8 +938,8 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
         crate::navigation_ui::usages_view(app, ui);
         return;
     }
-    ui.horizontal(|ui| {
-        ui.add_space(12.0);
+    widgets::toolbar_row(ui, |ui| {
+        ui.add_space(theme::layout::CONTENT_INSET);
         let input = widgets::search_field(
             ui,
             find_input_id(),
@@ -1101,16 +1009,14 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
         .show_rows(ui, widgets::ROW_HEIGHT, results.len(), |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for result in &results[range] {
-                let (rect, response) = list_row(ui, false);
-                icons::paint(
-                    ui.painter(),
-                    Rect::from_min_size(
-                        egui::pos2(rect.left() + 10.0, rect.center().y - 8.0),
-                        vec2(16.0, 16.0),
-                    ),
-                    app.file_icon(&result.path),
-                    icons::ICON,
+                let out = widgets::tree_row(
+                    ui,
+                    widgets::TreeRow {
+                        icon: Some((app.file_icon(&result.path), *icons::ICON)),
+                        ..widgets::TreeRow::new("")
+                    },
                 );
+                let (rect, response, text_x) = (out.rect, out.response, out.text_start);
                 // The location stays visible at the right; the preview (already
                 // elided around the match by the search engine) is clipped before it.
                 let location = ui
@@ -1123,7 +1029,7 @@ fn find(app: &mut IdeApp, ui: &mut egui::Ui) {
                 ui.painter()
                     .with_clip_rect(rect.with_max_x(location_x - 12.0))
                     .galley(
-                        egui::pos2(rect.left() + 34.0, rect.center().y - galley.size().y / 2.0),
+                        egui::pos2(text_x, rect.center().y - galley.size().y / 2.0),
                         galley,
                         *theme::editor::TEXT,
                     );

@@ -64,6 +64,7 @@ pub mod ids {
     pub const PAIR_BRACKETS: &str = "editor.codeEditing.pairBrackets";
     pub const PAIR_QUOTES: &str = "editor.codeEditing.pairQuotes";
     pub const GRADLE_DISTRIBUTION: &str = "gradle.distribution";
+    pub const GRADLE_BUILD_RUN: &str = "gradle.buildRunUsing";
     pub const GRADLE_OFFLINE: &str = "gradle.offline";
     pub const GRADLE_USER_HOME: &str = "gradle.userHome";
     pub const GRADLE_JVM: &str = "gradle.jvm";
@@ -534,6 +535,15 @@ fn add_definitions(registry: &mut SettingsRegistry) {
         )
         .scope(Scope::Project)
         .description("Wrapper falls back to gradle on PATH when the project has no gradlew"),
+        SettingDef::new(
+            ids::GRADLE_BUILD_RUN,
+            GRADLE,
+            "Build and run using",
+            options(&[("gradle", "Gradle"), ("jetthing", "Jetthing")]),
+            text("gradle"),
+        )
+        .scope(Scope::Project)
+        .description("Gradle runs the full build task; Jetthing only compiles before running"),
         SettingDef::new(ids::GRADLE_OFFLINE, GRADLE, "Offline work", Bool, B(false))
             .scope(Scope::Project)
             .description("Runs Gradle with --offline"),

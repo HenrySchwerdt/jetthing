@@ -43,6 +43,7 @@ impl IdeState {
     }
 
     pub fn start_gradle_sync(&mut self) -> Result<(), String> {
+        self.gradle_changes_pending = false;
         let plan = self.gradle_build().and_then(|build| build.sync_plan());
         self.start_task(plan, "Gradle Sync", TaskKind::Sync)
     }
@@ -171,6 +172,42 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             |state: &IdeState| state.is_gradle_project() && !state.runner.is_running(),
             |state: &mut IdeState, _| {
                 state.start_gradle_sync().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "gradle.loadChanges",
+                "Load Gradle Changes",
+                "Gradle",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| {
+                state.gradle_changes_pending
+                    && state.is_gradle_project()
+                    && !state.runner.is_running()
+            },
+            |state: &mut IdeState, _| {
+                state.start_gradle_sync().map_err(CommandError::Failed)?;
+                Ok(Value::Null)
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "gradle.dismissChanges",
+                "Ignore Gradle Changes",
+                "Gradle",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.gradle_changes_pending,
+            |state: &mut IdeState, _| {
+                state.gradle_changes_pending = false;
                 Ok(Value::Null)
             },
         ))
@@ -341,6 +378,45 @@ fi
             .execute("project.open", &mut reopened, json!({"path": root}))
             .unwrap();
         assert_eq!(reopened.gradle_model, state.gradle_model);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn build_script_changes_offer_load_gradle_changes_and_sync_clears_them() {
+        let root = fixture("autosync");
+        std::fs::write(root.join("gradlew"), "#!/bin/sh\necho ran\n").unwrap();
+        std::process::Command::new("chmod")
+            .args(["+x", "gradlew"])
+            .current_dir(&root)
+            .status()
+            .unwrap();
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        commands
+            .execute("project.open", &mut state, json!({"path": root}))
+            .unwrap();
+        assert!(!commands.is_enabled("gradle.loadChanges", &state));
+        std::fs::write(root.join("gradle.properties"), "org.gradle.daemon=false\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !state.gradle_changes_pending && Instant::now() < deadline {
+            state.poll_files();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            state.gradle_changes_pending,
+            "watcher saw gradle.properties"
+        );
+        assert!(commands.is_enabled("gradle.loadChanges", &state));
+        commands
+            .execute("gradle.loadChanges", &mut state, Value::Null)
+            .unwrap();
+        assert!(!state.gradle_changes_pending);
+        wait(&mut state);
+        state.gradle_changes_pending = true;
+        commands
+            .execute("gradle.dismissChanges", &mut state, Value::Null)
+            .unwrap();
+        assert!(!state.gradle_changes_pending);
         std::fs::remove_dir_all(root).unwrap();
     }
 

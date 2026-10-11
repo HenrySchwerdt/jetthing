@@ -2,7 +2,7 @@
 
 use crate::console_links::{self, LinkTarget};
 use crate::icons::{self, Icon};
-use crate::widgets::{list_row, row_text, tool_window_header};
+use crate::widgets::{self, tool_window_header};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, RichText, vec2};
 use jetthing_core::{BuildSnapshot, BuildTab, ToolWindow};
@@ -15,7 +15,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-const TREE_INDENT: f32 = 18.0;
 const CONSOLE_ROW: f32 = 18.0;
 
 /// Navigation requested from the tree (applied after painting).
@@ -326,58 +325,27 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     TaskKind::Build | TaskKind::Sync => project_name.clone(),
                     _ => run_subject(&project_name, &plan.name),
                 };
-                let (rect, response) = list_row(ui, view.selected == Some(0));
-                let mut x = rect.left() + 10.0;
-                match icon {
-                    Some((icon, color)) => {
-                        icons::paint(
-                            ui.painter(),
-                            egui::Rect::from_min_size(
-                                egui::pos2(x, rect.center().y - 7.0),
-                                vec2(14.0, 14.0),
-                            ),
-                            icon,
-                            color,
-                        );
-                    }
-                    None => {
-                        let spinner = egui::Rect::from_min_size(
-                            egui::pos2(x, rect.center().y - 6.0),
-                            vec2(12.0, 12.0),
-                        );
-                        ui.put(
-                            spinner,
-                            egui::Spinner::new().size(12.0).color(*theme::ACCENT),
-                        );
-                    }
-                }
-                x += 20.0;
-                x = row_text(
+                let title = format!("{subject}:");
+                let detail = match shown.elapsed {
+                    Some(elapsed) => format!("{verb}  {}", format_duration(elapsed)),
+                    None => verb.clone(),
+                };
+                let out = widgets::tree_row(
                     ui,
-                    rect,
-                    x,
-                    &format!("{subject}: "),
-                    theme::semibold(theme::UI_FONT_SIZE),
-                    *theme::TEXT_BRIGHT,
+                    widgets::TreeRow {
+                        selected: view.selected == Some(0),
+                        icon,
+                        reserve_icon: icon.is_none(),
+                        font: theme::semibold(theme::UI_FONT_SIZE),
+                        color: *theme::TEXT_BRIGHT,
+                        secondary: Some((&detail, *theme::TEXT)),
+                        ..widgets::TreeRow::new(&title)
+                    },
                 );
-                x = row_text(
-                    ui,
-                    rect,
-                    x,
-                    &verb,
-                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                    *theme::TEXT,
-                );
-                if let Some(elapsed) = shown.elapsed {
-                    row_text(
-                        ui,
-                        rect,
-                        x + 8.0,
-                        &format_duration(elapsed),
-                        egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                        *theme::TEXT_INFO,
-                    );
+                if icon.is_none() {
+                    spinner(ui, out.icon);
                 }
+                let response = out.response;
                 if response.clicked() {
                     action = Some(Action::Select(0, Some(0)));
                 }
@@ -396,8 +364,6 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                 }
                 for (index, step) in events.steps().iter().enumerate() {
                     let node = 1 + index;
-                    let (rect, response) = list_row(ui, view.selected == Some(node));
-                    let mut x = rect.left() + 10.0 + TREE_INDENT;
                     let (icon, color) = match step.outcome {
                         StepOutcome::Failed => (Some(Icon::Error), *theme::ERROR),
                         StepOutcome::Running => (None, *theme::TEXT),
@@ -410,56 +376,28 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                         }
                         _ => (Some(Icon::Success), *theme::SUCCESS),
                     };
-                    match icon {
-                        Some(icon) => icons::paint(
-                            ui.painter(),
-                            egui::Rect::from_min_size(
-                                egui::pos2(x, rect.center().y - 7.0),
-                                vec2(14.0, 14.0),
-                            ),
-                            icon,
-                            color,
-                        ),
-                        None => {
-                            let spinner = egui::Rect::from_min_size(
-                                egui::pos2(x, rect.center().y - 6.0),
-                                vec2(12.0, 12.0),
-                            );
-                            ui.put(
-                                spinner,
-                                egui::Spinner::new().size(12.0).color(*theme::ACCENT),
-                            );
-                        }
-                    }
-                    x += 20.0;
-                    x = row_text(
-                        ui,
-                        rect,
-                        x,
-                        &step.name,
-                        egui::FontId::proportional(theme::UI_FONT_SIZE),
-                        *theme::TEXT,
-                    );
-                    if let Some(label) = step.outcome.label() {
-                        x = row_text(
-                            ui,
-                            rect,
-                            x + 6.0,
-                            label,
-                            egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                            *theme::TEXT_INFO,
-                        );
-                    }
+                    let mut detail = step.outcome.label().unwrap_or_default().to_owned();
                     if let Some(duration) = step.duration().filter(|d| !d.is_zero()) {
-                        row_text(
-                            ui,
-                            rect,
-                            x + 8.0,
-                            &format_duration(duration),
-                            egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                            *theme::TEXT_INFO,
-                        );
+                        if !detail.is_empty() {
+                            detail.push_str("  ");
+                        }
+                        detail.push_str(&format_duration(duration));
                     }
+                    let out = widgets::tree_row(
+                        ui,
+                        widgets::TreeRow {
+                            depth: 1,
+                            selected: view.selected == Some(node),
+                            icon: icon.map(|icon| (icon, color)),
+                            reserve_icon: icon.is_none(),
+                            secondary: (!detail.is_empty()).then_some((&detail, *theme::TEXT_INFO)),
+                            ..widgets::TreeRow::new(&step.name)
+                        },
+                    );
+                    if icon.is_none() {
+                        spinner(ui, out.icon);
+                    }
+                    let response = out.response;
                     if response.clicked() {
                         action = Some(Action::Select(node, Some(step.console_line)));
                     }
@@ -471,14 +409,13 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     }
                 }
                 if let Some(summary) = events.summary() {
-                    let (rect, _) = list_row(ui, false);
-                    row_text(
+                    widgets::tree_row(
                         ui,
-                        rect,
-                        rect.left() + 10.0 + TREE_INDENT,
-                        summary,
-                        egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                        *theme::TEXT_INFO,
+                        widgets::TreeRow {
+                            depth: 1,
+                            color: *theme::TEXT_INFO,
+                            ..widgets::TreeRow::new(summary)
+                        },
                     );
                 }
             });
@@ -630,34 +567,28 @@ fn message_row(
     location: Option<&str>,
     selected: bool,
 ) -> egui::Response {
-    let (rect, response) = list_row(ui, selected);
-    let mut x = rect.left() + 10.0 + TREE_INDENT * depth as f32;
-    icons::paint(
-        ui.painter(),
-        egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 7.0), vec2(14.0, 14.0)),
-        icon,
-        color,
-    );
-    x += 20.0;
-    x = row_text(
+    let out = widgets::tree_row(
         ui,
-        rect,
-        x,
-        text,
-        egui::FontId::proportional(theme::UI_FONT_SIZE),
-        *theme::TEXT,
+        widgets::TreeRow {
+            depth,
+            selected,
+            icon: Some((icon, color)),
+            secondary: location.map(|location| (location, *theme::TEXT_INFO)),
+            ..widgets::TreeRow::new(text)
+        },
     );
-    if let Some(location) = location {
-        row_text(
-            ui,
-            rect,
-            x + 8.0,
-            location,
-            egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-            *theme::TEXT_INFO,
-        );
-    }
-    response.on_hover_text(text)
+    out.response.on_hover_text(text)
+}
+
+/// Spinner for a running step, centred on the row's icon slot.
+fn spinner(ui: &mut egui::Ui, slot: egui::Rect) {
+    let mut child = ui.new_child(
+        egui::UiBuilder::new().max_rect(egui::Rect::from_center_size(
+            slot.center(),
+            vec2(12.0, 12.0),
+        )),
+    );
+    widgets::busy_spinner(&mut child, 12.0, *theme::ACCENT);
 }
 
 /// Height for the console viewport that holds whole rows only, so a view

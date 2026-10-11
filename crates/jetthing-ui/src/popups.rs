@@ -793,7 +793,9 @@ fn file_structure(
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for (row_index, (depth, item)) in rows.iter().enumerate() {
                     let depth = if query.is_empty() { *depth } else { 0 };
-                    let response = crate::structure_view::row(ui, depth, item, row_index == index);
+                    let response =
+                        crate::structure_view::row(ui, depth, item, row_index == index, None)
+                            .response;
                     if row_index == index {
                         response.scroll_to_me(None);
                     }

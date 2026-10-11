@@ -2,13 +2,11 @@
 //! view switcher in its header.
 
 use crate::{IdeApp, icons, theme, widgets};
-use eframe::egui::{self, Rect, vec2};
+use eframe::egui::{self, vec2};
 use icons::Icon;
 use jetthing_android::view::{NodeKind, ViewNode};
 use serde_json::json;
 use std::collections::BTreeSet;
-
-const INDENT: f32 = 18.0;
 
 #[derive(Default)]
 pub struct AndroidViewState {
@@ -170,44 +168,23 @@ pub fn tree(app: &mut IdeApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.y = 0.0;
             for row in &rows[range] {
                 let selected = app.android_view.selected.as_deref() == Some(row.id.as_str());
-                let (rect, response) = widgets::list_row(ui, selected);
-                let mut x = rect.left() + 12.0 + row.depth as f32 * INDENT;
-                if row.expandable {
-                    icons::paint(
-                        ui.painter(),
-                        Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-                        if row.expanded {
-                            Icon::ChevronDown
+                let response = widgets::tree_row(
+                    ui,
+                    widgets::TreeRow {
+                        depth: row.depth,
+                        expanded: row.expandable.then_some(row.expanded),
+                        selected,
+                        icon: Some((icon_for(row), *icons::ICON)),
+                        font: if row.kind == NodeKind::Module {
+                            theme::semibold(theme::UI_FONT_SIZE)
                         } else {
-                            Icon::ChevronRight
+                            egui::FontId::proportional(theme::UI_FONT_SIZE)
                         },
-                        *theme::TEXT_SECONDARY,
-                    );
-                }
-                x += 16.0;
-                icons::paint(
-                    ui.painter(),
-                    Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), vec2(16.0, 16.0)),
-                    icon_for(row),
-                    *icons::ICON,
-                );
-                x += 22.0;
-                let font = if row.kind == NodeKind::Module {
-                    theme::semibold(theme::UI_FONT_SIZE)
-                } else {
-                    egui::FontId::proportional(theme::UI_FONT_SIZE)
-                };
-                x = widgets::row_text(ui, rect, x, &row.label, font, *theme::TEXT);
-                if let Some(detail) = &row.detail {
-                    widgets::row_text(
-                        ui,
-                        rect,
-                        x + 6.0,
-                        detail,
-                        egui::FontId::proportional(theme::UI_FONT_SIZE),
-                        *theme::TEXT_INFO,
-                    );
-                }
+                        secondary: row.detail.as_deref().map(|d| (d, *theme::TEXT_INFO)),
+                        ..widgets::TreeRow::new(&row.label)
+                    },
+                )
+                .response;
                 if response.clicked() {
                     app.android_view.selected = Some(row.id.clone());
                     if row.expandable {
