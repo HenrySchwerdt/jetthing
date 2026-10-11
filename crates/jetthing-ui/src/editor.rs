@@ -75,6 +75,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
         .frame(island_frame())
         .show(ctx, |ui| {
             let mut body = |app: &mut IdeApp, ui: &mut egui::Ui, strip: Option<&TabStrip>| {
+                let primary = strip.is_none_or(|strip| strip.primary);
                 tabs(app, ui, strip);
                 if app.state.diff_active && app.state.diff.is_some() {
                     crate::diff_ui::show(app, ui);
@@ -129,6 +130,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     ui.max_rect().top() + TAB_BAR_HEIGHT / 2.0 - 12.0,
                 );
                 if let Some(layout) = md_layout
+                    && primary
                     && let Some(picked) =
                         markdown_ui::layout_island(ui.ctx(), toolbar_right, layout)
                 {
@@ -316,6 +318,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 }
                 let selection = app.state.documents[index].selections.primary();
                 if md_layout.is_some()
+                    && primary
                     && !selection.is_caret()
                     && let Some(pos) = app.caret_screen_pos
                     && let Some((command, params)) =
@@ -323,8 +326,10 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                 {
                     requests.push(EditorRequest::Command(command, params));
                 }
-                crate::intentions_ui::lightbulb(app, ui, bulb);
-                crate::ai_inline::paint(app, ui);
+                if primary {
+                    crate::intentions_ui::lightbulb(app, ui, bulb);
+                    crate::ai_inline::paint(app, ui);
+                }
             };
             show_groups(app, ui, &mut body);
         });
