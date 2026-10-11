@@ -3095,6 +3095,7 @@ version = "0.0.5"
 dependencies = [
  "notify",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "walkdir",
 ]
