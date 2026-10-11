@@ -24,10 +24,9 @@ java-gradle sample with a cached Gradle model (`.jetthing/gradle/model.json`).
   Rename, Refactor (Rename File, Move…, Safe Delete…), Delete, Run 'App'
   (`project.runFile`), Open In (Show in File Manager, Terminal), Local History (disabled),
   Git (Show Diff, Add, Unstage), Mark Directory as, Reload from Disk, Compare With HEAD.
-  Entries without a command are hidden. Find Usages (needs a caret), Replace in Files,
-  Reformat Code and Optimize Imports (owned by `claude/refactoring`) are keyed on the
-  keymap's `ACTION_COMMANDS`, so they show up when those commands land: Reformat and
-  Optimize Imports open the file and dispatch the mapped command.
+  Entries without a command are hidden. Find Usages (needs a caret) and Replace in Files stay
+  hidden. Reformat Code and Optimize Imports are keyed on the keymap's `ACTION_COMMANDS`
+  (files only): they open the file and dispatch the mapped command.
 
 ## Screenshots
 

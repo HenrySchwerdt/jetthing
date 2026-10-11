@@ -620,14 +620,21 @@ mod tests {
         }
         assert!(file.contains(&"Refactor ▸".to_owned()), "{file:?}");
         assert!(file.contains(&"Open In ▸".to_owned()), "{file:?}");
-        // Refactoring-owned and unimplemented entries are hidden, not dead.
-        for hidden in [
-            "Find Usages",
-            "Reformat Code",
-            "Optimize Imports",
-            "Analyze ▸",
-        ] {
+        // Unimplemented entries are hidden, not dead; Reformat/Optimize Imports
+        // follow the keymap's command table (files only).
+        for hidden in ["Find Usages", "Analyze ▸"] {
             assert!(!file.contains(&hidden.to_owned()), "{hidden} hidden");
+        }
+        for shown in ["Reformat Code", "Optimize Imports"] {
+            assert_eq!(
+                file.contains(&shown.to_owned()),
+                keybindings::is_implemented(if shown == "Reformat Code" {
+                    "ReformatCode"
+                } else {
+                    "OptimizeImports"
+                }),
+                "{shown}"
+            );
         }
         let dir = model(Target::Tree {
             path: "src".into(),
