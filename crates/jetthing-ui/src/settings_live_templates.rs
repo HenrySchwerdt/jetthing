@@ -3,6 +3,7 @@
 //! text. Edits go through the `template.save` / `template.delete` /
 //! `template.setEnabled` commands, which persist user templates in settings.
 
+use crate::icons::{self, Icon};
 use crate::theme;
 use eframe::egui::{self, RichText};
 use jetthing_templates::{Template, TemplateRegistry, template_key};
@@ -125,9 +126,12 @@ fn group_row(
 ) {
     ui.horizontal(|ui| {
         let collapsed = page.collapsed.contains(&set.group);
-        if ui
-            .small_button(if collapsed { "▸" } else { "▾" })
-            .clicked()
+        let arrow = if collapsed {
+            Icon::ChevronRight
+        } else {
+            Icon::ChevronDown
+        };
+        if icons::button(ui, arrow, if collapsed { "Expand" } else { "Collapse" }).clicked()
             && !page.collapsed.remove(&set.group)
         {
             page.collapsed.insert(set.group.clone());
