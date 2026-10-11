@@ -118,6 +118,13 @@ const APPLICATION_FIELDS: &[Field] = &[
         false,
         true,
     ),
+    field(
+        "jdk",
+        "JDK",
+        "JAVA_HOME of the JDK (empty: the Gradle JDK)",
+        false,
+        true,
+    ),
     field("main_class", "Main class", "com.example.App", false, false),
     PROGRAM_ARGS,
 ];
@@ -806,6 +813,7 @@ mod tests {
         assert!(draft.to_config().unwrap_err().contains("main class"));
         draft.fields = vec![
             ("module", ":app".into()),
+            ("jdk", "/usr/lib/jvm/java-21".into()),
             ("main_class", "com.example.App".into()),
             ("program_arguments", "-v".into()),
         ];
@@ -816,6 +824,7 @@ mod tests {
             config.target,
             RunTarget::Application {
                 module: ":app".into(),
+                jdk: "/usr/lib/jvm/java-21".into(),
                 main_class: "com.example.App".into(),
                 program_arguments: vec!["-v".into()],
             }

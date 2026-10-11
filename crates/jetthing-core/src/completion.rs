@@ -349,8 +349,85 @@ impl IdeState {
     /// document: re-filters, re-queries incomplete lists and opens the popup
     /// automatically on identifier starts and trigger characters.
     pub fn completion_after_typing(&mut self, typed: &str) {
-        let Some(last) = typed.chars().last() else {
+        if typed.is_empty() {
             self.refresh_completion();
+            return;
+        }
+        let Some(document) = self
+            .active_document
+            .and_then(|index| self.documents.get(index))
+        else {
+            return;
+        };
+        let caret = document.selections.primary().head;
+        if self.commits_on_typed(typed) {
+            // The commit character is typed after the item: take it out,
+            // accept the selection and put it back behind the completion.
+            let index = self.active_document.unwrap_or_default();
+            if let Some(document) = self.documents.get_mut(index)
+                && caret >= typed.chars().count()
+                && let start = caret - typed.chars().count()
+                && document.text.edit(start, caret, "").is_ok()
+            {
+                document.selections.set_single(Selection::caret(start));
+                if self.accept_completion(false).is_ok() {
+                    if let Some(document) = self.documents.get_mut(index) {
+                        let at = document.selections.primary().head;
+                        let _ = document.text.edit(at, at, typed);
+                        document
+                            .selections
+                            .set_single(Selection::caret(at + typed.chars().count()));
+                    }
+                    self.sync_active_lsp();
+                    return self.completion_after_typing_resumed(typed);
+                }
+                // Not accepted: restore the typed character.
+                if let Some(document) = self.documents.get_mut(index) {
+                    let _ = document.text.edit(start, start, typed);
+                    document
+                        .selections
+                        .set_single(Selection::caret(start + typed.chars().count()));
+                }
+            }
+        }
+        self.completion_after_typing_resumed(typed);
+    }
+
+    /// Whether `typed` is a commit character of the selected completion.
+    fn commits_on_typed(&self, typed: &str) -> bool {
+        let mut chars = typed.chars();
+        let (Some(c), None) = (chars.next(), chars.next()) else {
+            return false;
+        };
+        if is_identifier_char(c) || c.is_whitespace() {
+            return false;
+        }
+        let Some(session) = self.completion.as_ref() else {
+            return false;
+        };
+        let Some(item) = session.selected_item().filter(|_| !session.waiting) else {
+            return false;
+        };
+        let typed = typed.to_owned();
+        match &item.commit_characters {
+            Some(chars) => chars.contains(&typed),
+            None => {
+                let Some(root) = self
+                    .project
+                    .as_ref()
+                    .map(|project| project.root().to_owned())
+                else {
+                    return false;
+                };
+                self.lsp
+                    .all_commit_characters(&root.join(&session.path))
+                    .contains(&typed)
+            }
+        }
+    }
+
+    fn completion_after_typing_resumed(&mut self, typed: &str) {
+        let Some(last) = typed.chars().last() else {
             return;
         };
         let Some(document) = self

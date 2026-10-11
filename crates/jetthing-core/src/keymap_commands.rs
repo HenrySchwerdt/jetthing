@@ -172,6 +172,7 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     editor("EditorUnSelectWord", "editor.shrinkSelection"),
     editor("CollapseRegion", "editor.collapseRegion"),
     editor("ExpandRegion", "editor.expandRegion"),
+    editor("CollapseSelection", "editor.foldSelection"),
     editor("CollapseAllRegions", "editor.collapseAllRegions"),
     editor("ExpandAllRegions", "editor.expandAllRegions"),
     editor("EditorDuplicate", "editor.duplicate"),
