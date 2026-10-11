@@ -28,6 +28,34 @@ pub struct TextMatch {
     pub highlights: Vec<std::ops::Range<usize>>,
 }
 
+/// One line changed by a replacement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineReplacement {
+    /// 1-based line number.
+    pub line: usize,
+    /// The line before and after, trimmed and elided like search results.
+    pub before: String,
+    pub after: String,
+    /// Occurrences replaced on this line.
+    pub count: usize,
+}
+
+/// The replacement result for one file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileReplacement {
+    /// Project-relative path.
+    pub path: PathBuf,
+    pub lines: Vec<LineReplacement>,
+    /// The complete new file contents (line endings preserved).
+    pub new_contents: String,
+}
+
+impl FileReplacement {
+    pub fn count(&self) -> usize {
+        self.lines.iter().map(|line| line.count).sum()
+    }
+}
+
 /// Longest preview kept per result line (including `…` markers).
 pub const PREVIEW_CHARS: usize = 120;
 /// Characters kept before the first occurrence when a long line is elided.
@@ -61,6 +89,8 @@ pub enum SearchError {
 #[derive(Debug, Clone)]
 pub struct Matcher {
     regex: regex::Regex,
+    /// Plain-text queries replace literally; regex queries expand `$1`/`${name}`.
+    expand_groups: bool,
     include_names: Option<globset::GlobSet>,
     include_paths: Option<globset::GlobSet>,
     exclude_names: Option<globset::GlobSet>,
@@ -120,6 +150,7 @@ impl Matcher {
         };
         Ok(Self {
             regex,
+            expand_groups: options.regex,
             include_names: set(include_names)?,
             include_paths: set(include_paths)?,
             exclude_names: set(exclude_names)?,
@@ -140,6 +171,66 @@ impl Matcher {
             return true;
         }
         hit(&self.include_names, name) || hit(&self.include_paths, relative)
+    }
+
+    /// `line` with every non-empty match replaced, and how many were replaced;
+    /// `None` when nothing matched. Regex queries expand `$1`, `${name}` and `$$`.
+    pub fn replace_line(&self, line: &str, replacement: &str) -> Option<(String, usize)> {
+        let mut out = String::with_capacity(line.len());
+        let mut last = 0;
+        let mut count = 0;
+        for captures in self.regex.captures_iter(line) {
+            let Some(whole) = captures.get(0).filter(|whole| !whole.is_empty()) else {
+                continue;
+            };
+            out.push_str(&line[last..whole.start()]);
+            if self.expand_groups {
+                captures.expand(replacement, &mut out);
+            } else {
+                out.push_str(replacement);
+            }
+            last = whole.end();
+            count += 1;
+        }
+        if count == 0 {
+            return None;
+        }
+        out.push_str(&line[last..]);
+        Some((out, count))
+    }
+
+    /// Replaces matches in `contents` line by line (as search finds them),
+    /// preserving each line's ending. `None` when nothing matched.
+    pub fn replace_contents(
+        &self,
+        path: &Path,
+        contents: &str,
+        replacement: &str,
+    ) -> Option<FileReplacement> {
+        let mut lines = Vec::new();
+        let mut new_contents = String::with_capacity(contents.len());
+        for (index, raw) in contents.split_inclusive('\n').enumerate() {
+            let body = raw.trim_end_matches(['\n', '\r']);
+            let ending = &raw[body.len()..];
+            match self.replace_line(body, replacement) {
+                Some((after, count)) => {
+                    lines.push(LineReplacement {
+                        line: index + 1,
+                        before: elide_around(body.trim(), 0).0,
+                        after: elide_around(after.trim(), 0).0,
+                        count,
+                    });
+                    new_contents.push_str(&after);
+                    new_contents.push_str(ending);
+                }
+                None => new_contents.push_str(raw),
+            }
+        }
+        (!lines.is_empty()).then(|| FileReplacement {
+            path: path.to_owned(),
+            lines,
+            new_contents,
+        })
     }
 
     /// Non-empty matches in `line`, as character ranges.
@@ -352,6 +443,30 @@ impl Drop for SearchService {
     }
 }
 
+/// Computes the replacement for each accepted file of `files` without writing
+/// anything (the preview of Replace in Files). Unreadable, oversized and
+/// non-UTF-8 files are skipped.
+pub fn plan_replacements(
+    root: &Path,
+    files: &[PathBuf],
+    matcher: &Matcher,
+    replacement: &str,
+) -> Vec<FileReplacement> {
+    files
+        .iter()
+        .filter(|relative| matcher.accepts(relative))
+        .filter_map(|relative| {
+            let path = root.join(relative);
+            let metadata = fs::metadata(&path).ok()?;
+            if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+                return None;
+            }
+            let contents = fs::read_to_string(path).ok()?;
+            matcher.replace_contents(relative, &contents, replacement)
+        })
+        .collect()
+}
+
 pub fn searchable_paths(root: &Path, paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
     paths
         .into_iter()
@@ -407,6 +522,48 @@ mod tests {
 
     fn matcher(query: &str, options: SearchOptions) -> Matcher {
         Matcher::new(query, &options).unwrap()
+    }
+
+    #[test]
+    fn replacements_expand_groups_only_in_regex_mode_and_keep_line_endings() {
+        let regex = matcher(
+            r"let (\w+) = (\d+)",
+            SearchOptions {
+                regex: true,
+                match_case: true,
+                ..Default::default()
+            },
+        );
+        let plan = regex
+            .replace_contents(
+                Path::new("a.kt"),
+                "let a = 1;\r\nkeep\r\nlet b = 2; let c = 3;",
+                "val $1: Int = $2",
+            )
+            .unwrap();
+        assert_eq!(
+            plan.new_contents,
+            "val a: Int = 1;\r\nkeep\r\nval b: Int = 2; val c: Int = 3;"
+        );
+        assert_eq!(plan.count(), 3);
+        assert_eq!(plan.lines[1].line, 3);
+        assert_eq!(plan.lines[0].before, "let a = 1;");
+        assert_eq!(plan.lines[0].after, "val a: Int = 1;");
+        let literal = matcher("a.b", SearchOptions::default());
+        let (text, count) = literal.replace_line("a.b axb", "$1").unwrap();
+        assert_eq!((text.as_str(), count), ("$1 axb", 1), "literal, no groups");
+        assert!(literal.replace_line("nothing", "x").is_none());
+        let empty = matcher(
+            "x*",
+            SearchOptions {
+                regex: true,
+                ..Default::default()
+            },
+        );
+        assert!(
+            empty.replace_line("abc", "-").is_none(),
+            "empty matches skipped"
+        );
     }
 
     #[test]

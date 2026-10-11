@@ -579,6 +579,7 @@ pub fn request_label(ui: &mut Ui, request: &nexus_http_core::model::Request, wid
         Protocol::Http => method_label(ui, &request.method, width),
         Protocol::WebSocket => right_label(ui, "WS", pal.syntax_number, width),
         Protocol::Sse => right_label(ui, "SSE", pal.info, width),
+        Protocol::Grpc => right_label(ui, "gRPC", pal.success, width),
     }
 }
 
