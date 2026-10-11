@@ -44,10 +44,12 @@ mod gutter_commands;
 pub mod keymap_commands;
 mod line_changes;
 mod lsp_commands;
+mod markdown_commands;
 mod navigation;
 mod new_class;
 mod plugin_host;
 mod problems;
+pub mod quick_nav;
 pub use new_class::{JavaKind, KotlinKind};
 mod project_commands;
 mod quick_doc;
@@ -168,6 +170,8 @@ pub struct IdeState {
     pub files: Vec<FileEntry>,
     pub documents: Vec<Document>,
     pub active_document: Option<usize>,
+    /// Markdown editor layout per file (Editor / Split / Preview).
+    pub markdown_layouts: std::collections::HashMap<std::path::PathBuf, jetthing_markdown::Layout>,
     pub plugin_host: PluginHostState,
     /// Pinned tabs, closed-tab history and the tab limit.
     pub tabs: tabs::EditorTabs,
@@ -220,6 +224,8 @@ pub struct IdeState {
     pub detected_build: Option<DetectedBuild>,
     /// Navigation history and pending/finished navigation requests.
     pub navigation: NavigationState,
+    /// Search Everywhere / Recent Locations / Switcher state.
+    pub quick_nav: quick_nav::QuickNavState,
     /// Quick fixes and intentions at the caret (Alt+Enter).
     pub code_actions: CodeActionState,
     /// Rename and the other server-backed refactorings.
@@ -333,6 +339,7 @@ impl IdeState {
         self.refactor = RefactorState::default();
         self.expanded_dirs.clear();
         self.recent_files.clear();
+        self.quick_nav = quick_nav::QuickNavState::default();
         self.tool_windows = ToolWindowLayout::default();
         self.tool_windows.show(ToolWindow::Project);
         self.status = format!("Opened {}", project.root().display());
@@ -871,6 +878,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     bazel_commands::register(&mut registry);
     build_commands::register(&mut registry);
     editor_commands::register(&mut registry);
+    markdown_commands::register(&mut registry);
     disk_sync::register(&mut registry);
     tabs::register(&mut registry);
     gradle_commands::register(&mut registry);
@@ -883,6 +891,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     diagnostic_commands::register(&mut registry);
     terminal_commands::register(&mut registry);
     settings_commands::register(&mut registry);
+    quick_nav::register(&mut registry);
     keymap_commands::register(&mut registry);
     first_run::register(&mut registry);
     lsp_commands::register(&mut registry);

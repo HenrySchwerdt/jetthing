@@ -16,6 +16,7 @@ pub mod markup;
 pub mod registry;
 pub mod snippet;
 pub mod transport;
+pub mod workspace_symbol;
 
 pub use client::{
     ApplyEditRequest, LaunchConfig, LspDiagnostic, LspResponse, LspService, ResponseError,
@@ -31,6 +32,7 @@ pub use registry::{
     LanguageServerProvider, LaunchContext, LspSettings, ProgramResolver, ResolvedProgram,
     ServerRegistry, ServerSettings, ServerSpec,
 };
+pub use workspace_symbol::{WorkspaceSymbolHit, WorkspaceSymbolRequestHandle};
 
 use std::path::PathBuf;
 use thiserror::Error;

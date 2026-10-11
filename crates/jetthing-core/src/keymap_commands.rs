@@ -63,6 +63,14 @@ const fn editor(action: &'static str, command: &'static str) -> ActionCommand {
 /// listed here are shown in the keymap as unbound ("not available in Jetthing").
 pub const ACTION_COMMANDS: &[ActionCommand] = &[
     global("ShowSettings", "settings.open", "{}"),
+    global("SearchEverywhere", "navigate.searchEverywhere", "{}"),
+    global("GotoAction", "navigate.findAction", "{}"),
+    global("GotoClass", "navigate.gotoClass", "{}"),
+    global("GotoFile", "navigate.gotoFile", "{}"),
+    global("GotoSymbol", "navigate.gotoSymbol", "{}"),
+    global("RecentFiles", "navigate.recentFiles", "{}"),
+    global("RecentLocations", "navigate.recentLocations", "{}"),
+    global("Switcher", "navigate.switcher", "{}"),
     global("CloseContent", "editor.close", "{}"),
     global("CompileDirty", "build.project", "{}"),
     global("Run", "run.project", "{}"),
@@ -171,6 +179,8 @@ pub const ACTION_COMMANDS: &[ActionCommand] = &[
     editor("EditorToggleColumnMode", "editor.toggleColumnMode"),
     editor("EditorJoinLines", "editor.joinLines"),
     editor("EditorToggleCase", "editor.toggleCase"),
+    editor("Markdown.Styling.CreateLink", "markdown.link"),
+    menu("Markdown.InsertEmptyTable", "markdown.insertTable"),
     editor("EditorSplitLine", "editor.splitLine"),
     editor("EditorStartNewLineBefore", "editor.startNewLineBefore"),
     menu("$Copy", "editor.copy"),
