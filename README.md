@@ -40,6 +40,7 @@ Download from the [latest release](https://github.com/HenrySchwerdt/jetthing/rel
 | Windows | `jetthing-<version>-windows-x86_64.msi` | `….zip` |
 | macOS (Apple silicon / Intel) | `jetthing-<version>-macos-aarch64.dmg` / `…-x86_64.dmg` | `….tar.gz` |
 | Linux | `jetthing_<version>_amd64.deb` (`sudo apt install ./jetthing_*.deb`) | `….tar.gz` with `.desktop` file |
+| Linux (any distribution) | `jetthing-<version>-linux-x86_64.AppImage` (`chmod +x`, run) | |
 
 - **Windows:** run the MSI. It installs to Program Files, adds a Start Menu entry and
   puts `jetthing` on `PATH`. Uninstall it from **Installed apps**.
@@ -47,6 +48,9 @@ Download from the [latest release](https://github.com/HenrySchwerdt/jetthing/rel
   Bin.
 - **Linux:** install the `.deb` with the command in the table. Uninstall it with
   `sudo apt remove jetthing`.
+
+Homebrew cask, winget and Scoop manifests are generated with every release build
+(`cargo xtask manifests`); see [`docs/release.md`](docs/release.md#package-managers).
 
 Builds are not signed by default, so Windows SmartScreen and macOS Gatekeeper warn on
 first launch. [`docs/release.md`](docs/release.md) explains how to proceed, and covers

@@ -535,6 +535,7 @@ impl IdeState {
         self.plugin_host.tool_window = Some((plugin.into(), id.into()));
         // Plugin tool windows share the right anchor with the built-in ones.
         self.tool_windows.hide(crate::ToolWindow::DeviceManager);
+        self.tool_windows.hide(crate::ToolWindow::RunningDevices);
     }
 
     /// Toggles a contributed tool window; returns whether it is visible.
@@ -552,6 +553,7 @@ impl IdeState {
         } else {
             self.plugin_host.tool_window = Some(target);
             self.tool_windows.hide(crate::ToolWindow::DeviceManager);
+            self.tool_windows.hide(crate::ToolWindow::RunningDevices);
             Ok(true)
         }
     }

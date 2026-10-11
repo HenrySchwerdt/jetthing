@@ -35,7 +35,7 @@ impl IdeState {
     }
 
     /// Opens `def` and puts the caret at the start of its line.
-    fn open_resource(&mut self, def: &ResourceDef) -> Result<(), String> {
+    pub(crate) fn open_resource(&mut self, def: &ResourceDef) -> Result<(), String> {
         self.open_file(&def.path)?;
         self.edit_active(|d| {
             let line = (def.line - 1).min(d.text.len_lines().saturating_sub(1));
