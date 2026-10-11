@@ -10,6 +10,8 @@ use serde_json::{Value, json};
 pub struct MergedManifestView {
     pub open: bool,
     pub title: String,
+    /// Gradle task that produces the blame report, e.g. `:app:assembleDebug`.
+    pub build_task: Option<String>,
     pub result: Option<Result<MergedManifest, String>>,
 }
 
@@ -32,6 +34,12 @@ impl IdeState {
             .ok_or("No build variant.")?;
         let view = &mut self.android.merged_manifest;
         view.title = format!("Merged Manifest — {gradle_path} ({variant})");
+        let mut capitalised = variant.chars();
+        let capitalised: String = capitalised
+            .next()
+            .map(|c| c.to_uppercase().chain(capitalised).collect())
+            .unwrap_or_default();
+        view.build_task = Some(format!("{gradle_path}:assemble{capitalised}"));
         view.result = Some(MergedManifest::load(&module_dir, &variant));
         view.open = true;
         Ok(())
@@ -66,6 +74,22 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                     Some(Err(error)) => Err(CommandError::Failed(error.clone())),
                     None => Ok(Value::Null),
                 }
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "android.manifest.text",
+                "Show Manifest Text",
+                "Android",
+                None,
+                "{}",
+            ),
+            |state: &IdeState| state.android.merged_manifest.open,
+            |state: &mut IdeState, _| {
+                state.android.merged_manifest.open = false;
+                Ok(Value::Null)
             },
         ))
         .expect("unique built-in id");
@@ -104,6 +128,10 @@ mod tests {
             state.android.merged_manifest.open,
             "the view explains the missing build"
         );
+        assert_eq!(
+            state.android.merged_manifest.build_task.as_deref(),
+            Some(":app:assembleDebug")
+        );
         write(
             "app/build/intermediates/manifest_merge_blame_file/debug/processDebugMainManifest/manifest-merger-blame-debug-report.txt",
             "1<manifest package=\"a.b\">\n2    <application />\n2-->/w/app/src/main/AndroidManifest.xml:2:5-20\n3</manifest>\n",
@@ -119,5 +147,17 @@ mod tests {
             "Merged Manifest — :app (debug)"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn text_command_returns_to_the_text_tab() {
+        let commands = built_in_commands();
+        let mut state = IdeState::default();
+        assert!(!commands.is_enabled("android.manifest.text", &state));
+        state.android.merged_manifest.open = true;
+        commands
+            .execute("android.manifest.text", &mut state, json!({}))
+            .unwrap();
+        assert!(!state.android.merged_manifest.open);
     }
 }

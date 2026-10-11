@@ -92,6 +92,26 @@ pub fn plugin_dirs(project: Option<&Path>) -> Vec<(&'static str, PathBuf)> {
     dirs
 }
 
+/// Local plugin registries listed by the Marketplace tab, in priority order:
+/// `JETTHING_REGISTRY_DIR`, `registry/` next to the executable and the per-user
+/// `registry` directory. Each holds `.jtplugin` archives.
+pub fn plugin_registry_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(dir) = std::env::var_os("JETTHING_REGISTRY_DIR").filter(|v| !v.is_empty()) {
+        dirs.push(PathBuf::from(dir));
+    }
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("registry")))
+    {
+        dirs.push(dir);
+    }
+    if let Some(dir) = user_config_dir() {
+        dirs.push(dir.join("registry"));
+    }
+    dirs
+}
+
 struct HostAdapter<'a> {
     state: &'a mut IdeState,
     id: String,

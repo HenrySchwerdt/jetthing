@@ -1,0 +1,63 @@
+{
+  "id": "13",
+  "title": "Diff viewer with chunk controls (two changes)",
+  "reference": "reference/intellij-community/java-gradle/13-diff.png",
+  "fixture": "java-gradle",
+  "open": [
+    "src/main/java/com/example/App.java"
+  ],
+  "steps": [
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "click",
+      "x": 673,
+      "y": 411
+    },
+    {
+      "op": "click",
+      "x": 1396,
+      "y": 716
+    },
+    {
+      "op": "click",
+      "x": 1357,
+      "y": 107
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "appendFile",
+      "path": "src/main/java/com/example/App.java",
+      "contents": "// changed outside the IDE\n"
+    },
+    {
+      "op": "execute",
+      "command": "git.refresh"
+    },
+    {
+      "op": "execute",
+      "command": "git.showDiff",
+      "args": {
+        "path": "src/main/java/com/example/App.java"
+      }
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "assert",
+      "pointer": "/status",
+      "contains": "1 difference"
+    },
+    {
+      "op": "screenshot",
+      "name": "13-diff.png"
+    }
+  ]
+}
