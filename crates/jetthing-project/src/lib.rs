@@ -343,10 +343,13 @@ mod tests {
         fs::write(dir.join(".classpath"), "x").unwrap();
         fs::write(dir.join("Main.java"), "x").unwrap();
         let names = |p: &Project| -> Vec<String> {
-            p.entries(100)
+            let mut names: Vec<String> = p
+                .entries(100)
                 .iter()
                 .map(|e| e.relative_path.display().to_string())
-                .collect()
+                .collect();
+            names.sort();
+            names
         };
         let project = Project::open(&dir).unwrap();
         assert!(
