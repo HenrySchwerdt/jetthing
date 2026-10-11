@@ -176,6 +176,73 @@ impl AndroidState {
         self.devices.avds = home.as_deref().map(list_avds).unwrap_or_default();
     }
 
+    /// `avdmanager create avd`; `image` is a `system-images;…` package path.
+    pub fn create_avd(
+        &mut self,
+        name: &str,
+        image: &str,
+        device: Option<&str>,
+    ) -> Result<(), String> {
+        let valid = |s: &str| {
+            !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ';' | ' '))
+        };
+        if !valid(name) || name.contains(' ') || name.contains(';') {
+            return Err("AVD name may only contain letters, digits, '_', '-' and '.'".into());
+        }
+        if !valid(image) || !image.starts_with("system-images;") {
+            return Err("System image must be a system-images;android-NN;… package path".into());
+        }
+        let avdmanager = self
+            .android_sdk_tool("avdmanager")
+            .ok_or("avdmanager not found. Install it with sdkmanager \"cmdline-tools;latest\".")?;
+        let mut command = std::process::Command::new(&avdmanager);
+        command
+            .args(["create", "avd", "--force", "-n", name, "-k", image])
+            .stdin(std::process::Stdio::null());
+        if let Some(device) = device.filter(|d| !d.is_empty()) {
+            command.args(["-d", device]);
+        }
+        let output = command
+            .output()
+            .map_err(|e| format!("cannot run {}: {e}", avdmanager.display()))?;
+        if !output.status.success() {
+            let text = String::from_utf8_lossy(&output.stderr);
+            let text = if text.trim().is_empty() {
+                String::from_utf8_lossy(&output.stdout)
+            } else {
+                text
+            };
+            return Err(format!("avdmanager failed: {}", text.trim()));
+        }
+        self.refresh_avds();
+        Ok(())
+    }
+
+    /// `adb pair <host:port> <code>`; returns adb's confirmation line.
+    pub fn pair_device(&mut self, address: &str, code: &str) -> Result<String, String> {
+        let valid_address = address
+            .rsplit_once(':')
+            .is_some_and(|(host, port)| !host.is_empty() && port.parse::<u16>().is_ok());
+        if !valid_address || address.chars().any(char::is_whitespace) {
+            return Err("Enter the pairing address as host:port, e.g. 192.168.1.20:37123".into());
+        }
+        if code.is_empty() || !code.chars().all(|c| c.is_ascii_digit()) {
+            return Err("The pairing code is the 6 digits shown on the device".into());
+        }
+        let adb = self.adb()?;
+        let output = adb
+            .run(&["pair", address, code])
+            .map_err(|e| e.to_string())?;
+        let _ = self.ensure_device_tracking();
+        Ok(output.trim().to_owned())
+    }
+
+    fn android_sdk_tool(&self, name: &str) -> Option<std::path::PathBuf> {
+        self.sdk.as_ref()?.sdk.as_ref()?.tool(name)
+    }
+
     pub fn start_emulator(&mut self, avd: &str) -> Result<(), String> {
         if self.devices.avds.is_empty() {
             self.refresh_avds();
@@ -225,7 +292,8 @@ impl IdeState {
         let devices = self.android.devices.poll();
         let logcat = self.android.logcat.poll();
         let deploy = self.poll_deploy();
-        devices || logcat || deploy
+        let sdk_repo = self.poll_sdk_repo();
+        devices || logcat || deploy || sdk_repo
     }
 }
 
@@ -335,6 +403,49 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
             },
         ))
         .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "android.avd.create",
+                "Create Virtual Device",
+                "Android",
+                None,
+                r#"{"name":"string","systemImage":"string","device":"string?"}"#,
+            ),
+            |_| true,
+            |state: &mut IdeState, params| {
+                let name = string_param(&params, "name")?;
+                let image = string_param(&params, "systemImage")?;
+                let device = params.get("device").and_then(Value::as_str);
+                state
+                    .android
+                    .create_avd(&name, &image, device)
+                    .map_err(CommandError::Failed)?;
+                Ok(json!({"name": name}))
+            },
+        ))
+        .expect("unique built-in id");
+    registry
+        .register(Command::new(
+            spec(
+                "android.devices.pair",
+                "Pair Devices Using Wi-Fi",
+                "Android",
+                None,
+                r#"{"address":"string","code":"string"}"#,
+            ),
+            |_| true,
+            |state: &mut IdeState, params| {
+                let address = string_param(&params, "address")?;
+                let code = string_param(&params, "code")?;
+                let message = state
+                    .android
+                    .pair_device(&address, &code)
+                    .map_err(CommandError::Failed)?;
+                Ok(json!({"message": message}))
+            },
+        ))
+        .expect("unique built-in id");
     for (id, label) in [
         ("android.emulator.start", "Start Emulator"),
         ("android.emulator.stop", "Stop Emulator"),
@@ -356,6 +467,47 @@ pub(crate) fn register(registry: &mut CommandRegistry<IdeState>) {
                 },
             ))
             .expect("unique built-in id");
+    }
+}
+
+#[cfg(test)]
+mod create_pair_tests {
+    use crate::{IdeState, built_in_commands};
+    use serde_json::json;
+
+    #[test]
+    fn create_and_pair_validate_input() {
+        let registry = built_in_commands();
+        let mut state = IdeState::default();
+        for params in [
+            json!({"name": "bad name", "systemImage": "system-images;android-35;google_apis;x86_64"}),
+            json!({"name": "ok", "systemImage": "platforms;android-35"}),
+            json!({"name": "ok", "systemImage": "system-images;android-35;google_apis;x86_64"}),
+        ] {
+            let error = registry
+                .execute("android.avd.create", &mut state, params)
+                .unwrap_err()
+                .to_string();
+            assert!(!error.is_empty());
+        }
+        let error = registry
+            .execute(
+                "android.devices.pair",
+                &mut state,
+                json!({"address": "nonsense", "code": "123456"}),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("host:port"), "{error}");
+        let error = registry
+            .execute(
+                "android.devices.pair",
+                &mut state,
+                json!({"address": "10.0.0.2:4000", "code": "12ab"}),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("6 digits"), "{error}");
     }
 }
 

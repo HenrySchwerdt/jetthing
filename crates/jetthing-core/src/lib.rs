@@ -23,6 +23,7 @@ mod android_devices;
 mod android_logcat;
 mod android_manifest;
 mod android_resources;
+mod android_sdk_repo;
 mod android_variants;
 mod annotations;
 mod bazel_commands;
@@ -910,6 +911,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     android_resources::register(&mut registry);
     android_manifest::register(&mut registry);
     android_logcat::register(&mut registry);
+    android_sdk_repo::register(&mut registry);
     bazel_commands::register(&mut registry);
     build_commands::register(&mut registry);
     debug_commands::register(&mut registry);

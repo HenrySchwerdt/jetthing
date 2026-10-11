@@ -6,14 +6,17 @@
 
 use crate::{IdeApp, theme};
 use eframe::egui::{self, RichText, vec2};
-use jetthing_android::{AndroidSdk, PackageCategory, SdkPackage};
+use jetthing_android::sdk_repo::{DEFAULT_UPDATE_SITES, RemotePackage, image_compatible};
+use jetthing_android::{AndroidSdk, PackageCategory, SdkPackage, api_release_name};
 use serde_json::json;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
     #[default]
     Platforms,
     Tools,
+    UpdateSites,
 }
 
 /// View state of the page; the SDK itself lives in `IdeState::android`.
@@ -24,7 +27,33 @@ pub struct SdkPage {
     location_edit: Option<String>,
     error: Option<String>,
     show_details: bool,
+    /// Obsolete packages are hidden unless this is set ("Hide obsolete packages" off).
     show_obsolete: bool,
+    /// Incompatible system images are hidden unless this is set.
+    show_incompatible: bool,
+    /// Whether the repository listing was requested for this opening.
+    requested: bool,
+    /// Checkbox changes not yet applied: package path → wanted installed state.
+    pending: BTreeMap<String, bool>,
+}
+
+/// Install state of a table row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Status {
+    #[default]
+    Installed,
+    Partial,
+    NotInstalled,
+}
+
+impl Status {
+    fn label(self) -> &'static str {
+        match self {
+            Status::Installed => "Installed",
+            Status::Partial => "Partially installed",
+            Status::NotInstalled => "Not installed",
+        }
+    }
 }
 
 /// One table row.
@@ -34,10 +63,15 @@ pub struct Row {
     pub api_level: String,
     pub revision: String,
     pub detail: Option<String>,
+    /// `sdkmanager` path the checkbox installs or uninstalls.
+    pub path: String,
+    pub status: Status,
 }
 
 fn row(package: &SdkPackage, name: String, details: bool) -> Row {
     Row {
+        path: package.path.clone(),
+        status: Status::Installed,
         name,
         api_level: package.api_level.clone().unwrap_or_default(),
         revision: package.revision.clone(),
@@ -95,6 +129,173 @@ pub fn tool_rows(sdk: &AndroidSdk, details: bool, obsolete: bool) -> Vec<Row> {
     rows
 }
 
+fn numeric_api(api: &str) -> (u32, String) {
+    let major = api
+        .split(['.', '-'])
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    (major, api.to_owned())
+}
+
+fn remote_visible(p: &RemotePackage, show_obsolete: bool, show_incompatible: bool) -> bool {
+    (show_obsolete || !p.obsolete || p.installed)
+        && (show_incompatible
+            || !p.is_system_image()
+            || p.installed
+            || image_compatible(&p.path, std::env::consts::ARCH))
+}
+
+/// Rows of "SDK Platforms" from the repository listing: one per API level
+/// (status derived from its components), or every component with details.
+pub fn remote_platform_rows(
+    packages: &[RemotePackage],
+    details: bool,
+    show_obsolete: bool,
+    show_incompatible: bool,
+) -> Vec<Row> {
+    let is_platform_part = |p: &&RemotePackage| {
+        ["platforms;", "system-images;", "sources;"]
+            .iter()
+            .any(|prefix| p.path.starts_with(prefix))
+    };
+    let parts: Vec<&RemotePackage> = packages
+        .iter()
+        .filter(is_platform_part)
+        .filter(|p| remote_visible(p, show_obsolete, show_incompatible))
+        .collect();
+    let mut rows: Vec<Row> = if details {
+        parts
+            .iter()
+            .map(|p| Row {
+                name: p.description.clone(),
+                api_level: p.api_level().unwrap_or_default(),
+                revision: p.version.clone(),
+                detail: Some(p.path.clone()),
+                path: p.path.clone(),
+                status: if p.installed {
+                    Status::Installed
+                } else {
+                    Status::NotInstalled
+                },
+            })
+            .collect()
+    } else {
+        parts
+            .iter()
+            .filter(|p| p.path.starts_with("platforms;"))
+            .map(|p| {
+                let api = p.api_level().unwrap_or_default();
+                let components_installed = parts
+                    .iter()
+                    .any(|c| c.installed && c.api_level().as_deref() == Some(api.as_str()));
+                let status = match (p.installed, components_installed) {
+                    (true, _) => Status::Installed,
+                    (false, true) => Status::Partial,
+                    (false, false) => Status::NotInstalled,
+                };
+                let name = api
+                    .split(['.', '-'])
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .and_then(api_release_name)
+                    .unwrap_or_else(|| p.description.clone());
+                Row {
+                    name,
+                    api_level: api,
+                    revision: p.version.clone(),
+                    detail: None,
+                    path: p.path.clone(),
+                    status,
+                }
+            })
+            .collect()
+    };
+    rows.sort_by(|a, b| {
+        numeric_api(&b.api_level)
+            .cmp(&numeric_api(&a.api_level))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    rows
+}
+
+/// Rows of "SDK Tools" from the repository listing: newest package of each
+/// kind, or every version with details.
+pub fn remote_tool_rows(
+    packages: &[RemotePackage],
+    details: bool,
+    show_obsolete: bool,
+) -> Vec<Row> {
+    let tools = packages
+        .iter()
+        .filter(|p| {
+            !["platforms;", "system-images;", "sources;"]
+                .iter()
+                .any(|prefix| p.path.starts_with(prefix))
+        })
+        .filter(|p| remote_visible(p, show_obsolete, true));
+    let status = |installed| {
+        if installed {
+            Status::Installed
+        } else {
+            Status::NotInstalled
+        }
+    };
+    if details {
+        return tools
+            .map(|p| Row {
+                name: p.description.clone(),
+                api_level: String::new(),
+                revision: p.version.clone(),
+                detail: Some(p.path.clone()),
+                path: p.path.clone(),
+                status: status(p.installed),
+            })
+            .collect();
+    }
+    let mut rows: Vec<Row> = Vec::new();
+    let mut kinds: Vec<(String, bool)> = Vec::new();
+    for p in tools {
+        let kind = p.path.split(';').next().unwrap_or_default().to_owned();
+        if let Some(at) = kinds.iter().position(|(k, _)| *k == kind) {
+            // Listing order is ascending: keep the newest as the row, and
+            // report the group installed when any member is.
+            kinds[at].1 |= p.installed;
+            rows[at].status = status(kinds[at].1);
+            continue;
+        }
+        kinds.push((kind.clone(), p.installed));
+        let name = match kind.as_str() {
+            "build-tools" => "Android SDK Build-Tools".to_owned(),
+            "cmdline-tools" => "Android SDK Command-line Tools".to_owned(),
+            "ndk" => "NDK (Side by side)".to_owned(),
+            "cmake" => "CMake".to_owned(),
+            _ => p.description.clone(),
+        };
+        rows.push(Row {
+            name,
+            api_level: String::new(),
+            revision: p.version.clone(),
+            detail: None,
+            path: p.path.clone(),
+            status: status(p.installed),
+        });
+    }
+    // Newest package of a group: later listing entries win the revision/path.
+    for p in packages {
+        let kind = p.path.split(';').next().unwrap_or_default();
+        if let Some(at) = kinds.iter().position(|(k, _)| k == kind)
+            && p.path.contains(';')
+            && remote_visible(p, show_obsolete, true)
+            && !p.path.starts_with("platforms;")
+        {
+            rows[at].revision = p.version.clone();
+            rows[at].path = p.path.clone();
+        }
+    }
+    rows
+}
+
 const NAME_X: f32 = 32.0;
 
 pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
@@ -103,6 +304,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     }
     let mut close = false;
     let mut apply = false;
+    let mut apply_packages = false;
     let screen = ctx.content_rect();
     let size = vec2(
         (screen.width() - 80.0).clamp(480.0, 980.0),
@@ -185,7 +387,11 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                     }
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        for (tab, label) in [(Tab::Platforms, "SDK Platforms"), (Tab::Tools, "SDK Tools")] {
+                        for (tab, label) in [
+                            (Tab::Platforms, "SDK Platforms"),
+                            (Tab::Tools, "SDK Tools"),
+                            (Tab::UpdateSites, "SDK Update Sites"),
+                        ] {
                             let selected = page.tab == tab;
                             let button = egui::Button::new(label)
                                 .fill(if selected { *theme::SELECTION } else { egui::Color32::TRANSPARENT })
@@ -205,14 +411,28 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                             "Each Android SDK Platform package includes the Android platform and sources pertaining to an API level by default. Check \"Show package details\" to display individual SDK components."
                         }
                         Tab::Tools => {
-                            "Below are the installed SDK developer tools. Check \"Show package details\" to display individual versions. Install or update packages with sdkmanager."
+                            "Below are the available SDK developer tools. Once installed, the IDE will notify you when there are updates. Check \"Show package details\" to display available versions of an SDK Tool."
+                        }
+                        Tab::UpdateSites => {
+                            "The repository channels sdkmanager reads packages from. These are the default Google channels; sdkmanager manages custom sites itself."
                         }
                     };
                     ui.label(RichText::new(description).color(theme::TEXT_SECONDARY));
                     ui.add_space(8.0);
                     let footer_height = 76.0;
                     let table_height = (ui.available_height() - footer_height).max(80.0);
+                    let remote = &app.state.android.sdk_repo;
                     let rows = match (sdk, page.tab) {
+                        (_, Tab::UpdateSites) => Vec::new(),
+                        (_, Tab::Platforms) if remote.loaded => remote_platform_rows(
+                            &remote.packages,
+                            page.show_details,
+                            page.show_obsolete,
+                            page.show_incompatible,
+                        ),
+                        (_, Tab::Tools) if remote.loaded => {
+                            remote_tool_rows(&remote.packages, page.show_details, page.show_obsolete)
+                        }
                         (Some(sdk), Tab::Platforms) => {
                             platform_rows(sdk, page.show_details, page.show_obsolete)
                         }
@@ -221,28 +441,66 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                         }
                         (None, _) => Vec::new(),
                     };
-                    table(ui, page.tab, &rows, table_height);
+                    if page.tab == Tab::UpdateSites {
+                        update_sites_table(ui, table_height);
+                    } else {
+                        table(ui, page.tab, &rows, table_height, &mut page.pending);
+                    }
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.checkbox(&mut page.show_details, "Show package details");
                             ui.add_space(12.0);
-                            ui.checkbox(&mut page.show_obsolete, "Show obsolete packages");
+                            let mut hide_obsolete = !page.show_obsolete;
+                            if ui.checkbox(&mut hide_obsolete, "Hide obsolete packages").changed() {
+                                page.show_obsolete = !hide_obsolete;
+                            }
+                            ui.add_space(12.0);
+                            let mut hide_incompatible = !page.show_incompatible;
+                            if ui
+                                .checkbox(&mut hide_incompatible, "Hide incompatible system images")
+                                .changed()
+                            {
+                                page.show_incompatible = !hide_incompatible;
+                            }
                         });
                     });
                     ui.add_space(8.0);
                     ui.separator();
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new("Packages are installed with sdkmanager; this page lists what is installed.")
-                                .color(theme::TEXT_INFO),
-                        );
+                        let repo = &app.state.android.sdk_repo;
+                        let status = match (&repo.progress, &repo.result) {
+                            (Some(progress), _) => RichText::new(progress).color(theme::TEXT_INFO),
+                            (None, Some(Err(error))) => RichText::new(error).color(theme::ERROR),
+                            (None, Some(Ok(message))) => RichText::new(message).color(theme::TEXT_INFO),
+                            (None, None) => RichText::new(
+                                "Check packages and press Apply to install or uninstall them with sdkmanager.",
+                            )
+                            .color(theme::TEXT_INFO),
+                        };
+                        if repo.is_busy() {
+                            ui.add(egui::Spinner::new().size(12.0));
+                        }
+                        ui.label(status);
+                        let busy = repo.is_busy();
+                        let changes = page.pending.len();
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
-                                .add_enabled(page.location_edit.is_some(), egui::Button::new("Apply"))
+                                .add_enabled(
+                                    page.location_edit.is_some() || (changes > 0 && !busy),
+                                    egui::Button::new("Apply"),
+                                )
                                 .clicked()
                             {
-                                apply = true;
+                                apply = page.location_edit.is_some();
+                                apply_packages = changes > 0;
+                            }
+                            if ui
+                                .add_enabled(!busy, egui::Button::new("Refresh"))
+                                .on_hover_text("Fetch the package list again")
+                                .clicked()
+                            {
+                                page.requested = false;
                             }
                             if ui.button("Cancel").clicked() {
                                 close = true;
@@ -252,6 +510,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                 .min_size(vec2(72.0, 0.0));
                             if ui.add(ok).clicked() {
                                 apply = page.location_edit.is_some();
+                                apply_packages = changes > 0 && !busy;
                                 close = true;
                             }
                         });
@@ -261,6 +520,33 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         close = true;
         apply = false;
+        apply_packages = false;
+    }
+    if !app.android_sdk.requested && app.state.android.sdk.is_some() {
+        app.android_sdk.requested = true;
+        // A missing sdkmanager is not an error here: the installed list stays.
+        let _ = app
+            .commands
+            .execute("android.sdk.refreshRemote", &mut app.state, json!({}));
+    }
+    if apply_packages {
+        let packages = &app.state.android.sdk_repo.packages;
+        let installed = |path: &str| packages.iter().any(|p| p.path == path && p.installed);
+        let (mut install, mut uninstall) = (Vec::new(), Vec::new());
+        for (path, wanted) in &app.android_sdk.pending {
+            match (*wanted, installed(path)) {
+                (true, false) => install.push(path.clone()),
+                (false, true) => uninstall.push(path.clone()),
+                _ => {}
+            }
+        }
+        app.android_sdk.pending.clear();
+        if !install.is_empty() || !uninstall.is_empty() {
+            app.dispatch(
+                "android.sdk.apply",
+                json!({"install": install, "uninstall": uninstall}),
+            );
+        }
     }
     if apply && let Some(path) = app.android_sdk.location_edit.clone() {
         match app.commands.execute(
@@ -282,14 +568,50 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
         app.state.android.sdk_manager_open = false;
         app.android_sdk.location_edit = None;
         app.android_sdk.error = None;
+        app.android_sdk.requested = false;
+        app.android_sdk.pending.clear();
     }
 }
 
-fn table(ui: &mut egui::Ui, tab: Tab, rows: &[Row], height: f32) {
+fn update_sites_table(ui: &mut egui::Ui, height: f32) {
+    egui::Frame::new()
+        .fill(*theme::ISLAND)
+        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+        .corner_radius(4)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.set_height(height);
+            egui::Grid::new("sdk_update_sites")
+                .num_columns(3)
+                .spacing(vec2(24.0, 8.0))
+                .show(ui, |ui| {
+                    for label in ["Enabled", "Name", "URL"] {
+                        ui.label(RichText::new(label).color(theme::TEXT_BRIGHT));
+                    }
+                    ui.end_row();
+                    for (name, url) in DEFAULT_UPDATE_SITES {
+                        let mut enabled = true;
+                        ui.add_enabled(false, egui::Checkbox::without_text(&mut enabled));
+                        ui.label(*name);
+                        ui.label(RichText::new(*url).color(theme::TEXT_INFO));
+                        ui.end_row();
+                    }
+                });
+        });
+}
+
+fn table(
+    ui: &mut egui::Ui,
+    tab: Tab,
+    rows: &[Row],
+    height: f32,
+    pending: &mut BTreeMap<String, bool>,
+) {
     let width = ui.available_width();
     let columns: &[(&str, f32)] = match tab {
         Tab::Platforms => &[("API Level", 0.62), ("Revision", 0.76), ("Status", 0.86)],
         Tab::Tools => &[("Version", 0.70), ("Status", 0.86)],
+        Tab::UpdateSites => &[],
     };
     egui::Frame::new()
         .fill(*theme::ISLAND)
@@ -333,7 +655,7 @@ fn table(ui: &mut egui::Ui, tab: Tab, rows: &[Row], height: f32) {
             if rows.is_empty() {
                 ui.add_space(24.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("No installed packages").color(theme::TEXT_INFO));
+                    ui.label(RichText::new("No packages").color(theme::TEXT_INFO));
                 });
                 return;
             }
@@ -351,26 +673,52 @@ fn table(ui: &mut egui::Ui, tab: Tab, rows: &[Row], height: f32) {
                             painter.rect_filled(rect, 0.0, theme::HOVER);
                         }
                         let y = rect.top() + 12.0;
-                        // Installed packages render as checked, read-only boxes.
+                        let checked = pending
+                            .get(&row.path)
+                            .copied()
+                            .unwrap_or(row.status != Status::NotInstalled);
                         let check = egui::Rect::from_center_size(
                             egui::pos2(rect.left() + 16.0, y),
                             vec2(13.0, 13.0),
                         );
-                        painter.rect_filled(check, 3.0, theme::ACCENT);
-                        painter.line_segment(
-                            [
-                                check.left_center() + vec2(3.0, 0.0),
-                                check.center_bottom() + vec2(-1.0, -3.0),
-                            ],
-                            egui::Stroke::new(1.5_f32, theme::TEXT_BRIGHT),
+                        let box_response = ui.interact(
+                            check.expand(4.0),
+                            ui.id().with(("sdk_check", &row.path)),
+                            egui::Sense::click(),
                         );
-                        painter.line_segment(
-                            [
-                                check.center_bottom() + vec2(-1.0, -3.0),
-                                check.right_top() + vec2(-3.0, 3.0),
-                            ],
-                            egui::Stroke::new(1.5_f32, theme::TEXT_BRIGHT),
-                        );
+                        if box_response.clicked() {
+                            let installed = row.status != Status::NotInstalled;
+                            if !checked == installed {
+                                pending.remove(&row.path);
+                            } else {
+                                pending.insert(row.path.clone(), !checked);
+                            }
+                        }
+                        let painter = ui.painter();
+                        if checked {
+                            painter.rect_filled(check, 3.0, theme::ACCENT);
+                            painter.line_segment(
+                                [
+                                    check.left_center() + vec2(3.0, 0.0),
+                                    check.center_bottom() + vec2(-1.0, -3.0),
+                                ],
+                                egui::Stroke::new(1.5_f32, theme::TEXT_BRIGHT),
+                            );
+                            painter.line_segment(
+                                [
+                                    check.center_bottom() + vec2(-1.0, -3.0),
+                                    check.right_top() + vec2(-3.0, 3.0),
+                                ],
+                                egui::Stroke::new(1.5_f32, theme::TEXT_BRIGHT),
+                            );
+                        } else {
+                            painter.rect_stroke(
+                                check,
+                                3.0,
+                                egui::Stroke::new(1.0_f32, theme::TEXT_SECONDARY),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
                         text(
                             painter,
                             rect.left() + NAME_X,
@@ -387,9 +735,11 @@ fn table(ui: &mut egui::Ui, tab: Tab, rows: &[Row], height: f32) {
                                 *theme::TEXT_INFO,
                             );
                         }
+                        let status = row.status.label();
                         let values: Vec<&str> = match tab {
-                            Tab::Platforms => vec![&row.api_level, &row.revision, "Installed"],
-                            Tab::Tools => vec![&row.revision, "Installed"],
+                            Tab::Platforms => vec![&row.api_level, &row.revision, status],
+                            Tab::Tools => vec![&row.revision, status],
+                            Tab::UpdateSites => Vec::new(),
                         };
                         for ((_, at), value) in columns.iter().zip(values) {
                             text(painter, rect.left() + width * at, y, value, *theme::TEXT);
@@ -474,6 +824,62 @@ mod tests {
             rows[1].detail.as_deref(),
             Some("system-images;android-35;google_apis;x86_64")
         );
+    }
+
+    fn remote(path: &str, desc: &str, installed: bool) -> RemotePackage {
+        RemotePackage {
+            path: path.into(),
+            version: "1".into(),
+            description: desc.into(),
+            installed,
+            obsolete: desc.contains("Obsolete"),
+        }
+    }
+
+    #[test]
+    fn remote_platforms_show_status_and_hide_filters() {
+        let packages = vec![
+            remote("platforms;android-35", "Android SDK Platform 35", true),
+            remote("platforms;android-36", "Android SDK Platform 36", false),
+            remote(
+                "system-images;android-36;google_apis;x86_64",
+                "x86 image",
+                true,
+            ),
+            remote(
+                "platforms;android-10",
+                "Android SDK Platform 10 (Obsolete)",
+                false,
+            ),
+        ];
+        let rows = remote_platform_rows(&packages, false, false, true);
+        let summary: Vec<_> = rows
+            .iter()
+            .map(|r| (r.api_level.as_str(), r.status))
+            .collect();
+        assert_eq!(
+            summary,
+            [("36", Status::Partial), ("35", Status::Installed)],
+            "newest first; obsolete hidden"
+        );
+        let all = remote_platform_rows(&packages, false, true, true);
+        assert_eq!(all.last().unwrap().status, Status::NotInstalled);
+        assert_eq!(remote_platform_rows(&packages, true, false, true).len(), 3);
+    }
+
+    #[test]
+    fn remote_tools_group_by_kind() {
+        let packages = vec![
+            remote("build-tools;34.0.0", "Android SDK Build-Tools 34", true),
+            remote("build-tools;35.0.0", "Android SDK Build-Tools 35", false),
+            remote("platform-tools", "Android SDK Platform-Tools", false),
+        ];
+        let rows = remote_tool_rows(&packages, false, false);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].path, "build-tools;35.0.0");
+        assert_eq!(rows[0].status, Status::Installed);
+        assert_eq!(rows[1].status, Status::NotInstalled);
+        assert_eq!(remote_tool_rows(&packages, true, false).len(), 3);
     }
 
     #[test]
