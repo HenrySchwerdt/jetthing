@@ -15,6 +15,7 @@ pub mod cookies;
 pub mod exec;
 pub mod filter;
 pub mod graphql;
+pub mod grpc;
 pub mod history;
 pub mod import;
 pub mod model;

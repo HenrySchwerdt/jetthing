@@ -92,7 +92,9 @@ impl NexusApp {
         match protocol {
             nexus_http_core::model::Protocol::Http => self.state.send(&id),
             _ if self.state.stream_connected(&id) => {
-                if protocol == nexus_http_core::model::Protocol::WebSocket {
+                if protocol == nexus_http_core::model::Protocol::WebSocket
+                    || self.state.stream_can_send(&id)
+                {
                     self.state.send_stream_message(&id);
                 }
             }
@@ -332,6 +334,11 @@ impl NexusApp {
         if req_actions.generate_code {
             self.overlays.open(Overlay::Code);
         }
+        if req_actions.load_grpc_schema
+            && let Some(id) = self.state.selected.clone()
+        {
+            self.state.load_grpc_schema(&id);
+        }
         if req_actions.fetch_token {
             self.start_token_fetch();
         }
@@ -416,7 +423,19 @@ mod tests {
                 text: "{\"a\": 1}".into(),
             }),
         ));
+        let mut grpc = Request::new("Say", Method::Post, "grpc://localhost:50051");
+        grpc.protocol = nexus_http_core::model::Protocol::Grpc;
+        grpc.grpc.method = "pkg.Echo/Say".into();
+        let grpc_id = grpc.id.clone();
+        ws.items.push(Item::Request(grpc));
         let mut app = NexusApp::with_state(NexusState::in_memory(ws));
+        app.state.grpc_schemas.entry(grpc_id.clone()).or_default();
+        for selected in [None, Some(grpc_id)] {
+            if let Some(id) = selected {
+                app.state.selected = Some(id);
+            }
+            render(&mut app, true);
+        }
         for tab in state::RequestTab::ALL {
             app.state.request_tab = tab;
             render(&mut app, true);
