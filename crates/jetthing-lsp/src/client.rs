@@ -846,6 +846,7 @@ pub fn client_capabilities() -> ClientCapabilities {
                 context_support: Some(true),
                 ..Default::default()
             }),
+            inlay_hint: Some(lsp_types::InlayHintClientCapabilities::default()),
             code_action: Some(CodeActionClientCapabilities {
                 code_action_literal_support: Some(CodeActionLiteralSupport {
                     code_action_kind: CodeActionKindLiteralSupport {

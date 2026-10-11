@@ -31,6 +31,7 @@ mod branch_commands;
 mod build_commands;
 pub mod build_info;
 mod code_actions;
+mod code_vision;
 mod completion;
 mod completion_stats;
 mod debug_commands;
@@ -95,6 +96,7 @@ pub use ai_commands::{AiState, ApplyPreview, CHAT_FILE as AI_CHAT_FILE, MOCK_ENV
 pub use ai_inline::InlineSuggestion;
 pub use ai_terminal::{ShellSuggestion, ShellSuggestionState};
 pub use code_actions::{CodeActionItem, CodeActionList, CodeActionState};
+pub use code_vision::{CodeLens, InlayLabel};
 pub use completion_stats::CompletionStats;
 pub use debug_commands::{BREAKPOINTS_FILE, ExecutionPoint};
 pub use navigation::{NavigationItem, NavigationKind, NavigationList, NavigationState, Place};
@@ -209,6 +211,8 @@ pub struct IdeState {
     pub remote_error: Option<String>,
     /// Blame annotations of documents that have them switched on.
     annotations: std::collections::HashMap<PathBuf, annotations::Annotation>,
+    /// Code vision and inlay hints per document.
+    code_vision: code_vision::CodeVisionState,
     /// Git tool window Log tab.
     pub git_log: GitLogState,
     /// The diff viewer tab, if open.
@@ -736,6 +740,7 @@ impl IdeState {
         self.poll_refactor();
         self.poll_docs();
         self.poll_signature();
+        self.poll_code_vision();
         let Some(root) = self.project.as_ref().map(|p| p.root().to_owned()) else {
             return;
         };
@@ -944,6 +949,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
     remote_commands::register(&mut registry);
     welcome_commands::register(&mut registry);
     annotations::register(&mut registry);
+    code_vision::register(&mut registry);
     worktree_commands::register(&mut registry);
     navigation::register(&mut registry);
     code_actions::register(&mut registry);

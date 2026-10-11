@@ -33,6 +33,8 @@ pub enum EditorRequest {
     ShowCommit(String),
     /// Click on a gutter run icon (line, screen position for the popup).
     Gutter(usize, egui::Pos2),
+    /// A code-vision lens was clicked: Find Usages of the name at line, column.
+    Usages(usize, usize),
 }
 
 pub struct EditorOutput {
@@ -163,6 +165,7 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             let context_model = app.context_menu_model(&crate::context_menus::Target::Editor);
             let changes = app.state.document_changes(index).to_vec();
             let blame = app.state.document_annotations(index).map(<[_]>::to_vec);
+            let (lenses, inlays) = app.state.code_vision(index);
             let gutter = run_icons(app, ui.ctx());
             let doc_path = app.state.absolute_path(&app.state.documents[index].path);
             if md_layout.is_some() {
@@ -190,6 +193,8 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
                     run: &gutter,
                     breakpoints: &breakpoints,
                     execution_line,
+                    lenses: &lenses,
+                    inlays: &inlays,
                 },
                 navigable,
                 editor_scroll,
@@ -332,6 +337,10 @@ pub(crate) fn handle_request(app: &mut IdeApp, ctx: &egui::Context, request: Edi
             app.run_context_action(&action, &crate::context_menus::Target::Editor, ctx)
         }
         EditorRequest::Gutter(line, position) => crate::gutter_popup::open(ctx, line, position),
+        EditorRequest::Usages(line, column) => {
+            move_caret_to(app, line, column);
+            app.dispatch("navigate.findUsages", Value::Null);
+        }
         EditorRequest::Paste(text) => {
             let whole_line = app.clipboard_line.as_deref() == Some(text.as_str());
             app.dispatch(
@@ -690,6 +699,51 @@ pub(crate) fn highlighted_line_job(
     job
 }
 
+/// Width of a parameter-name hint pill.
+fn hint_width(text: &str, char_width: f32) -> f32 {
+    text.chars().count() as f32 * char_width * 0.85 + 8.0
+}
+
+/// Character column (fractional) under `x`, measured from the text origin, on
+/// a line with parameter hints `(column, width, text)` sorted by column.
+fn column_at(hints: &[(usize, f32, &str)], x: f32, char_width: f32) -> f32 {
+    let mut shift = 0.0;
+    for &(column, width, _) in hints {
+        let start = column as f32 * char_width + shift;
+        if x < start {
+            break;
+        }
+        if x < start + width {
+            return column as f32;
+        }
+        shift += width;
+    }
+    (x - shift) / char_width
+}
+
+/// Paints a parameter-name hint: small grey text on a rounded pill.
+fn paint_hint(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    width: f32,
+    label: &str,
+    font: &egui::FontId,
+    row_height: f32,
+) {
+    painter.rect_filled(
+        Rect::from_min_size(origin + vec2(1.0, 3.0), vec2(width - 2.0, row_height - 6.0)),
+        3.0,
+        *theme::editor::CARET_ROW,
+    );
+    painter.text(
+        origin + vec2(width / 2.0, row_height / 2.0),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::new(font.size * 0.85, font.family.clone()),
+        *theme::editor::LINE_NUMBER_CARET,
+    );
+}
+
 /// Paints a collapsed region's placeholder box and the text after the region
 /// on its last line, starting at `origin` (top-left of the placeholder).
 fn paint_collapsed_tail(
@@ -884,6 +938,10 @@ struct GutterData<'a> {
     breakpoints: &'a [usize],
     /// Zero-based line where the debugger is suspended.
     execution_line: Option<usize>,
+    /// Usages / author lenses shown after declarations.
+    lenses: &'a [jetthing_core::CodeLens],
+    /// Parameter-name hints shown inside lines.
+    inlays: &'a [jetthing_core::InlayLabel],
 }
 
 #[allow(clippy::too_many_arguments)] // paint inputs of one editor frame
@@ -904,6 +962,8 @@ fn editor_surface(
         run: gutter,
         breakpoints,
         execution_line,
+        lenses,
+        inlays,
     } = gutter_data;
     let mut requests = Vec::new();
     let font = theme::editor_font(ui.style());
@@ -924,6 +984,8 @@ fn editor_surface(
     // Carets never stay inside collapsed text (Go to Line, Find, arrows).
     document.reveal_carets();
     let folds = FoldView::new(document);
+    let lens_by_line: std::collections::HashMap<usize, &jetthing_core::CodeLens> =
+        lenses.iter().map(|lens| (lens.line, lens)).collect();
     let row_count = folds.row_count(line_count);
     let digits = line_count.max(1).to_string().len().max(2);
     let blame_width = if blame.is_some() {
@@ -934,6 +996,30 @@ fn editor_surface(
     let layout = GutterLayout::new(blame_width, digits as f32 * char_width, !gutter.is_empty());
     let gutter_width = layout.width;
     let text_left = gutter_width + TEXT_LEFT_PADDING;
+    // Parameter-name hints take room inside their line: (column, width, text).
+    let mut hints_by_line: std::collections::HashMap<usize, Vec<(usize, f32, &str)>> =
+        std::collections::HashMap::new();
+    for inlay in inlays {
+        let width = hint_width(&inlay.text, char_width);
+        hints_by_line.entry(inlay.line).or_default().push((
+            inlay.column,
+            width,
+            inlay.text.as_str(),
+        ));
+    }
+    for hints in hints_by_line.values_mut() {
+        hints.sort_by_key(|hint| hint.0);
+    }
+    // Horizontal offset of `column` on `line` (before the glyph).
+    let shifted = |line: usize, column: usize| -> f32 {
+        let hints = hints_by_line.get(&line).map_or(&[][..], Vec::as_slice);
+        column as f32 * char_width
+            + hints
+                .iter()
+                .filter(|hint| hint.0 <= column)
+                .map(|hint| hint.1)
+                .sum::<f32>()
+    };
     let caret_line = document
         .text
         .char_to_line_column(document.selections.primary().head)
@@ -989,9 +1075,13 @@ fn editor_surface(
             let line = folds.row_to_line(row_at(position));
             let line_text = document.text.line(line).unwrap_or_default();
             let content = line_text.trim_end_matches(['\r', '\n']);
-            let column = (((position.x - rect.left() - text_left) / char_width)
-                .round()
-                .max(0.0) as usize)
+            let column = (column_at(
+                hints_by_line.get(&line).map_or(&[][..], Vec::as_slice),
+                position.x - rect.left() - text_left,
+                char_width,
+            )
+            .round()
+            .max(0.0) as usize)
                 .min(content.chars().count());
             document.text.line_to_char(line).unwrap_or(0) + column
         };
@@ -1343,8 +1433,8 @@ fn editor_surface(
                 let start = match_start.max(line_start).min(line_end);
                 let end = match_end.max(line_start).min(line_end);
                 if start < end {
-                    let x1 = rect.left() + text_left + (start - line_start) as f32 * char_width;
-                    let x2 = rect.left() + text_left + (end - line_start) as f32 * char_width;
+                    let x1 = rect.left() + text_left + shifted(line, start - line_start);
+                    let x2 = rect.left() + text_left + shifted(line, end - line_start);
                     painter.rect_filled(
                         Rect::from_min_max(egui::pos2(x1, y), egui::pos2(x2, y + row_height)),
                         2.0,
@@ -1354,7 +1444,7 @@ fn editor_surface(
             }
             for &offset in &brace_pair {
                 if offset >= line_start && offset < line_end {
-                    let x1 = rect.left() + text_left + (offset - line_start) as f32 * char_width;
+                    let x1 = rect.left() + text_left + shifted(line, offset - line_start);
                     painter.rect_filled(
                         Rect::from_min_size(egui::pos2(x1, y), vec2(char_width, row_height)),
                         2.0,
@@ -1367,8 +1457,8 @@ fn editor_surface(
                 let end = selection.end().max(line_start).min(line_end);
                 let spans_newline = selection.end() > line_end && selection.start() <= line_end;
                 if start < end || (spans_newline && !selection.is_caret()) {
-                    let x1 = rect.left() + text_left + (start - line_start) as f32 * char_width;
-                    let mut x2 = rect.left() + text_left + (end - line_start) as f32 * char_width;
+                    let x1 = rect.left() + text_left + shifted(line, start - line_start);
+                    let mut x2 = rect.left() + text_left + shifted(line, end - line_start);
                     if spans_newline {
                         x2 += char_width * 0.6;
                     }
@@ -1394,14 +1484,68 @@ fn editor_surface(
                 }
                 None => content,
             };
-            let job = highlighted_line_job(visible, line_start_byte, &document.analysis, &font);
-            let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-            let text_y = y + (row_height - galley.size().y) / 2.0;
-            painter.galley(
-                egui::pos2(rect.left() + text_left, text_y),
-                galley,
-                Color32::WHITE,
-            );
+            // Text is laid out in segments around the parameter hints.
+            let mut segment_start = 0;
+            let mut x = rect.left() + text_left;
+            let line_hints = hints_by_line.get(&line).map_or(&[][..], Vec::as_slice);
+            let visible_chars = visible.chars().count();
+            let cuts = line_hints
+                .iter()
+                .map(|&(column, width, label)| (column.min(visible_chars), Some((width, label))))
+                .chain(std::iter::once((visible_chars, None)));
+            for (column, hint) in cuts {
+                if column > segment_start || hint.is_none() {
+                    let from = visible
+                        .char_indices()
+                        .nth(segment_start)
+                        .map_or(visible.len(), |(index, _)| index);
+                    let to = visible
+                        .char_indices()
+                        .nth(column)
+                        .map_or(visible.len(), |(index, _)| index);
+                    let job = highlighted_line_job(
+                        &visible[from..to],
+                        line_start_byte + from,
+                        &document.analysis,
+                        &font,
+                    );
+                    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                    let text_y = y + (row_height - galley.size().y) / 2.0;
+                    painter.galley(egui::pos2(x, text_y), galley, Color32::WHITE);
+                    x += (column - segment_start) as f32 * char_width;
+                    segment_start = column;
+                }
+                if let Some((width, label)) = hint {
+                    paint_hint(&painter, egui::pos2(x, y), width, label, &font, row_height);
+                    x += width;
+                }
+            }
+            if collapsed.is_none()
+                && let Some(lens) = lens_by_line.get(&line)
+            {
+                let origin = egui::pos2(
+                    rect.left() + text_left + shifted(line, visible_chars) + 3.0 * char_width,
+                    y,
+                );
+                let galley = painter.layout_no_wrap(
+                    lens.text(),
+                    egui::FontId::proportional(theme::UI_FONT_SIZE - 2.0),
+                    *theme::editor::LINE_NUMBER_CARET,
+                );
+                let lens_rect = Rect::from_min_size(
+                    egui::pos2(origin.x, y + (row_height - galley.size().y) / 2.0),
+                    galley.size(),
+                );
+                painter.galley(lens_rect.min, galley, Color32::WHITE);
+                if let Some(pointer) = response.hover_pos()
+                    && lens_rect.contains(pointer)
+                {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    if response.clicked() {
+                        requests.push(EditorRequest::Usages(lens.line, lens.column));
+                    }
+                }
+            }
             if let Some(row) = collapsed {
                 paint_collapsed_tail(
                     &painter,
@@ -1482,7 +1626,7 @@ fn editor_surface(
                 }
             }
 
-            let column_x = |column: usize| rect.left() + text_left + column as f32 * char_width;
+            let column_x = |column: usize| rect.left() + text_left + shifted(line, column);
             problems_ui::paint_line(
                 &painter,
                 problems,

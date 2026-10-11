@@ -118,6 +118,7 @@ fn main() {
                     "typeDefinitionProvider": true,
                     "implementationProvider": true,
                     "referencesProvider": true,
+                    "inlayHintProvider": true,
                     "codeActionProvider": {"resolveProvider": true},
                     "executeCommandProvider": {"commands": ["fake.apply"]}
                 },"serverInfo":{"name":"fake"}}}));
@@ -469,6 +470,23 @@ fn main() {
                     json!({"jsonrpc":"2.0","id":id,"result":{"contents":{"kind":"markdown",
                     "value":"```java\nString greeting(String name)\n```\nGreets *name*."}}}),
                 );
+            }
+            ("textDocument/inlayHint", Some(id)) => {
+                // A `name:` parameter hint after every `greeting(` call.
+                let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+                let mut hints = Vec::new();
+                for (line, content) in documents
+                    .get(uri)
+                    .map_or("", String::as_str)
+                    .lines()
+                    .enumerate()
+                {
+                    for (at, _) in content.match_indices("greeting(\"") {
+                        hints.push(json!({"position": {"line": line, "character": at + 9},
+                            "label": "name:", "kind": 2}));
+                    }
+                }
+                send(json!({"jsonrpc":"2.0","id":id,"result":hints}));
             }
             ("textDocument/signatureHelp", Some(id)) => {
                 send(json!({"jsonrpc":"2.0","id":id,"result":{"signatures":[
