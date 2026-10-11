@@ -16,6 +16,7 @@ pub mod resources;
 pub mod sdk;
 pub mod sdk_repo;
 pub mod variants;
+pub mod vector;
 pub mod view;
 
 pub use adb::{
