@@ -4,7 +4,8 @@ use jetthing_language::{LanguageAnalysis, analyze_lazy};
 use jetthing_lsp::{LspDiagnostic, LspManager};
 use jetthing_project::{FileEntry, Project};
 use jetthing_runner::TaskService;
-use jetthing_search::{SearchEvent, SearchService, TextMatch};
+pub use jetthing_search::TextMatch;
+use jetthing_search::{SearchEvent, SearchService};
 use jetthing_terminal::TerminalSession;
 use jetthing_text::{EditJournal, Selection, SelectionSet, TextDocument};
 use serde_json::{Value, json};
@@ -90,6 +91,46 @@ pub use completion::CompletionSession;
 pub use gutter_commands::GutterMark;
 pub use jetthing_runnables::RunnableKind;
 pub use jetthing_search::SearchOptions;
+
+/// Where Find in Files looks (the tabs of the Find in Files popup).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SearchScopeKind {
+    #[default]
+    Project,
+    /// The Gradle module that contains the active file.
+    Module,
+    /// `project_view.search_scope`.
+    Directory,
+    OpenFiles,
+    ProductionFiles,
+    TestFiles,
+}
+
+impl SearchScopeKind {
+    pub fn id(self) -> &'static str {
+        match self {
+            SearchScopeKind::Project => "project",
+            SearchScopeKind::Module => "module",
+            SearchScopeKind::Directory => "directory",
+            SearchScopeKind::OpenFiles => "openFiles",
+            SearchScopeKind::ProductionFiles => "production",
+            SearchScopeKind::TestFiles => "tests",
+        }
+    }
+
+    pub fn parse(id: &str) -> Option<SearchScopeKind> {
+        [
+            SearchScopeKind::Project,
+            SearchScopeKind::Module,
+            SearchScopeKind::Directory,
+            SearchScopeKind::OpenFiles,
+            SearchScopeKind::ProductionFiles,
+            SearchScopeKind::TestFiles,
+        ]
+        .into_iter()
+        .find(|kind| kind.id() == id)
+    }
+}
 pub use plugin_host::{
     PluginHostState, PluginStatusWidget, PluginTab, plugin_dirs, plugin_registry_dirs,
     sync_plugin_commands, user_plugin_dir,
@@ -198,6 +239,11 @@ pub struct IdeState {
     pub search: SearchService,
     pub search_results: Vec<TextMatch>,
     pub search_query: String,
+    pub search_scope_kind: SearchScopeKind,
+    /// Set while the Find in Files popup drives the search: no tool window opens.
+    pub search_background: bool,
+    /// Find Action: list disabled actions too (persisted in the workspace file).
+    pub include_disabled_actions: bool,
     /// Options of the last Find in Files run.
     pub search_options: SearchOptions,
     pub search_files_scanned: usize,
@@ -662,6 +708,93 @@ impl IdeState {
         Ok(())
     }
 
+    /// Text occurrences for Search Everywhere; runs next to (and never replaces)
+    /// the Find in Files results.
+    pub fn request_text_search(&mut self, query: &str) {
+        let query = query.trim();
+        if self.quick_nav.text_query == query {
+            return;
+        }
+        self.quick_nav.text.cancel();
+        self.quick_nav.text_results.clear();
+        self.quick_nav.text_query = query.to_owned();
+        let Some(project) = self.project.as_ref() else {
+            return;
+        };
+        if query.chars().count() < 2 {
+            return;
+        }
+        let files = self
+            .files
+            .iter()
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| entry.relative_path.clone())
+            .collect();
+        // An unstartable query (empty) simply lists no text hits.
+        let _ = self.quick_nav.text.start(
+            project.root().to_owned(),
+            files,
+            query.to_owned(),
+            &SearchOptions::default(),
+        );
+    }
+
+    /// Directory of the Gradle module that contains the active file, relative
+    /// to the project root (`""` for the root module).
+    pub fn active_module_dir(&self) -> Option<PathBuf> {
+        let root = self.project.as_ref()?.root();
+        let active = &self.documents.get(self.active_document?)?.path;
+        let active = active.strip_prefix(root).unwrap_or(active);
+        self.gradle_model
+            .as_ref()?
+            .projects
+            .iter()
+            .filter_map(|module| module.dir.strip_prefix(root).ok())
+            .filter(|dir| active.starts_with(dir))
+            .max_by_key(|dir| dir.components().count())
+            .map(Path::to_owned)
+    }
+
+    fn in_search_scope(&self, path: &Path) -> bool {
+        let under_mark = |tests: bool| {
+            self.directory_marks().iter().any(|(dir, mark)| {
+                path.starts_with(dir)
+                    && matches!(
+                        mark,
+                        project_view::DirMark::Tests | project_view::DirMark::TestResources
+                    ) == tests
+                    && !matches!(mark, project_view::DirMark::Excluded)
+            })
+        };
+        match self.search_scope_kind {
+            SearchScopeKind::Project => true,
+            SearchScopeKind::Directory => self
+                .project_view
+                .search_scope
+                .as_ref()
+                .is_none_or(|scope| path.starts_with(scope)),
+            SearchScopeKind::Module => self
+                .active_module_dir()
+                .is_none_or(|dir| path.starts_with(dir)),
+            SearchScopeKind::OpenFiles => self.documents.iter().any(|document| {
+                let root = self.project.as_ref().map(|project| project.root());
+                root.and_then(|root| document.path.strip_prefix(root).ok())
+                    .unwrap_or(&document.path)
+                    == path
+            }),
+            SearchScopeKind::TestFiles => under_mark(true),
+            SearchScopeKind::ProductionFiles => !under_mark(true),
+        }
+    }
+
+    pub fn poll_text_search(&mut self) {
+        for event in self.quick_nav.text.poll() {
+            if let SearchEvent::Match(found) = event {
+                self.quick_nav.text_results.push(found);
+            }
+        }
+    }
+
     /// Starts a shell in `dir` (default: the project root) as the Terminal
     /// settings describe it.
     pub(crate) fn spawn_terminal_session(
@@ -693,12 +826,7 @@ impl IdeState {
         self.files
             .iter()
             .filter(|entry| !entry.is_dir)
-            .filter(|entry| {
-                self.project_view
-                    .search_scope
-                    .as_ref()
-                    .is_none_or(|scope| entry.relative_path.starts_with(scope))
-            })
+            .filter(|entry| self.in_search_scope(&entry.relative_path))
             .map(|entry| entry.relative_path.clone())
             .collect()
     }
@@ -716,7 +844,9 @@ impl IdeState {
         self.search_files_scanned = 0;
         self.search_truncated = false;
         self.search_query = query.clone();
-        self.tool_windows.show(ToolWindow::Find);
+        if !self.search_background {
+            self.tool_windows.show(ToolWindow::Find);
+        }
         let job = self
             .search
             .start(project.root().to_owned(), files, query, &options)
@@ -1129,7 +1259,7 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                 "Find in Files",
                 "Search",
                 Some("⇧⌘F"),
-                r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?","fileMask":"string?","scope":"string?"}"#,
+                r#"{"query":"string","matchCase":"bool?","wholeWords":"bool?","regex":"bool?","fileMask":"string?","scope":"string?","scopeKind":"string?","background":"bool?"}"#,
             ),
             |state: &IdeState| state.project.is_some(),
             |state: &mut IdeState, params| {
@@ -1151,9 +1281,19 @@ pub fn built_in_commands() -> CommandRegistry<IdeState> {
                     .and_then(Value::as_str)
                     .filter(|scope| !scope.is_empty())
                     .map(PathBuf::from);
-                let job = state
-                    .start_search_with(query, options)
-                    .map_err(CommandError::InvalidParams)?;
+                state.search_scope_kind = params
+                    .get("scopeKind")
+                    .and_then(Value::as_str)
+                    .and_then(SearchScopeKind::parse)
+                    .unwrap_or(if state.project_view.search_scope.is_some() {
+                        SearchScopeKind::Directory
+                    } else {
+                        SearchScopeKind::Project
+                    });
+                state.search_background = flag("background");
+                let job = state.start_search_with(query, options);
+                state.search_background = false;
+                let job = job.map_err(CommandError::InvalidParams)?;
                 Ok(json!({"job": job}))
             },
         ))

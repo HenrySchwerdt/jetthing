@@ -222,8 +222,8 @@ impl IdeApp {
                 self.dispatch(id, self.find.params());
             }
             UiAction::FindInPath => {
-                self.dispatch("toolwindow.activate.find", Value::Null);
-                self.search_focus_requested(ctx);
+                let selection = self.primary_selection_text();
+                self.open_find_popup(selection);
             }
             UiAction::SaveAll => self.autosave(),
             UiAction::NewProject => self.new_project_dialog(),

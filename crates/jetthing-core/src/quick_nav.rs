@@ -13,6 +13,7 @@ use jetthing_lsp::completion::{MatchClass, fuzzy_match, match_class};
 use jetthing_lsp::lsp_types;
 use jetthing_lsp::{WorkspaceSymbolHit, WorkspaceSymbolRequestHandle};
 use jetthing_project::FileEntry;
+use jetthing_search::TextMatch;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -27,15 +28,17 @@ pub enum SearchTab {
     Files,
     Symbols,
     Actions,
+    Text,
 }
 
 impl SearchTab {
-    pub const ALL: [SearchTab; 5] = [
+    pub const ALL: [SearchTab; 6] = [
         SearchTab::All,
         SearchTab::Classes,
         SearchTab::Files,
         SearchTab::Symbols,
         SearchTab::Actions,
+        SearchTab::Text,
     ];
 
     pub fn id(self) -> &'static str {
@@ -45,6 +48,7 @@ impl SearchTab {
             SearchTab::Files => "files",
             SearchTab::Symbols => "symbols",
             SearchTab::Actions => "actions",
+            SearchTab::Text => "text",
         }
     }
 
@@ -55,6 +59,7 @@ impl SearchTab {
             SearchTab::Files => "Files",
             SearchTab::Symbols => "Symbols",
             SearchTab::Actions => "Actions",
+            SearchTab::Text => "Text",
         }
     }
 
@@ -100,6 +105,55 @@ pub fn rank<T>(
     candidates: impl IntoIterator<Item = (T, String)>,
     limit: usize,
 ) -> Vec<Ranked<T>> {
+    rank_with(false, query, candidates, limit)
+}
+
+/// Like [`rank`], but for names made of several words (actions, file names):
+/// letters scattered over the words (`main` in `Markdown: Insert Image`) do not
+/// match. A strict match is a contiguous run at a word start, initials of
+/// words, or camel humps inside one word.
+pub fn rank_strict<T>(
+    query: &str,
+    candidates: impl IntoIterator<Item = (T, String)>,
+    limit: usize,
+) -> Vec<Ranked<T>> {
+    rank_with(true, query, candidates, limit)
+}
+
+/// Whether the matched `positions` of `name` read as a deliberate match.
+fn strict_match(name: &str, positions: &[usize]) -> bool {
+    let chars: Vec<char> = name.chars().collect();
+    let word_start = |index: usize| {
+        index == 0
+            || chars.get(index - 1).is_some_and(|c| !c.is_alphanumeric())
+                && chars.get(index).is_some_and(|c| c.is_alphanumeric())
+    };
+    let Some(&first) = positions.first() else {
+        return true;
+    };
+    let contiguous = positions.windows(2).all(|pair| pair[1] == pair[0] + 1);
+    if contiguous && word_start(first) {
+        return true;
+    }
+    if positions.len() >= 2
+        && positions.iter().all(|&p| word_start(p))
+        && positions.windows(2).all(|pair| pair[1] != pair[0] + 1)
+    {
+        return true;
+    }
+    // Camel humps inside a single word.
+    let (lo, hi) = (first, positions[positions.len() - 1]);
+    !chars[lo..=hi.min(chars.len() - 1)]
+        .iter()
+        .any(|c| !c.is_alphanumeric())
+}
+
+fn rank_with<T>(
+    strict: bool,
+    query: &str,
+    candidates: impl IntoIterator<Item = (T, String)>,
+    limit: usize,
+) -> Vec<Ranked<T>> {
     let mut ranked: Vec<(Ranked<T>, usize)> = Vec::new();
     for (item, name) in candidates {
         let (class, score, positions) = if query.is_empty() {
@@ -108,6 +162,9 @@ pub fn rank<T>(
             let Some(found) = fuzzy_match(query, &name) else {
                 continue;
             };
+            if strict && !strict_match(&name, &found.positions) {
+                continue;
+            }
             (
                 match_class(query, &name, &found),
                 found.score,
@@ -321,6 +378,7 @@ pub enum Hit {
     File { path: PathBuf, line: Option<usize> },
     Symbol(SymbolEntry),
     Action(ActionCandidate),
+    Text(TextMatch),
 }
 
 /// What the providers draw from.
@@ -332,14 +390,19 @@ pub struct SearchSources<'a> {
     /// Extra results from a running language server (deduplicated here).
     pub server_symbols: &'a [SymbolEntry],
     pub actions: &'a [ActionCandidate],
+    /// Occurrences of the query in project files (from the background text search).
+    pub text: &'a [TextMatch],
+    /// "Include non-project items": symbols of libraries outside the project root.
+    pub include_non_project: bool,
 }
 
 /// Rows per section on the All tab.
-const ALL_SECTION: [(SearchTab, usize); 4] = [
+const ALL_SECTION: [(SearchTab, usize); 5] = [
     (SearchTab::Classes, 4),
-    (SearchTab::Files, 4),
     (SearchTab::Symbols, 4),
-    (SearchTab::Actions, 4),
+    (SearchTab::Files, 4),
+    (SearchTab::Actions, 5),
+    (SearchTab::Text, 5),
 ];
 const TAB_LIMIT: usize = 30;
 
@@ -365,7 +428,18 @@ fn provider(
         SearchTab::Files => files(query, sources, limit),
         SearchTab::Classes => symbols(query, sources, limit, true),
         SearchTab::Symbols => symbols(query, sources, limit, false),
-        SearchTab::Actions => rank(
+        SearchTab::Text => sources
+            .text
+            .iter()
+            .take(limit)
+            .map(|found| Ranked {
+                item: Hit::Text(found.clone()),
+                positions: Vec::new(),
+                class: MatchClass::Inner,
+                score: 0,
+            })
+            .collect(),
+        SearchTab::Actions => rank_strict(
             query,
             sources
                 .actions
@@ -395,7 +469,7 @@ fn files(query: &str, sources: &SearchSources, limit: usize) -> Vec<Ranked<Hit>>
             })
             .collect();
     }
-    rank(
+    rank_strict(
         pattern,
         sources
             .files
@@ -430,6 +504,7 @@ fn symbols(query: &str, sources: &SearchSources, limit: usize, classes: bool) ->
         .copied()
         .chain(sources.server_symbols.iter())
         .filter(|symbol| keep(symbol.kind))
+        .filter(|symbol| sources.include_non_project || !symbol.path.is_absolute())
         .filter(|symbol| seen.insert((symbol.path.clone(), symbol.name.clone(), symbol.line)))
         .map(|symbol| (Hit::Symbol(symbol.clone()), symbol.name.clone()))
         .collect();
@@ -543,6 +618,10 @@ pub struct QuickNavState {
     /// Whether the last [`SymbolIndex::refresh`] covered every file.
     pub index_complete: bool,
     pub server: ServerSymbols,
+    /// Background text search feeding the Text tab of Search Everywhere.
+    pub text: jetthing_search::SearchService,
+    pub text_results: Vec<TextMatch>,
+    pub text_query: String,
 }
 
 impl QuickNavState {
@@ -989,6 +1068,8 @@ mod tests {
             symbols: indexed.iter().collect(),
             server_symbols: &server,
             actions: &actions,
+            text: &[],
+            include_non_project: true,
         };
         let classes = search(SearchTab::Classes, "MA", &sources);
         assert_eq!(classes.len(), 1, "server duplicate is merged: {classes:?}");
@@ -1181,8 +1262,8 @@ mod tests {
                 )
                 .is_err()
         );
-        assert_eq!(SearchTab::All.step(true), SearchTab::Actions);
-        assert_eq!(SearchTab::Actions.step(false), SearchTab::All);
+        assert_eq!(SearchTab::All.step(true), SearchTab::Text);
+        assert_eq!(SearchTab::Text.step(false), SearchTab::All);
     }
 
     #[test]
@@ -1206,5 +1287,70 @@ mod tests {
         assert!(java.iter().any(|(n, k, _)| n == "A" && is_class_like(*k)));
         assert!(java.iter().any(|(n, _, l)| n == "run" && *l == 1));
         assert!(outline(Path::new("n.txt"), "hello").is_empty());
+    }
+
+    #[test]
+    fn strict_ranking_drops_letters_scattered_over_words() {
+        let names = [
+            "Markdown: Insert Image",
+            "Main Menu",
+            "Build Project",
+            "Run Main",
+            "getName",
+        ];
+        let rank = |query: &str| {
+            names_of(rank_strict(
+                query,
+                names.iter().map(|n| (n.to_string(), n.to_string())),
+                10,
+            ))
+        };
+        let found = rank("main");
+        assert!(found.contains(&"Main Menu".to_owned()), "{found:?}");
+        assert!(found.contains(&"Run Main".to_owned()), "{found:?}");
+        assert!(
+            !found.contains(&"Markdown: Insert Image".to_owned()),
+            "{found:?}"
+        );
+        assert_eq!(rank("bp"), ["Build Project"], "word initials still match");
+        assert_eq!(rank("gN"), ["getName"], "humps inside one word match");
+    }
+
+    fn names_of(ranked: Vec<Ranked<String>>) -> Vec<String> {
+        ranked.into_iter().map(|r| r.item).collect()
+    }
+
+    #[test]
+    fn text_tab_lists_occurrences_and_library_symbols_are_optional() {
+        let found = TextMatch {
+            path: "a.txt".into(),
+            line: 3,
+            column: 1,
+            length: 4,
+            preview: "main".into(),
+            highlights: std::iter::once(0..4).collect(),
+        };
+        let library = SymbolEntry {
+            name: "main".into(),
+            kind: SymbolKind::Function,
+            path: "/jdk/Foo.java".into(),
+            line: 0,
+            container: None,
+        };
+        let sources = |include| SearchSources {
+            files: &[],
+            recent: &[],
+            symbols: Vec::new(),
+            server_symbols: std::slice::from_ref(&library),
+            actions: &[],
+            text: std::slice::from_ref(&found),
+            include_non_project: include,
+        };
+        let text = search(SearchTab::Text, "main", &sources(false));
+        assert_eq!(text[0].item, Hit::Text(found.clone()));
+        assert!(search(SearchTab::Symbols, "main", &sources(false)).is_empty());
+        assert_eq!(search(SearchTab::Symbols, "main", &sources(true)).len(), 1);
+        let all = search(SearchTab::All, "main", &sources(true));
+        assert!(matches!(all[0].item, Hit::Symbol(_)), "symbols before text");
     }
 }

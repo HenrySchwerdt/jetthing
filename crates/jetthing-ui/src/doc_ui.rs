@@ -412,6 +412,7 @@ pub fn track_hover(app: &mut IdeApp, ctx: &egui::Context, hover: Option<(usize, 
         .is_some_and(|(pointer, rect)| rect.expand(8.0).contains(pointer));
     let busy = app.state.completion.is_some()
         || app.palette.open
+        || app.find_popup.open
         || app.dialog.is_some()
         || ctx.input(|input| input.pointer.any_down());
     if let Some(popup) = &app.state.docs.popup

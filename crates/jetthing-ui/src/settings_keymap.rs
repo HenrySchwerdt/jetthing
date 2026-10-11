@@ -37,6 +37,12 @@ impl KeymapPage {
     pub fn capturing(&self) -> bool {
         self.capture.is_some()
     }
+
+    /// Filters the action list (Find Action's Assign Shortcut).
+    pub fn set_query(&mut self, query: String) {
+        self.query = query;
+        self.by_shortcut = false;
+    }
 }
 
 /// Draws the action list for keymap `id` (the selector's current value).

@@ -13,7 +13,7 @@ use jetthing_language::structure::SymbolKind;
 use serde_json::{Value, json};
 use std::time::Duration;
 
-const MAX_ROWS: usize = 14;
+const MAX_ROWS: usize = 40;
 /// Time spent indexing symbols per frame while the popup is open.
 const INDEX_BUDGET: Duration = Duration::from_millis(15);
 
@@ -28,6 +28,10 @@ pub struct Palette {
     tab: SearchTab,
     /// Query last sent to the language server.
     server_query: String,
+    /// "Include non-project items": library symbols from the language server.
+    include_non_project: bool,
+    /// A keyboard move happened: scroll the selected row into view.
+    scroll_to_selected: bool,
 }
 
 impl Palette {
@@ -57,18 +61,22 @@ const UI_ACTIONS: [(&str, &str); 3] = [
 /// Id prefix of a [`UI_ACTIONS`] candidate (the rest is the keymap action id).
 const UI_ACTION_PREFIX: &str = "ui:";
 
-fn actions(app: &IdeApp) -> Vec<ActionCandidate> {
-    let ui_actions = UI_ACTIONS.iter().map(|(action, label)| ActionCandidate {
-        enabled: app.menu_action_enabled(action),
-        shortcut: app.action_shortcut(action).unwrap_or_default(),
-        id: format!("{UI_ACTION_PREFIX}{action}"),
-        label: (*label).into(),
-        category: "File".into(),
-    });
+fn actions(app: &IdeApp, include_disabled: bool) -> Vec<ActionCandidate> {
+    let ui_actions = UI_ACTIONS
+        .iter()
+        .map(|(action, label)| ActionCandidate {
+            enabled: app.menu_action_enabled(action),
+            shortcut: app.action_shortcut(action).unwrap_or_default(),
+            id: format!("{UI_ACTION_PREFIX}{action}"),
+            label: (*label).into(),
+            category: "File".into(),
+        })
+        .filter(|candidate| include_disabled || candidate.enabled);
     app.commands
         .specs()
         .into_iter()
         .filter(IdeApp::parameterless)
+        .filter(|spec| include_disabled || app.commands.is_enabled(&spec.id, &app.state))
         // Android actions only apply to Android projects; the SDK manager is global.
         .filter(|spec| {
             spec.category != "Android"
@@ -100,8 +108,16 @@ fn items(app: &mut IdeApp) -> Vec<Ranked<Hit>> {
         }
         app.state.poll_server_symbols();
     }
+    if matches!(tab, SearchTab::All | SearchTab::Text) {
+        app.state.request_text_search(&query);
+        app.state.poll_text_search();
+    }
     let actions = if matches!(tab, SearchTab::All | SearchTab::Actions) {
-        actions(app)
+        // The All tab never lists disabled actions; the Actions tab has the checkbox.
+        actions(
+            app,
+            tab == SearchTab::Actions && app.state.include_disabled_actions,
+        )
     } else {
         Vec::new()
     };
@@ -112,13 +128,15 @@ fn items(app: &mut IdeApp) -> Vec<Ranked<Hit>> {
         symbols: navigation.index.all().collect(),
         server_symbols: &navigation.server.results,
         actions: &actions,
+        text: &navigation.text_results,
+        include_non_project: app.palette.include_non_project,
     };
     let mut found = search(tab, &query, &sources);
     if tab == SearchTab::All && query.is_empty() {
         // Nothing typed: recent files only, like the reference IDE.
         found.retain(|hit| matches!(hit.item, Hit::File { .. }));
     }
-    found.truncate(if tab == SearchTab::All { 16 } else { MAX_ROWS });
+    found.truncate(if tab == SearchTab::All { 24 } else { MAX_ROWS });
     found
 }
 
@@ -181,6 +199,145 @@ fn open_location(
     ctx.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
 }
 
+/// One result row. Returns the index when the row was clicked.
+fn row(
+    app: &mut IdeApp,
+    ui: &mut egui::Ui,
+    width: f32,
+    index: usize,
+    ranked: &Ranked<Hit>,
+    scroll_selected: bool,
+) -> Option<usize> {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 26.0), Sense::click());
+    let selected = index == app.palette.selected;
+    if selected && scroll_selected {
+        response.scroll_to_me(None);
+    }
+    let row = rect.shrink2(vec2(6.0, 1.0));
+    if selected {
+        ui.painter().rect_filled(row, 4.0, theme::SELECTION);
+    } else if response.hovered() {
+        ui.painter().rect_filled(row, 4.0, theme::HOVER);
+    }
+    let icon_rect = Rect::from_min_size(
+        egui::pos2(row.left() + 8.0, row.center().y - 8.0),
+        vec2(16.0, 16.0),
+    );
+    let small = egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0);
+    // (title, inline detail, right-aligned text, icon, title colour, highlighted positions)
+    let mut positions = ranked.positions.clone();
+    let (title, detail, trailing, icon, color) = match &ranked.item {
+        Hit::Action(action) => (
+            action.label.clone(),
+            action.shortcut.clone(),
+            action.category.clone(),
+            Icon::Run,
+            if action.enabled {
+                *theme::TEXT_BRIGHT
+            } else {
+                *theme::TEXT_DISABLED
+            },
+        ),
+        Hit::File { path, line } => (
+            file_name(path),
+            path.parent()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default(),
+            line.map(|line| format!(":{line}")).unwrap_or_default(),
+            app.file_icon(path),
+            *theme::TEXT_BRIGHT,
+        ),
+        Hit::Symbol(symbol) => (
+            symbol.name.clone(),
+            symbol.container.clone().unwrap_or_default(),
+            format!("{}:{}", file_name(&symbol.path), symbol.line + 1),
+            symbol_icon(symbol),
+            *theme::TEXT_BRIGHT,
+        ),
+        Hit::Text(found) => {
+            positions = found.highlights.iter().flat_map(|r| r.clone()).collect();
+            (
+                found.preview.clone(),
+                String::new(),
+                format!("{} {}", file_name(&found.path), found.line),
+                app.file_icon(&found.path),
+                *theme::TEXT_BRIGHT,
+            )
+        }
+    };
+    let icon_color = if matches!(ranked.item, Hit::Action(_)) {
+        *theme::TEXT_INFO
+    } else {
+        *icons::ICON
+    };
+    icons::paint(ui.painter(), icon_rect, icon, icon_color);
+    // Trailing text first, so the title is clipped before it.
+    let trailing_galley = ui.painter().layout_no_wrap(
+        trailing,
+        egui::FontId::proportional(theme::UI_FONT_SIZE),
+        *theme::TEXT_SECONDARY,
+    );
+    let trailing_x = row.right() - 10.0 - trailing_galley.size().x;
+    ui.painter().galley(
+        egui::pos2(trailing_x, row.center().y - trailing_galley.size().y / 2.0),
+        trailing_galley,
+        *theme::TEXT_SECONDARY,
+    );
+    let body = row.with_max_x(trailing_x - 8.0);
+    let x = highlighted_text(ui, body, row.left() + 32.0, &title, &positions, color);
+    crate::widgets::row_text(ui, body, x + 10.0, &detail, small, *theme::TEXT_SECONDARY);
+    if response.hovered() && ui.input(|input| input.pointer.delta() != egui::Vec2::ZERO) {
+        app.palette.selected = index;
+    }
+    response.clicked().then_some(index)
+}
+
+/// Selected item's path (or action id), the Assign Shortcut hint on the Actions tab.
+fn footer(app: &IdeApp, ui: &mut egui::Ui, width: f32, selected: Option<&Ranked<Hit>>) {
+    let (footer, _) = ui.allocate_exact_size(vec2(width, 28.0), Sense::hover());
+    ui.painter().rect_filled(
+        footer,
+        egui::CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: 10,
+            se: 10,
+        },
+        theme::FRAME,
+    );
+    let font = egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0);
+    let left = match selected.map(|ranked| &ranked.item) {
+        Some(Hit::File { path, .. }) => path.display().to_string(),
+        Some(Hit::Symbol(symbol)) => symbol.path.display().to_string(),
+        Some(Hit::Text(found)) => found.path.display().to_string(),
+        Some(Hit::Action(action)) => action.id.clone(),
+        None => "↑↓ to navigate · Enter to open · Esc to close".to_owned(),
+    };
+    let right = if app.palette.tab == SearchTab::Actions {
+        "Assign Shortcut  Alt+Enter"
+    } else {
+        ""
+    };
+    let galley =
+        ui.painter()
+            .layout_no_wrap(right.to_owned(), font.clone(), *theme::TEXT_SECONDARY);
+    let right_width = galley.size().x;
+    ui.painter().galley(
+        footer.right_center() - vec2(14.0 + right_width, galley.size().y / 2.0),
+        galley,
+        *theme::TEXT_SECONDARY,
+    );
+    ui.painter()
+        .with_clip_rect(footer.with_max_x(footer.right() - right_width - 28.0))
+        .text(
+            footer.left_center() + vec2(14.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            left,
+            font,
+            *theme::TEXT_INFO,
+        );
+}
+
 pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     if !app.palette.open {
         return;
@@ -195,7 +352,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
         }
     }
     let found = items(app);
-    if found.len() > MAX_ROWS {
+    if app.state.quick_nav.text.is_running() {
         ctx.request_repaint();
     }
     if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -205,22 +362,28 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     if !found.is_empty() {
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)) {
             app.palette.selected = (app.palette.selected + 1) % found.len();
+            app.palette.scroll_to_selected = true;
         }
         if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)) {
             app.palette.selected = (app.palette.selected + found.len() - 1) % found.len();
+            app.palette.scroll_to_selected = true;
         }
     }
     app.palette.selected = app.palette.selected.min(found.len().saturating_sub(1));
     let enter = ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
     let screen = ctx.content_rect();
-    let width = 680.0_f32.min(screen.width() - 40.0);
+    let width = 700.0_f32.min(screen.width() - 40.0);
+    // Alt+Enter on an action: Assign Shortcut (opens the keymap page).
+    let assign = app.palette.tab == SearchTab::Actions
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::ALT, egui::Key::Enter));
+    let list_height = (screen.height() * 0.7 - 150.0).max(120.0);
     let mut chosen = enter.then_some(app.palette.selected);
     let mut close = false;
     egui::Area::new(egui::Id::new("search_everywhere"))
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(
             screen.center().x - width / 2.0,
-            screen.top() + screen.height() * 0.16,
+            screen.top() + screen.height() * 0.12,
         ))
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style())
@@ -260,6 +423,24 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                 app.palette.selected = 0;
                             }
                         }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_space(10.0);
+                            match app.palette.tab {
+                                SearchTab::Actions => {
+                                    ui.checkbox(
+                                        &mut app.state.include_disabled_actions,
+                                        "Include disabled actions",
+                                    );
+                                }
+                                SearchTab::Files | SearchTab::Text => {}
+                                _ => {
+                                    ui.checkbox(
+                                        &mut app.palette.include_non_project,
+                                        "Include non-project items",
+                                    );
+                                }
+                            }
+                        });
                     });
                     ui.painter().hline(
                         ui.min_rect().x_range(),
@@ -275,7 +456,9 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                 .font(egui::FontId::proportional(theme::UI_FONT_SIZE + 2.0))
                                 .desired_width(width - 60.0)
                                 .margin(egui::Margin::symmetric(4, 10))
-                                .hint_text("Type to search classes, files, symbols and actions"),
+                                .hint_text(
+                                    "Type to search classes, files, symbols, actions and text",
+                                ),
                         );
                         if app.palette.just_opened || !input.has_focus() {
                             input.request_focus();
@@ -300,106 +483,22 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                         });
                         ui.add_space(12.0);
                     }
-                    for (index, ranked) in found.iter().enumerate() {
-                        let (rect, response) =
-                            ui.allocate_exact_size(vec2(width, 26.0), Sense::click());
-                        let row = rect.shrink2(vec2(6.0, 1.0));
-                        if index == app.palette.selected {
-                            ui.painter().rect_filled(row, 4.0, theme::SELECTION);
-                        } else if response.hovered() {
-                            ui.painter().rect_filled(row, 4.0, theme::HOVER);
-                        }
-                        let icon_rect = Rect::from_min_size(
-                            egui::pos2(row.left() + 8.0, row.center().y - 8.0),
-                            vec2(16.0, 16.0),
-                        );
-                        let small = egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0);
-                        let (title, detail, trailing, icon, color) = match &ranked.item {
-                            Hit::Action(action) => (
-                                action.label.clone(),
-                                action.category.clone(),
-                                action.shortcut.clone(),
-                                Icon::Run,
-                                if action.enabled {
-                                    *theme::TEXT_BRIGHT
-                                } else {
-                                    *theme::TEXT_DISABLED
-                                },
-                            ),
-                            Hit::File { path, line } => (
-                                file_name(path),
-                                path.parent()
-                                    .map(|p| p.display().to_string())
-                                    .unwrap_or_default(),
-                                line.map(|line| format!(":{line}")).unwrap_or_default(),
-                                app.file_icon(path),
-                                *theme::TEXT_BRIGHT,
-                            ),
-                            Hit::Symbol(symbol) => (
-                                symbol.name.clone(),
-                                symbol.container.clone().unwrap_or_default(),
-                                format!("{}:{}", file_name(&symbol.path), symbol.line + 1),
-                                symbol_icon(symbol),
-                                *theme::TEXT_BRIGHT,
-                            ),
-                        };
-                        let icon_color = if matches!(ranked.item, Hit::Action(_)) {
-                            *theme::TEXT_INFO
-                        } else {
-                            *icons::ICON
-                        };
-                        icons::paint(ui.painter(), icon_rect, icon, icon_color);
-                        let x = highlighted_text(
-                            ui,
-                            row,
-                            row.left() + 32.0,
-                            &title,
-                            &ranked.positions,
-                            color,
-                        );
-                        crate::widgets::row_text(
-                            ui,
-                            row,
-                            x + 10.0,
-                            &detail,
-                            small,
-                            *theme::TEXT_INFO,
-                        );
-                        ui.painter().text(
-                            row.right_center() - vec2(10.0, 0.0),
-                            egui::Align2::RIGHT_CENTER,
-                            trailing,
-                            egui::FontId::proportional(theme::UI_FONT_SIZE),
-                            *theme::TEXT_SECONDARY,
-                        );
-                        if response.hovered()
-                            && ui.input(|input| input.pointer.delta() != egui::Vec2::ZERO)
-                        {
-                            app.palette.selected = index;
-                        }
-                        if response.clicked() {
-                            chosen = Some(index);
-                        }
-                    }
+                    let scroll_selected = std::mem::take(&mut app.palette.scroll_to_selected);
+                    egui::ScrollArea::vertical()
+                        .max_height(list_height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            for (index, ranked) in found.iter().enumerate() {
+                                if let Some(click) =
+                                    row(app, ui, width, index, ranked, scroll_selected)
+                                {
+                                    chosen = Some(click);
+                                }
+                            }
+                        });
                     ui.add_space(4.0);
-                    let (footer, _) = ui.allocate_exact_size(vec2(width, 28.0), Sense::hover());
-                    ui.painter().rect_filled(
-                        footer,
-                        egui::CornerRadius {
-                            nw: 0,
-                            ne: 0,
-                            sw: 10,
-                            se: 10,
-                        },
-                        theme::FRAME,
-                    );
-                    ui.painter().text(
-                        footer.left_center() + vec2(14.0, 0.0),
-                        egui::Align2::LEFT_CENTER,
-                        "↑↓ to navigate · Enter to run · Esc to close",
-                        egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                        *theme::TEXT_INFO,
-                    );
+                    footer(app, ui, width, found.get(app.palette.selected));
                 });
         });
     if ctx.input(|input| input.pointer.any_click()) && !ctx.is_pointer_over_area() {
@@ -427,7 +526,25 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 app.palette.open = false;
                 open_location(app, ctx, &symbol.path, Some(symbol.line + 1));
             }
+            Hit::Text(found) => {
+                app.palette.open = false;
+                app.dispatch(
+                    "editor.openFile",
+                    json!({
+                        "path": found.path,
+                        "line": found.line,
+                        "column": found.column,
+                        "length": found.length,
+                    }),
+                );
+                ctx.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
+            }
         }
+    }
+    if assign && let Some(Hit::Action(action)) = found.get(app.palette.selected).map(|r| &r.item) {
+        app.keymap_search = Some(action.label.clone());
+        app.palette.open = false;
+        app.dispatch("settings.open", json!({"page": "preferences.keymap"}));
     }
     if close {
         app.palette.open = false;
@@ -441,7 +558,7 @@ mod tests {
     #[test]
     fn find_action_offers_window_actions_and_hides_android_outside_android_projects() {
         let app = IdeApp::with_update_check(None, Vec::new(), false);
-        let found = actions(&app);
+        let found = actions(&app, false);
         for label in ["New Project…", "Open…", "Exit"] {
             assert!(
                 found.iter().any(|a| a.label == label && a.enabled),

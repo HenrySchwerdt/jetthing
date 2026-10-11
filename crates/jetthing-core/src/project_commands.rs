@@ -24,6 +24,7 @@ pub struct Workspace {
     pub marked_dirs: std::collections::BTreeMap<PathBuf, crate::project_view::DirMark>,
     /// `Some(false)` when Compact Middle Packages was switched off.
     pub compact_packages: Option<bool>,
+    pub include_disabled_actions: bool,
 }
 
 pub const WORKSPACE_FILE: &str = ".jetthing/workspace.json";
@@ -221,6 +222,7 @@ impl IdeState {
             pinned_files: self.tabs.pinned.iter().cloned().collect(),
             marked_dirs: self.project_view.marks.clone(),
             compact_packages: Some(self.project_view.compact_packages),
+            include_disabled_actions: self.include_disabled_actions,
             selected_run_configuration: self
                 .run_configurations
                 .selected()
@@ -273,6 +275,7 @@ impl IdeState {
             .filter(|(path, _)| known.contains(*path))
             .map(|(path, mark)| (path.clone(), *mark))
             .collect();
+        self.include_disabled_actions = workspace.include_disabled_actions;
         if let Some(compact) = workspace.compact_packages {
             self.project_view.compact_packages = compact;
         }

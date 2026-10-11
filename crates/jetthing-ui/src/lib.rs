@@ -36,6 +36,7 @@ mod doc_ui;
 mod editor;
 mod editor_keys;
 mod file_icon;
+mod find_popup;
 mod findbar;
 mod first_run;
 mod folding;
@@ -104,6 +105,9 @@ pub struct IdeApp {
     switcher_ctrl: Option<bool>,
     terminal_selection: Option<(terminal_ui::GridPoint, terminal_ui::GridPoint)>,
     search_input: String,
+    find_popup: find_popup::FindPopup,
+    /// Keymap page filter requested by Find Action's Assign Shortcut.
+    keymap_search: Option<String>,
     /// Find in Files option toggles and file mask.
     find_options: jetthing_core::SearchOptions,
     /// Query and options of the last search shown in the Find inputs, so a
@@ -277,6 +281,8 @@ impl IdeApp {
             switcher_ctrl: None,
             terminal_selection: None,
             search_input: String::new(),
+            find_popup: Default::default(),
+            keymap_search: None,
             find_options: jetthing_core::SearchOptions::default(),
             find_synced: Default::default(),
             tree_selection: None,
@@ -595,6 +601,7 @@ impl IdeApp {
         }
         if completion_open
             && !self.palette.open
+            && !self.find_popup.open
             && self.dialog.is_none()
             && self.editor_focused(ctx)
         {
@@ -616,6 +623,7 @@ impl IdeApp {
             }
         } else if self.state.snippet.is_some()
             && !self.palette.open
+            && !self.find_popup.open
             && self.dialog.is_none()
             && self.editor_focused(ctx)
         {
@@ -633,7 +641,8 @@ impl IdeApp {
         let terminal_focused = ctx
             .memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
             && self.dialog.is_none()
-            && !self.palette.open;
+            && !self.palette.open
+            && !self.find_popup.open;
         if self.dispatch_keymap(ctx, terminal_focused) {
             consumed_chord.set(true);
         }
@@ -671,8 +680,9 @@ impl IdeApp {
                 self.dispatch("navigate.switcherCancel", Value::Null);
             } else if self.state.ai.pending_apply.is_some() {
                 self.dispatch("ai.chat.applyCancel", Value::Null);
-            } else if self.palette.open {
+            } else if self.palette.open || self.find_popup.open {
                 self.palette.open = false;
+                self.find_popup.open = false;
             } else if self.state.docs.popup.is_some() {
                 self.dispatch("language.closeQuickDoc", Value::Null);
             } else if self.state.completion.is_some() {
@@ -688,6 +698,7 @@ impl IdeApp {
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
             } else if self.state.tool_windows.visible(Anchor::Bottom).is_some()
                 && !self.palette.open
+                && !self.find_popup.open
             {
                 // Escape returns focus to the editor; keep the tool window open.
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
@@ -720,7 +731,11 @@ impl IdeApp {
             .and_then(|index| self.state.documents.get(index))
             .map(|document| document.path.clone());
         if active != self.last_active_file {
-            if active.is_some() && self.dialog.is_none() && !self.palette.open {
+            if active.is_some()
+                && self.dialog.is_none()
+                && !self.palette.open
+                && !self.find_popup.open
+            {
                 ctx.memory_mut(|memory| memory.request_focus(editor::editor_id()));
             }
             self.last_active_file = active;
@@ -747,10 +762,6 @@ impl IdeApp {
             ctx.memory_mut(|memory| memory.request_focus(id));
         }
         self.last_bottom = bottom;
-    }
-
-    fn search_focus_requested(&self, ctx: &egui::Context) {
-        ctx.memory_mut(|memory| memory.request_focus(toolwindows::find_input_id()));
     }
 
     /// "Search Everywhere" opens on a quick double press of Shift alone.
@@ -908,6 +919,7 @@ impl IdeApp {
             plugin_ui::app_window(self, ctx, &plugin);
             switcher::frame(self, ctx);
             palette::show(self, ctx);
+            find_popup::show(self, ctx);
             switcher::show(self, ctx);
             plugin_ui::notifications(self, ctx);
             self.control_after_frame(ctx);
@@ -943,6 +955,7 @@ impl IdeApp {
         ai_inline::handle_keys(self, ctx);
         if self.dialog.is_none()
             && !self.palette.open
+            && !self.find_popup.open
             && !ctx.memory(|memory| memory.has_focus(toolwindows::terminal_input_id()))
         {
             navigation_ui::handle_shortcuts(self, ctx);
@@ -989,6 +1002,7 @@ impl IdeApp {
         refactor_ui::popup(self, ctx);
         switcher::frame(self, ctx);
         palette::show(self, ctx);
+        find_popup::show(self, ctx);
         switcher::show(self, ctx);
         popups::show(self, ctx);
         settings_dialog::show(self, ctx);
