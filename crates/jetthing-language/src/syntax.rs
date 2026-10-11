@@ -73,7 +73,7 @@ fn error_ranges(node: tree_sitter::Node<'_>, source: &str, ranges: &mut Vec<Rang
 }
 
 /// Grows a byte range to the start of its first line and the end of its last.
-fn line_range(source: &str, range: Range<usize>) -> Range<usize> {
+pub(crate) fn line_range(source: &str, range: Range<usize>) -> Range<usize> {
     let bytes = source.as_bytes();
     let end = range.end.min(bytes.len());
     let start = range.start.min(end);
