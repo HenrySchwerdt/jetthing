@@ -28,6 +28,11 @@ pub trait ComponentProvider: Send + Sync {
         http: &HttpClient,
         settings: Option<&ComponentSettings>,
     ) -> Result<Release, ToolchainError>;
+
+    /// What to install when the project pins nothing (`lts` for JDKs).
+    fn default_request(&self) -> VersionRequest {
+        VersionRequest::Latest
+    }
 }
 
 /// One release in a static list or JSON index.

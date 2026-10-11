@@ -52,13 +52,13 @@ pub fn status_widget(app: &mut IdeApp, ui: &mut egui::Ui, font: egui::FontId) {
     let Some((text, busy, problem)) = summary(app, &servers) else {
         return;
     };
-    let icon = problem.then_some((Icon::Warning, theme::WARNING));
+    let icon = problem.then_some((Icon::Warning, *theme::WARNING));
     let color = if problem {
-        theme::TEXT_SECONDARY
+        *theme::TEXT_SECONDARY
     } else if busy {
-        theme::TEXT_INFO
+        *theme::TEXT_INFO
     } else {
-        theme::TEXT_SECONDARY
+        *theme::TEXT_SECONDARY
     };
     let response = widgets::flat_widget(ui, icon, &text, font, color, false, 22.0);
     if busy {
@@ -120,14 +120,15 @@ pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
     let mut dismiss = None;
     let mut restart = false;
     let mut copy = None;
+    let mut setup = None;
     egui::Area::new(egui::Id::new("lsp_notices"))
-        .order(egui::Order::Foreground)
+        .order(crate::notifications::BALLOON_ORDER)
         .anchor(egui::Align2::RIGHT_BOTTOM, vec2(-16.0, -bottom))
         .show(ctx, |ui| {
             ui.set_width(width);
             for notice in notices.iter().rev().take(3) {
                 egui::Frame::popup(ui.style())
-                    .fill(theme::NOTIFICATION)
+                    .fill(*theme::NOTIFICATION)
                     .stroke(egui::Stroke::new(1.0_f32, theme::NOTIFICATION))
                     .corner_radius(8)
                     .inner_margin(egui::Margin::same(14))
@@ -135,9 +136,9 @@ pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
                         ui.set_width(width - 28.0);
                         ui.horizontal(|ui| {
                             let icon = if notice.error {
-                                (Icon::Error, theme::ERROR)
+                                (Icon::Error, *theme::ERROR)
                             } else {
-                                (Icon::Warning, theme::WARNING)
+                                (Icon::Warning, *theme::WARNING)
                             };
                             crate::icons::show(ui, icon.0, 16.0, icon.1);
                             ui.label(
@@ -165,6 +166,12 @@ pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                                 .clicked()
                             };
+                            if let Some(component) = &notice.setup
+                                && link(ui, "Set up")
+                            {
+                                setup = Some((notice.id.clone(), component.clone()));
+                            }
+                            ui.add_space(12.0);
                             if notice.id.starts_with("missing:") && link(ui, "Copy Install Hint") {
                                 copy = Some(notice.body.clone());
                             }
@@ -185,5 +192,11 @@ pub fn notices(app: &mut IdeApp, ctx: &egui::Context) {
     }
     if restart {
         app.dispatch("language.restartServers", Value::Null);
+    }
+    if let Some((id, component)) = setup {
+        // Installs the server and what it needs (jdtls → JDK); servers restart
+        // when the setup finishes.
+        app.dispatch("toolchain.setup", json!({ "components": [component] }));
+        app.dispatch("language.dismissNotice", json!({ "id": id }));
     }
 }

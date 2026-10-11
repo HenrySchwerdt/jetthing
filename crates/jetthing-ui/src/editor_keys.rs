@@ -38,7 +38,9 @@ impl Mods {
     }
 }
 
-/// Command bound to `key` in the editor, if any.
+/// Command bound to `key` in the editor, if any. The active keymap
+/// (`crate::keybindings`) handles these actions first; this table is the fallback
+/// for keystrokes the keymap leaves unbound.
 pub fn action_for(key: Key, modifiers: Modifiers, mac: bool) -> Option<&'static str> {
     let m = Mods::from(modifiers);
     let (alt, alt_shift, ctrl_shift) = (

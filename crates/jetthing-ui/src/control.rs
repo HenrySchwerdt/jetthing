@@ -9,7 +9,9 @@
 use crate::{IdeApp, editor, findbar, toolwindows};
 use eframe::egui;
 use jetthing_command::CommandError;
-use jetthing_control::{Chord, ControlServer, Pending, Request, Response, WaitCondition};
+use jetthing_control::{
+    Chord, ControlServer, Pending, PointerButton, Request, Response, WaitCondition,
+};
 use jetthing_core::{Anchor, ToolWindow};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -150,6 +152,23 @@ impl IdeApp {
                     events: vec![egui::Event::Text(text)],
                     done: Some(pending),
                 }),
+                Request::Click {
+                    x,
+                    y,
+                    button,
+                    count,
+                } => {
+                    let mut frames = click_frames(egui::pos2(x, y), button, count);
+                    if let Some(last) = frames.last_mut() {
+                        last.done = Some(pending);
+                    }
+                    control.input.extend(frames);
+                }
+                Request::Move { x, y } => control.input.push_back(InputFrame {
+                    modifiers: egui::Modifiers::NONE,
+                    events: vec![egui::Event::PointerMoved(egui::pos2(x, y))],
+                    done: Some(pending),
+                }),
                 Request::Screenshot { path } => {
                     let id = control.next_screenshot;
                     control.next_screenshot += 1;
@@ -211,7 +230,7 @@ impl IdeApp {
                         && control.frames_since_input >= SETTLE_FRAMES
                         && self.background_idle()
                 }
-                WaitCondition::Popup => self.popup_visible(),
+                WaitCondition::Popup => self.popup_visible(ctx),
                 WaitCondition::Text => text.as_deref().is_some_and(|text| self.shows_text(text)),
             };
             if met {
@@ -255,15 +274,21 @@ impl IdeApp {
             && !self.state.updates.is_busy()
     }
 
-    fn popup_visible(&self) -> bool {
+    fn popup_visible(&self, ctx: &egui::Context) -> bool {
         self.palette.open
             || self.dialog.is_some()
             || self.state.about_open
+            || self.state.first_run_open
             || self.completion_visible()
+            || egui::Popup::is_any_open(ctx)
+            || self.state.docs.popup.is_some()
     }
 
     fn completion_visible(&self) -> bool {
-        !self.state.lsp.completions().is_empty()
+        self.state
+            .completion
+            .as_ref()
+            .is_some_and(|session| session.visible())
     }
 
     fn terminal_text(&self) -> Option<String> {
@@ -303,6 +328,10 @@ impl IdeApp {
                 json!({
                     "path": relative(&document.path),
                     "modified": document.text.is_dirty(),
+                    "diskConflict": document.conflict.map(|conflict| match conflict {
+                        jetthing_core::DiskConflict::Modified => "modified",
+                        jetthing_core::DiskConflict::Deleted => "deleted",
+                    }),
                 })
             })
             .collect();
@@ -348,16 +377,35 @@ impl IdeApp {
                 "bottom": tool_window(Anchor::Bottom),
             },
             "focus": focus,
+            "projectTree": {
+                "selected": self.tree_selection.as_deref().map(relative),
+                "expanded": self.state.expanded_dirs.iter().map(|path| relative(path.as_path())).collect::<Vec<_>>(),
+            },
             "editor": editor,
             "terminal": self.terminal_text(),
             "popups": {
                 "searchEverywhere": self.palette.open.then(|| self.palette.tab_name()),
+                "switcher": self.state.quick_nav.switcher.as_ref().map(|switcher| match switcher.selected_entry() {
+                    jetthing_core::quick_nav::SwitcherEntry::File(path) => relative(path),
+                    jetthing_core::quick_nav::SwitcherEntry::ToolWindow(window) => window.title().to_owned(),
+                }),
                 "dialog": self.dialog.as_ref().map(|dialog| dialog.kind()),
                 "findBar": self.find.open,
                 "completion": self.completion_visible(),
                 "notification": self.state.update_notification,
                 "about": self.state.about_open,
+                "customize": self.state.first_run_open,
                 "crashReport": self.state.crash_report.is_some(),
+                "menu": egui::Popup::is_any_open(ctx),
+            },
+            "findInFiles": {
+                "query": self.state.search_query,
+                "results": self.state.search_results.len(),
+            },
+            "problems": active.map(|_| self.state.active_problems().len()),
+            "run": {
+                "task": self.state.runner.plan().map(|plan| plan.name.clone()),
+                "running": self.state.runner.is_running(),
             },
             "status": self.state.status,
             "busy": !self.background_idle(),
@@ -367,6 +415,33 @@ impl IdeApp {
 
 /// Frames for a chord. `DoubleShift` is the modifier-only Search Everywhere
 /// gesture: Shift pressed and released twice on consecutive frames.
+/// Frames for a click: move, then press and release `count` times, each on
+/// its own frame so egui sees hover, press and (double) click like real input.
+pub(crate) fn click_frames(pos: egui::Pos2, button: PointerButton, count: u8) -> Vec<InputFrame> {
+    let button = match button {
+        PointerButton::Primary => egui::PointerButton::Primary,
+        PointerButton::Secondary => egui::PointerButton::Secondary,
+        PointerButton::Middle => egui::PointerButton::Middle,
+    };
+    let frame = |events| InputFrame {
+        modifiers: egui::Modifiers::NONE,
+        events,
+        done: None,
+    };
+    let press = |pressed| egui::Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let mut frames = vec![frame(vec![egui::Event::PointerMoved(pos)])];
+    for _ in 0..count.clamp(1, 3) {
+        frames.push(frame(vec![press(true)]));
+        frames.push(frame(vec![press(false)]));
+    }
+    frames
+}
+
 pub(crate) fn key_frames(chord: &str) -> Result<Vec<InputFrame>, String> {
     let frame = |modifiers, events| InputFrame {
         modifiers,
@@ -466,6 +541,29 @@ mod tests {
     }
 
     #[test]
+    fn clicks_move_then_press_and_release_per_frame() {
+        let frames = click_frames(egui::pos2(18.0, 20.0), PointerButton::Secondary, 2);
+        assert_eq!(frames.len(), 5);
+        assert!(matches!(frames[0].events[0], egui::Event::PointerMoved(_)));
+        assert!(matches!(
+            frames[1].events[0],
+            egui::Event::PointerButton {
+                button: egui::PointerButton::Secondary,
+                pressed: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            frames[4].events[0],
+            egui::Event::PointerButton { pressed: false, .. }
+        ));
+        assert_eq!(
+            click_frames(egui::Pos2::ZERO, PointerButton::Primary, 0).len(),
+            3
+        );
+    }
+
+    #[test]
     fn double_shift_frames_open_search_everywhere() {
         let mut app = IdeApp::with_update_check(None, Vec::new(), false);
         let ctx = egui::Context::default();
@@ -477,7 +575,14 @@ mod tests {
             };
             let _ = ctx.run(input, |ctx| app.detect_double_shift(ctx));
         }
-        assert!(app.palette.open);
+        assert_eq!(
+            app.state.quick_nav.request,
+            Some(
+                jetthing_core::quick_nav::NavigationRequest::SearchEverywhere(
+                    jetthing_core::quick_nav::SearchTab::All
+                )
+            )
+        );
     }
 
     #[test]
@@ -497,7 +602,8 @@ mod tests {
         std::fs::write(dir.join("src/main.rs"), "fn main() {}\n").unwrap();
         let mut app =
             IdeApp::with_update_check(Some(dir.clone()), vec![PathBuf::from("src/main.rs")], false);
-        app.palette.show();
+        app.palette
+            .show_tab(jetthing_core::quick_nav::SearchTab::All);
         let ctx = egui::Context::default();
         let response = app.control_execute(
             &ctx,
@@ -516,7 +622,7 @@ mod tests {
         );
         assert_eq!(state["editor"]["caret"]["line"], 2);
         assert_eq!(state["popups"]["searchEverywhere"], "all");
-        assert!(app.popup_visible());
+        assert!(app.popup_visible(&ctx));
         assert!(app.shows_text("fn main"));
         let unknown = app.control_execute(&ctx, "no.such.command", Value::Null);
         assert!(!unknown.ok);

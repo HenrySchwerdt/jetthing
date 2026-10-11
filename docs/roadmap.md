@@ -16,6 +16,11 @@
 - [x] Save and Save All commands
 - [x] Command palette
 - [x] Manifest plugin discovery
+- [x] Plugin API 1: Rust plugins contribute commands, menus, keybindings, settings, tool windows, editor tabs and status widgets; live enable/disable; `--app <id>` standalone mode (`docs/plugins/api.md`)
+- [x] `.jtplugin` install/uninstall without restart and Plugins page (Marketplace/Installed tabs)
+- [x] Lua 5.4 plugins (sandboxed; immediate and declarative views)
+- [x] WASM component plugins (wasmtime, WIT world, permission-gated WASI, fuel/memory limits)
+- [ ] JetBrains Marketplace browsing and conversion
 - [x] Revisioned rope-backed text engine with Unicode-safe undo/redo
 - [x] Viewport-native editor that shapes and paints only visible lines
 - [x] Multi-cursor selections, atomic edits, and coalesced primary typing transactions
@@ -37,7 +42,12 @@
 - [x] Collapsible, sorted project tree with VCS file colors
 - [x] Run widget (`run.project`) next to Build, with OpenGL fallback renderer
 - [x] Release packaging (`cargo xtask dist`) and CI/release workflows
-- [ ] Light theme, settings dialog, and bundled icon set beyond the core actions
+- [x] Typed settings model and Settings dialog with search, Apply/Reset and Advanced Settings
+- [x] Theme engine from spec data with live Islands Dark / Islands Light switching
+- [x] Keymap engine loading all bundled keymaps, keymap-driven shortcuts and Keymap settings page
+- [ ] Bundled icon set beyond the core actions
+- [x] Native installers: MSI, DMG (`Jetthing.app`) and `.deb`, smoke-tested in CI
+- [ ] Code signing and notarization with project certificates (pipeline supports it)
 - [x] Editor actions: duplicate/delete/comment/move lines, pairing, smart Enter, word moves
 - [x] Find/Replace in file, Go to Line, Recent Files, Go to File
 - [x] Project tree New/Rename/Delete, commit with message and file selection
@@ -45,7 +55,19 @@
 - [x] Check for Updates with verified self-update from GitHub releases
 - [x] `--version` and Help → About with embedded build info (commit, date, target)
 - [x] Log file per OS, crash reports with backtrace, crash notice on next start
+- [x] Release notes from conventional commits (`cargo xtask changelog`)
+- [x] First-run "Customize Jetthing": theme, keymap, settings import
 - [x] Versioned release pipeline (0.0.2) publishing on every version bump
+
+## AI Assistant (#52)
+
+- [x] `jetthing-ai` engine: provider trait, Anthropic/OpenAI-compatible/Ollama streaming, mock provider, settings and key storage
+- [x] AI Chat tool window with streaming Markdown, context chips, slash commands, Apply with diff preview
+- [x] Inline ghost-text completion with debounce, type-through, Tab / word accept
+- [x] AI actions (Explain, Refactor, Generate tests/docs, Find problems, Fix with AI on problems and failed builds)
+- [x] Commit message generation from the selected changes
+- [x] Terminal natural language → command with confirmation
+- [x] Agent mode with a visible plan, per-edit/command approval and Stop
 
 ## M2 — language intelligence
 
@@ -59,7 +81,11 @@ Rust via rust-analyzer.
 - [x] Rust document open/change synchronization and published diagnostics
 - [x] Completion request transport and result modeling
 - [x] Completion popup, UTF-16 caret integration, and transactional insertion
-- [ ] Completion filtering/snippets, hover, navigation, formatting, and code actions
+- [x] IntelliJ-style completion popup: auto-popup, camel-hump filtering/ranking, Enter/Tab
+- [x] Completion snippets with tab stops, mirrors and auto-import edits
+- [x] Completion documentation panel (resolve), quick documentation and hover
+- [x] Parameter info (signature help) after `(`/`,`, after completing calls, and Ctrl+P
+- [ ] Navigation, formatting, code actions
 
 ## M3 — professional workflows
 
@@ -69,7 +95,11 @@ workspace layout persistence, plugin manager, and recovery.
 - [x] Repository detection, branch/status view, stage, and unstage
 - [ ] Diff editor, history, blame, commit, branches, fetch/pull/push, and worktrees
 - [x] Universal process runner and detected project build command
-- [ ] Persistent run configurations, test tree, debug-before-run, and compound tasks
+- [x] Build-system provider trait; Build/Run window with step tree, timings and error navigation
+- [x] Gradle sync model (init script) and Gradle tool window
+- [x] Persistent run configurations with the Run/Debug Configurations dialog
+- [x] Test runner tree with Rerun Failed Tests (JUnit XML, libtest, go test)
+- [ ] Debug-before-run and compound tasks
 
 ## M4 — web/JVM/Android bundles
 
@@ -82,7 +112,8 @@ Use installed SDK, ADB, emulator, and Gradle; do not depend on Android Studio.
 - [ ] Catalog: JDK (foojay Disco) + jdtls, rust-analyzer/rustup, Android cmdline-tools/sdkmanager,
       kotlin-lsp, bazelisk/starpls, Node/typescript-language-server, pyright/ruff, gopls/delve,
       clangd, lemminx, taplo, yaml-language-server
-- [ ] LSP "server not found" → Set up through the resolver; build/run, Android, Bazel use it
+- [x] LSP "server not found" → Set up through the resolver (jdtls on a managed JDK, rust-analyzer, taplo)
+- [ ] Build/run, Android, Bazel and debuggers resolve their tools through `Toolchains`
 
 ## Next task
 

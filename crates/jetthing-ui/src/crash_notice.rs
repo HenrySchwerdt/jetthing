@@ -18,14 +18,14 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     };
     let mut action = None;
     egui::Area::new(egui::Id::new("crash_notice"))
-        .order(egui::Order::Foreground)
+        .order(crate::notifications::BALLOON_ORDER)
         .fixed_pos(egui::pos2(
             screen.right() - width - 16.0,
             screen.bottom() - 150.0 - lift - crate::chrome::STATUS_BAR_HEIGHT,
         ))
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style())
-                .fill(theme::NOTIFICATION)
+                .fill(*theme::NOTIFICATION)
                 .stroke(egui::Stroke::new(1.0_f32, theme::NOTIFICATION))
                 .corner_radius(8)
                 .inner_margin(egui::Margin::same(14))

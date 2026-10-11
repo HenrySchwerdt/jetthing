@@ -7,15 +7,18 @@
 
 use crate::{
     LspError,
-    client::{LspDiagnostic, LspService, ServerState, WorkProgress},
-    registry::{LaunchContext, LspSettings, ServerRegistry, cache_dir, workspace_root},
+    client::{ApplyEditRequest, LspDiagnostic, LspService, ServerState, WorkProgress},
+    registry::{
+        LaunchContext, LspSettings, ProgramResolver, ServerRegistry, cache_dir, workspace_root,
+    },
 };
-use lsp_types::{CompletionItem, CompletionResponse, request::Completion};
+use lsp_types::{CompletionItem, CompletionResponse, CompletionTriggerKind, request::Completion};
 use serde::Serialize;
 use serde_json::json;
 use std::{
     collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -55,6 +58,113 @@ pub struct ServerInfo {
     pub message: Option<String>,
 }
 
+/// A request sent with [`LspManager::request`] or [`LspManager::send_request`],
+/// answered asynchronously.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestHandle {
+    pub server: ServerKey,
+    pub id: u64,
+    pub method: String,
+}
+
+/// Optional server features, checked against the advertised capabilities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Feature {
+    Definition,
+    TypeDefinition,
+    Implementation,
+    References,
+    CodeAction,
+    CodeActionResolve,
+    ExecuteCommand,
+    PrepareRename,
+    Rename,
+    Formatting,
+    RangeFormatting,
+}
+
+impl Feature {
+    pub fn method(self) -> &'static str {
+        match self {
+            Feature::Definition => "textDocument/definition",
+            Feature::TypeDefinition => "textDocument/typeDefinition",
+            Feature::Implementation => "textDocument/implementation",
+            Feature::References => "textDocument/references",
+            Feature::CodeAction => "textDocument/codeAction",
+            Feature::CodeActionResolve => "codeAction/resolve",
+            Feature::ExecuteCommand => "workspace/executeCommand",
+            Feature::PrepareRename => "textDocument/prepareRename",
+            Feature::Rename => "textDocument/rename",
+            Feature::Formatting => "textDocument/formatting",
+            Feature::RangeFormatting => "textDocument/rangeFormatting",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Feature::Definition => "Go to Declaration",
+            Feature::TypeDefinition => "Go to Type Declaration",
+            Feature::Implementation => "Go to Implementation",
+            Feature::References => "Find Usages",
+            Feature::CodeAction | Feature::CodeActionResolve => "code actions",
+            Feature::ExecuteCommand => "commands",
+            Feature::PrepareRename | Feature::Rename => "Rename",
+            Feature::Formatting | Feature::RangeFormatting => "Reformat Code",
+        }
+    }
+
+    fn supported(self, capabilities: &lsp_types::ServerCapabilities) -> bool {
+        use lsp_types::{
+            ImplementationProviderCapability as Impl, OneOf,
+            TypeDefinitionProviderCapability as TypeDef,
+        };
+        match self {
+            Feature::Definition => !matches!(
+                capabilities.definition_provider,
+                None | Some(OneOf::Left(false))
+            ),
+            Feature::TypeDefinition => !matches!(
+                capabilities.type_definition_provider,
+                None | Some(TypeDef::Simple(false))
+            ),
+            Feature::Implementation => !matches!(
+                capabilities.implementation_provider,
+                None | Some(Impl::Simple(false))
+            ),
+            Feature::References => !matches!(
+                capabilities.references_provider,
+                None | Some(OneOf::Left(false))
+            ),
+            Feature::CodeAction => !matches!(
+                capabilities.code_action_provider,
+                None | Some(lsp_types::CodeActionProviderCapability::Simple(false))
+            ),
+            Feature::CodeActionResolve => matches!(
+                &capabilities.code_action_provider,
+                Some(lsp_types::CodeActionProviderCapability::Options(options))
+                    if options.resolve_provider == Some(true)
+            ),
+            Feature::ExecuteCommand => capabilities.execute_command_provider.is_some(),
+            Feature::PrepareRename => matches!(
+                &capabilities.rename_provider,
+                Some(OneOf::Right(options)) if options.prepare_provider == Some(true)
+            ),
+            Feature::Rename => !matches!(
+                capabilities.rename_provider,
+                None | Some(OneOf::Left(false))
+            ),
+            Feature::Formatting => !matches!(
+                capabilities.document_formatting_provider,
+                None | Some(OneOf::Left(false))
+            ),
+            Feature::RangeFormatting => !matches!(
+                capabilities.document_range_formatting_provider,
+                None | Some(OneOf::Left(false))
+            ),
+        }
+    }
+}
+
 /// A notification balloon about a language server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LspNotice {
@@ -63,6 +173,9 @@ pub struct LspNotice {
     pub title: String,
     pub body: String,
     pub error: bool,
+    /// Toolchain component that a "Set up" action installs (missing servers).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup: Option<String>,
 }
 
 struct ManagedServer {
@@ -95,8 +208,29 @@ pub struct LspManager {
     notices: Vec<LspNotice>,
     dismissed: BTreeSet<String>,
     completion: Option<CompletionRequest>,
-    completions: Vec<CompletionItem>,
-    completion_incomplete: bool,
+    completion_result: Option<CompletionResult>,
+    /// Diagnostics revisions of the live servers at the last poll.
+    diagnostics_seen: Vec<u64>,
+    diagnostics_generation: u64,
+    resolver: Option<Arc<dyn ProgramResolver>>,
+}
+
+/// Why completion was requested (LSP `CompletionTriggerKind`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionTrigger {
+    /// Ctrl+Space or typing an identifier character.
+    Invoked,
+    /// A server trigger character such as `.`.
+    Character(String),
+    /// Re-query because the previous result was `isIncomplete`.
+    Incomplete,
+}
+
+/// A completion response.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CompletionResult {
+    pub items: Vec<CompletionItem>,
+    pub incomplete: bool,
 }
 
 impl Default for LspManager {
@@ -117,9 +251,16 @@ impl LspManager {
             notices: Vec::new(),
             dismissed: BTreeSet::new(),
             completion: None,
-            completions: Vec::new(),
-            completion_incomplete: false,
+            completion_result: None,
+            diagnostics_seen: Vec::new(),
+            diagnostics_generation: 0,
+            resolver: None,
         }
+    }
+
+    /// Installs the hook that finds provisioned servers outside `PATH`.
+    pub fn set_resolver(&mut self, resolver: Option<Arc<dyn ProgramResolver>>) {
+        self.resolver = resolver;
     }
 
     pub fn registry(&self) -> &ServerRegistry {
@@ -140,6 +281,7 @@ impl LspManager {
                     title: "Invalid language server settings".into(),
                     body: error.to_string(),
                     error: true,
+                    setup: None,
                 });
                 LspSettings::default()
             }
@@ -148,7 +290,7 @@ impl LspManager {
 
     /// Stops every server.
     pub fn shutdown(&mut self) {
-        self.clear_completions();
+        self.cancel_completion();
         self.documents.clear();
         for server in &mut self.servers {
             if let Some(service) = server.service.as_mut() {
@@ -156,6 +298,8 @@ impl LspManager {
             }
         }
         self.servers.clear();
+        self.diagnostics_seen.clear();
+        self.diagnostics_generation += 1;
     }
 
     /// Restarts every server and re-opens its documents on the next sync.
@@ -208,10 +352,11 @@ impl LspManager {
                 let service = match self.launch(&key) {
                     Ok(service) => Some(service),
                     Err(error @ LspError::ServerNotFound { .. }) => {
-                        let notify = self
-                            .registry
-                            .get(&key.server)
-                            .is_some_and(|provider| provider.spec().notify_missing);
+                        let spec = self.registry.get(&key.server).map(|p| p.spec());
+                        let notify = spec.is_some_and(|spec| spec.notify_missing);
+                        let setup = spec
+                            .zip(self.resolver.as_deref())
+                            .and_then(|(spec, resolver)| resolver.setup_component(spec));
                         self.missing.insert(key.server.clone());
                         if notify {
                             self.push_notice(LspNotice {
@@ -219,6 +364,7 @@ impl LspManager {
                                 title: format!("{language} language server not found"),
                                 body: error.to_string(),
                                 error: false,
+                                setup,
                             });
                         }
                         return Err(error);
@@ -255,9 +401,33 @@ impl LspManager {
         );
         match self.servers[index].service.as_mut() {
             Some(service) if service.state() != ServerState::Exited => {
-                service.sync_document(path, language_id, text, version)
+                match service.sync_document(path, language_id, text, version) {
+                    // The server exited after the state check; `poll` notices the exit,
+                    // restarts it and re-sends every open document, this one included.
+                    Err(LspError::Start(error))
+                        if error.kind() == std::io::ErrorKind::BrokenPipe =>
+                    {
+                        Ok(())
+                    }
+                    other => other,
+                }
             }
             // Restarting: the document is re-sent once the server is back.
+            _ => Ok(()),
+        }
+    }
+
+    /// Notifies the server of `path` that the document was saved.
+    pub fn save_document(&mut self, path: &Path) -> Result<(), LspError> {
+        let Some(key) = self
+            .documents
+            .get(path)
+            .map(|document| document.server.clone())
+        else {
+            return Ok(());
+        };
+        match self.service_mut(&key) {
+            Some(service) if service.state() == ServerState::Ready => service.save_document(path),
             _ => Ok(()),
         }
     }
@@ -281,6 +451,7 @@ impl LspManager {
             root: &key.root,
             cache_dir: cache_dir(),
             settings: self.settings.servers.get(&key.server),
+            resolver: self.resolver.as_deref(),
         })?;
         LspService::launch(&config, &key.root)
     }
@@ -315,6 +486,7 @@ impl LspManager {
                                 "{reason}\n\nRun \"Restart Language Servers\" after fixing the problem."
                             ),
                             error: true,
+                            setup: None,
                         };
                         self.push_notice(notice);
                         continue;
@@ -350,7 +522,37 @@ impl LspManager {
             }
         }
         self.poll_completion();
+        let seen: Vec<u64> = self
+            .servers
+            .iter()
+            .map(|server| {
+                server
+                    .service
+                    .as_ref()
+                    .map_or(0, LspService::diagnostics_revision)
+            })
+            .collect();
+        if seen != self.diagnostics_seen {
+            self.diagnostics_seen = seen;
+            self.diagnostics_generation += 1;
+        }
         restarted
+    }
+
+    /// Changes whenever the published diagnostics of any server may have
+    /// changed (after [`poll`](Self::poll)), so callers can cache derived views.
+    pub fn diagnostics_generation(&self) -> u64 {
+        self.diagnostics_generation
+    }
+
+    /// Every file with published diagnostics, across all running servers.
+    /// Paths are as the servers reported them (absolute, usually canonical).
+    pub fn all_diagnostics(&self) -> impl Iterator<Item = (&Path, &[LspDiagnostic])> {
+        self.servers
+            .iter()
+            .filter_map(|server| server.service.as_ref())
+            .flat_map(|service| service.diagnostics().iter())
+            .map(|(path, diagnostics)| (path.as_path(), diagnostics.as_slice()))
     }
 
     /// The running server for `path`, if any.
@@ -435,16 +637,19 @@ impl LspManager {
 
     /// Diagnostics published for `path` by its server.
     pub fn diagnostics_for(&self, path: &Path) -> Vec<LspDiagnostic> {
-        let Some(service) = self.server_for(path) else {
-            return Vec::new();
-        };
+        self.published_diagnostics(path).unwrap_or_default()
+    }
+
+    /// Diagnostics for `path`, or `None` when its server has not checked it
+    /// yet (so callers can fall back to syntax errors).
+    pub fn published_diagnostics(&self, path: &Path) -> Option<Vec<LspDiagnostic>> {
+        let service = self.server_for(path)?;
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_owned());
         service
             .diagnostics()
             .get(&canonical)
             .or_else(|| service.diagnostics().get(path))
             .cloned()
-            .unwrap_or_default()
     }
 
     /// One entry per started server.
@@ -493,6 +698,24 @@ impl LspManager {
         self.missing.iter().map(String::as_str)
     }
 
+    /// What the server of `path` is still busy with (starting, importing the
+    /// project, indexing), if anything. Completion answers given meanwhile may
+    /// be empty or incomplete (jdtls answers nothing while "Building 0%").
+    pub fn indexing_status(&self, path: &Path) -> Option<String> {
+        let service = self.server_for(path)?;
+        if let Some(progress) = service.progress().values().next() {
+            return Some(describe_progress(progress));
+        }
+        (service.state() == ServerState::Starting).then(|| format!("{}: starting", service.name()))
+    }
+
+    /// Whether the server of `path` is ready and has no work in progress.
+    pub fn is_idle_for(&self, path: &Path) -> bool {
+        self.server_for(path).is_some_and(|service| {
+            service.state() == ServerState::Ready && service.progress().is_empty()
+        })
+    }
+
     /// Whether any server is starting or reporting progress.
     pub fn is_busy(&self) -> bool {
         self.servers.iter().any(|server| match &server.service {
@@ -520,12 +743,128 @@ impl LspManager {
         self.notices.push(notice);
     }
 
+    /// Sends `feature`'s request for the UTF-16 position in `path` to its
+    /// ready server. `extra` fields are merged into the position params
+    /// (e.g. `{"context": {"includeDeclaration": true}}`).
+    pub fn request(
+        &mut self,
+        path: &Path,
+        feature: Feature,
+        line: usize,
+        character: usize,
+        extra: serde_json::Value,
+    ) -> Result<RequestHandle, LspError> {
+        let mut params = json!({
+            "textDocument": {"uri": crate::client::file_uri(path)?},
+            "position": {"line": line, "character": character},
+        });
+        if let (Some(params), serde_json::Value::Object(extra)) = (params.as_object_mut(), extra) {
+            params.extend(extra);
+        }
+        self.request_with_params(path, feature, params)
+    }
+
+    /// Sends `feature`'s request with complete `params` to the ready server
+    /// of `path`, after checking the server advertises the feature.
+    pub fn request_with_params(
+        &mut self,
+        path: &Path,
+        feature: Feature,
+        params: serde_json::Value,
+    ) -> Result<RequestHandle, LspError> {
+        let service = self.ready_server_for(path)?;
+        if !feature.supported(service.capabilities()) {
+            return Err(LspError::Protocol(format!(
+                "{} does not support {}",
+                service.name(),
+                feature.label()
+            )));
+        }
+        let server = ServerKey {
+            server: service.name().into(),
+            root: service.root().to_owned(),
+        };
+        let id = service.request_raw(feature.method(), params)?;
+        let server = self
+            .documents
+            .get(path)
+            .map(|document| document.server.clone())
+            .unwrap_or(server);
+        Ok(RequestHandle {
+            server,
+            id,
+            method: feature.method().into(),
+        })
+    }
+
+    /// Whether the server of `path` is running and advertises `feature`.
+    pub fn supports(&self, path: &Path, feature: Feature) -> bool {
+        self.server_for(path)
+            .is_some_and(|service| feature.supported(service.capabilities()))
+    }
+
+    /// `workspace/applyEdit` requests the servers sent since the last call.
+    /// Each must be answered with [`respond_apply_edit`](Self::respond_apply_edit).
+    pub fn take_apply_edits(&mut self) -> Vec<(ServerKey, ApplyEditRequest)> {
+        let mut requests = Vec::new();
+        for server in &mut self.servers {
+            if let Some(service) = server.service.as_mut() {
+                requests.extend(
+                    service
+                        .take_apply_edits()
+                        .into_iter()
+                        .map(|request| (server.key.clone(), request)),
+                );
+            }
+        }
+        requests
+    }
+
+    pub fn respond_apply_edit(
+        &mut self,
+        server: &ServerKey,
+        id: serde_json::Value,
+        result: Result<(), String>,
+    ) {
+        if let Some(service) = self.service_mut(server) {
+            let _ = service.respond_apply_edit(id, result);
+        }
+    }
+
+    /// The result of `handle` once it arrived; an error when the server
+    /// answered with one or went away.
+    pub fn take_response(
+        &mut self,
+        handle: &RequestHandle,
+    ) -> Option<Result<serde_json::Value, LspError>> {
+        let Some(service) = self.service_mut(&handle.server) else {
+            return Some(Err(LspError::NotReady(handle.server.server.clone())));
+        };
+        if let Some(response) = service.take_response(handle.id) {
+            return Some(response.result.map_err(|error| LspError::Server {
+                code: error.code,
+                message: error.message,
+            }));
+        }
+        if !service.is_pending(handle.id) || service.state() == ServerState::Exited {
+            return Some(Err(LspError::NotReady(handle.server.server.clone())));
+        }
+        None
+    }
+
+    pub fn cancel_request(&mut self, handle: &RequestHandle) {
+        if let Some(service) = self.service_mut(&handle.server) {
+            service.cancel(handle.id);
+        }
+    }
+
     /// Requests completion at a UTF-16 position, cancelling any older request.
     pub fn request_completion(
         &mut self,
         path: &Path,
         line: usize,
         character: usize,
+        trigger: CompletionTrigger,
     ) -> Result<u64, LspError> {
         self.cancel_completion();
         let service = self.ready_server_for(path)?;
@@ -533,12 +872,22 @@ impl LspManager {
             server: service.name().into(),
             root: service.root().to_owned(),
         };
+        let context = match trigger {
+            CompletionTrigger::Invoked => json!({"triggerKind": CompletionTriggerKind::INVOKED}),
+            CompletionTrigger::Character(character) => json!({
+                "triggerKind": CompletionTriggerKind::TRIGGER_CHARACTER,
+                "triggerCharacter": character
+            }),
+            CompletionTrigger::Incomplete => json!({
+                "triggerKind": CompletionTriggerKind::TRIGGER_FOR_INCOMPLETE_COMPLETIONS
+            }),
+        };
         let id = service.request_raw(
             <Completion as lsp_types::request::Request>::METHOD,
             json!({
                 "textDocument": {"uri": crate::client::file_uri(path)?},
                 "position": {"line": line, "character": character},
-                "context": {"triggerKind": 1}
+                "context": context
             }),
         )?;
         let key = self
@@ -550,7 +899,9 @@ impl LspManager {
         Ok(id)
     }
 
-    fn cancel_completion(&mut self) {
+    /// Cancels the pending completion request and drops an untaken result.
+    pub fn cancel_completion(&mut self) {
+        self.completion_result = None;
         if let Some(request) = self.completion.take()
             && let Some(service) = self.service_mut(&request.server)
         {
@@ -575,31 +926,106 @@ impl LspManager {
             return;
         };
         self.completion = None;
-        let (items, incomplete) = match result {
-            Ok(Some(CompletionResponse::Array(items))) => (items, false),
-            Ok(Some(CompletionResponse::List(list))) => (list.items, list.is_incomplete),
-            Ok(None) | Err(_) => (Vec::new(), false),
-        };
-        self.completions = items;
-        self.completion_incomplete = incomplete;
+        self.completion_result = Some(match result {
+            Ok(Some(CompletionResponse::Array(items))) => CompletionResult {
+                items,
+                incomplete: false,
+            },
+            Ok(Some(CompletionResponse::List(list))) => CompletionResult {
+                items: list.items,
+                incomplete: list.is_incomplete,
+            },
+            Ok(None) | Err(_) => CompletionResult::default(),
+        });
     }
 
     pub fn completion_pending(&self) -> bool {
         self.completion.is_some()
     }
 
-    pub fn completions(&self) -> &[CompletionItem] {
-        &self.completions
+    /// Takes the latest completion response once it has arrived.
+    pub fn take_completion(&mut self) -> Option<CompletionResult> {
+        self.completion_result.take()
     }
 
-    pub fn completions_incomplete(&self) -> bool {
-        self.completion_incomplete
+    /// Filters and sorts `items` for `path`'s language with its provider's
+    /// relevance hints.
+    pub fn rank_completions(
+        &self,
+        path: &Path,
+        items: &[CompletionItem],
+        prefix: &str,
+        usage: impl Fn(&CompletionItem) -> i32,
+    ) -> Vec<crate::completion::RankedItem> {
+        match self.registry.for_path(path) {
+            Some((provider, _)) => crate::completion::rank_with_usage(
+                items,
+                prefix,
+                |item| provider.completion_relevance(item),
+                usage,
+            ),
+            None => crate::completion::rank_with_usage(items, prefix, |_| 0, usage),
+        }
     }
 
-    pub fn clear_completions(&mut self) {
-        self.cancel_completion();
-        self.completions.clear();
-        self.completion_incomplete = false;
+    /// Characters that open completion for `path`'s running server (`.`, `::`, ...).
+    pub fn trigger_characters(&self, path: &Path) -> Vec<String> {
+        self.server_for(path)
+            .and_then(|service| service.capabilities().completion_provider.as_ref())
+            .and_then(|provider| provider.trigger_characters.clone())
+            .unwrap_or_default()
+    }
+
+    /// Sends a typed request to the ready server of `path`. The handle is used
+    /// to collect (`take_response`) or cancel (`cancel_request`) the result.
+    pub fn send_request<R: lsp_types::request::Request>(
+        &mut self,
+        path: &Path,
+        params: R::Params,
+    ) -> Result<RequestHandle, LspError> {
+        let service = self.ready_server_for(path)?;
+        let server = ServerKey {
+            server: service.name().into(),
+            root: service.root().to_owned(),
+        };
+        let id = service.request::<R>(params)?;
+        let server = self
+            .documents
+            .get(path)
+            .map(|document| document.server.clone())
+            .unwrap_or(server);
+        Ok(RequestHandle {
+            server,
+            id,
+            method: R::METHOD.into(),
+        })
+    }
+
+    /// The decoded response for a [`send_request`](Self::send_request) handle,
+    /// once it has arrived.
+    pub fn take_typed_response<R: lsp_types::request::Request>(
+        &mut self,
+        handle: &RequestHandle,
+    ) -> Option<Result<R::Result, LspError>> {
+        let service = self.service_mut(&handle.server);
+        match service {
+            Some(service) => service.take_typed::<R>(handle.id),
+            None => Some(Err(LspError::NotReady(handle.server.server.clone()))),
+        }
+    }
+
+    /// Whether `handle` is still waiting for its response.
+    pub fn is_pending(&self, handle: &RequestHandle) -> bool {
+        self.servers
+            .iter()
+            .find(|server| server.key == handle.server)
+            .and_then(|server| server.service.as_ref())
+            .is_some_and(|service| service.is_pending(handle.id))
+    }
+
+    /// Server capabilities for `path`'s running server.
+    pub fn capabilities_for(&self, path: &Path) -> Option<&lsp_types::ServerCapabilities> {
+        self.server_for(path).map(LspService::capabilities)
     }
 
     /// The language id the server uses for `path`.

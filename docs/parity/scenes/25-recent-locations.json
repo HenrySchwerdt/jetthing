@@ -1,0 +1,59 @@
+{
+  "id": "25",
+  "title": "Recent Locations (Ctrl+Shift+E)",
+  "fixture": "java-gradle",
+  "open": [
+    "src/main/java/com/example/App.java",
+    "src/test/java/com/example/AppTest.java"
+  ],
+  "steps": [
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "execute",
+      "command": "editor.gotoLine",
+      "args": {
+        "line": 9
+      }
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "execute",
+      "command": "editor.openFile",
+      "args": {
+        "path": "src/test/java/com/example/AppTest.java",
+        "line": 8
+      }
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "key",
+      "chord": "Primary+Shift+E"
+    },
+    {
+      "op": "wait",
+      "until": "popup"
+    },
+    {
+      "op": "wait",
+      "until": "idle"
+    },
+    {
+      "op": "assert",
+      "pointer": "/popups/dialog",
+      "equals": "recentLocations"
+    },
+    {
+      "op": "screenshot",
+      "name": "25-recent-locations.png"
+    }
+  ]
+}

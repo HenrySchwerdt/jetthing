@@ -1,8 +1,38 @@
 // Release builds are GUI apps on Windows (no console window).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod plugins;
+
 use jetthing_ui::diagnostics;
 use std::path::PathBuf;
+
+enum Mode {
+    Ide {
+        project: Option<PathBuf>,
+        files: Vec<PathBuf>,
+    },
+    /// `--app <plugin-id>`: only the plugin's app view.
+    App(String),
+}
+
+/// Window chrome per platform. macOS keeps its traffic-light buttons but merges
+/// the title bar into the content (transparent bar, full-size content view,
+/// no title text) so the main toolbar draws in the title-bar area; the toolbar
+/// reserves `jetthing_ui::chrome::MAC_TRAFFIC_LIGHT_INSET` for the buttons. Other
+/// platforms draw their own controls in the toolbar.
+fn platform_viewport(
+    viewport: eframe::egui::ViewportBuilder,
+    macos: bool,
+) -> eframe::egui::ViewportBuilder {
+    if macos {
+        viewport
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false)
+    } else {
+        viewport.with_decorations(false)
+    }
+}
 
 fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOptions {
     let mut viewport = eframe::egui::ViewportBuilder::default()
@@ -10,14 +40,13 @@ fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOpti
         .with_app_id("jetthing")
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([800.0, 500.0]);
-    viewport = if cfg!(target_os = "macos") {
-        // Keep native window controls in the OS title bar. The toolbar below it
-        // starts at the content edge and needs no traffic-light spacer.
-        viewport.with_title_shown(false)
-    } else {
-        // The main toolbar doubles as the title bar.
-        viewport.with_decorations(false)
-    };
+    // Taskbar / dock icon from the original artwork in `assets/icon`.
+    if let Ok(icon) =
+        eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/jetthing.png"))
+    {
+        viewport = viewport.with_icon(icon);
+    }
+    viewport = platform_viewport(viewport, cfg!(target_os = "macos"));
     eframe::NativeOptions {
         viewport,
         renderer,
@@ -25,19 +54,14 @@ fn native_options(renderer: eframe::Renderer, title: &str) -> eframe::NativeOpti
     }
 }
 
-fn run(
-    renderer: eframe::Renderer,
-    title: &str,
-    project: Option<PathBuf>,
-    files: Vec<PathBuf>,
-) -> eframe::Result<()> {
+fn run(renderer: eframe::Renderer, title: &str, app: jetthing_ui::IdeApp) -> eframe::Result<()> {
     eframe::run_native(
         "Jetthing",
         native_options(renderer, title),
         Box::new(move |cc| {
             cc.egui_ctx.set_theme(eframe::egui::Theme::Dark);
             jetthing_ui::install_theme(&cc.egui_ctx);
-            let mut app = jetthing_ui::IdeApp::new(project, files);
+            let mut app = app;
             app.start_control_from_env(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
@@ -115,9 +139,45 @@ fn install_startup_panic_hook() {
     }));
 }
 
+fn parse_args() -> Result<Mode, String> {
+    let mut args = std::env::args_os().skip(1);
+    let mut positional = Vec::new();
+    while let Some(arg) = args.next() {
+        if arg == "--app" {
+            let id = args
+                .next()
+                .and_then(|id| id.into_string().ok())
+                .ok_or("--app needs a plugin id, e.g. --app dev.jetthing.hello")?;
+            return Ok(Mode::App(id));
+        }
+        if let Some(id) = arg.to_str().and_then(|arg| arg.strip_prefix("--app=")) {
+            return Ok(Mode::App(id.to_owned()));
+        }
+        positional.push(PathBuf::from(arg));
+    }
+    let mut positional = positional.into_iter();
+    Ok(Mode::Ide {
+        project: positional.next(),
+        files: positional.collect(),
+    })
+}
+
+fn build_app(mode: &Mode) -> Result<jetthing_ui::IdeApp, String> {
+    match mode {
+        Mode::Ide { project, files } => Ok(jetthing_ui::IdeApp::with_plugin_set(
+            project.clone(),
+            files.clone(),
+            plugins::plugin_set(),
+        )),
+        Mode::App(id) => jetthing_ui::IdeApp::standalone(id, plugins::plugin_set()),
+    }
+}
+
 const USAGE: &str = "usage: jetthing [PROJECT_DIR] [FILE...]
+       jetthing --app <PLUGIN_ID>
 
 Opens PROJECT_DIR (or the welcome screen) and FILEs relative to it.
+  --app ID        run only the plugin's app view
   -V, --version   print version and build information
   -h, --help      print this help
 Environment: JETTHING_RENDERER=glow, JETTHING_NO_UPDATE_CHECK,
@@ -159,11 +219,51 @@ fn main() -> eframe::Result<()> {
     if cfg!(debug_assertions) && std::env::var_os("JETTHING_DEBUG_PANIC").is_some() {
         panic!("JETTHING_DEBUG_PANIC requested a test crash");
     }
-    // Usage: jetthing-app [PROJECT_DIR] [FILE...]
-    let mut args = std::env::args_os().skip(1).map(PathBuf::from);
-    let project = args.next();
-    let files: Vec<PathBuf> = args.collect();
-    let title = project
+    // Usage: jetthing [PROJECT_DIR] [FILE...]  |  jetthing --app <PLUGIN_ID>
+    let mode = match parse_args() {
+        Ok(mode) => mode,
+        Err(error) => {
+            eprintln!("jetthing: {error}");
+            std::process::exit(2);
+        }
+    };
+    let app = match build_app(&mode) {
+        Ok(app) => app,
+        Err(error) => {
+            eprintln!("jetthing: {error}");
+            std::process::exit(2);
+        }
+    };
+    let project = match &mode {
+        Mode::Ide { project, .. } => project.clone(),
+        Mode::App(_) => None,
+    };
+    let title = app.app_title().unwrap_or_else(|| title_for(project));
+    let forced_gl = std::env::var("JETTHING_RENDERER").is_ok_and(|value| value == "glow");
+    if forced_gl {
+        return run(eframe::Renderer::Glow, &title, app);
+    }
+    match run(eframe::Renderer::Wgpu, &title, app) {
+        // No usable wgpu adapter/surface (VMs, old drivers): fall back to OpenGL.
+        // The first app was consumed by the failed attempt; build a fresh one.
+        Err(eframe::Error::Wgpu(error)) => {
+            let message = format!("wgpu unavailable ({error}); falling back to OpenGL");
+            diagnostics::log(diagnostics::Level::Warn, &message);
+            eprintln!("jetthing: {message}");
+            match build_app(&mode) {
+                Ok(app) => run(eframe::Renderer::Glow, &title, app),
+                Err(error) => {
+                    eprintln!("jetthing: {error}");
+                    std::process::exit(2);
+                }
+            }
+        }
+        other => other,
+    }
+}
+
+fn title_for(project: Option<PathBuf>) -> String {
+    project
         .as_deref()
         .and_then(|path| path.canonicalize().ok())
         .and_then(|path| {
@@ -171,26 +271,7 @@ fn main() -> eframe::Result<()> {
                 .map(|name| name.to_string_lossy().into_owned())
         })
         .map(|name| format!("{name} – Jetthing"))
-        .unwrap_or_else(|| "Jetthing".into());
-    let forced_gl = std::env::var("JETTHING_RENDERER").is_ok_and(|value| value == "glow");
-    if forced_gl {
-        return run(eframe::Renderer::Glow, &title, project, files);
-    }
-    match run(
-        eframe::Renderer::Wgpu,
-        &title,
-        project.clone(),
-        files.clone(),
-    ) {
-        // No usable wgpu adapter/surface (VMs, old drivers): fall back to OpenGL.
-        Err(eframe::Error::Wgpu(error)) => {
-            let message = format!("wgpu unavailable ({error}); falling back to OpenGL");
-            diagnostics::log(diagnostics::Level::Warn, &message);
-            eprintln!("jetthing: {message}");
-            run(eframe::Renderer::Glow, &title, project, files)
-        }
-        other => other,
-    }
+        .unwrap_or_else(|| "Jetthing".into())
 }
 
 #[cfg(test)]
@@ -208,5 +289,27 @@ mod tests {
         assert!(generic.contains("libfoo.so.3 is missing"));
         assert!(!generic.contains("apt install"));
         assert_eq!(missing_library_hint("index out of bounds"), None);
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    #[test]
+    fn macos_merges_the_title_bar_and_keeps_native_buttons() {
+        let viewport = platform_viewport(Default::default(), true);
+        assert_eq!(viewport.fullsize_content_view, Some(true));
+        assert_eq!(viewport.titlebar_shown, Some(false));
+        assert_eq!(viewport.title_shown, Some(false));
+        assert_eq!(viewport.decorations, None);
+    }
+
+    #[test]
+    fn other_platforms_draw_their_own_title_bar() {
+        let viewport = platform_viewport(Default::default(), false);
+        assert_eq!(viewport.decorations, Some(false));
+        assert_eq!(viewport.fullsize_content_view, None);
+        assert_eq!(viewport.titlebar_shown, None);
     }
 }

@@ -18,6 +18,9 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     let mut restart = false;
     let mut clear = false;
     let exited = app.state.terminal.as_ref().is_some_and(|t| t.is_exited());
+    let ai_available = app.commands.is_enabled("ai.terminal.suggest", &app.state);
+    let ai_open = app.ai_ui.terminal_open;
+    let mut ai_toggle = false;
     let hide = tool_window_header(ui, "Terminal", |ui| {
         if exited {
             ui.label(egui::RichText::new("process exited").color(theme::TEXT_INFO));
@@ -27,6 +30,7 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         }
         clear = ui.button("Clear").clicked();
         restart = icons::button(ui, Icon::Refresh, "Restart shell").clicked();
+        ai_toggle = crate::ai_terminal::header_button(ui, ai_available, ai_open);
     });
     if hide {
         app.toggle_tool_window(jetthing_core::ToolWindow::Terminal);
@@ -40,6 +44,10 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
         app.dispatch("terminal.clear", Value::Null);
         app.terminal_selection = None;
     }
+    if ai_toggle {
+        crate::ai_terminal::toggle(app);
+    }
+    crate::ai_terminal::bar(app, ui);
     let font = egui::FontId::monospace(theme::EDITOR_FONT_SIZE);
     let (cell_width, cell_height) =
         ui.fonts_mut(|fonts| (fonts.glyph_width(&font, 'M'), fonts.row_height(&font)));
@@ -128,15 +136,15 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
                     cell_height,
                 ),
             );
-            let mut fg = ansi_color(cell.fgcolor(), theme::editor::TEXT, cell.bold());
-            let mut bg = ansi_color(cell.bgcolor(), theme::ISLAND, false);
+            let mut fg = ansi_color(cell.fgcolor(), *theme::editor::TEXT, cell.bold());
+            let mut bg = ansi_color(cell.bgcolor(), *theme::ISLAND, false);
             if cell.inverse() {
                 std::mem::swap(&mut fg, &mut bg);
             }
             if selection.is_some_and(|(start, end)| (row, col) >= start && (row, col) < end) {
-                bg = theme::editor::SELECTION;
+                bg = *theme::editor::SELECTION;
             }
-            if bg != theme::ISLAND {
+            if bg != *theme::ISLAND {
                 painter.rect_filled(cell_rect, 0, bg);
             }
             if !cell.contents().is_empty() {

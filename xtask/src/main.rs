@@ -1,3 +1,5 @@
+mod changelog;
+mod dist;
 mod parity;
 mod scenes;
 
@@ -8,8 +10,7 @@ use std::{
     process::Command,
 };
 
-const USAGE: &str =
-    "usage: cargo xtask parity [--check] | dist | scenes [--only 01,05] [--out DIR] [--release]";
+const USAGE: &str = "usage: cargo xtask parity [--check] | dist [--installer] [--target <triple>] | changelog [--from REF] [--to REF] [--version X.Y.Z] [--output FILE] | scenes [--only 01,05] [--out DIR] [--release] | pack-plugin <dir> [output] | build-wasm-example";
 
 fn workspace_root() -> PathBuf {
     // Prefer the current directory when it holds the inventory (normal `cargo run`
@@ -35,8 +36,16 @@ fn main() -> Result<()> {
             }
             parity(check)
         }
-        Some("dist") => dist(),
+        Some("dist") => dist::dist(dist::Options::parse(args.into_iter().skip(1))?),
+        Some("changelog") => changelog::run(changelog::Options::parse(args.into_iter().skip(1))?),
         Some("scenes") => scenes::run(args.into_iter().skip(1)),
+        Some("build-wasm-example") => build_wasm_example(),
+        Some("pack-plugin") => {
+            let dir = args
+                .get(1)
+                .context("usage: cargo xtask pack-plugin <plugin dir> [output]")?;
+            pack_plugin(Path::new(dir), args.get(2).map(Path::new))
+        }
         _ => bail!(USAGE),
     }
 }
@@ -54,57 +63,48 @@ fn parity(check: bool) -> Result<()> {
     Ok(())
 }
 
-/// Builds release binaries and stages a distributable directory under `dist/`.
-fn dist() -> Result<()> {
+/// Rebuilds `plugins/hello-wasm/hello_wasm.wasm` (needs the `wasm32-wasip2` target).
+fn build_wasm_example() -> Result<()> {
+    let dir = Path::new("plugins/hello-wasm");
     let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-        .args([
-            "build",
-            "--release",
-            "-p",
-            "jetthing-app",
-            "-p",
-            "jetthing-cli",
-        ])
+        .args(["build", "--release", "--target", "wasm32-wasip2"])
+        .current_dir(dir)
         .status()
-        .context("run cargo build")?;
+        .context("run cargo for the wasm example")?;
     if !status.success() {
-        bail!("release build failed");
+        bail!(
+            "building the wasm example failed (install the target: rustup target add wasm32-wasip2)"
+        );
     }
-    let version = env!("CARGO_PKG_VERSION");
-    let target = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
-    let name = format!("jetthing-{version}-{target}");
-    let out = Path::new("dist").join(&name);
-    if out.exists() {
-        fs::remove_dir_all(&out)?;
-    }
-    fs::create_dir_all(&out)?;
-    let exe = std::env::consts::EXE_SUFFIX;
-    for (built, shipped) in [
-        ("jetthing-app", "jetthing"),
-        ("jetthing-cli", "jetthing-cli"),
-    ] {
-        let from = Path::new("target/release").join(format!("{built}{exe}"));
-        let to = out.join(format!("{shipped}{exe}"));
-        fs::copy(&from, &to).with_context(|| format!("copy {}", from.display()))?;
-    }
-    for file in ["README.md", "docs/spec/data/NOTICE.md"] {
-        let target_name = if file.ends_with("NOTICE.md") {
-            "NOTICE-intellij-data.md"
-        } else {
-            "README.md"
-        };
-        fs::copy(file, out.join(target_name)).with_context(|| format!("copy {file}"))?;
-    }
-    let fonts = out.join("licenses");
-    fs::create_dir_all(&fonts)?;
-    for license in ["Inter-OFL.txt", "JetBrainsMono-OFL.txt"] {
-        fs::copy(
-            Path::new("crates/jetthing-ui/assets/fonts").join(license),
-            fonts.join(license),
-        )
-        .with_context(|| format!("copy {license}"))?;
-    }
-    // Forward slashes on every platform so CI scripts can parse the path.
-    println!("dist/{name}");
+    fs::copy(
+        dir.join("target/wasm32-wasip2/release/jetthing_plugin_hello_wasm.wasm"),
+        dir.join("hello_wasm.wasm"),
+    )?;
+    println!("{}", dir.join("hello_wasm.wasm").display());
+    Ok(())
+}
+
+/// Packs a plugin directory into `dist/plugins/<id>-<version>.jtplugin`.
+fn pack_plugin(dir: &Path, output: Option<&Path>) -> Result<()> {
+    let manifest_text = fs::read_to_string(dir.join(jetthing_plugins::MANIFEST_FILE))
+        .with_context(|| {
+            format!(
+                "{} has no {}",
+                dir.display(),
+                jetthing_plugins::MANIFEST_FILE
+            )
+        })?;
+    let manifest = jetthing_plugins::PluginManifest::parse(&manifest_text)?;
+    let default = Path::new("dist/plugins").join(format!(
+        "{}-{}.{}",
+        manifest.id,
+        manifest.version,
+        jetthing_plugins::archive::ARCHIVE_EXTENSION
+    ));
+    let output = output.unwrap_or(&default);
+    jetthing_plugins::archive::pack(dir, output)?;
+    // Installing validates the archive the same way the IDE will.
+    jetthing_plugins::archive::read_manifest(output)?;
+    println!("{}", output.display());
     Ok(())
 }

@@ -1,6 +1,7 @@
 use ropey::Rope;
 use thiserror::Error;
 
+pub mod format;
 pub mod multicaret;
 pub mod ops;
 pub mod transform;
@@ -20,6 +21,40 @@ struct Transaction {
     typing: bool,
     before_state: u64,
     after_state: u64,
+}
+
+/// Maximum number of journaled edits kept before consumers must resynchronize
+/// from the full text (see [`TextDocument::take_edits`]).
+const MAX_JOURNAL_EDITS: usize = 4096;
+
+/// A row/column position where the column counts UTF-8 bytes from line start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BytePoint {
+    pub row: usize,
+    pub column: usize,
+}
+
+/// One applied buffer mutation in UTF-8 byte coordinates, in the shape
+/// incremental parsers (Tree-sitter `InputEdit`) expect. Offsets refer to the
+/// text as it was immediately before this edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteEdit {
+    pub start_byte: usize,
+    pub old_end_byte: usize,
+    pub new_end_byte: usize,
+    pub start_point: BytePoint,
+    pub old_end_point: BytePoint,
+    pub new_end_point: BytePoint,
+}
+
+/// Edits applied since the last [`TextDocument::take_edits`] call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditJournal {
+    /// The consumer must rebuild from the full text (new document, or too many
+    /// edits accumulated without being drained).
+    Reset,
+    /// Edits in application order.
+    Edits(Vec<ByteEdit>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,6 +255,8 @@ pub enum TextError {
     },
     #[error("text changes overlap or are not ordered")]
     OverlappingChanges,
+    #[error("invalid regular expression: {0}")]
+    InvalidPattern(String),
 }
 
 /// Revisioned UTF-8 text storage. All public offsets are Unicode scalar-value
@@ -233,6 +270,8 @@ pub struct TextDocument {
     next_state: u64,
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
+    journal: Vec<ByteEdit>,
+    journal_reset: bool,
 }
 
 impl TextDocument {
@@ -245,6 +284,28 @@ impl TextDocument {
             next_state: 1,
             undo: Vec::new(),
             redo: Vec::new(),
+            journal: Vec::new(),
+            journal_reset: true,
+        }
+    }
+
+    /// Drains the byte-level edit journal. Every mutation (edits, typing,
+    /// undo and redo) is journaled; a new document starts with
+    /// [`EditJournal::Reset`].
+    pub fn take_edits(&mut self) -> EditJournal {
+        let edits = std::mem::take(&mut self.journal);
+        if std::mem::take(&mut self.journal_reset) {
+            EditJournal::Reset
+        } else {
+            EditJournal::Edits(edits)
+        }
+    }
+
+    fn byte_point(&self, byte: usize) -> BytePoint {
+        let row = self.rope.byte_to_line(byte);
+        BytePoint {
+            row,
+            column: byte - self.rope.line_to_byte(row),
         }
     }
 
@@ -276,6 +337,17 @@ impl TextDocument {
 
     pub fn line_to_char(&self, line: usize) -> Option<usize> {
         (line < self.len_lines()).then(|| self.rope.line_to_char(line))
+    }
+
+    /// UTF-8 byte offset of a character offset (clamped to the end).
+    pub fn char_to_byte(&self, index: usize) -> usize {
+        self.rope.char_to_byte(index.min(self.len_chars()))
+    }
+
+    /// Character offset of a UTF-8 byte offset (clamped to the end; a byte
+    /// inside a character maps to that character).
+    pub fn byte_to_char(&self, byte: usize) -> usize {
+        self.rope.byte_to_char(byte.min(self.rope.len_bytes()))
     }
 
     pub fn line_to_byte(&self, line: usize) -> Option<usize> {
@@ -325,6 +397,53 @@ impl TextDocument {
             .map(char::len_utf16)
             .sum();
         Ok((line, utf16_character))
+    }
+
+    /// Converts an LSP UTF-16 line/character position to a rope character
+    /// offset. Positions past the end of a line clamp to the line end, and
+    /// lines past the end clamp to the document end, as the protocol requires.
+    pub fn char_from_lsp_position(&self, line: usize, character: usize) -> usize {
+        if line >= self.rope.len_lines() {
+            return self.rope.len_chars();
+        }
+        let line_start = self.rope.line_to_char(line);
+        let mut units = 0;
+        let mut offset = line_start;
+        for c in self.rope.line(line).chars() {
+            if units >= character || c == '\n' || c == '\r' {
+                break;
+            }
+            units += c.len_utf16();
+            offset += 1;
+        }
+        offset
+    }
+
+    /// Strict variant of [`Self::char_from_lsp_position`] for edits that must
+    /// be validated: a character past the end of the line still means the line
+    /// end, but a line past the end of the document is an error.
+    pub fn try_char_from_lsp_position(
+        &self,
+        line: usize,
+        utf16: usize,
+    ) -> Result<usize, TextError> {
+        let len = self.len_chars();
+        if line >= self.rope.len_lines() {
+            return Err(TextError::InvalidRange {
+                start: line,
+                end: line,
+                len,
+            });
+        }
+        let start = self.rope.line_to_char(line);
+        let mut units = 0;
+        for (index, c) in self.rope.line(line).chars().enumerate() {
+            if units >= utf16 || c == '\n' || c == '\r' {
+                return Ok(start + index);
+            }
+            units += c.len_utf16();
+        }
+        Ok(start + self.rope.line(line).len_chars())
     }
 
     pub fn edit(
@@ -517,9 +636,23 @@ impl TextDocument {
     }
 
     pub fn undo(&mut self) -> bool {
-        let Some(transaction) = self.undo.pop() else {
-            return false;
-        };
+        self.undo_carets().is_some()
+    }
+
+    pub fn redo(&mut self) -> bool {
+        self.redo_carets().is_some()
+    }
+
+    /// Undoes the last transaction and returns where carets belong afterwards:
+    /// one per edit, after the restored text (where the caret was before a
+    /// deletion, where typing started for an insertion).
+    pub fn undo_carets(&mut self) -> Option<Vec<usize>> {
+        let transaction = self.undo.pop()?;
+        let carets = transaction
+            .edits
+            .iter()
+            .map(|edit| edit.original_start + edit.deleted.chars().count())
+            .collect();
         for edit in transaction.edits.iter().rev() {
             self.apply(
                 edit.applied_start,
@@ -530,13 +663,17 @@ impl TextDocument {
         self.current_state = transaction.before_state;
         self.redo.push(transaction);
         self.revision = self.revision.saturating_add(1);
-        true
+        Some(carets)
     }
 
-    pub fn redo(&mut self) -> bool {
-        let Some(transaction) = self.redo.pop() else {
-            return false;
-        };
+    /// Redoes the next transaction; carets go after each re-applied edit.
+    pub fn redo_carets(&mut self) -> Option<Vec<usize>> {
+        let transaction = self.redo.pop()?;
+        let carets = transaction
+            .edits
+            .iter()
+            .map(|edit| edit.applied_start + edit.inserted.chars().count())
+            .collect();
         for edit in transaction.edits.iter().rev() {
             self.apply(
                 edit.original_start,
@@ -547,7 +684,7 @@ impl TextDocument {
         self.current_state = transaction.after_state;
         self.undo.push(transaction);
         self.revision = self.revision.saturating_add(1);
-        true
+        Some(carets)
     }
 
     fn validate_range(&self, start: usize, end: usize) -> Result<(), TextError> {
@@ -559,12 +696,33 @@ impl TextDocument {
     }
 
     fn apply(&mut self, start: usize, end: usize, inserted: &str) {
+        let start_byte = self.rope.char_to_byte(start);
+        let old_end_byte = self.rope.char_to_byte(end);
+        let start_point = self.byte_point(start_byte);
+        let old_end_point = self.byte_point(old_end_byte);
         if start != end {
             self.rope.remove(start..end);
         }
         if !inserted.is_empty() {
             self.rope.insert(start, inserted);
         }
+        if self.journal_reset {
+            return;
+        }
+        if self.journal.len() >= MAX_JOURNAL_EDITS {
+            self.journal.clear();
+            self.journal_reset = true;
+            return;
+        }
+        let new_end_byte = start_byte + inserted.len();
+        self.journal.push(ByteEdit {
+            start_byte,
+            old_end_byte,
+            new_end_byte,
+            start_point,
+            old_end_point,
+            new_end_point: self.byte_point(new_end_byte),
+        });
     }
 
     fn allocate_state(&mut self) -> u64 {
@@ -590,8 +748,103 @@ impl TextDocument {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn lsp_positions_convert_to_character_offsets() {
+        let doc = TextDocument::new("a𝔸b\r\nxyz\n");
+        assert_eq!(doc.try_char_from_lsp_position(0, 0).unwrap(), 0);
+        // 𝔸 is two UTF-16 units.
+        assert_eq!(doc.try_char_from_lsp_position(0, 3).unwrap(), 2);
+        // Past the end of the line clamps to the line end, before "\r\n".
+        assert_eq!(doc.try_char_from_lsp_position(0, 99).unwrap(), 3);
+        assert_eq!(doc.try_char_from_lsp_position(1, 1).unwrap(), 6);
+        // The empty last line exists; beyond it is an error.
+        assert_eq!(doc.try_char_from_lsp_position(2, 0).unwrap(), 9);
+        assert!(doc.try_char_from_lsp_position(3, 0).is_err());
+        for offset in 0..doc.len_chars() {
+            let (line, character) = doc.lsp_position(offset).unwrap();
+            if doc.char_at(offset) != Some('\n') {
+                assert_eq!(
+                    doc.try_char_from_lsp_position(line, character).unwrap(),
+                    offset
+                );
+            }
+        }
+    }
+
     use super::*;
+
+    #[test]
+    fn undo_and_redo_report_carets_at_the_change() {
+        let mut doc = TextDocument::new("fn a() {}\nfn b() {}\n");
+        doc.type_text(10, "let").unwrap();
+        doc.type_text(13, " x").unwrap();
+        assert_eq!(doc.undo_carets(), Some(vec![10]), "where typing started");
+        assert_eq!(doc.redo_carets(), Some(vec![15]), "after the re-typed text");
+        doc.edit(0, 3, "").unwrap();
+        assert_eq!(doc.undo_carets(), Some(vec![3]), "after restored text");
+        doc.edit_many([
+            TextChange {
+                start_char: 0,
+                end_char: 0,
+                inserted: "// ".into(),
+            },
+            TextChange {
+                start_char: 10,
+                end_char: 10,
+                inserted: "// ".into(),
+            },
+        ])
+        .unwrap();
+        assert_eq!(doc.undo_carets(), Some(vec![0, 10]), "one caret per edit");
+        assert_eq!(doc.redo_carets(), Some(vec![3, 16]));
+        let mut empty = TextDocument::new("");
+        assert_eq!(empty.undo_carets(), None);
+    }
     use proptest::prelude::*;
+
+    #[test]
+    fn journal_reports_byte_edits_including_undo() {
+        let mut doc = TextDocument::new("ä\nbc\n");
+        assert_eq!(doc.take_edits(), EditJournal::Reset);
+        assert_eq!(doc.take_edits(), EditJournal::Edits(Vec::new()));
+        doc.edit(3, 4, "XY").unwrap();
+        let point = |row, column| BytePoint { row, column };
+        let expected = ByteEdit {
+            start_byte: 4,
+            old_end_byte: 5,
+            new_end_byte: 6,
+            start_point: point(1, 1),
+            old_end_point: point(1, 2),
+            new_end_point: point(1, 3),
+        };
+        assert_eq!(doc.take_edits(), EditJournal::Edits(vec![expected]));
+        assert!(doc.undo());
+        let EditJournal::Edits(edits) = doc.take_edits() else {
+            panic!("expected edits");
+        };
+        assert_eq!(edits.len(), 1);
+        assert_eq!(
+            (
+                edits[0].start_byte,
+                edits[0].old_end_byte,
+                edits[0].new_end_byte
+            ),
+            (4, 6, 5)
+        );
+    }
+
+    #[test]
+    fn journal_overflow_requests_reset() {
+        let mut doc = TextDocument::new("");
+        doc.take_edits();
+        for _ in 0..=MAX_JOURNAL_EDITS {
+            doc.edit(0, 0, "x").unwrap();
+        }
+        assert_eq!(doc.take_edits(), EditJournal::Reset);
+        doc.edit(0, 0, "y").unwrap();
+        assert!(matches!(doc.take_edits(), EditJournal::Edits(edits) if edits.len() == 1));
+    }
 
     #[test]
     fn edits_unicode_without_splitting_and_tracks_history() {
@@ -635,6 +888,20 @@ mod tests {
         assert_eq!(doc.lsp_position(4).unwrap(), (1, 0));
         assert_eq!(doc.lsp_position(6).unwrap(), (1, 3));
         assert!(doc.lsp_position(99).is_err());
+    }
+
+    #[test]
+    fn converts_lsp_utf16_positions_back_to_character_offsets() {
+        let doc = TextDocument::new("one\na🦀b\n");
+        assert_eq!(doc.char_from_lsp_position(1, 0), 4);
+        assert_eq!(doc.char_from_lsp_position(1, 3), 6);
+        assert_eq!(doc.char_from_lsp_position(1, 4), 7);
+        assert_eq!(doc.char_from_lsp_position(1, 99), 7, "clamps to line end");
+        assert_eq!(doc.char_from_lsp_position(9, 0), doc.len_chars());
+        for offset in 0..doc.len_chars() {
+            let (line, character) = doc.lsp_position(offset).unwrap();
+            assert_eq!(doc.char_from_lsp_position(line, character), offset);
+        }
     }
 
     #[test]
@@ -806,6 +1073,37 @@ mod tests {
             // Identical replacements do not add an undo transaction.
             prop_assert_eq!(doc.undo(), original != replacement);
             prop_assert_eq!(doc.text(), original);
+        }
+
+        #[test]
+        fn journal_replays_to_the_final_text(
+            original in "[a-zä🦀\\n]{0,40}",
+            steps in prop::collection::vec((0usize..60, 0usize..5, "[xé\\n]{0,3}", 0u8..6), 1..12),
+        ) {
+            let mut doc = TextDocument::new(&original);
+            doc.take_edits();
+            let mut replay = original.clone().into_bytes();
+            for (at, delete, insert, action) in steps {
+                let len = doc.len_chars();
+                let start = at.min(len);
+                match action {
+                    0 => { doc.undo(); }
+                    1 => { doc.redo(); }
+                    _ => doc.edit(start, (start + delete).min(len), &insert).unwrap(),
+                }
+                let EditJournal::Edits(edits) = doc.take_edits() else {
+                    panic!("journal reset");
+                };
+                for edit in edits {
+                    let inserted = doc.text().into_bytes()[edit.start_byte..edit.new_end_byte].to_vec();
+                    // Points must agree with the pre-edit text.
+                    let before = String::from_utf8(replay.clone()).unwrap();
+                    let row = before[..edit.start_byte].matches('\n').count();
+                    prop_assert_eq!(edit.start_point.row, row);
+                    replay.splice(edit.start_byte..edit.old_end_byte, inserted);
+                }
+                prop_assert_eq!(String::from_utf8(replay.clone()).unwrap(), doc.text());
+            }
         }
     }
 }

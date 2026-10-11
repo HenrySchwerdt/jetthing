@@ -1,40 +1,23 @@
-//! "Search Everywhere" popup: actions and project files with keyboard navigation.
+//! "Search Everywhere" popup: Classes, Files, Symbols and Actions behind one field.
+//!
+//! What each tab lists and how it ranks is decided in `jetthing_core::quick_nav`;
+//! this file only renders it and turns a chosen row into a command.
 
-use crate::icons::{self, Icon};
+use crate::icons::{self, Icon, TypeKind};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Rect, Sense, vec2};
+use jetthing_core::quick_nav::{
+    ActionCandidate, Hit, Ranked, SearchSources, SearchTab, SymbolEntry, file_name, search,
+};
+use jetthing_language::structure::SymbolKind;
 use serde_json::{Value, json};
-use std::path::PathBuf;
+use std::time::Duration;
 
 const MAX_ROWS: usize = 14;
+/// Time spent indexing symbols per frame while the popup is open.
+const INDEX_BUDGET: Duration = Duration::from_millis(15);
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Tab {
-    #[default]
-    All,
-    Files,
-    Actions,
-}
-
-impl Tab {
-    const ALL: [Tab; 3] = [Tab::All, Tab::Files, Tab::Actions];
-
-    fn label(self) -> &'static str {
-        match self {
-            Tab::All => "All",
-            Tab::Files => "Files",
-            Tab::Actions => "Actions",
-        }
-    }
-
-    fn next(self) -> Tab {
-        match self {
-            Tab::All => Tab::Files,
-            Tab::Files => Tab::Actions,
-            Tab::Actions => Tab::All,
-        }
-    }
-}
+pub type Tab = SearchTab;
 
 #[derive(Default)]
 pub struct Palette {
@@ -42,137 +25,154 @@ pub struct Palette {
     query: String,
     selected: usize,
     just_opened: bool,
-    tab: Tab,
+    tab: SearchTab,
+    /// Query last sent to the language server.
+    server_query: String,
 }
 
 impl Palette {
-    pub fn show(&mut self) {
-        self.show_tab(Tab::All);
-    }
-
     /// Selected tab, as reported by the automation `state` request.
     pub fn tab_name(&self) -> &'static str {
-        match self.tab {
-            Tab::All => "all",
-            Tab::Files => "files",
-            Tab::Actions => "actions",
-        }
+        self.tab.id()
     }
 
-    pub fn show_tab(&mut self, tab: Tab) {
+    pub fn show_tab(&mut self, tab: SearchTab) {
         self.open = true;
         self.query.clear();
         self.selected = 0;
         self.just_opened = true;
         self.tab = tab;
+        self.server_query.clear();
     }
 }
 
-enum Item {
-    Action {
-        id: String,
-        label: String,
-        category: String,
-        shortcut: String,
-        enabled: bool,
-    },
-    File(PathBuf),
-}
-
-/// Case-insensitive subsequence match score; lower is better, `None` means no match.
-pub fn fuzzy_score(candidate: &str, query: &str) -> Option<usize> {
-    if query.is_empty() {
-        return Some(0);
-    }
-    let candidate = candidate.to_lowercase();
-    let query = query.to_lowercase();
-    if let Some(position) = candidate.find(&query) {
-        return Some(position);
-    }
-    let mut chars = candidate.char_indices();
-    let mut gaps = 0;
-    let mut last = None;
-    for wanted in query.chars() {
-        let (index, _) = chars.find(|(_, c)| *c == wanted)?;
-        if let Some(previous) = last
-            && index > previous + 1
-        {
-            gaps += 1;
-        }
-        last = Some(index);
-    }
-    Some(100 + gaps)
-}
-
-fn items(app: &IdeApp, query: &str, tab: Tab) -> Vec<Item> {
-    let want_actions = tab != Tab::Files;
-    let want_files = tab != Tab::Actions;
-    let actions: Vec<(usize, Item)> = app
-        .commands
+fn actions(app: &IdeApp) -> Vec<ActionCandidate> {
+    app.commands
         .specs()
         .into_iter()
-        .filter(|_| want_actions)
         .filter(IdeApp::parameterless)
-        .filter_map(|spec| {
-            let score = fuzzy_score(&spec.label, query)
-                .or_else(|| fuzzy_score(&spec.id, query).map(|score| score + 50))?;
-            Some((
-                score,
-                Item::Action {
-                    enabled: app.commands.is_enabled(&spec.id, &app.state),
-                    id: spec.id,
-                    label: spec.label,
-                    category: spec.category,
-                    shortcut: crate::keys::display(spec.shortcut.as_deref().unwrap_or_default()),
-                },
-            ))
+        .map(|spec| ActionCandidate {
+            enabled: app.commands.is_enabled(&spec.id, &app.state),
+            shortcut: app.command_shortcut(&spec),
+            id: spec.id,
+            label: spec.label,
+            category: spec.category,
         })
-        .collect();
-    let mut files: Vec<(usize, Item)> = if !want_files {
-        Vec::new()
-    } else if query.is_empty() {
-        // An empty Files search lists recent files first, like the reference IDE.
-        app.state
-            .recent_files
-            .iter()
-            .take(MAX_ROWS)
-            .map(|path| (0, Item::File(path.clone())))
-            .collect()
-    } else {
-        app.state
-            .files
-            .iter()
-            .filter(|entry| !entry.is_dir)
-            .filter_map(|entry| {
-                let name = IdeApp::file_name(&entry.relative_path);
-                let score = fuzzy_score(&name, query)?;
-                Some((score, Item::File(entry.relative_path.clone())))
-            })
-            .take(500)
-            .collect()
-    };
-    files.sort_by_key(|(score, _)| *score);
-    if tab == Tab::All {
-        files.truncate(MAX_ROWS / 2);
-    }
-    // Stable sort keeps files ahead of actions with an equal score.
-    let mut all: Vec<(usize, Item)> = files.into_iter().chain(actions).collect();
-    all.sort_by_key(|(score, _)| *score);
-    all.into_iter()
-        .map(|(_, item)| item)
-        .take(MAX_ROWS)
         .collect()
+}
+
+fn items(app: &mut IdeApp) -> Vec<Ranked<Hit>> {
+    let query = app.palette.query.clone();
+    let tab = app.palette.tab;
+    if matches!(
+        tab,
+        SearchTab::All | SearchTab::Classes | SearchTab::Symbols
+    ) {
+        app.state.refresh_symbol_index(INDEX_BUDGET);
+        if app.palette.server_query != query {
+            app.palette.server_query = query.clone();
+            app.state.request_server_symbols(&query);
+        }
+        app.state.poll_server_symbols();
+    }
+    let actions = if matches!(tab, SearchTab::All | SearchTab::Actions) {
+        actions(app)
+    } else {
+        Vec::new()
+    };
+    let navigation = &app.state.quick_nav;
+    let sources = SearchSources {
+        files: &app.state.files,
+        recent: &app.state.recent_files,
+        symbols: navigation.index.all().collect(),
+        server_symbols: &navigation.server.results,
+        actions: &actions,
+    };
+    let mut found = search(tab, &query, &sources);
+    if tab == SearchTab::All && query.is_empty() {
+        // Nothing typed: recent files only, like the reference IDE.
+        found.retain(|hit| matches!(hit.item, Hit::File { .. }));
+    }
+    found.truncate(if tab == SearchTab::All { 16 } else { MAX_ROWS });
+    found
+}
+
+fn symbol_icon(symbol: &SymbolEntry) -> Icon {
+    match symbol.kind {
+        SymbolKind::Class => Icon::JavaType(TypeKind::Class),
+        SymbolKind::Interface => Icon::JavaType(TypeKind::Interface),
+        SymbolKind::Enum => Icon::JavaType(TypeKind::Enum),
+        _ => Icon::File,
+    }
+}
+
+/// Paints `text` with the characters at `positions` emphasised; returns the end x.
+fn highlighted_text(
+    ui: &egui::Ui,
+    row: Rect,
+    x: f32,
+    text: &str,
+    positions: &[usize],
+    color: egui::Color32,
+) -> f32 {
+    let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
+    let mut job = egui::text::LayoutJob::default();
+    for (index, ch) in text.chars().enumerate() {
+        let matched = positions.contains(&index);
+        job.append(
+            &ch.to_string(),
+            0.0,
+            egui::text::TextFormat {
+                font_id: font.clone(),
+                color: if matched { *theme::MODIFIED } else { color },
+                background: if matched {
+                    theme::SELECTION_DISABLED.gamma_multiply(0.6)
+                } else {
+                    egui::Color32::TRANSPARENT
+                },
+                ..Default::default()
+            },
+        );
+    }
+    let galley = ui.painter().layout_job(job);
+    let width = galley.size().x;
+    let pos = egui::pos2(x, row.center().y - galley.size().y / 2.0);
+    ui.painter().with_clip_rect(row).galley(pos, galley, color);
+    x + width
+}
+
+/// Moves the caret to a symbol or `file:line` and focuses the editor.
+fn open_location(
+    app: &mut IdeApp,
+    ctx: &egui::Context,
+    path: &std::path::Path,
+    line: Option<usize>,
+) {
+    let mut params = json!({"path": path});
+    if let Some(line) = line {
+        params["line"] = json!(line);
+    }
+    app.dispatch("editor.openFile", params);
+    ctx.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
 }
 
 pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
     if !app.palette.open {
         return;
     }
-    if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)) {
-        app.palette.tab = app.palette.tab.next();
-        app.palette.selected = 0;
+    for (modifiers, backward) in [
+        (egui::Modifiers::NONE, false),
+        (egui::Modifiers::SHIFT, true),
+    ] {
+        if ctx.input_mut(|input| input.consume_key(modifiers, egui::Key::Tab)) {
+            app.palette.tab = app.palette.tab.step(backward);
+            app.palette.selected = 0;
+        }
     }
-    let found = items(app, &app.palette.query, app.palette.tab);
+    let found = items(app);
+    if found.len() > MAX_ROWS {
+        ctx.request_repaint();
+    }
     if ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         app.palette.open = false;
         return;
@@ -211,7 +211,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                             let galley = ui.painter().layout_no_wrap(
                                 tab.label().to_owned(),
                                 egui::FontId::proportional(theme::UI_FONT_SIZE),
-                                theme::TEXT_BRIGHT,
+                                *theme::TEXT_BRIGHT,
                             );
                             let (rect, response) = ui.allocate_exact_size(
                                 vec2(galley.size().x + 20.0, 32.0),
@@ -224,9 +224,9 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                                 ui.painter().rect_filled(pill, 4.0, theme::HOVER);
                             }
                             let color = if tab == app.palette.tab {
-                                theme::TEXT_BRIGHT
+                                *theme::TEXT_BRIGHT
                             } else {
-                                theme::TEXT_SECONDARY
+                                *theme::TEXT_SECONDARY
                             };
                             ui.painter()
                                 .galley(rect.center() - galley.size() / 2.0, galley, color);
@@ -243,14 +243,14 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                     );
                     ui.horizontal(|ui| {
                         ui.add_space(12.0);
-                        icons::show(ui, Icon::Search, 16.0, theme::TEXT_SECONDARY);
+                        icons::show(ui, Icon::Search, 16.0, *theme::TEXT_SECONDARY);
                         let input = ui.add(
                             egui::TextEdit::singleline(&mut app.palette.query)
                                 .frame(false)
                                 .font(egui::FontId::proportional(theme::UI_FONT_SIZE + 2.0))
                                 .desired_width(width - 60.0)
                                 .margin(egui::Margin::symmetric(4, 10))
-                                .hint_text("Type to search actions and files"),
+                                .hint_text("Type to search classes, files, symbols and actions"),
                         );
                         if app.palette.just_opened || !input.has_focus() {
                             input.request_focus();
@@ -275,7 +275,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                         });
                         ui.add_space(12.0);
                     }
-                    for (index, item) in found.iter().enumerate() {
+                    for (index, ranked) in found.iter().enumerate() {
                         let (rect, response) =
                             ui.allocate_exact_size(vec2(width, 26.0), Sense::click());
                         let row = rect.shrink2(vec2(6.0, 1.0));
@@ -288,74 +288,65 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                             egui::pos2(row.left() + 8.0, row.center().y - 8.0),
                             vec2(16.0, 16.0),
                         );
-                        match item {
-                            Item::Action {
-                                label,
-                                category,
-                                shortcut,
-                                enabled,
-                                ..
-                            } => {
-                                icons::paint(ui.painter(), icon_rect, Icon::Run, theme::TEXT_INFO);
-                                let color = if *enabled {
-                                    theme::TEXT_BRIGHT
+                        let small = egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0);
+                        let (title, detail, trailing, icon, color) = match &ranked.item {
+                            Hit::Action(action) => (
+                                action.label.clone(),
+                                action.category.clone(),
+                                action.shortcut.clone(),
+                                Icon::Run,
+                                if action.enabled {
+                                    *theme::TEXT_BRIGHT
                                 } else {
-                                    theme::TEXT_DISABLED
-                                };
-                                let x = crate::widgets::row_text(
-                                    ui,
-                                    row,
-                                    row.left() + 32.0,
-                                    label,
-                                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                                    color,
-                                );
-                                crate::widgets::row_text(
-                                    ui,
-                                    row,
-                                    x + 10.0,
-                                    category,
-                                    egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                                    theme::TEXT_INFO,
-                                );
-                                ui.painter().text(
-                                    row.right_center() - vec2(10.0, 0.0),
-                                    egui::Align2::RIGHT_CENTER,
-                                    shortcut,
-                                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                                    theme::TEXT_SECONDARY,
-                                );
-                            }
-                            Item::File(path) => {
-                                let name = IdeApp::file_name(path);
-                                icons::paint(
-                                    ui.painter(),
-                                    icon_rect,
-                                    Icon::for_file(&name),
-                                    icons::ICON,
-                                );
-                                let x = crate::widgets::row_text(
-                                    ui,
-                                    row,
-                                    row.left() + 32.0,
-                                    &name,
-                                    egui::FontId::proportional(theme::UI_FONT_SIZE),
-                                    theme::TEXT_BRIGHT,
-                                );
-                                let parent = path
-                                    .parent()
+                                    *theme::TEXT_DISABLED
+                                },
+                            ),
+                            Hit::File { path, line } => (
+                                file_name(path),
+                                path.parent()
                                     .map(|p| p.display().to_string())
-                                    .unwrap_or_default();
-                                crate::widgets::row_text(
-                                    ui,
-                                    row,
-                                    x + 10.0,
-                                    &parent,
-                                    egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                                    theme::TEXT_INFO,
-                                );
-                            }
-                        }
+                                    .unwrap_or_default(),
+                                line.map(|line| format!(":{line}")).unwrap_or_default(),
+                                app.file_icon(path),
+                                *theme::TEXT_BRIGHT,
+                            ),
+                            Hit::Symbol(symbol) => (
+                                symbol.name.clone(),
+                                symbol.container.clone().unwrap_or_default(),
+                                format!("{}:{}", file_name(&symbol.path), symbol.line + 1),
+                                symbol_icon(symbol),
+                                *theme::TEXT_BRIGHT,
+                            ),
+                        };
+                        let icon_color = if matches!(ranked.item, Hit::Action(_)) {
+                            *theme::TEXT_INFO
+                        } else {
+                            *icons::ICON
+                        };
+                        icons::paint(ui.painter(), icon_rect, icon, icon_color);
+                        let x = highlighted_text(
+                            ui,
+                            row,
+                            row.left() + 32.0,
+                            &title,
+                            &ranked.positions,
+                            color,
+                        );
+                        crate::widgets::row_text(
+                            ui,
+                            row,
+                            x + 10.0,
+                            &detail,
+                            small,
+                            *theme::TEXT_INFO,
+                        );
+                        ui.painter().text(
+                            row.right_center() - vec2(10.0, 0.0),
+                            egui::Align2::RIGHT_CENTER,
+                            trailing,
+                            egui::FontId::proportional(theme::UI_FONT_SIZE),
+                            *theme::TEXT_SECONDARY,
+                        );
                         if response.hovered()
                             && ui.input(|input| input.pointer.delta() != egui::Vec2::ZERO)
                         {
@@ -382,7 +373,7 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                         egui::Align2::LEFT_CENTER,
                         "↑↓ to navigate · Enter to run · Esc to close",
                         egui::FontId::proportional(theme::UI_FONT_SIZE - 1.0),
-                        theme::TEXT_INFO,
+                        *theme::TEXT_INFO,
                     );
                 });
         });
@@ -390,39 +381,27 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
         close = true;
     }
     if let Some(index) = chosen
-        && let Some(item) = found.get(index)
+        && let Some(ranked) = found.get(index)
     {
-        match item {
-            Item::Action { id, enabled, .. } => {
-                if *enabled {
-                    let id = id.clone();
+        match &ranked.item {
+            Hit::Action(action) => {
+                if action.enabled {
+                    let id = action.id.clone();
                     app.palette.open = false;
                     app.dispatch(&id, Value::Null);
                 }
             }
-            Item::File(path) => {
-                let path = path.clone();
+            Hit::File { path, line } => {
                 app.palette.open = false;
-                app.dispatch("editor.openFile", json!({"path": path}));
-                ctx.memory_mut(|memory| memory.request_focus(crate::editor::editor_id()));
+                open_location(app, ctx, path, *line);
+            }
+            Hit::Symbol(symbol) => {
+                app.palette.open = false;
+                open_location(app, ctx, &symbol.path, Some(symbol.line + 1));
             }
         }
     }
     if close {
         app.palette.open = false;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fuzzy_prefers_substrings_then_subsequences() {
-        assert_eq!(fuzzy_score("Save All", "save"), Some(0));
-        assert_eq!(fuzzy_score("Save All", "all"), Some(5));
-        assert!(fuzzy_score("Toggle Terminal", "tgt").is_some_and(|score| score >= 100));
-        assert_eq!(fuzzy_score("Build", "xyz"), None);
-        assert_eq!(fuzzy_score("anything", ""), Some(0));
     }
 }
