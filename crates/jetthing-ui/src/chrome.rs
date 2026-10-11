@@ -52,6 +52,20 @@ pub fn main_toolbar(app: &mut IdeApp, ctx: &egui::Context) {
                     .max_rect(bar.shrink2(vec2(6.0, 0.0)))
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
+            if custom_title_bar() && app.state.project.is_some() {
+                let active = app
+                    .state
+                    .active_document
+                    .and_then(|index| app.state.documents.get(index));
+                let title = window_title(&app.project_name(), active.map(|doc| doc.path.as_path()));
+                ui.painter().text(
+                    bar.center(),
+                    egui::Align2::CENTER_CENTER,
+                    &title,
+                    egui::FontId::proportional(theme::UI_FONT_SIZE),
+                    *theme::TEXT_SECONDARY,
+                );
+            }
             let ui = &mut content;
             ui.spacing_mut().item_spacing.x = 4.0;
             ui.add_space(toolbar_leading_inset(cfg!(target_os = "macos")));
@@ -626,6 +640,46 @@ fn first_line_truncated(text: &str, max: usize) -> String {
     }
 }
 
+/// Whether the file on disk is read-only; probed at most once per second.
+fn is_read_only(ctx: &egui::Context, path: &std::path::Path) -> bool {
+    let now = ctx.input(|input| input.time);
+    let id = egui::Id::new(("read_only_probe", path));
+    if let Some((at, value)) = ctx.data(|data| data.get_temp::<(f64, bool)>(id))
+        && now - at < 1.0
+    {
+        return value;
+    }
+    let value = std::fs::metadata(path).is_ok_and(|meta| meta.permissions().readonly());
+    ctx.data_mut(|data| data.insert_temp(id, (now, value)));
+    value
+}
+
+/// Window title like the reference IDE: `project – File.java [module.sourceSet]`.
+/// The module is the directory above `src/` (or the project itself) joined with
+/// the source set (`main`, `test`, …) when the file lives under `src/<set>/`.
+pub fn window_title(project: &str, file: Option<&std::path::Path>) -> String {
+    let Some(file) = file else {
+        return format!("{project} – Jetthing");
+    };
+    let parts: Vec<String> = file
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    let name = parts.last().cloned().unwrap_or_default();
+    let module = match parts.iter().position(|part| part == "src") {
+        Some(src) if src + 2 < parts.len() => {
+            let owner = if src == 0 {
+                project.to_owned()
+            } else {
+                parts[src - 1].clone()
+            };
+            format!("{owner}.{}", parts[src + 1])
+        }
+        _ => project.to_owned(),
+    };
+    format!("{project} – {name} [{module}]")
+}
+
 pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
     egui::TopBottomPanel::bottom("status_bar")
         .exact_height(STATUS_BAR_HEIGHT)
@@ -715,17 +769,6 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                         let caret = document.selections.primary().head;
                         let (line, column) =
                             document.text.char_to_line_column(caret).unwrap_or((0, 0));
-                        if let Some(language) = document.analysis.language {
-                            widgets::flat_widget(
-                                ui,
-                                None,
-                                language,
-                                font.clone(),
-                                secondary,
-                                false,
-                                22.0,
-                            );
-                        }
                         widgets::flat_widget(
                             ui,
                             None,
@@ -752,7 +795,8 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                             secondary,
                             false,
                             22.0,
-                        );
+                        )
+                        .on_hover_text("Line separator");
                         widgets::flat_widget(
                             ui,
                             None,
@@ -766,6 +810,18 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
                             false,
                             22.0,
                         );
+                        if is_read_only(ctx, &app.state.absolute_path(&document.path)) {
+                            widgets::flat_widget(
+                                ui,
+                                None,
+                                "Read-only",
+                                font.clone(),
+                                *theme::WARNING,
+                                false,
+                                22.0,
+                            )
+                            .on_hover_text("File is read-only");
+                        }
                         if document.selections.column_mode() {
                             widgets::flat_widget(
                                 ui,
@@ -832,6 +888,24 @@ pub fn status_bar(app: &mut IdeApp, ctx: &egui::Context) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn window_title_names_file_and_module() {
+        use std::path::Path;
+        assert_eq!(super::window_title("p", None), "p – Jetthing");
+        assert_eq!(
+            super::window_title("java-gradle", Some(Path::new("src/main/java/App.java"))),
+            "java-gradle – App.java [java-gradle.main]"
+        );
+        assert_eq!(
+            super::window_title("p", Some(Path::new("app/src/test/java/T.java"))),
+            "p – T.java [app.test]"
+        );
+        assert_eq!(
+            super::window_title("p", Some(Path::new("README.md"))),
+            "p – README.md [p]"
+        );
+    }
+
     #[test]
     fn only_macos_reserves_room_for_the_traffic_lights() {
         assert_eq!(toolbar_leading_inset(true), MAC_TRAFFIC_LIGHT_INSET);

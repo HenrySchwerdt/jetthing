@@ -597,7 +597,56 @@ fn page(
                 let highlight = searching && search.matching_settings.contains(&def.id);
                 setting_row(ui, dialog, registry, store, def, group.is_some(), highlight);
             }
+            if page_id == "AppEditorFontConfigurable" {
+                font_preview(ui, dialog, registry, store);
+            }
             ui.add_space(12.0);
+        });
+}
+
+/// Editor > Font: sample text at the size and line height being edited.
+fn font_preview(
+    ui: &mut egui::Ui,
+    dialog: &SettingsDialog,
+    registry: &SettingsRegistry,
+    store: &SettingsStore,
+) {
+    use jetthing_settings::ids;
+    let size = dialog
+        .draft
+        .value(registry, store, ids::EDITOR_FONT_SIZE)
+        .ok()
+        .and_then(|value| value.as_int())
+        .unwrap_or(13)
+        .clamp(4, 72) as f32;
+    let line_height = dialog
+        .draft
+        .value(registry, store, ids::EDITOR_LINE_HEIGHT)
+        .ok()
+        .and_then(|value| value.as_float())
+        .unwrap_or(1.2)
+        .clamp(0.6, 3.0) as f32;
+    group_heading(ui, "Font preview", false);
+    egui::Frame::new()
+        .fill(*theme::editor::BACKGROUND)
+        .stroke(egui::Stroke::new(1.0_f32, theme::POPUP_BORDER))
+        .corner_radius(4)
+        .inner_margin(egui::Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = size * (line_height - 1.0).max(0.0);
+            let font = egui::FontId::monospace(size);
+            for line in [
+                "The quick brown fox jumps over the lazy dog",
+                "0123456789 () {} [] <> == != -> =>",
+                "public static void main(String[] args)",
+            ] {
+                ui.label(
+                    RichText::new(line)
+                        .font(font.clone())
+                        .color(*theme::editor::TEXT),
+                );
+            }
         });
 }
 

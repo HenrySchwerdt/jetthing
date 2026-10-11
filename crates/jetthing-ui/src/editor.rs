@@ -84,8 +84,13 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             crate::toolchain_banner::show(app, ui);
             let md_layout = app.state.markdown_layout();
             let full = ui.available_rect_before_wrap();
+            // The toggle lives in the editor's top-right toolbar: the tab strip row.
+            let toolbar_right = egui::pos2(
+                full.right(),
+                ui.max_rect().top() + TAB_BAR_HEIGHT / 2.0 - 12.0,
+            );
             if let Some(layout) = md_layout
-                && let Some(picked) = markdown_ui::layout_island(ui.ctx(), full.right_top(), layout)
+                && let Some(picked) = markdown_ui::layout_island(ui.ctx(), toolbar_right, layout)
             {
                 requests.push(EditorRequest::Command(
                     "markdown.layout",

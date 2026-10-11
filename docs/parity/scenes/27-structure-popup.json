@@ -1,0 +1,13 @@
+{
+  "id": "27",
+  "title": "File Structure popup (Ctrl+F12)",
+  "reference": "reference/intellij-community/java-gradle/22-structure.png",
+  "fixture": "java-gradle",
+  "open": ["src/main/java/com/example/App.java"],
+  "steps": [
+    {"op": "wait", "until": "idle"},
+    {"op": "key", "chord": "Primary+F12"},
+    {"op": "wait", "until": "popup"},
+    {"op": "screenshot", "name": "22-structure-fixed-popup.png"}
+  ]
+}

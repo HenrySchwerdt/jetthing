@@ -997,13 +997,13 @@ pub fn status_widget(app: &mut IdeApp, ui: &mut egui::Ui, font: egui::FontId) {
     let ai = &app.state.ai;
     let (text, color, tooltip) = if !ai.policy.allow_ai {
         (
-            "AI: disabled".to_owned(),
+            String::new(),
             theme::TEXT_INFO,
             format!("AI is disabled for this project ({PROJECT_POLICY_FILE})"),
         )
     } else if !ai.is_enabled() {
         (
-            "AI: off".to_owned(),
+            String::new(),
             theme::TEXT_INFO,
             "AI Assistant is off — click to set up a provider".to_owned(),
         )
@@ -1015,9 +1015,8 @@ pub fn status_widget(app: &mut IdeApp, ui: &mut egui::Ui, font: egui::FontId) {
         )
     } else {
         let model = ai.summary();
-        let short = model.rsplit(" · ").next().unwrap_or(&model).to_owned();
         (
-            short,
+            String::new(),
             theme::TEXT_SECONDARY,
             format!("AI Assistant: {model}"),
         )

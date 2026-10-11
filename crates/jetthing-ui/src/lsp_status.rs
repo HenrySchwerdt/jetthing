@@ -38,7 +38,8 @@ fn summary(app: &IdeApp, servers: &[ServerInfo]) -> Option<(String, bool, bool)>
             true,
             false,
         ),
-        ServerStatus::Ready => (id.to_owned(), false, false),
+        // A healthy server needs no text; the widget stays as an icon-only entry.
+        ServerStatus::Ready => (String::new(), false, false),
         ServerStatus::Restarting { attempt } => {
             (format!("{id}: restarting ({attempt})…"), true, true)
         }
@@ -52,7 +53,13 @@ pub fn status_widget(app: &mut IdeApp, ui: &mut egui::Ui, font: egui::FontId) {
     let Some((text, busy, problem)) = summary(app, &servers) else {
         return;
     };
-    let icon = problem.then_some((Icon::Warning, *theme::WARNING));
+    let icon = if problem {
+        Some((Icon::Warning, *theme::WARNING))
+    } else if text.is_empty() {
+        Some((Icon::Success, *theme::TEXT_INFO))
+    } else {
+        None
+    };
     let color = if problem {
         *theme::TEXT_SECONDARY
     } else if busy {
