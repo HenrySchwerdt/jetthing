@@ -111,6 +111,8 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
             );
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.spacing_mut().button_padding = vec2(4.0, 2.0);
                 for candidate in ResourceTab::ALL {
                     let selected = candidate == tab;
                     let text = RichText::new(candidate.title()).color(if selected {
