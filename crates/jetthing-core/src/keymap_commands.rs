@@ -64,6 +64,7 @@ const fn editor(action: &'static str, command: &'static str) -> ActionCommand {
 pub const ACTION_COMMANDS: &[ActionCommand] = &[
     global("ShowSettings", "settings.open", "{}"),
     menu("ShowPlugins", "plugin.manager.open"),
+    menu("CloseProject", "project.close"),
     global("SearchEverywhere", "navigate.searchEverywhere", "{}"),
     global("GotoAction", "navigate.findAction", "{}"),
     global("GotoClass", "navigate.gotoClass", "{}"),

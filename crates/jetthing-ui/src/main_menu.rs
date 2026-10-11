@@ -119,13 +119,41 @@ pub(crate) fn main_menu_items() -> Vec<MenuItem> {
     menu.into_iter()
         .map(|item| match item {
             MenuItem::Submenu { id, label, items } if id == "FileMenu" => MenuItem::Submenu {
-                items: filter_menu(&items, &|action| keybindings::is_implemented(action)),
+                items: with_new_project(filter_menu(&items, &|action| {
+                    keybindings::is_implemented(action)
+                })),
                 id,
                 label,
             },
             other => other,
         })
         .collect()
+}
+
+/// File > New starts with "New Project…" (opens the New Project wizard).
+fn with_new_project(mut items: Vec<MenuItem>) -> Vec<MenuItem> {
+    let entry = MenuItem::Action {
+        id: "NewProject".into(),
+        label: "New Project…".into(),
+    };
+    match items.iter_mut().find_map(|item| match item {
+        MenuItem::Submenu { id, items, .. } if id == "NewElementInMenuGroup" => Some(items),
+        _ => None,
+    }) {
+        Some(new) => {
+            new.insert(0, MenuItem::Separator(None));
+            new.insert(0, entry);
+        }
+        None => items.insert(
+            0,
+            MenuItem::Submenu {
+                id: "NewElementInMenuGroup".into(),
+                label: "New".into(),
+                items: vec![entry],
+            },
+        ),
+    }
+    items
 }
 
 /// The hamburger button; when clicked, the menu titles expand inline in the main
@@ -224,8 +252,15 @@ fn render(app: &mut IdeApp, ui: &mut egui::Ui, items: &[MenuItem]) {
     for item in items {
         match item {
             MenuItem::Action { id, label } => action_item(app, ui, id, label),
-            MenuItem::Submenu { label, items, .. } => {
-                ui.menu_button(label, |ui| scrolled(ui, |ui| render(app, ui, items)));
+            MenuItem::Submenu { id, label, items } => {
+                ui.menu_button(label, |ui| {
+                    scrolled(ui, |ui| {
+                        if id == "$LRU" {
+                            recent_projects(app, ui);
+                        }
+                        render(app, ui, items)
+                    })
+                });
             }
             MenuItem::Separator(title) => {
                 ui.separator();
@@ -239,6 +274,30 @@ fn render(app: &mut IdeApp, ui: &mut egui::Ui, items: &[MenuItem]) {
             }
         }
     }
+}
+
+/// The recently opened projects (most recent first) at the top of Recent Projects.
+fn recent_projects(app: &mut IdeApp, ui: &mut egui::Ui) {
+    let entries: Vec<_> = app.state.recent_projects.entries().to_vec();
+    if entries.is_empty() {
+        ui.add_enabled(false, egui::Button::new("No recent projects"));
+    }
+    for entry in &entries {
+        let button = egui::Button::new(&entry.name);
+        if ui
+            .add(button)
+            .on_hover_text(entry.path.display().to_string())
+            .clicked()
+        {
+            let ctx = ui.ctx().clone();
+            let path = entry.path.display().to_string();
+            if let Err(error) = app.open_project_path(&path, &ctx) {
+                app.state.status = error;
+            }
+            ui.close();
+        }
+    }
+    ui.separator();
 }
 
 fn action_item(app: &mut IdeApp, ui: &mut egui::Ui, id: &str, label: &str) {

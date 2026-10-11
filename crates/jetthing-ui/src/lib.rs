@@ -336,7 +336,22 @@ impl IdeApp {
         if let Err(error) = self.commands.execute(id, &mut self.state, params) {
             diagnostics::log(diagnostics::Level::Warn, &format!("{id}: {error}"));
             self.state.status = error.to_string();
+        } else if id == "project.close" {
+            self.project_closed();
         }
+    }
+
+    /// Resets project-bound UI state after `project.close`.
+    fn project_closed(&mut self) {
+        self.tree_selection = None;
+        self.tree_revealed = None;
+        self.commit_overrides.clear();
+        self.commit_message.clear();
+        self.search_input.clear();
+        self.terminal_selection = None;
+        self.dialog = None;
+        self.find = findbar::FindBar::default();
+        self.dispatch("plugin.refresh", Value::Null);
     }
 
     pub(crate) fn open_dialog(&mut self, dialog: popups::Dialog) {
