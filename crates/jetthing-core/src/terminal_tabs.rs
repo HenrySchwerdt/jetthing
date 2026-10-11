@@ -205,8 +205,10 @@ mod tests {
 
     #[test]
     fn sessions_swap_in_and_close() {
-        let mut state = IdeState::default();
-        state.terminal = Some(shell("first"));
+        let mut state = IdeState {
+            terminal: Some(shell("first")),
+            ..Default::default()
+        };
         assert_eq!(
             state.terminal_tab_titles(),
             vec![("Local".to_owned(), true)]
@@ -225,7 +227,7 @@ mod tests {
         assert_eq!(state.terminal_tab_titles().len(), 2);
 
         state.select_terminal_tab(0).unwrap();
-        assert_eq!(state.terminal_tab_titles()[0].1, true);
+        assert!(state.terminal_tab_titles()[0].1);
         assert!(state.terminal.is_some());
         assert!(state.select_terminal_tab(5).is_err());
 
