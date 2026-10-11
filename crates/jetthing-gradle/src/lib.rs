@@ -5,6 +5,9 @@
 //! model comes from a Gradle sync, which runs the user's Gradle.
 
 pub mod model;
+mod options;
+
+pub use options::{Distribution, GradleOptions, options, set_options};
 
 pub use model::{GradleModel, JdkModel, LibraryModel, ProjectModel, TaskModel};
 
@@ -135,7 +138,11 @@ impl GradleBuild {
 
     /// Program used to invoke Gradle: the wrapper when present, else `gradle` on PATH.
     pub fn program(&self) -> Result<String, RunnerError> {
-        match &self.wrapper {
+        let wrapper = self
+            .wrapper
+            .as_ref()
+            .filter(|_| options().distribution == Distribution::Wrapper);
+        match wrapper {
             Some(wrapper) if cfg!(windows) => Ok(wrapper.display().to_string()),
             Some(_) => Ok("./gradlew".into()),
             None => require_program(
@@ -168,7 +175,28 @@ impl GradleBuild {
         tasks: &[String],
     ) -> Result<TaskPlan, RunnerError> {
         let args = tasks.iter().cloned().chain(["--console=plain".to_owned()]);
-        Ok(TaskPlan::new(name, self.program()?, args, &self.root).with_kind(kind))
+        Ok(self.plan(name, args)?.with_kind(kind))
+    }
+
+    /// A plan invoking Gradle with `args`, honouring the user's [`GradleOptions`]
+    /// (distribution, `--offline`, Gradle user home and JDK).
+    pub(crate) fn plan(
+        &self,
+        name: impl Into<String>,
+        args: impl IntoIterator<Item = String>,
+    ) -> Result<TaskPlan, RunnerError> {
+        let options = options();
+        let args = args
+            .into_iter()
+            .chain(options.offline.then(|| "--offline".to_owned()));
+        let mut plan = TaskPlan::new(name, self.program()?, args, &self.root);
+        if let Some(home) = &options.user_home {
+            plan = plan.with_env("GRADLE_USER_HOME", home);
+        }
+        if let Some(jvm) = &options.jvm {
+            plan = plan.with_env("JAVA_HOME", jvm);
+        }
+        Ok(plan)
     }
 }
 
@@ -329,6 +357,32 @@ impl BuildSystem for Gradle {
         root: &Path,
         config: &RunConfiguration,
     ) -> Result<TaskPlan, RunnerError> {
+        if let RunTarget::Application {
+            module,
+            main_class,
+            program_arguments,
+        } = &config.target
+        {
+            let build = detected(root)?;
+            let module = match module.trim() {
+                "" => build.modules.first(),
+                path => build.modules.iter().find(|m| m.path == path),
+            }
+            .ok_or_else(|| {
+                RunnerError::NotRunnable(format!("no Gradle module `{}`", module.trim()))
+            })?;
+            let script = build.init_script()?;
+            let mut args = vec![
+                module.task(model::RUN_MAIN_TASK),
+                "--init-script".to_owned(),
+                script.display().to_string(),
+                format!("-Pjetthing.mainClass={}", main_class.trim()),
+            ];
+            if !program_arguments.is_empty() {
+                args.push(format!("--args={}", program_arguments.join(" ")));
+            }
+            return build.task_plan(TaskKind::Run, &config.name, &args);
+        }
         let RunTarget::Gradle {
             tasks,
             options,

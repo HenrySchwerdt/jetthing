@@ -6,6 +6,7 @@ use crate::widgets::{list_row, row_text};
 use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, RichText, vec2};
 use jetthing_runner::{TestCase, TestOutcome, TestResults};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const INDENT: f32 = 18.0;
@@ -15,6 +16,7 @@ struct View {
     /// (suite, case); a suite alone when `case` is empty.
     selected: Option<(String, String)>,
     hide_passed: bool,
+    hide_ignored: bool,
 }
 
 fn view_id() -> egui::Id {
@@ -70,7 +72,27 @@ pub fn tree(app: &IdeApp, ui: &mut egui::Ui, running: bool) {
     let results = app.state.runner.tests();
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        ui.checkbox(&mut view.hide_passed, "Hide passed");
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let mut show_passed = !view.hide_passed;
+        if toggle(
+            ui,
+            Icon::Success,
+            *theme::SUCCESS,
+            "Show Passed",
+            &mut show_passed,
+        ) {
+            view.hide_passed = !show_passed;
+        }
+        let mut show_ignored = !view.hide_ignored;
+        if toggle(
+            ui,
+            Icon::Warning,
+            *theme::WARNING,
+            "Show Ignored",
+            &mut show_ignored,
+        ) {
+            view.hide_ignored = !show_ignored;
+        }
     });
     egui::ScrollArea::both()
         .id_salt("test_tree")
@@ -106,7 +128,11 @@ pub fn tree(app: &IdeApp, ui: &mut egui::Ui, running: bool) {
                 view.selected = None;
             }
             for suite in results.suites() {
-                if view.hide_passed && !suite.failed() {
+                if !suite
+                    .cases
+                    .iter()
+                    .any(|case| visible(case, view.hide_passed, view.hide_ignored))
+                {
                     continue;
                 }
                 let selected = view
@@ -135,7 +161,10 @@ pub fn tree(app: &IdeApp, ui: &mut egui::Ui, running: bool) {
                     view.selected = Some((suite.name.clone(), String::new()));
                 }
                 for case in &suite.cases {
-                    if view.hide_passed && !case.failed() {
+                    if view.hide_passed && case.outcome == TestOutcome::Passed {
+                        continue;
+                    }
+                    if view.hide_ignored && case.outcome == TestOutcome::Skipped {
                         continue;
                     }
                     let selected = view
@@ -163,6 +192,26 @@ pub fn tree(app: &IdeApp, ui: &mut egui::Ui, running: bool) {
             }
         });
     ui.data_mut(|data| data.insert_temp(view_id(), view));
+}
+
+/// Whether the Show Passed / Show Ignored toggles let `case` through.
+fn visible(case: &TestCase, hide_passed: bool, hide_ignored: bool) -> bool {
+    match case.outcome {
+        TestOutcome::Passed => !hide_passed,
+        TestOutcome::Skipped => !hide_ignored,
+        TestOutcome::Failed { .. } => true,
+    }
+}
+
+/// A toolbar toggle button; returns whether it was clicked (flipping `on`).
+fn toggle(ui: &mut egui::Ui, icon: Icon, color: Color32, tip: &str, on: &mut bool) -> bool {
+    let tint = if *on { color } else { *theme::TEXT_DISABLED };
+    let response = icons::button_colored(ui, icon, tint, tip, *on);
+    let clicked = response.clicked();
+    if clicked {
+        *on = !*on;
+    }
+    clicked
 }
 
 fn paint_icon(ui: &egui::Ui, x: f32, rect: egui::Rect, icon: Icon, color: Color32) {
@@ -251,8 +300,64 @@ pub fn header(app: &IdeApp, ui: &mut egui::Ui) {
     ui.add_space(6.0);
 }
 
-/// Failure message, stack trace and captured output of a test.
-pub fn details(ui: &mut egui::Ui, case: &TestCase) {
+/// A stack frame `at pkg.Class.method(File.java:12)` → (`pkg/Class` path suffix without
+/// extension, file name, 1-based line).
+fn parse_frame(line: &str) -> Option<(String, String, usize)> {
+    let rest = line.trim().strip_prefix("at ")?;
+    let (callee, location) = rest.split_once('(')?;
+    let (file, line_no) = location.strip_suffix(')')?.rsplit_once(':')?;
+    let line_no: usize = line_no.parse().ok()?;
+    let class = callee.rsplit_once('.')?.0;
+    let class = class.split('$').next()?.replace('.', "/");
+    // Module prefixes such as `app//com.example.A.m` are dropped.
+    let class = class.rsplit("//").next()?.to_owned();
+    (!file.is_empty() && line_no > 0).then(|| (class, file.to_owned(), line_no))
+}
+
+/// Finds `<class path>`'s sibling `file` below `root`, skipping build output.
+fn find_source(root: &Path, class: &str, file: &str) -> Option<PathBuf> {
+    let package = class
+        .rsplit_once('/')
+        .map(|(package, _)| package)
+        .unwrap_or("");
+    let suffix = Path::new(package).join(file);
+    let mut pending = vec![root.to_owned()];
+    let mut visited = 0;
+    while let Some(dir) = pending.pop() {
+        visited += 1;
+        if visited > 5000 {
+            return None;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if path.is_dir() {
+                if !matches!(
+                    name.as_ref(),
+                    "build" | "target" | "node_modules" | ".git" | ".gradle" | "out"
+                ) {
+                    pending.push(path);
+                }
+            } else if name == file && path.ends_with(&suffix) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// Failure message, stack trace and captured output of a test. Returns the source
+/// location of a clicked stack frame.
+pub fn details(
+    ui: &mut egui::Ui,
+    case: &TestCase,
+    root: Option<&Path>,
+) -> Option<(PathBuf, usize)> {
+    let mut opened = None;
     egui::ScrollArea::both()
         .id_salt("test_details")
         .auto_shrink([false, false])
@@ -266,11 +371,26 @@ pub fn details(ui: &mut egui::Ui, case: &TestCase) {
                             .color(*theme::ERROR),
                     );
                     if !details.trim().is_empty() && details.trim() != message.trim() {
-                        ui.label(
-                            RichText::new(details.trim_end())
-                                .font(mono.clone())
-                                .color(*theme::editor::TEXT),
-                        );
+                        for line in details.trim_end().lines() {
+                            let frame = parse_frame(line);
+                            let text = RichText::new(line).font(mono.clone());
+                            if let Some((class, file, line_no)) = frame {
+                                let link = ui
+                                    .add(
+                                        egui::Label::new(text.color(*theme::ACCENT))
+                                            .sense(egui::Sense::click()),
+                                    )
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if link.clicked()
+                                    && let Some(path) =
+                                        root.and_then(|root| find_source(root, &class, &file))
+                                {
+                                    opened = Some((path, line_no));
+                                }
+                            } else {
+                                ui.label(text.color(*theme::editor::TEXT));
+                            }
+                        }
                     }
                 }
                 TestOutcome::Skipped => {
@@ -289,6 +409,7 @@ pub fn details(ui: &mut egui::Ui, case: &TestCase) {
                 );
             }
         });
+    opened
 }
 
 #[cfg(test)]
@@ -308,6 +429,32 @@ mod tests {
         .unwrap();
         assert_eq!(summary(&mixed).0, "1 test failed, 1 passed, 1 ignored");
         assert_eq!(summary(&TestResults::default()).0, "No tests were found");
+    }
+
+    #[test]
+    fn stack_frames_resolve_to_files_and_lines() {
+        assert_eq!(
+            parse_frame("\tat com.example.AppTest.greets(AppTest.java:12)"),
+            Some((
+                "com/example".to_owned() + "/AppTest",
+                "AppTest.java".into(),
+                12
+            ))
+        );
+        assert_eq!(
+            parse_frame("\tat java.base/java.lang.Thread.run(Native Method)"),
+            None
+        );
+        assert_eq!(parse_frame("Caused by: x"), None);
+        let case = |outcome| TestCase {
+            name: "t".into(),
+            outcome,
+            duration: None,
+            output: String::new(),
+        };
+        assert!(!visible(&case(TestOutcome::Passed), true, false));
+        assert!(!visible(&case(TestOutcome::Skipped), false, true));
+        assert!(visible(&case(TestOutcome::Skipped), true, false));
     }
 
     #[test]

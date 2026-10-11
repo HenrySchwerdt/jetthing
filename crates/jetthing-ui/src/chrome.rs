@@ -333,21 +333,40 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
                 .iter()
                 .map(|config| (config.name.clone(), config.temporary))
                 .collect();
+            let idle = !app.state.runner.is_running();
+            // `Current File` runs the entry point or test at the caret.
+            let clicked = run_row(ui, "Current File", false, selected.is_none(), false);
+            if clicked == RowAction::Select {
+                app.dispatch("runConfig.selectCurrentFile", Value::Null);
+                ui.close();
+            }
             for (name, temporary) in names {
-                let text = egui::RichText::new(&name).color(if temporary {
-                    theme::TEXT_SECONDARY
-                } else {
-                    theme::TEXT
-                });
-                if ui
-                    .add(egui::Button::selectable(
-                        selected.as_deref() == Some(name.as_str()),
-                        text,
-                    ))
-                    .clicked()
-                {
-                    app.dispatch("runConfig.select", json!({"name": name}));
-                    ui.close();
+                let action = run_row(
+                    ui,
+                    &name,
+                    temporary,
+                    selected.as_deref() == Some(name.as_str()),
+                    idle,
+                );
+                match action {
+                    RowAction::None => {}
+                    RowAction::Select => {
+                        app.dispatch("runConfig.select", json!({"name": name}));
+                        ui.close();
+                    }
+                    RowAction::Run => {
+                        app.dispatch("runConfig.run", json!({"name": name}));
+                        ui.close();
+                    }
+                    RowAction::Debug => {
+                        app.dispatch("runConfig.select", json!({"name": name}));
+                        app.dispatch("debug.start", Value::Null);
+                        ui.close();
+                    }
+                    RowAction::More => {
+                        app.dispatch("runConfig.edit", json!({"name": name}));
+                        ui.close();
+                    }
                 }
             }
             if let Some(build) = &detected
@@ -360,27 +379,94 @@ fn run_widget(app: &mut IdeApp, ui: &mut egui::Ui) {
                         .size(theme::UI_FONT_SIZE - 1.0),
                 );
             }
-            if selected.is_some()
-                || detected
-                    .as_ref()
-                    .is_some_and(|b| b.run_unavailable.is_some())
+            ui.separator();
+            let enabled = app.commands.is_enabled("runConfig.edit", &app.state);
+            if ui
+                .add_enabled(enabled, egui::Button::new("Edit Configurations…"))
+                .clicked()
             {
-                ui.separator();
-            }
-            for (id, label) in [
-                ("runConfig.edit", "Edit Configurations…"),
-                ("build.project", "Build Project"),
-                ("test.project", "Run All Tests"),
-                ("run.rerun", "Rerun Last Task"),
-            ] {
-                let enabled = app.commands.is_enabled(id, &app.state);
-                if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
-                    app.dispatch(id, Value::Null);
-                    ui.close();
-                }
+                app.dispatch("runConfig.edit", Value::Null);
+                ui.close();
             }
         });
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowAction {
+    None,
+    Select,
+    Run,
+    Debug,
+    More,
+}
+
+/// One row of the run widget popup; Run / Debug / ⋮ buttons appear on hover.
+/// `buttons` is false while a task runs (or for `Current File`, which has no extras).
+fn run_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    temporary: bool,
+    selected: bool,
+    buttons: bool,
+) -> RowAction {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width().max(240.0), 24.0), Sense::click());
+    if response.hovered() || selected {
+        let fill = if response.hovered() {
+            *theme::HOVER
+        } else {
+            *theme::SELECTION
+        };
+        ui.painter().rect_filled(rect, 2.0, fill);
+    }
+    let color = if temporary {
+        *theme::TEXT_SECONDARY
+    } else {
+        *theme::TEXT
+    };
+    ui.painter().text(
+        rect.left_center() + vec2(8.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        name,
+        egui::FontId::proportional(theme::UI_FONT_SIZE),
+        color,
+    );
+    let mut action = if response.clicked() {
+        RowAction::Select
+    } else {
+        RowAction::None
+    };
+    if buttons && response.hovered() {
+        let slots = [
+            (RowAction::Run, Some(Icon::Run), *theme::RUN_GREEN, "Run"),
+            (RowAction::Debug, Some(Icon::Debug), *icons::ICON, "Debug"),
+            (RowAction::More, None, *icons::ICON, "More actions"),
+        ];
+        for (index, (kind, icon, tint, tip)) in slots.into_iter().rev().enumerate() {
+            let slot = Rect::from_center_size(
+                egui::pos2(rect.right() - 14.0 - 22.0 * index as f32, rect.center().y),
+                vec2(20.0, 20.0),
+            );
+            let hit = ui.interact(slot, response.id.with(tip), Sense::click());
+            if hit.hovered() {
+                ui.painter().rect_filled(slot, 3.0, *theme::PRESSED);
+            }
+            match icon {
+                Some(icon) => icons::paint(ui.painter(), slot.shrink(3.0), icon, tint),
+                None => {
+                    for step in [-4.0, 0.0, 4.0] {
+                        ui.painter()
+                            .circle_filled(slot.center() + vec2(0.0, step), 1.2, tint);
+                    }
+                }
+            }
+            if hit.on_hover_text(tip).clicked() {
+                action = kind;
+            }
+        }
+    }
+    action
 }
 
 pub(crate) fn window_controls(ui: &mut egui::Ui) {

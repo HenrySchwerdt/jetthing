@@ -82,6 +82,13 @@ pub fn show(app: &mut IdeApp, ctx: &egui::Context) {
                 if debug.clicked() {
                     debug_action = true;
                 }
+                ui.add_enabled(
+                    false,
+                    egui::Button::new(format!("     Run {target} with Coverage"))
+                        .frame(false)
+                        .min_size(vec2(270.0, 24.0)),
+                )
+                .on_disabled_hover_text("Code coverage is not available yet (IJ-RUN-069)");
                 if ui
                     .add(
                         egui::Button::new("     Modify Run Configuration…")

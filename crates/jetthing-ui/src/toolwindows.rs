@@ -621,6 +621,9 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.add_space(8.0);
         ui.spacing_mut().item_spacing.x = 2.0;
+        if icons::button(ui, Icon::Refresh, "Refresh").clicked() {
+            app.dispatch("git.refresh", Value::Null);
+        }
         let rollback = icons::button(
             ui,
             Icon::Rollback,
@@ -644,11 +647,21 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
         {
             open = Some(path);
         }
+        ui.add_space(6.0);
+        for (icon, tip, collapse) in [
+            (Icon::ExpandAll, "Expand All", false),
+            (Icon::CollapseAll, "Collapse All", true),
+        ] {
+            if icons::button(ui, icon, tip).clicked() {
+                for title in ["Changes", "Unversioned Files"] {
+                    ui.data_mut(|data| data.insert_temp(group_collapsed_id(title), collapse));
+                }
+            }
+        }
     });
-    let form_height = 160.0;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .max_height((ui.available_height() - form_height).max(60.0))
+        .max_height((ui.available_height() * 0.5).max(60.0))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for (title, files) in &groups {
@@ -661,6 +674,9 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     n if n == files.len() => Some(true),
                     _ => None,
                 };
+                let group_id = group_collapsed_id(title);
+                let group_collapsed: bool =
+                    ui.data(|data| data.get_temp(group_id)).unwrap_or(false);
                 let (rect, response) = list_row(ui, false);
                 icons::paint(
                     ui.painter(),
@@ -668,7 +684,11 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                         egui::pos2(rect.left() + 10.0, rect.center().y - 8.0),
                         vec2(16.0, 16.0),
                     ),
-                    Icon::ChevronDown,
+                    if group_collapsed {
+                        Icon::ChevronRight
+                    } else {
+                        Icon::ChevronDown
+                    },
                     *theme::TEXT_SECONDARY,
                 );
                 let check = Rect::from_min_size(
@@ -694,9 +714,17 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     egui::FontId::proportional(theme::UI_FONT_SIZE),
                     *theme::TEXT_INFO,
                 );
-                if response.clicked() && !files.is_empty() {
+                let on_chevron = response
+                    .interact_pointer_pos()
+                    .is_some_and(|pos| pos.x < rect.left() + 28.0);
+                if response.clicked() && on_chevron {
+                    ui.data_mut(|data| data.insert_temp(group_id, !group_collapsed));
+                } else if response.clicked() && !files.is_empty() {
                     let value = state != Some(true);
                     toggles.extend(files.iter().map(|(p, _)| (p.clone(), value)));
+                }
+                if group_collapsed {
+                    continue;
                 }
                 for (path, kind) in files {
                     let (rect, response) = list_row(ui, selected_row.as_ref() == Some(path));
@@ -808,10 +836,12 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     }
                 });
             });
+            // The message editor takes the height left under the file list.
+            let rows = ((ui.available_height() - 84.0) / 18.0).floor().max(3.0) as usize;
             let response = ui.add(
                 egui::TextEdit::multiline(&mut app.commit_message)
                     .id(commit_message_id())
-                    .desired_rows(4)
+                    .desired_rows(rows)
                     .desired_width(f32::INFINITY)
                     .hint_text("Commit Message"),
             );
@@ -854,6 +884,28 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
                     commit_now = true;
                     push_after = true;
                 }
+                let gear = icons::button(ui, Icon::Task, "Commit options");
+                egui::Popup::menu(&gear).show(|ui| {
+                    let mut amend = app.commit_amend;
+                    if ui.checkbox(&mut amend, "Amend commit").changed() {
+                        app.commit_amend = amend;
+                        if amend && app.commit_message.trim().is_empty() {
+                            app.commit_message =
+                                app.state.last_commit_message().unwrap_or_default();
+                        }
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            !app.commit_message.is_empty(),
+                            egui::Button::new("Clear Commit Message"),
+                        )
+                        .clicked()
+                    {
+                        app.commit_message.clear();
+                        ui.close();
+                    }
+                });
                 ui.label(
                     RichText::new(widgets::pluralize(
                         selected.len(),
@@ -895,6 +947,10 @@ fn commit(app: &mut IdeApp, ui: &mut egui::Ui) {
     if let Some(path) = open {
         app.dispatch("git.showDiff", json!({"path": path}));
     }
+}
+
+fn group_collapsed_id(title: &str) -> egui::Id {
+    egui::Id::new(("commit_group_collapsed", title))
 }
 
 pub fn commit_message_id() -> egui::Id {

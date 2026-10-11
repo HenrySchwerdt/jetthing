@@ -391,7 +391,18 @@ pub fn show(app: &mut IdeApp, ui: &mut egui::Ui) {
     if test_mode {
         crate::test_view::header(app, &mut console);
         match crate::test_view::selected_case(app, ui.ctx()) {
-            Some(case) => crate::test_view::details(&mut console, &case),
+            Some(case) => {
+                if let Some((path, line)) =
+                    crate::test_view::details(&mut console, &case, project_root.as_deref())
+                {
+                    action = Some(Action::Open {
+                        node: 0,
+                        path: path.display().to_string(),
+                        line: line as u32,
+                        column: 1,
+                    });
+                }
+            }
             None => console_view(app, &mut console, &command_line, view.reveal.take()),
         }
     } else {

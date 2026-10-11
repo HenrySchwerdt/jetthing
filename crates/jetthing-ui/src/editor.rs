@@ -82,6 +82,14 @@ pub fn central(app: &mut IdeApp, ctx: &egui::Context) {
             }
             crate::disk_banner::show(app, ui);
             crate::toolchain_banner::show(app, ui);
+            if crate::merged_manifest_ui::applies(app) {
+                crate::merged_manifest_ui::tab_bar(app, ui);
+                if app.state.android.merged_manifest.open {
+                    crate::merged_manifest_ui::body(app, ui);
+                    app.caret_screen_pos = None;
+                    return;
+                }
+            }
             let md_layout = app.state.markdown_layout();
             let full = ui.available_rect_before_wrap();
             // The toggle lives in the editor's top-right toolbar: the tab strip row.
@@ -1599,6 +1607,7 @@ fn editor_surface(
     let command = |id: &'static str| EditorRequest::Command(id, Value::Null);
     let clone_armed = editor_keys::clone_gesture_armed(ui.ctx(), response.id, mac);
     let mut typed = String::new();
+    let pairing = theme::pair_options(ui.ctx());
     for event in events {
         let (key, modifiers) = match event {
             egui::Event::Text(text) if !text.is_empty() => {
@@ -1606,8 +1615,13 @@ fn editor_surface(
                 let mut chars = text.chars();
                 let single = chars.next().filter(|_| chars.next().is_none());
                 let handled = match single {
-                    Some(c) => ops::type_char(&mut document.text, &mut document.selections, c)
-                        .map_err(text_error)?,
+                    Some(c) => ops::type_char_with(
+                        &mut document.text,
+                        &mut document.selections,
+                        c,
+                        pairing,
+                    )
+                    .map_err(text_error)?,
                     None => false,
                 };
                 if !handled {

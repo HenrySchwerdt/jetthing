@@ -20,6 +20,7 @@ pub struct AndroidState {
     /// Whether the Android SDK settings page is showing.
     pub sdk_manager_open: bool,
     pub devices: crate::android_devices::DeviceHub,
+    pub sdk_repo: crate::android_sdk_repo::SdkRepoState,
     pub logcat: crate::android_logcat::LogcatState,
     pub deploy: crate::android_deploy::DeployState,
     /// Active build variant per module Gradle path (Build Variants tool window).
