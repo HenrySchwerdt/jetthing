@@ -9,6 +9,7 @@ use crate::{IdeApp, theme};
 use eframe::egui::{self, Color32, Rect, Sense, Stroke, vec2};
 use jetthing_core::{Problem, ProblemCounts, Severity, ToolWindow};
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Width of the error stripe right of the editor text.
@@ -474,10 +475,100 @@ pub fn tool_window(app: &mut IdeApp, ui: &mut egui::Ui) {
         .as_ref()
         .map(|project| project.root().to_owned());
     let mut jump = None;
+    // Left toolbar: Preview, Quick Fix, Group by Severity.
+    let options_id = egui::Id::new("problems_options");
+    let mut options: Options = ui
+        .data(|data| data.get_temp(options_id))
+        .unwrap_or_default();
+    let body = ui.available_rect_before_wrap();
+    let toolbar_rect = Rect::from_min_size(body.min, vec2(34.0, body.height()));
+    ui.painter().line_segment(
+        [toolbar_rect.right_top(), toolbar_rect.right_bottom()],
+        Stroke::new(1.0_f32, *theme::TOOLBAR_SEPARATOR),
+    );
+    let mut toolbar = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(toolbar_rect.shrink2(vec2(4.0, 4.0)))
+            .layout(egui::Layout::top_down(egui::Align::Center)),
+    );
+    toolbar.spacing_mut().item_spacing.y = 2.0;
+    if icons::button_colored(
+        &mut toolbar,
+        Icon::Find,
+        *theme::ICON,
+        "Preview",
+        options.preview,
+    )
+    .clicked()
+    {
+        options.preview = !options.preview;
+    }
+    let can_fix_here = options.selected.is_some();
+    if toolbar
+        .add_enabled_ui(can_fix_here, |ui| {
+            icons::button(
+                ui,
+                Icon::Warning,
+                "Show Quick Fixes for the Selected Problem",
+            )
+        })
+        .inner
+        .clicked()
+        && let Some((path, line, column)) = options.selected.clone()
+    {
+        jump_to(app, &ui.ctx().clone(), &path, line, column);
+        app.dispatch("code.showIntentions", serde_json::Value::Null);
+    }
+    if icons::button_colored(
+        &mut toolbar,
+        Icon::Structure,
+        *theme::ICON,
+        "Group by Severity",
+        options.group_by_severity,
+    )
+    .clicked()
+    {
+        options.group_by_severity = !options.group_by_severity;
+    }
+    let previews: HashMap<(PathBuf, usize), String> = if options.preview {
+        let mut previews = HashMap::new();
+        for (path, problems) in std::iter::once((active_path.clone(), file_problems.clone()))
+            .filter_map(|(path, problems)| Some((path?, problems)))
+            .chain(project_errors.iter().cloned())
+        {
+            if let Some(document) = app.state.documents.iter().find(|doc| doc.path == path) {
+                for problem in &problems {
+                    if let Some(line) = document.text.line(problem.line) {
+                        previews.insert(
+                            (path.clone(), problem.line),
+                            line.trim_end_matches(['\r', '\n']).trim().to_owned(),
+                        );
+                    }
+                }
+            }
+        }
+        previews
+    } else {
+        HashMap::new()
+    };
+    let mut selected = options.selected.clone();
+    let content_rect =
+        Rect::from_min_max(egui::pos2(toolbar_rect.right() + 1.0, body.top()), body.max);
+    let mut content = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(content_rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    let ui = &mut content;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
+            let view = GroupView {
+                group_by_severity: options.group_by_severity,
+                previews: &previews,
+                selected: options.selected.as_ref(),
+            };
             match tab {
                 Tab::File => {
                     let Some(path) = &active_path else {
@@ -488,7 +579,7 @@ pub fn tool_window(app: &mut IdeApp, ui: &mut egui::Ui) {
                         empty(ui, &format!("No problems in {}", IdeApp::file_name(path)));
                         return;
                     }
-                    file_group(ui, root.as_deref(), path, &file_problems, &mut jump);
+                    file_group(ui, root.as_deref(), path, &file_problems, &view, &mut jump);
                 }
                 Tab::ProjectErrors => {
                     if project_errors.is_empty() {
@@ -496,14 +587,50 @@ pub fn tool_window(app: &mut IdeApp, ui: &mut egui::Ui) {
                         return;
                     }
                     for (path, errors) in &project_errors {
-                        file_group(ui, root.as_deref(), path, errors, &mut jump);
+                        file_group(ui, root.as_deref(), path, errors, &view, &mut jump);
                     }
                 }
             }
         });
     if let Some((path, line, column)) = jump {
+        selected = Some((path.clone(), line, column));
         jump_to(app, &ui.ctx().clone(), &path, line, column);
     }
+    options.selected = selected;
+    ui.data_mut(|data| data.insert_temp(options_id, options));
+}
+
+/// View switches of the Problems tool window (left toolbar) and the problem
+/// last clicked.
+#[derive(Clone, Default)]
+struct Options {
+    preview: bool,
+    group_by_severity: bool,
+    selected: Option<(PathBuf, usize, usize)>,
+}
+
+struct GroupView<'a> {
+    group_by_severity: bool,
+    previews: &'a HashMap<(PathBuf, usize), String>,
+    selected: Option<&'a (PathBuf, usize, usize)>,
+}
+
+/// `/very/long/path/to/dir` shortened to `…/path/to/dir` within `max` chars.
+fn elide_path(path: &str, max: usize) -> String {
+    if path.chars().count() <= max {
+        return path.to_owned();
+    }
+    let mut kept: Vec<&str> = Vec::new();
+    let mut length = 2;
+    for part in path.rsplit(['/', '\\']).filter(|part| !part.is_empty()) {
+        if length + part.chars().count() + 1 > max && !kept.is_empty() {
+            break;
+        }
+        length += part.chars().count() + 1;
+        kept.push(part);
+    }
+    kept.reverse();
+    format!("…/{}", kept.join("/"))
 }
 
 fn empty(ui: &mut egui::Ui, text: &str) {
@@ -520,6 +647,7 @@ fn file_group(
     root: Option<&Path>,
     path: &Path,
     problems: &[Problem],
+    view: &GroupView<'_>,
     jump: &mut Option<(PathBuf, usize, usize)>,
 ) {
     let font = egui::FontId::proportional(theme::UI_FONT_SIZE);
@@ -550,7 +678,7 @@ fn file_group(
             ui,
             rect,
             x + 8.0,
-            &parent.display().to_string(),
+            &elide_path(&parent.display().to_string(), 48),
             font.clone(),
             theme::TEXT_INFO,
         );
@@ -563,8 +691,32 @@ fn file_group(
         font.clone(),
         theme::TEXT_INFO,
     );
-    for problem in problems {
-        let (rect, response) = list_row(ui, false);
+    let mut ordered: Vec<&Problem> = problems.iter().collect();
+    if view.group_by_severity {
+        ordered.sort_by_key(|problem| problem.severity);
+    }
+    let mut section = None;
+    for problem in ordered {
+        if view.group_by_severity && section != Some(problem.severity) {
+            section = Some(problem.severity);
+            let count = problems
+                .iter()
+                .filter(|other| other.severity == problem.severity)
+                .count();
+            let (rect, _) = list_row(ui, false);
+            row_text(
+                ui,
+                rect,
+                rect.left() + 34.0,
+                &format!("{} {count}", severity_title(problem.severity)),
+                theme::semibold(theme::UI_FONT_SIZE),
+                theme::TEXT_SECONDARY,
+            );
+        }
+        let chosen = view
+            .selected
+            .is_some_and(|(p, line, _)| p == path && *line == problem.line);
+        let (rect, response) = list_row(ui, chosen);
         icons::paint(
             ui.painter(),
             Rect::from_min_size(
@@ -594,6 +746,26 @@ fn file_group(
         if response.on_hover_text(&problem.message).clicked() {
             *jump = Some((path.to_owned(), problem.line, problem.column));
         }
+        if let Some(code) = view.previews.get(&(path.to_owned(), problem.line)) {
+            let (rect, _) = list_row(ui, false);
+            row_text(
+                ui,
+                rect,
+                rect.left() + 56.0,
+                code,
+                egui::FontId::monospace(theme::UI_FONT_SIZE - 1.0),
+                theme::TEXT_INFO,
+            );
+        }
+    }
+}
+
+fn severity_title(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Error => "Errors",
+        Severity::Warning => "Warnings",
+        Severity::WeakWarning => "Weak Warnings",
+        Severity::Hint => "Hints",
     }
 }
 
@@ -614,6 +786,18 @@ mod tests {
             unnecessary: false,
             deprecated: false,
         }
+    }
+
+    #[test]
+    fn long_directories_are_elided_from_the_left() {
+        assert_eq!(elide_path("/a/b", 48), "/a/b");
+        assert_eq!(
+            elide_path(
+                "/home/user/projects/sample/src/main/java/com/example/app",
+                30
+            ),
+            "…/java/com/example/app"
+        );
     }
 
     #[test]
